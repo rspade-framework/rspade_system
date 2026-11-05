@@ -27,8 +27,13 @@ class Tasks_Enable_Command extends Command
     public function handle()
     {
         $state = Task::disabled_state();
+        $changed = Task::enable();
 
-        if (!Task::enable()) {
+        // Both branches poke the task daemon: rsx:maintenance:disable ends with this command
+        // whether or not the system was off, and the daemon has waited out the window.
+        \App\RSpade\Core\Task\Task_Daemon::poke();
+
+        if (!$changed) {
             $this->info('[OK] The task system is already on.');
 
             return 0;

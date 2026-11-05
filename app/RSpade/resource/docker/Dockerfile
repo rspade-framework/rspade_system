@@ -276,9 +276,21 @@ RUN chown -R root:root /opt/rspade/proxority \
     && find /opt/rspade/proxority -type f -exec chmod 644 {} + \
     && chmod 755 /usr/local/bin/proxority
 
+# rspade-taskd - the task scheduler: it runs the task tick (php artisan rsx:task:process) at the
+# moment the last tick said work comes due, and when the application pokes it, instead of once
+# a minute. Source: resource/docker/rspade-taskd/, installed at /opt/rspade/rspade-taskd/ and run
+# by supervisor as the `tasks` program (supervisor/conf.d/tasks.conf). Like Proxority it is part
+# of the image and starts with no checkout mounted. /usr/local/bin/rspade-taskd is the
+# operator's command: `rspade-taskd status`, `rspade-taskd poke`.
+COPY rspade-taskd/ /opt/rspade/rspade-taskd/
+COPY rspade-taskd-cli.sh /usr/local/bin/rspade-taskd
+RUN chown -R root:root /opt/rspade/rspade-taskd \
+    && find /opt/rspade/rspade-taskd -type d -exec chmod 755 {} + \
+    && find /opt/rspade/rspade-taskd -type f -exec chmod 644 {} + \
+    && chmod 755 /usr/local/bin/rspade-taskd
+
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
-COPY task-run.sh       /usr/local/bin/rspade-task-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
 COPY sizing.sh         /usr/local/bin/rspade-sizing
 COPY trusted-proxies.sh /usr/local/bin/rspade-trusted-proxies
@@ -310,7 +322,6 @@ COPY npm-shim.sh       /usr/local/bin/npm
 # entirely from an executable one.
 RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-realtime-run \
-              /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
               /usr/local/bin/rspade-sizing \
               /usr/local/bin/rspade-trusted-proxies \
@@ -538,11 +549,11 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 COPY php/opcache-dev.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
-# Development PHP: 256 MB a process, php-fpm and the CLI alike - lower than production on
+# Development PHP: 320 MB a process, php-fpm and the CLI alike - lower than production on
 # purpose, so a request or a command that grows past what production allows fails here
 # first (rspade-sizing rewrites it at every start, from RSPADE_PHP_MEMORY_LIMIT_MB when set).
 RUN for sapi in fpm cli; do \
-        printf '%s\n' 'memory_limit = 256M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
+        printf '%s\n' 'memory_limit = 320M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
         && chmod 644 /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini; \
     done
 
@@ -578,10 +589,11 @@ COPY php/www-prod.conf  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
               /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 
-# Production PHP: 320 MB a process, php-fpm and the CLI alike (rspade-sizing rewrites it at
+# Production PHP: 352 MB a process (development's 320 and a tenth more), php-fpm and the CLI
+# alike (rspade-sizing rewrites it at
 # every start, from RSPADE_PHP_MEMORY_LIMIT_MB when set).
 RUN for sapi in fpm cli; do \
-        printf '%s\n' 'memory_limit = 320M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
+        printf '%s\n' 'memory_limit = 352M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
         && chmod 644 /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini; \
     done
 

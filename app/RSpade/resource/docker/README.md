@@ -56,7 +56,7 @@ runs it as root before the application serves traffic.
 | `migrate` snapshot/rollback | yes, against a local DB | **no** — nothing to snapshot |
 | OPcache | revalidate every request | revalidate every 10s |
 | PHP-FPM | one pool, root, `ondemand`, 16 workers | one pool, `www-data`, `dynamic`, **sized to the machine at start** (below) |
-| PHP memory limit | 256 MB | 320 MB |
+| PHP memory limit | 320 MB | 352 MB |
 | Headless-browser libraries (Playwright / Chromium) | yes | yes — an application prints PDFs with it; see below |
 | Blank credentials | generated + printed once | **refuses to start** |
 | LibreOffice, poppler | yes | yes — document preview is a runtime feature |
@@ -131,6 +131,16 @@ The `playwright` package finds it with nothing to configure:
 
 All under supervisor; `supervisorctl status` lists them.
 
+**A service that stops is started again, forever.** Every long-running program runs under the
+retry runner (`retry-run.sh`, installed as `rspade-retry-run`): it waits 2 s before the first
+restart, doubling to a minute across consecutive failures (a run that lasted a minute or more
+starts the count over), and never gives up. Supervisor alone cannot wait before a restart and
+parks a program that keeps failing in FATAL. The runner passes every signal supervisor sends
+on to the service and waits for it to exit, so a graceful stop and `stopwaitsecs` work as if
+the service were the program itself. Two exceptions: `mysql` relies on supervisor's own
+restart (also forever), because `migrate` stops it to copy the data directory, and `dockerd`
+is never restarted (its launcher exits on purpose when the host grants no nested Docker).
+
 | Service | What it does |
 |---|---|
 | `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator, plus the loopback-only listeners of the request path (below) |
@@ -140,14 +150,22 @@ All under supervisor; `supervisorctl status` lists them.
 | `mysql` | dev target only |
 | `realtime` | WebSocket relay behind `/ws` |
 | `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
-| `rsx-companiond` | runs the application's companion applications (`rsx:man companion_apps`); always up and idle until one is started. Not wrapped in the retry runner, so `stopwaitsecs=360` (the largest companion grace, 300, plus a minute) is honoured. Absent from the test worker images, whose tests start their own |
-| `tasks` | **the cron replacement**: ticks `rsx:task:process` once a minute |
+| `rsx-companiond` | runs the application's companion applications (`rsx:man companion_apps`); always up and idle until one is started. `stopwaitsecs=360` (the largest companion grace, 300, plus a minute) covers its stop: the retry runner passes the signal on and waits. Absent from the test worker images, whose tests start their own |
+| `tasks` | **the cron replacement**: `rspade-taskd` runs `rsx:task:process` when work comes due and when the application pokes it |
 | `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 | `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
 
 The `tasks` program matters. The framework's documented driver for all background and
 scheduled work is a single crontab line, and a container has no crontab. Without
 it, `Task::dispatch()` succeeds and nothing ever runs it — silently.
+
+It is not a minute loop. `rspade-taskd` (`rspade-taskd/`, installed at
+`/opt/rspade/rspade-taskd/`) runs the same tick, which says when it is next wanted: the next
+schedule, the next deferred run, or a minute while anything is running. The application pokes
+it over `/run/rspade-taskd/taskd.sock` when that moment may have moved earlier (a dispatch, a
+worker exiting, a rebuild, `rsx:tasks:enable`). An idle container therefore starts no PHP
+process and asks the database nothing between schedules. `rspade-taskd status` shows the
+last tick and the next; `rsx:man tasks`, the tick section, has the rules.
 
 ## The request path
 
@@ -168,7 +186,7 @@ priority requests go first, and the rest take turns. Its status: `proxority stat
 
 **Proxority is part of the image.** Its one copy of source is `proxority/` in this directory
 (its `README.md` is the full account); the Dockerfile installs it at `/opt/rspade/proxority/`,
-supervisor runs `bash /opt/rspade/proxority/proxority-run.sh`, and `/usr/local/bin/proxority`
+supervisor runs `bash /opt/rspade/proxority/proxority-run.sh` (under the retry runner), and `/usr/local/bin/proxority`
 is `node /opt/rspade/proxority/proxority.js "$@"`. So it runs with or without a checkout
 mounted. From the project it reads only its whitelist refresh,
 `php /var/www/html/system/artisan rsx:proxority:routes --json`, every 60 s; with no checkout
@@ -269,7 +287,7 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log, Proxority's scheduling and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
 | `PHP_FPM_WORKER_COUNT` | the php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pool is sized in prod only) |
-| `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `320` prod, `256` dev when unset |
+| `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `352` prod, `320` dev when unset |
 | `RSPADE_PHP_TYPICAL_MB` | what one PHP process typically holds, for the RAM ceiling; `128` when unset |
 | `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `3` when unset |
 | `RSX_TASK_MAX_WORKERS` | on-demand task workers; also read from the project `.env`; two thirds of the calculated task workers when unset |
@@ -332,7 +350,7 @@ that script):
 ```
 redis      = 32 MB under 1 GB, else min(2 GB, max(64 MB, 5% of memory))
 reserved   = 600 fixed + min(2 GB, max(200 MB, 5%)) scratch + redis x 1.25 (+ dev MySQL)
-processes  = min(RAM / 128, (RAM + swap) / 320, 140)   # every PHP process; 140 is the cap
+processes  = min(RAM / 128, (RAM + swap) / 352, 140)   # every PHP process; 140 is the cap (352 = the prod limit)
 php-fpm    = at most 3 per core, the rest of processes after the task workers
 tasks      = about php-fpm / 4 (at least 2), one more per 25 php-fpm past 16
              split 1 scheduled : 2 on demand, at least one of each

@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
+use App\RSpade\Core\Task\Task_Daemon;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
@@ -239,6 +240,13 @@ class Task_Worker_Command extends Command
             throw $e;
         } finally {
             Session::_restore_context($launch_context);
+
+            // A worker that ran something has changed what is due - a lock released, a
+            // follow-up re-anchored, a retry scheduled - and has just left its pool, so a
+            // spawn may now have room. The task daemon re-asks (a no-op without one).
+            if ($this->tasks_processed > 0) {
+                Task_Daemon::poke();
+            }
         }
 
         $this->info("[WORKER] Worker finished. Processed {$this->tasks_processed} task(s)");
@@ -291,9 +299,11 @@ class Task_Worker_Command extends Command
      */
     private function claim_pending_run(array $identity)
     {
-        $row = DB::table('_tasks')
-            ->where('status_id', Task_Run_Model::STATUS_PENDING)
-            ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
+        // Due by Task_Daemon's rules: a dispatched run at its time, a run a schedule produced
+        // a few seconds early.
+        $row = Task_Daemon::where_pending_due(
+            DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING)
+        )
             ->when($this->skip_ids, function ($query) {
                 $query->whereNotIn('id', $this->skip_ids);
             })
@@ -358,12 +368,10 @@ class Task_Worker_Command extends Command
      */
     private function claim_due_schedule(array $identity)
     {
-        $now = now()->format('Y-m-d H:i:s.v');
-
         $on_demand_due = DB::table('_tasks')
             ->where('status_id', Task_Run_Model::STATUS_PENDING)
             ->where('priority', '<', Task_Runner::PRIORITY_SCHEDULED)
-            ->where('scheduled_for', '<=', $now)
+            ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
             ->when($this->skip_ids, function ($query) {
                 $query->whereNotIn('id', $this->skip_ids);
             })
@@ -373,8 +381,11 @@ class Task_Worker_Command extends Command
             return self::CLAIM_SKIPPED;
         }
 
+        // A schedule is due Task_Daemon::SCHEDULE_LEAD_SECONDS early, and its next run is
+        // advanced from the later of now and the time it was due - from now alone, a 3:00 run
+        // claimed at 2:59:56 would advance to 3:00 again and run twice.
         $schedule = DB::table('_task_schedules')
-            ->where('next_run_at', '<=', now()->format('Y-m-d H:i:s.v'))
+            ->where('next_run_at', '<=', Task_Daemon::schedule_due_cutoff())
             ->orderBy('next_run_at')
             ->first();
 
@@ -382,7 +393,7 @@ class Task_Worker_Command extends Command
             return null;
         }
 
-        $next_run_at = date('Y-m-d H:i:s', (new Cron_Parser($schedule->cron_expression))->get_next_run_time());
+        $next_run_at = date('Y-m-d H:i:s', Task_Daemon::next_run_after(new Cron_Parser($schedule->cron_expression), $schedule->next_run_at));
         $managed = Task_Concurrency::is_managed($schedule->class, $schedule->method);
 
         $task_id = DB::transaction(function () use ($schedule, $next_run_at, $identity, $managed) {

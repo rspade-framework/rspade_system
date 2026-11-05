@@ -32,12 +32,34 @@ class Rsx_Check_Command extends Command
     protected $description = 'Check code for RSpade framework standards compliance';
 
     /**
+     * PHP's memory_limit for rsx:check, in MB. Above the development container's 320 MB, as
+     * for rsx:test (Rsx_Test_Command::PHP_MEMORY_LIMIT_MB): a COLD pass - no remembered
+     * verdicts, so every rule judges every file - runs the cross-file rules over the whole
+     * tree on top of the per-file pass, and a large application's tree can need more than the
+     * development CLI's budget. A ceiling all the same, so a pass that starts retaining memory
+     * per file fails loud instead of taking the box's memory; Code_Quality_Memory_Gate_Test
+     * holds the real cost well below it.
+     */
+    const PHP_MEMORY_LIMIT_MB = 500;
+
+    /**
      * Execute the console command.
      *
      * @return int
      */
     public function handle()
     {
+        ini_set('memory_limit', self::PHP_MEMORY_LIMIT_MB . 'M');
+
+        // The MEMORY GATE's readout (Code_Quality_Memory_Gate_Test), printed at shutdown so it
+        // is printed on every exit path - a pass with violations, and one that died at the
+        // memory limit, included. Framework-internal (the `--_` convention).
+        if (\App\RSpade\Core\Console\Rsx_Internal_Flags::has('--_check-report-peak')) {
+            register_shutdown_function(function () {
+                echo PHP_EOL . 'CHECK_PEAK_BYTES=' . memory_get_peak_usage(true) . PHP_EOL;
+            });
+        }
+
         // Place .placeholder files in all empty directories
         $this->place_placeholder_files();
 

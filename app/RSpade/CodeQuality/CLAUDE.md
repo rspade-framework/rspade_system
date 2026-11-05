@@ -27,7 +27,8 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 2. **Support/Source_Cache** (`Support/Source_Cache.php`)
    - The ONE reader, tokenizer and parser of a source file, per pass
    - `content()` / `tokens()` / `ast()` / `class_node()`, lazy and memoized, with a hard LRU
-     entry bound so peak memory tracks files IN FLIGHT rather than files in the tree
+     entry bound AND a source-byte bound (`SOURCE_BYTES_BUDGET`) so peak memory tracks files IN
+     FLIGHT rather than files in the tree
    - `declared_members($path, $class)` is the AST-FREE per-class summary, and the ONE bucket
      the LRU does not evict: it holds no nikic nodes, so it is proportional to the INDEX, which
      is what the budget permits to grow. It is what stopped the four ancestry rules re-parsing
@@ -76,7 +77,10 @@ A rule receives a path, the contents and the manifest metadata, and says what is
   not declare a static property (both enforced by a test in `tests/code_quality/`).
 - Sanitized file contents are cached by `CodeQualityChecker` in the shared derived cache
   (`App\RSpade\Core\Cache\File_Content_Cache`, namespace `code-quality-sanitized`) - there
-  is no CacheManager any more.
+  is no CacheManager any more, and NO per-process memo in front of it: the driver asks once per
+  file, so a memo only ever held finished files (129 MB of a large application's cold check).
+  `rsx:check` sets its own 500 MB limit; `tests/code_quality/php/Code_Quality_Memory_Gate_Test`
+  is the budget (`rsx:man code_quality`, MEMORY).
 
 ## Rule Categories
 

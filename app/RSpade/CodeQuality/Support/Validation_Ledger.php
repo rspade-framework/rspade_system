@@ -67,10 +67,13 @@ class Validation_Ledger
     private static bool $dirty = false;
 
     /**
-     * Passes recorded by THIS process, as [rule_id][hash]. The prune keeps these whatever
-     * the manifest says: a caller that just judged a file is better evidence that the file
-     * matters than the manifest is (the syntax-lint stages, for one, reach a handful of
-     * files the manifest does not index).
+     * File hashes THIS process recorded a pass for, as [hash => 1] - once per FILE, not per
+     * rule: a cold pass records every rule against every file, and a per-rule copy was a
+     * second ledger in memory. The prune keeps every verdict for these hashes whatever the
+     * manifest says: a caller that just judged a file is better evidence that the file matters
+     * than the manifest is (the syntax-lint stages, for one, reach a handful of files the
+     * manifest does not index). A verdict is about the file's BYTES, so keeping another rule's
+     * verdict for a hash judged here is never wrong.
      */
     private static array $recorded_here = [];
 
@@ -115,7 +118,7 @@ class Validation_Ledger
         static::__retire_superseded_generations($rule_id);
 
         static::$store['rules'][$rule_id][$file_hash] = 1;
-        static::$recorded_here[$rule_id][$file_hash] = 1;
+        static::$recorded_here[$file_hash] = 1;
         static::$dirty = true;
 
         if (!static::$shutdown_registered) {
@@ -144,7 +147,6 @@ class Validation_Ledger
         foreach (array_keys(static::$store['rules']) as $existing) {
             if ($existing !== $rule_id && str_starts_with($existing, $prefix)) {
                 unset(static::$store['rules'][$existing]);
-                unset(static::$recorded_here[$existing]);
                 static::$dirty = true;
             }
         }
@@ -242,11 +244,15 @@ class Validation_Ledger
             @mkdir($directory, 0755, true);
         }
 
-        $body = "<?php\n\nreturn " . var_export(static::$store, true) . ";\n";
-
+        // STREAMED, one rule at a time. The ledger holds a verdict per rule per file - 18 MB
+        // on disk for an 8,000-file tree - and exporting it as ONE string held the store, the
+        // string and its concatenated copy at once: the peak of a cold rsx:check. The file is
+        // the same `return [...]` var_export would write, assembled from per-rule pieces.
         $temp = $path . '.' . getmypid() . '.tmp';
 
-        if (@file_put_contents($temp, $body) === false) {
+        if (!static::__write_store($temp)) {
+            @unlink($temp);
+
             return;
         }
 
@@ -264,6 +270,29 @@ class Validation_Ledger
     }
 
     /**
+     * Write static::$store to $file as a PHP file returning it, one rule's verdicts at a time,
+     * so the memory it costs is one rule's slice rather than a copy of the whole ledger.
+     */
+    private static function __write_store(string $file): bool
+    {
+        $handle = @fopen($file, 'wb');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        $ok = fwrite($handle, "<?php\n\nreturn [\n'version' => " . var_export(static::$store['version'], true) . ",\n'rules' => [\n") !== false;
+
+        foreach (static::$store['rules'] as $rule_id => $hashes) {
+            $ok = $ok && fwrite($handle, var_export((string) $rule_id, true) . ' => ' . var_export($hashes, true) . ",\n") !== false;
+        }
+
+        $ok = $ok && fwrite($handle, "],\n'derived' => " . var_export(static::$store['derived'], true) . ",\n];\n") !== false;
+
+        return fclose($handle) && $ok;
+    }
+
+    /**
      * Drop every hash the manifest no longer knows, EXCEPT the ones this process just
      * recorded.
      *
@@ -276,10 +305,10 @@ class Validation_Ledger
     {
         static::__load();
 
-        $live = array_flip($live_hashes);
+        $keep = array_flip($live_hashes) + static::$recorded_here;
 
         foreach (static::$store['rules'] as $rule_id => $hashes) {
-            $kept = array_intersect_key($hashes, $live) + (static::$recorded_here[$rule_id] ?? []);
+            $kept = array_intersect_key($hashes, $keep);
 
             if (count($kept) === count($hashes)) {
                 continue;

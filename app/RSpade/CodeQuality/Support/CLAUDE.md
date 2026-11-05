@@ -51,8 +51,12 @@ the ones that pass.
 
 **The budget it implements** (owner ruling): peak memory is proportional to the index plus a
 constant bounded by the LARGEST SINGLE FILE, never to the number of files parsed. So it is an
-LRU with a hard entry bound per bucket - a pass may read ten thousand files and hold a handful
-at once - and `release()` empties it at the end of the pass. Nothing in it is static.
+LRU with two hard bounds per bucket - an entry count, and `SOURCE_BYTES_BUDGET` (512 KiB) of
+source, because an AST is ~50x its source and a token stream ~15x - so a pass may read ten
+thousand files and hold a handful at once; the entry just stored is always kept, so one file
+over the whole budget is still held on its own. `release()` empties it at the end of the pass.
+Measured on the reference tree, the byte bound cost a cold `rsx:check` nothing (61 s vs 62 s,
+same peak); on a large application's tree, 64 average-sized ASTs were 90-145 MB. Nothing in it is static.
 
 **Capacity is measured, not chosen.** `Manifest_Build::BUILD_SOURCE_CACHE_CAPACITY` is 16, and
 the class default is 64. On this reference tree a cold build peaks at 124.8 MB with 64,
@@ -103,6 +107,12 @@ its class name is answered by the class override loader with the application's c
 that runs, under the framework id, and `select_app_rule_files()` does not count it again.
 
 ## Validation_Ledger - the ONE store of "already passed"
+
+**Two memory facts, both measured on a cold pass of an 8,000-file tree.** `flush()` writes the
+file ONE RULE AT A TIME (`__write_store()`): the ledger is a verdict per rule per file, 18 MB on
+disk there, and one `var_export()` string held the store, the string and its concatenated copy
+at once - the peak of the whole check. And `$recorded_here` (what the prune keeps whatever the
+manifest says) is a set of FILE HASHES, not a second per-rule copy of every verdict recorded.
 
 See `rsx:man code_quality`, THE VALIDATION LEDGER, for the contract. What is worth repeating
 here: **the DRIVER writes it, not the rule.** Every entry is filed under

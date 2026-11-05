@@ -224,7 +224,8 @@ class Task_Health_Checks
                 'status' => $severity,
                 'detail' => 'no schedules registered - rsx:task:process has never run',
                 'remediation' => 'install the cron entry: * * * * * cd '
-                    . base_path() . ' && php artisan rsx:task:process',
+                    . base_path() . ' && php artisan rsx:task:process'
+                    . ' (in the RSpade container: supervisorctl status tasks, rspade-taskd status)',
             ];
         }
 
@@ -237,7 +238,7 @@ class Task_Health_Checks
                 'detail' => $schedule_count . ' schedule(s); oldest is due ' . Rsx_Time::relative($oldest)
                     . ' (over ' . self::STALE_MINUTES . 'min stale). NOTE: this cannot distinguish a'
                     . ' missing cron tick from a stalled worker pool',
-                'remediation' => 'verify the rsx:task:process cron is running and the worker pool is not wedged',
+                'remediation' => 'verify the scheduler is running - the rsx:task:process cron line, or in the RSpade container the `tasks` program (rspade-taskd status) - and the worker pool is not wedged',
             ];
         }
 

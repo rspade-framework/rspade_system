@@ -33,8 +33,6 @@ class CodeQualityChecker
      */
     protected const SANITIZED_NAMESPACE = 'code-quality-sanitized';
 
-    /** Per-process memo in front of the disk cache. */
-    protected static array $sanitized_memory = [];
     protected static array $rules = [];
     protected static array $config = [];
 
@@ -49,7 +47,6 @@ class CodeQualityChecker
     public static function init(array $config = []): void
     {
         static::$collector = new ViolationCollector();
-        static::$sanitized_memory = [];
         static::$config = $config;
 
         // ONE discovery, ONE set of rule objects: the driver's.
@@ -295,23 +292,23 @@ class CodeQualityChecker
     }
     
     /**
-     * The sanitized {content, lines, original_lines} document for one file, from the
-     * per-process memo, then the derived cache, then the sanitizer.
+     * The sanitized {content, lines, original_lines} document for one file, from the derived
+     * cache, then the sanitizer.
+     *
+     * NOT MEMOIZED in the process. The driver asks once per file and hands that one copy to
+     * every rule of the file, so a memo would only ever hold the copies of files already
+     * finished with - one per file in the scan, which on a cold pass of a large tree is the
+     * single largest thing in memory. Peak memory stays proportional to the largest single
+     * file, as for Source_Cache (Support/CLAUDE.md).
      */
     protected static function get_sanitized_file(string $file_path): array
     {
-        if (isset(static::$sanitized_memory[$file_path])) {
-            return static::$sanitized_memory[$file_path];
-        }
-
         $cached = File_Content_Cache::get(self::SANITIZED_NAMESPACE, $file_path, '', 'json');
 
         if ($cached !== null) {
             $decoded = json_decode($cached, true);
 
             if (is_array($decoded)) {
-                static::$sanitized_memory[$file_path] = $decoded;
-
                 return $decoded;
             }
         }
@@ -326,8 +323,6 @@ class CodeQualityChecker
             json_encode($sanitized_data)
         );
 
-        static::$sanitized_memory[$file_path] = $sanitized_data;
-
         return $sanitized_data;
     }
 
@@ -336,7 +331,6 @@ class CodeQualityChecker
      */
     public static function clear_cache(): void
     {
-        static::$sanitized_memory = [];
         File_Content_Cache::clear(self::SANITIZED_NAMESPACE);
     }
     

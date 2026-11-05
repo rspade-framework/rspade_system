@@ -88,7 +88,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * PHP's memory_limit for a test run, in MB: every PHP process of the run - this command run
      * in-process, and every php-fpm worker and CLI process inside a test container (the
      * orchestrator starts each container with RSPADE_PHP_MEMORY_LIMIT_MB, which rspade-sizing
-     * writes into both). Above the development container's 256 MB, because a test run holds a
+     * writes into both). Above the development container's 320 MB, because a test run holds a
      * suite's fixtures and a whole manifest in one process; a ceiling all the same, so a test
      * that leaks fails loud instead of taking the box's memory.
      */

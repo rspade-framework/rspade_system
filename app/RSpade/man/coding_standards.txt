@@ -560,7 +560,9 @@ EXAMPLES
 APPLICATION RULES (rsx:check)
     php artisan rsx:check enforces the conventions in this page and the
     other man pages. Every finding names its rule id and carries its own
-    remediation text. An application adds rules of its own for conventions
+    remediation text. It raises its own memory_limit to 500 MB: a first run
+    (or one after a rule changed) judges every file, which on a large tree
+    can need more than the CLI's default. An application adds rules of its own for conventions
     only it has - retired vocabulary after a refactor, a house pattern, a
     banned import - and they run in rsx:check exactly like the framework's.
 

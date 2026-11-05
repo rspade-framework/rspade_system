@@ -8,7 +8,7 @@
 # container start runs the same check before PHP serves anything (see the entrypoint);
 # this keeps a long-running container current between starts.
 #
-# A SUPERVISOR PROGRAM, NOT CRON, for the reason task-run.sh gives: the image has no cron
+# A SUPERVISOR PROGRAM, NOT CRON: the image has no cron
 # daemon, and a program here is visible in `supervisorctl status` and logs to the
 # container log like every other service.
 #

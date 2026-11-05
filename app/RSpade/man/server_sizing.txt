@@ -58,7 +58,7 @@ MINIMUM MACHINE
     that cannot hold them runs out of memory under load.
 
 THE BUDGET
-    All in MB; L is the memory limit (320 production, 256 development - lower
+    All in MB; L is the memory limit (352 production, 320 development - lower
     on purpose, so growth fails on a developer's box first), A the typical
     size (128).
 

@@ -37,7 +37,7 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     /**
      * The suite's process stands at about 115 MB before this class runs, each fixture index it
      * loads to compare costs about 30 MB, and several are held at once. Measured peak 260 MB
-     * (2026-10-31), past the development CLI limit of 256 MB. The limit stays raised for the
+     * (2026-10-31), past the development CLI limit of that day (256 MB). The limit stays raised for the
      * rest of the process: PHP refuses to lower it below what is already in use.
      */
     public static function setup()

@@ -592,3 +592,34 @@ Children are real `php artisan` processes on the test database: a task being sto
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | TASK-LIST-01 | `rsx:task:list` lists a concrete service at any depth below `Rsx_Service_Abstract` (one under an abstract intermediate) and never the abstract | php | `Task_List_Fixture_Service` extends `Task_List_Fixture_Base_Abstract` | the service and its task listed, the base not | implemented | 2026-10-28 |
 
+
+## Task_Daemon_Due_Rules_Test (php, default isolation) - the shared due rules and the daemon's tick output
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-due-01 | a schedule within SCHEDULE_LEAD_SECONDS is claimed now and advances past the run it claimed; a second worker runs nothing | schedule due in 3 s; two scheduled workers | one run; next_run_at after the due time | implemented |
+| task-due-02 | a schedule beyond the lead waits | due in 35 s | no run | implemented |
+| task-due-03 | a dispatched run is due at its time exactly; a schedule-origin run early | both due in 3 s; on-demand worker | dispatched PENDING; scheduled COMPLETED | implemented |
+| task-due-04 | next_wake_ms(): null when nothing waits; a schedule's lead before it; a deferred run sooner; a minute while anything runs | rows as named | as named | implemented |
+| task-due-05 | the tick prints RSX_TASK_NEXT_WAKE_MS only under --_report-next-wake | two ticks | absent; one well-formed line | implemented |
+| task-due-06 | an unchanged reconcile reads _task_schedules once and writes nothing | a settled tick, then one under DB::listen | 0 writes, at most 2 reads | implemented |
+
+## Task_Daemon_Process_Test (php driving node, no transactions) - rspade-taskd against a fake tick
+
+Fixture: `tests/tasks/resource/fake_tick.js`, steered by a mode file (ok + next wake, maintenance exit 75, error, held).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| taskd-01 | ticks at start and again when the tick says; logs its narration; "none" sleeps to the ceiling and a poke ticks | next=300, then none | 3+ ticks; reason due, then ceiling; a poke ticks | implemented |
+| taskd-02 | pokes during a tick are ONE follow-up | a held tick, 10 pokes, release | exactly 2 ticks over 10x the debounce | implemented |
+| taskd-03 | exit 75 is maintenance, asked again on its interval; a poke after the window resumes | maintenance, then ok | in_maintenance true, then false; "maintenance is over" | implemented |
+| taskd-04 | a failure before the first success is quiet; after it, reported once and retried until it works | error, ok, error, ok | no [ERROR] at start; failing_since set then cleared | implemented |
+| taskd-05 | status and poke CLI; a live socket is never stolen; SIGTERM removes the socket; not running is exit 1 | node CLI | as named | implemented |
+
+## Task_Dispatch_After_Commit_Test (php, no transactions) - dispatch() starts its worker after the caller's commit
+
+| ID | Purpose (what it proves) | Input | Expected (approx) | Status |
+|---|---|---|---|---|
+| commit-01 | inside a transaction no worker starts until the commit; the commit starts it | dispatch in DB::transaction, spawning on | registry unchanged inside, changed after | implemented |
+| commit-02 | a rolled-back dispatch starts nothing | dispatch, rollBack | row gone, registry unchanged | implemented |
+| commit-03 | outside a transaction the worker starts at once | dispatch | registry changed on return | implemented |

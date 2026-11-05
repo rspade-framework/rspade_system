@@ -17,9 +17,13 @@ use PhpParser\ParserFactory;
  *
  * THE BUDGET this class implements (owner ruling): peak memory is proportional to the
  * index plus a constant bounded by the LARGEST SINGLE FILE, never proportional to the
- * number of files parsed. So the cache is an LRU with a hard entry bound: a build may
- * parse ten thousand files and still hold at most `$capacity` of them at once. Nothing
- * here is static - the instance belongs to the build, and `release()` empties it.
+ * number of files parsed. So the cache is an LRU with two hard bounds per bucket: at most
+ * `$capacity` files, and at most SOURCE_BYTES_BUDGET bytes of their SOURCE. A build may parse
+ * ten thousand files and still hold at most that much of them at once. The byte bound is the
+ * one that matters on a tree of large files - an AST costs about fifty times its source - and
+ * the file just stored is always kept, whatever its size, so the bound is "the budget, or the
+ * largest single file". Nothing here is static - the instance belongs to the build, and
+ * `release()` empties it.
  *
  * WHAT IT MEMOIZES, per path:
  *   - content()  the raw bytes;
@@ -50,8 +54,26 @@ class Source_Cache
     /** Default number of files held at once. Bounded, not tuned: see the budget above. */
     public const DEFAULT_CAPACITY = 64;
 
+    /**
+     * Bytes of SOURCE each bucket may hold (the content, token and AST buckets alike), on top
+     * of the entry bound.
+     *
+     * What a bucket costs in memory is a multiple of the source it holds, not a count of files:
+     * measured on the framework's largest files, a nikic AST is 44-58x its source and a
+     * PhpToken stream 14-18x. Sixty-four files of a large application's average size held
+     * about 90-145 MB of AST across a cold rsx:check's cross-file rules - more than the
+     * development CLI's whole budget beside the rest of the pass. 512 KiB of source is about
+     * 25-30 MB of AST, which keeps the cross-file rules' working set (a class and its
+     * ancestors) resident for any realistic hierarchy: the framework's largest file is 212 KB.
+     * A bucket asked to hold more than this re-parses instead, which costs time, never memory.
+     */
+    public const SOURCE_BYTES_BUDGET = 512 * 1024;
+
     /** Maximum entries per bucket. */
     private int $capacity;
+
+    /** [bucket name => [key => source bytes]], the byte bound's ledger, MRU last like the buckets. */
+    private array $sizes = ['content' => [], 'tokens' => [], 'ast' => []];
 
     /** [key => string] raw file contents, most-recently-used last. */
     private array $content = [];
@@ -99,7 +121,7 @@ class Source_Cache
         $key = $this->__key($path, $hash);
 
         if (array_key_exists($key, $this->content)) {
-            return $this->__touch($this->content, $key);
+            return $this->__touch($this->content, 'content', $key);
         }
 
         $value = '';
@@ -115,7 +137,7 @@ class Source_Cache
 
         $this->work['content']++;
 
-        return $this->__store($this->content, $key, $value);
+        return $this->__store($this->content, 'content', $key, $value, strlen($value));
     }
 
     /**
@@ -126,7 +148,7 @@ class Source_Cache
         $key = $this->__key($path, $hash);
 
         if (array_key_exists($key, $this->tokens)) {
-            return $this->__touch($this->tokens, $key);
+            return $this->__touch($this->tokens, 'tokens', $key);
         }
 
         $source = $this->content($path, $hash);
@@ -134,7 +156,7 @@ class Source_Cache
 
         $this->work['tokens']++;
 
-        return $this->__store($this->tokens, $key, $value);
+        return $this->__store($this->tokens, 'tokens', $key, $value, strlen($source));
     }
 
     /**
@@ -146,7 +168,7 @@ class Source_Cache
         $key = $this->__key($path, $hash);
 
         if (array_key_exists($key, $this->ast)) {
-            return $this->__touch($this->ast, $key);
+            return $this->__touch($this->ast, 'ast', $key);
         }
 
         $source = $this->content($path, $hash);
@@ -162,7 +184,7 @@ class Source_Cache
 
         $this->work['ast']++;
 
-        $this->__store($this->ast, $key, $value);
+        $this->__store($this->ast, 'ast', $key, $value, strlen($source));
 
         // The class-node map is a satellite of the AST bucket: whatever the store just
         // evicted must lose its class nodes too, or the satellite would outlive the bound.
@@ -541,10 +563,12 @@ class Source_Cache
         $key = $this->__key($path, $hash);
 
         unset($this->content[$key], $this->tokens[$key], $this->ast[$key], $this->class_nodes[$key], $this->members[$key]);
+        unset($this->sizes['content'][$key], $this->sizes['tokens'][$key], $this->sizes['ast'][$key]);
 
         // A path written under one hash is also the path spelled with no hash.
         if ($hash !== '') {
             unset($this->content[$path], $this->tokens[$path], $this->ast[$path], $this->class_nodes[$path], $this->members[$path]);
+            unset($this->sizes['content'][$path], $this->sizes['tokens'][$path], $this->sizes['ast'][$path]);
         }
     }
 
@@ -558,6 +582,7 @@ class Source_Cache
         $this->ast = [];
         $this->class_nodes = [];
         $this->members = [];
+        $this->sizes = ['content' => [], 'tokens' => [], 'ast' => []];
         $this->parser = null;
     }
 
@@ -601,26 +626,34 @@ class Source_Cache
     /**
      * Move $key to the most-recently-used end and return its value.
      */
-    private function __touch(array &$bucket, string $key)
+    private function __touch(array &$bucket, string $name, string $key)
     {
         $value = $bucket[$key];
         unset($bucket[$key]);
         $bucket[$key] = $value;
 
+        $size = $this->sizes[$name][$key];
+        unset($this->sizes[$name][$key]);
+        $this->sizes[$name][$key] = $size;
+
         return $value;
     }
 
     /**
-     * Store $value under $key and evict the least-recently-used entry while the bucket is
-     * over capacity. PHP arrays preserve insertion order, so the first key is the LRU one.
+     * Store $value (made from $source_bytes of source) under $key, then evict the
+     * least-recently-used entries while the bucket is over either bound - never the entry just
+     * stored. PHP arrays preserve insertion order, so the first key is the LRU one.
      */
-    private function __store(array &$bucket, string $key, $value)
+    private function __store(array &$bucket, string $name, string $key, $value, int $source_bytes)
     {
+        unset($bucket[$key], $this->sizes[$name][$key]);
         $bucket[$key] = $value;
+        $this->sizes[$name][$key] = $source_bytes;
 
-        while (count($bucket) > $this->capacity) {
+        while (count($bucket) > 1
+            && (count($bucket) > $this->capacity || array_sum($this->sizes[$name]) > self::SOURCE_BYTES_BUDGET)) {
             $oldest = array_key_first($bucket);
-            unset($bucket[$oldest]);
+            unset($bucket[$oldest], $this->sizes[$name][$oldest]);
         }
 
         return $value;

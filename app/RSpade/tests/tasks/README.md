@@ -25,6 +25,8 @@ framework.
   return contract
 - `Task_Concurrency.php` + `Task_Lock.php` - identities, coalescing enqueue, run locks
 - `Task_Waiting.php` - what a pending run is waiting for, derived per read
+- `Task_Daemon.php` + `resource/docker/rspade-taskd/rspade-taskd.js` - the shared due rules,
+  the tick's next-wake answer, the poke, and the container's scheduler daemon
 - `Task_Pool.php` - the three pools' rsx-lockd connection (lock, membership, count, liveness,
   stats), over `Core/Locks/Lockd_Connection.php`
 - `Task_Kill_Worker.php` + `Task_Kill_Request_Model(_Abstract).php` - force stops and kills
@@ -106,6 +108,10 @@ They exist only while the suite runs (the test trees enter the manifest only the
   statistics (`Task_Schedule_Run_Test`), visibility in rsx:health and rsx:tasks:list
   (`Task_Schedule_Visibility_Test`), setting the next run explicitly -
   `Task::set_next_run()` / `$task->run_again_in()` (`Task_Next_Run_Test`).
+- When a run is due and when the tick is next wanted: the 5 s schedule lead and its advance
+  past the claimed run, exact dispatched due times, `next_wake_ms()`, the tick's report line,
+  the one-read reconcile (`Task_Daemon_Due_Rules_Test`); the scheduler daemon itself against a
+  fake tick - start, wake, debounce, maintenance, failure, CLI (`Task_Daemon_Process_Test`).
 - What a pending run is waiting for, derived at read time: each reason and its exact text,
   precedence, a changed holder, one query for many runs (`Task_Waiting_Test`).
 - Reports and output: every report, coalescing, readers, `to_status_array()`

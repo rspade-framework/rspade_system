@@ -32,16 +32,16 @@ plan_is() {
 
 # ---- 1. The worked table: the memory ceilings bound every PHP process, php-fpm is held
 # to 3 a core, and the task workers are about a quarter of php-fpm, never below 2. -------
-# 2 GB / 1 core / no swap: RAM + swap at 320 MB allows 3 processes - the floors win.
-plan_is "total=2 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=320" 1 2048 0
+# 2 GB / 1 core / no swap: RAM + swap at 352 MB allows 3 processes - the floors win.
+plan_is "total=2 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 0
 # The same box with 2 GB of swap: php-fpm at the CPU ceiling (3 a core), tasks at the floor.
-plan_is "total=3 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=320" 1 2048 2048
+plan_is "total=3 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 2048
 # 4 GB / 2 cores / no swap: php-fpm at the CPU ceiling, 6, and the floor of 2 tasks.
-plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320" 2 4096 0
+plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 0
 # Swap adds nothing once the CPU ceiling is what binds.
-plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320" 2 4096 4096
-plan_is "total=12 standby=4 tasks=3 scheduled=1 on_demand=2 redis_mb=409 limit_mb=320" 4 8192 0
-plan_is "total=24 standby=4 tasks=6 scheduled=2 on_demand=4 redis_mb=819 limit_mb=320" 8 16384 0
+plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 4096
+plan_is "total=12 standby=4 tasks=3 scheduled=1 on_demand=2 redis_mb=409 limit_mb=352" 4 8192 0
+plan_is "total=24 standby=4 tasks=6 scheduled=2 on_demand=4 redis_mb=819 limit_mb=352" 8 16384 0
 
 # ---- 2. The Redis cap: 32 under 1 GB, otherwise max(64, 5%). ---------------------------
 plan_line 1 512 0 | grep -q "redis_mb=32 "    || fail "a box under 1 GB gets 32 MB of Redis"
@@ -52,9 +52,9 @@ plan_line 8 65536 0 | grep -q "redis_mb=2048 " || fail "64 GB is capped at 2 GB"
 bash "$SCRIPT" plan 8 131072 0 | grep -q "+ 2048 scratch" || fail "scratch is capped at 2 GB"
 
 # ---- 2b. Past 64 php-fpm, one more task worker per 25; and the 140-process cap. -------
-plan_is "total=48 standby=4 tasks=12 scheduled=4 on_demand=8 redis_mb=1638 limit_mb=320" 16 32768 0
-plan_is "total=96 standby=4 tasks=17 scheduled=6 on_demand=11 redis_mb=2048 limit_mb=320" 32 65536 0
-plan_is "total=122 standby=4 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=320" 128 524288 0
+plan_is "total=48 standby=4 tasks=12 scheduled=4 on_demand=8 redis_mb=1638 limit_mb=352" 16 32768 0
+plan_is "total=96 standby=4 tasks=17 scheduled=6 on_demand=11 redis_mb=2048 limit_mb=352" 32 65536 0
+plan_is "total=122 standby=4 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=352" 128 524288 0
 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice    capped at 140 PHP processes" || fail "a capped box says so"
 bash "$SCRIPT" plan 16 32768 0 | grep -q "^notice" && fail "a box under the cap has no notice"
 PHP_FPM_WORKER_COUNT=300 plan_line 128 524288 0 | grep -q "^total=300 .* tasks=25 scheduled=8 on_demand=17 " || fail "a set count is never capped"
@@ -63,13 +63,13 @@ PHP_FPM_WORKER_COUNT=300 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice" &&
 # ---- 3. The reservation and the ceilings are reported. --------------------------------
 OUT="$(bash "$SCRIPT" plan 2 4096 4096)"
 echo "$OUT" | grep -q "reserved  1059 MB = 600 fixed + 204 scratch + 255 redis + 0 mysql + 0 extra" || fail "the reservation: $OUT"
-echo "$OUT" | grep -q "ceilings  processes: ram 23, ram+swap 22; php-fpm: cpu 6 -> cpu" || fail "the ceilings: $OUT"
+echo "$OUT" | grep -q "ceilings  processes: ram 23, ram+swap 20; php-fpm: cpu 6 -> cpu" || fail "the ceilings: $OUT"
 echo "$OUT" | grep -q "tasks     2: 1 scheduled (calculated) + 1 on demand (calculated)" || fail "the task split: $OUT"
 
-# ---- 4. The development target: 256 MB, and MySQL reserved. ---------------------------
+# ---- 4. The development target: 320 MB, and MySQL reserved. ---------------------------
 OUT="$(bash "$SCRIPT" plan 2 4096 0 dev)"
 echo "$OUT" | grep -q "reserved  1315 MB = 600 fixed + 204 scratch + 255 redis + 256 mysql + 0 extra" || fail "dev reservation: $OUT"
-echo "$OUT" | tail -n1 | grep -q "total=6 .* tasks=2 .* limit_mb=256$" || fail "dev budget: $OUT"
+echo "$OUT" | tail -n1 | grep -q "total=6 .* tasks=2 .* limit_mb=320$" || fail "dev budget: $OUT"
 
 # ---- 5. Each switch replaces its part of the calculation. -----------------------------
 [ "$(PHP_FPM_WORKER_COUNT=10 plan_line 1 1 0 | cut -d' ' -f1-2)" = "total=10 standby=4" ] || fail "PHP_FPM_WORKER_COUNT"
@@ -121,7 +121,7 @@ done
 [ "$(value_of www user)" = "www-data" ] || fail "apply changed a line it does not own"
 
 for sapi in fpm cli; do
-    grep -qx "memory_limit = 320M" "$ROOT/etc/php/8.5/$sapi/conf.d/95-rspade-memory.ini" || fail "the $sapi memory limit"
+    grep -qx "memory_limit = 352M" "$ROOT/etc/php/8.5/$sapi/conf.d/95-rspade-memory.ini" || fail "the $sapi memory limit"
 done
 grep -qx "maxmemory 300mb" "$ROOT/etc/redis/rspade-memory.conf" || fail "the Redis cap"
 [ ! -e "$ROOT/etc/mysql" ] || fail "a production apply wrote a MySQL file"
@@ -135,7 +135,7 @@ php -r '
         && $b["php_fpm"]["total"] === 10 && $b["php_fpm"]["source"] === "override" && $b["php_fpm"]["standby"] === 4 && $b["php_fpm"]["pool_sized"] === true
         && $b["ceilings"]["winner"] === "override"
         && $b["redis"]["maxmemory_mb"] === 300 && $b["redis"]["source"] === "override"
-        && $b["php"]["memory_limit_mb"] === 320 && $b["php"]["memory_limit_source"] === "calculated"
+        && $b["php"]["memory_limit_mb"] === 352 && $b["php"]["memory_limit_source"] === "calculated"
         && $b["tasks"]["total"] === $b["tasks"]["scheduled"] + $b["tasks"]["on_demand"]
         && $b["tasks"]["scheduled_source"] === "calculated"
         && $b["ceilings"]["process_cap"] === 140 && is_bool($b["ceilings"]["capped"]) && is_bool($b["ceilings"]["cap_notice"])
@@ -154,12 +154,12 @@ PHP_VERSION=8.5 bash "$SCRIPT" apply prod --root="$ROOT" >/dev/null || fail "app
 grep -q '"scheduled": 4, "scheduled_source": "override"' "$JSON" || fail "the .env RSX_TASK_SCHEDULED_WORKERS was not counted"
 rm "$ROOT/var/www/html/.env"
 
-# ---- 9. apply dev: the pool untouched, 256 MB, the MySQL buffer pool. ----------------
+# ---- 9. apply dev: the pool untouched, 320 MB, the MySQL buffer pool. ----------------
 cp "$DOCKER_DIR/php/www.conf" "$POOLS/www.conf"
 BEFORE="$(md5sum < "$POOLS/www.conf")"
 PHP_VERSION=8.5 MYSQL_INNODB_BUFFER_MB=96 bash "$SCRIPT" apply dev --root="$ROOT" >/dev/null || fail "apply dev"
 [ "$(md5sum < "$POOLS/www.conf")" = "$BEFORE" ] || fail "a development apply changed the pool"
-grep -qx "memory_limit = 256M" "$ROOT/etc/php/8.5/cli/conf.d/95-rspade-memory.ini" || fail "the dev CLI memory limit"
+grep -qx "memory_limit = 320M" "$ROOT/etc/php/8.5/cli/conf.d/95-rspade-memory.ini" || fail "the dev CLI memory limit"
 grep -qx "innodb_buffer_pool_size = 96M" "$ROOT/etc/mysql/mysql.conf.d/95-rspade-sizing.cnf" || fail "the dev MySQL buffer pool"
 grep -q '"pool_sized": false' "$JSON" || fail "the dev record says the pool was not sized"
 

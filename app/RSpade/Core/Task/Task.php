@@ -17,6 +17,7 @@ use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Core\Task\Task_Daemon;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Notify;
@@ -214,7 +215,7 @@ class Task
      * watch (Task_Run_Model::find($id)).
      *
      * The row is written PENDING and, when the run is due now, a detached worker is spawned
-     * if a pool has room (on_demand first, then scheduled - the scheduled pool takes on-demand
+     * (after the caller's transaction commits, when one is open) if a pool has room (on_demand first, then scheduled - the scheduled pool takes on-demand
      * work first). The ONLY thing that defers a run is a future 'scheduled_for': it waits and
      * is picked up by the cron tick (or a later spawn) once due. A process that turned
      * spawning off - and every test, unless it opted in - enqueues only; see spawn_workers().
@@ -282,9 +283,22 @@ class Task
         // debounce timing); an unmanaged task with a future scheduled_for is deferred to the
         // cron tick. With both pools full nothing is spawned: a busy worker reaches this row
         // when it finishes its current one, and the cron tick covers the rest.
-        if ($managed || $scheduled_for === null || !$scheduled_for->isFuture()) {
-            static::spawn_worker(Task_Pool::ON_DEMAND) || static::spawn_worker(Task_Pool::SCHEDULED);
-        }
+        //
+        // In the container the task daemon, not a minute tick, comes back for a deferred run
+        // (a future scheduled_for, a #[Debounce] delay) or one no worker had room for: it is
+        // told the next due moment may have moved.
+        //
+        // Both wait for the caller's transaction to COMMIT (DB::afterCommit runs at once when
+        // none is open): a worker or a tick is another process, which cannot see an
+        // uncommitted row - started now it would find nothing to claim and the run would wait
+        // for whatever ticks next. A rollback takes the row away, and nothing is started.
+        $spawn = $managed || $scheduled_for === null || !$scheduled_for->isFuture();
+        DB::afterCommit(function () use ($spawn) {
+            if ($spawn) {
+                static::spawn_worker(Task_Pool::ON_DEMAND) || static::spawn_worker(Task_Pool::SCHEDULED);
+            }
+            Task_Daemon::poke();
+        });
 
         return $id;
     }
@@ -338,6 +352,11 @@ class Task
             . ' ON DUPLICATE KEY UPDATE next_run_at = VALUES(next_run_at), updated_at = VALUES(updated_at)',
             [$service_class, $rsx_task, $cron_expression, (new Cron_Parser($cron_expression))->get_cron_expression(), Rsx_Time::get_server_timezone(), $next_run_at, $now, $now]
         );
+
+        // The task daemon sleeps until the next due moment it knows of; this one may be sooner.
+        // After the caller's commit, when there is one: the tick reads the row from another
+        // process.
+        DB::afterCommit(fn () => Task_Daemon::poke());
 
         return Rsx_Time::to_iso($next_run_at);
     }

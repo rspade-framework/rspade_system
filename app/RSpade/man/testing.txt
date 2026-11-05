@@ -476,7 +476,7 @@ DOCKER-ACCELERATED TESTING
     the runner sets it on its own process, and starts every container with the
     RSPADE_PHP_MEMORY_LIMIT_MB=500 switch, which rspade-sizing writes into php-fpm and
     the CLI at container start (rsx:man server_sizing). Above the development
-    container's 256 MB, because a test process holds a suite's fixtures and a whole
+    container's 320 MB, because a test process holds a suite's fixtures and a whole
     manifest; a ceiling all the same, so a test that leaks fails loud.
 
     A RUN'S CONTAINERS DIE WITH THE RUN. SIGTERM, SIGINT or SIGHUP to rsx:test

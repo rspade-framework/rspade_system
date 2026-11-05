@@ -1648,6 +1648,11 @@ class Manifest
 
             $mode_event = Rsx::is_production() ? 'rsx.rebuilt.prod' : 'rsx.rebuilt.dev';
             Rsx::trigger_action($mode_event, $payload);
+
+            // New code may declare, change or drop a #[Schedule]: the task daemon re-runs the
+            // tick, which reconciles the schedules and says when it is next wanted (a no-op
+            // outside the RSpade container).
+            \App\RSpade\Core\Task\Task_Daemon::poke();
         }
 
         Rsx::trigger_action('rsx.ready', ['rebuilt' => static::$_rebuild_occurred]);

@@ -464,15 +464,20 @@ class Companion_Daemon_Process_Test extends Rsx_Test_Abstract
     // ------------------------------------------------------------------------------------
 
     /**
-     * The properties that make supervisor's stop wait for the companions: the daemon is the
-     * program's main pid (no retry wrapper, the runner ends in exec), and stopwaitsecs exceeds
-     * the largest grace a build accepts.
+     * The properties that make supervisor's stop wait for the companions: the program runs the
+     * daemon under the retry runner, which passes the stop signal on and waits for the daemon
+     * (the runner script ends in exec, so that pid IS node), and stopwaitsecs exceeds the
+     * largest grace a build accepts.
      */
     private static function __assert_shipped_program_shape(): void
     {
         $conf = (string) file_get_contents(base_path('app/RSpade/resource/docker/supervisor/conf.d/rsx-companiond.conf'));
 
-        static::__assert_true((bool) preg_match('/^command=bash \S+\/companiond-run\.sh$/m', $conf), 'the program runs the runner directly, never through rspade-retry-run');
+        static::__assert_true((bool) preg_match('/^command=bash \/usr\/local\/bin\/rspade-retry-run rsx-companiond bash \S+\/companiond-run\.sh$/m', $conf), 'the program runs the daemon under the retry runner');
+
+        $retry = (string) file_get_contents(base_path('app/RSpade/resource/docker/retry-run.sh'));
+        static::__assert_contains('kill -s "$signal" "$child"', $retry, 'the retry runner passes a stop signal on to the daemon');
+        static::__assert_contains('wait "$child"', $retry, 'and waits for it to exit');
         static::__assert_true((bool) preg_match('/^stopwaitsecs=(\d+)$/m', $conf, $match), 'stopwaitsecs is set');
         static::__assert_greater_than(\App\RSpade\Core\Companion\Companion_Service_Abstract::MAX_SHUTDOWN_GRACE_SECONDS, (int) $match[1]);
 

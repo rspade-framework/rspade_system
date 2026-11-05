@@ -542,3 +542,13 @@ stay aligned.
 | SANITIZE-PHP-02 | code keeps its line AND column; comments become whitespace; an attribute and a string holding `//` are untouched | php | the same fixture | per-line assertions | implemented | 2026-10-28 |
 | SANITIZE-PHP-03 | a rule reports the line a call is written on below a run of comments | php | PHP-EXEC-01 over 12 `//` lines + a docblock + the call | one violation at the call's line | implemented | 2026-10-28 |
 | SANITIZE-PHP-04 | PHP-EXEC-01 flags the PHP function only, never a method or static call of that name | php | `$redis->exec()`, `Pipeline::exec()`, `exec(...)`, `\exec(...)` | violations on the last two lines only | implemented | 2026-10-31 |
+
+## Memory: Source_Cache bounds and the cold rsx:check gate
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| CQ-MEM-01 | the source-byte budget evicts before the entry bound | php | eight files of a quarter-budget each, capacity 64 | at most three ASTs and contents resident | implemented (`Source_Cache_Bounds_Test`) | 2026-11-05 |
+| CQ-MEM-02 | a file larger than the whole budget is parsed once and held on its own | php | a small file, then one of twice the budget | one AST resident; a second ask re-parses nothing | implemented (`Source_Cache_Bounds_Test`) | 2026-11-05 |
+| CQ-MEM-03 | the entry bound still holds for small files | php | ten tiny files, capacity 4 | four resident | implemented (`Source_Cache_Bounds_Test`) | 2026-11-05 |
+| CQ-MEM-04 | a cold rsx:check of the reference tree peaks under 160 MB | php (child processes) | scratch build + tmp roots; manifest built first, then the check | CHECK_PEAK_BYTES under budget (measured 113 MB) | implemented (`Code_Quality_Memory_Gate_Test`) | 2026-11-05 |
+| CQ-MEM-05 | a cold rsx:check of a tree five times the reference size peaks under 256 MB | php (child processes) | generated classes (10 methods, chains of 4), JS classes, stylesheets | CHECK_PEAK_BYTES under budget (measured 186 MB) | implemented (`Code_Quality_Memory_Gate_Test`) | 2026-11-05 |

@@ -17,7 +17,7 @@
 # `environment:`). Unset means calculated; a value that is not a whole number of the
 # allowed range stops the start, naming the switch - nothing is silently replaced.
 #
-#   RSPADE_PHP_MEMORY_LIMIT_MB   L: memory_limit for php-fpm AND the CLI    320 prod, 256 dev
+#   RSPADE_PHP_MEMORY_LIMIT_MB   L: memory_limit for php-fpm AND the CLI    352 prod, 320 dev
 #   RSPADE_PHP_TYPICAL_MB        A: what one PHP process typically holds    128
 #   RSPADE_PHP_WORKERS_PER_CORE  the CPU ceiling's factor                   3
 #   PHP_FPM_WORKER_COUNT         the php-fpm total, instead of calculated   (2 or more)
@@ -356,8 +356,10 @@ case "$target" in
     *) echo "usage: the target is dev or prod, got '${target}'" >&2; exit 2 ;;
 esac
 
-default_limit=320
-[ "$target" = "dev" ] && default_limit=256
+# Development 320 MB; production a tenth more, 352 MB - lower in development on purpose, so a
+# request or a command that grows past what production allows fails on a developer's box first.
+default_limit=352
+[ "$target" = "dev" ] && default_limit=320
 
 take_switch limit_mb RSPADE_PHP_MEMORY_LIMIT_MB "$default_limit" 1
 take_switch typical_mb RSPADE_PHP_TYPICAL_MB 128 1

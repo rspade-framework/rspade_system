@@ -3,13 +3,11 @@
 # Supervisor entry point for rsx-companiond.
 #
 # Invoke with an explicit interpreter, never by relying on the exec bit:
-#   command=bash /var/www/html/system/bin/rsx-companiond/companiond-run.sh
+#   command=bash /usr/local/bin/rspade-retry-run rsx-companiond bash /var/www/html/system/bin/rsx-companiond/companiond-run.sh
 #
-# Never run this through the rspade-retry-run wrapper. That wrapper keeps a bash loop as
-# supervisor's main pid, which exits at once on SIGTERM while the daemon is still stopping its
-# children: supervisor would call the program stopped with the grace still running, stopwaitsecs
-# would mean nothing, and a restart would start a second daemon beside the first. This script
-# ends in exec, so supervisor's pid IS the daemon and a stop waits for the children.
+# Supervisor runs it under rspade-retry-run, which restarts a daemon that died and passes a
+# stop signal on, waiting for the daemon to exit. This script ends in exec, so the pid the
+# runner signals and waits for IS the daemon, and a stop waits for the children.
 #
 # It waits for the entry file because system/ is delivered separately from the image: exiting
 # would walk supervisor's FATAL path and leave the program down until somebody noticed.

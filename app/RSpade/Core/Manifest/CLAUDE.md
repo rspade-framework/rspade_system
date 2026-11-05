@@ -64,7 +64,7 @@ loads, parses or reflects every indexed file to find the few it judges.** Four c
 did (ACTOR-01, MANIFEST-MONO-01 and TEXT-TYPE-01 called `class_exists()` on every file before
 asking `is_subclass_of()`; MODEL-FETCH-SYSTEM-01 parsed every class looking for one attribute).
 A loaded class is never unloaded, so a one-file rebuild paid for the whole tree - 90 MB here, and
-past a 256 MB CLI limit on a larger tree. The subject set comes from the index:
+past the development CLI limit on a larger tree. The subject set comes from the index:
 `php_get_subclasses_of()` for a lineage, `by_attribute()` for a declaration, and only those
 classes are loaded or parsed.
 

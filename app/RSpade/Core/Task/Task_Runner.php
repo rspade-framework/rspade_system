@@ -17,6 +17,7 @@ use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Core\Task\Task_Daemon;
 use App\RSpade\Core\Task\Task_Dispatcher_Context;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock_Set;
@@ -316,6 +317,14 @@ class Task_Runner
         // After the release: the frame also tells the runs waiting on this lock to look again,
         // and what they read must be the lock free and their own row re-anchored.
         Task_Notify::lifecycle($id);
+
+        // An INLINE run (no pool membership) that held a run lock may have been what a pending
+        // run was waiting for, and a coalesced follow-up was just re-anchored: the task daemon
+        // re-asks when work comes due. A pool worker needs no poke here - it claims the next run
+        // itself, and pokes when it exits.
+        if ($run_lock !== null && Task_Pool::member_pool() === null) {
+            Task_Daemon::poke();
+        }
     }
 
     /**

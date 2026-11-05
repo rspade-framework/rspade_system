@@ -25,6 +25,16 @@ says what is in this DIRECTORY and what must stay true when editing it.
   lock, unlock, and spawn only below the cap - `rsx:task:killer` for the kill pool,
   `rsx:task:worker --pool=` otherwise) and the process switch `spawn_workers(bool)` (OFF by
   default under the test suite).
+- `Task_Daemon.php` — the application's side of `rspade-taskd`, the container's scheduler
+  (`resource/docker/rspade-taskd/`): `poke()` (a line on its socket, only where
+  `/.rspade_container` exists and this process spawns workers; never waits, never fails),
+  `next_wake_ms()` (what the tick prints under `--_report-next-wake`: next schedule less the
+  lead, next deferred pending run, `BUSY_RECHECK_SECONDS` while anything runs or a kill is
+  owed here, null when nothing waits), and THE DUE RULES every claim and spawn check uses:
+  `schedule_due_cutoff()` (`SCHEDULE_LEAD_SECONDS` early), `where_pending_due()` (a dispatched
+  run at its time, a scheduled-origin run early) and `next_run_after()` (advance from the later
+  of now and the due time). Pokes come from `dispatch()`, `set_next_run()`, a worker that ran
+  something exiting, a manifest rebuild and `rsx:tasks:enable`.
 - `Task_Dispatcher_Context.php` — `#[Run_As_Dispatcher]`: `begin($task_id)` loads the run's
   `_tasks.user_session_id` (the dispatching sign-in - staff, portal or an API key's) and
   starts a FROZEN, BOUND virtual session from it (`Session::_begin_virtual()`: identity, site,
@@ -166,6 +176,12 @@ says what is in this DIRECTORY and what must stay true when editing it.
   context back; `Task::internal()` snapshots and restores its caller's context
   (`Session::_snapshot_context()`) and never blanks it. Anything new that memoizes on the
   acting identity is cleared in `_end_virtual()`.
+- **One set of due rules.** Every "is it due" in this system - the worker's two claims, the
+  tick's spawn check, `--once` - goes through `Task_Daemon`'s due rules, and
+  `next_wake_ms()` must agree with them (it starts from what they leave undue). A schedule
+  claimed early ADVANCES from its due time, never from now, or it runs that minute twice.
+  The daemon ticks only when told: a new path that writes a due time (`scheduled_for`,
+  `next_run_at`) or frees a blocked run outside a worker pokes.
 - **Claim order is tier, then age.** `claim_pending_run()` orders by `priority`,
   `scheduled_for`, `id` (served by `idx_tasks_claim_priority`, no sort); `claim_due_schedule()`
   ticks nothing while a due on-demand run (priority < 2) is pending and not set aside this

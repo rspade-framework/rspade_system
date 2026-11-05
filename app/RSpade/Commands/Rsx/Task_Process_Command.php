@@ -13,6 +13,8 @@ use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Task\Task_Daemon;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Kill_Worker;
@@ -25,8 +27,12 @@ use App\RSpade\Core\Health\Rsx_Container_Sizing;
 /**
  * Task Process Command
  *
- * The scheduler/dispatcher tick. Run via system cron every minute:
+ * The scheduler/dispatcher tick. Outside the RSpade container it runs from system cron every
+ * minute:
  *   * * * * * cd /var/www/html && php artisan rsx:task:process
+ * Inside it, the task daemon (rspade-taskd, Task_Daemon) runs the same tick when it is wanted:
+ * at the moment the previous tick said work comes due (printed under the internal flag
+ * --_report-next-wake), and when the application pokes it.
  *
  * Each tick it:
  * 1. Recovers RUNNING runs that will never settle on their own: those whose worker has left its
@@ -36,10 +42,12 @@ use App\RSpade\Core\Health\Rsx_Container_Sizing;
  * 2. Hands kill requests whose kill worker died back to the queue.
  * 3. Reconciles _task_schedules against the manifest's #[Schedule] declarations (register new,
  *    re-register a changed cron expression, delete removed) so schedule edits take effect
- *    within one tick.
+ *    within one tick - one read of the table, compared in memory, so an unchanged tree costs
+ *    one query and writes nothing.
  * 4. Tries ONE spawn per pool with due work: on_demand (else scheduled) for due dispatched
  *    runs, scheduled for due schedules, kill for due kill requests on this host. It does NOT
- *    become a worker itself.
+ *    become a worker itself. A schedule is due Task_Daemon::SCHEDULE_LEAD_SECONDS early
+ *    (Task_Daemon's due rules).
  *
  * WHILE THE TASK SYSTEM IS OFF (Task::is_enabled(), read from the database at each spawn) steps 1-3 run as
  * always - a dead run is still settled, a kill request still gets its kill worker, which is
@@ -53,6 +61,7 @@ use App\RSpade\Core\Health\Rsx_Container_Sizing;
  */
 class Task_Process_Command extends Command
 {
+
     protected $signature = 'rsx:task:process
         {--once : Process one pending task inline then exit (for testing)}
         {--force-scheduled : Make every schedule due now}';
@@ -75,6 +84,13 @@ class Task_Process_Command extends Command
         $this->recover_kill_requests();
         $this->reconcile_schedules((bool) $this->option('force-scheduled'));
         $this->spawn_workers_for_due_work();
+
+        // The task daemon's question: when is this tick wanted next? One machine-read line on
+        // stdout, for rspade-taskd only; cron never passes the flag.
+        if (Rsx_Internal_Flags::has('--_report-next-wake')) {
+            $wake = Task_Daemon::next_wake_ms();
+            $this->line('RSX_TASK_NEXT_WAKE_MS=' . ($wake === null ? 'none' : $wake));
+        }
 
         // Once per container start: a box the automatic sizing capped says so in the log.
         Rsx_Container_Sizing::log_cap_notice();
@@ -491,13 +507,21 @@ class Task_Process_Command extends Command
         $now = now()->format('Y-m-d H:i:s.v');
         $timezone = Rsx_Time::get_server_timezone();
 
-        foreach (Task::get_scheduled_tasks() as $task_def) {
+        // ONE READ OF THE TABLE, compared in memory. Nothing to reconcile is the common case -
+        // every tick of an unchanged tree - so it costs this one query and writes nothing.
+        $declarations = Task::get_scheduled_tasks();
+        $rows = [];
+        foreach (DB::table('_task_schedules')->get() as $row) {
+            $rows[$row->class . '::' . $row->method] = $row;
+        }
+
+        foreach ($declarations as $task_def) {
             $class = $task_def['class'];
             $method = $task_def['method'];
             $cron_expression = $task_def['cron_expression'];
             $seen[$class . '::' . $method] = true;
 
-            $existing = DB::table('_task_schedules')->where('class', $class)->where('method', $method)->first();
+            $existing = $rows[$class . '::' . $method] ?? null;
             $parser = new Cron_Parser($cron_expression, $timezone);
             $cron_resolved = $parser->get_cron_expression();
             $next_run_at = $force_all ? $now : date('Y-m-d H:i:s', $parser->get_next_run_time());
@@ -539,7 +563,7 @@ class Task_Process_Command extends Command
             }
         }
 
-        foreach (DB::table('_task_schedules')->get(['id', 'class', 'method']) as $schedule) {
+        foreach ($rows as $schedule) {
             if (!isset($seen[$schedule->class . '::' . $schedule->method])) {
                 $this->info("[SCHEDULED] Removing deleted schedule {$schedule->class}::{$schedule->method}");
                 DB::table('_task_schedules')->where('id', $schedule->id)->delete();
@@ -556,13 +580,10 @@ class Task_Process_Command extends Command
      */
     private function spawn_workers_for_due_work(): void
     {
-        $now = now()->format('Y-m-d H:i:s.v');
-
-        $dispatched_due = DB::table('_tasks')
-            ->where('status_id', Task_Run_Model::STATUS_PENDING)
-            ->where('scheduled_for', '<=', $now)
-            ->exists();
-        $schedule_due = DB::table('_task_schedules')->where('next_run_at', '<=', $now)->exists();
+        $dispatched_due = Task_Daemon::where_pending_due(
+            DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING)
+        )->exists();
+        $schedule_due = DB::table('_task_schedules')->where('next_run_at', '<=', Task_Daemon::schedule_due_cutoff())->exists();
         $kill_due = Task_Kill_Worker::has_due_requests(Task_Pool::host());
 
         if ($dispatched_due && (Task::spawn_worker(Task_Pool::ON_DEMAND) || Task::spawn_worker(Task_Pool::SCHEDULED))) {
@@ -586,9 +607,9 @@ class Task_Process_Command extends Command
      */
     private function process_one_task(): void
     {
-        $row = DB::table('_tasks')
-            ->where('status_id', Task_Run_Model::STATUS_PENDING)
-            ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
+        $row = Task_Daemon::where_pending_due(
+            DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING)
+        )
             ->orderBy('priority')
             ->orderBy('scheduled_for')
             ->orderBy('id')

@@ -434,8 +434,10 @@ STARTING A RUN
        Inserts a PENDING row and, when it is due now, spawns a detached worker if a pool
        has room (on_demand first, then scheduled). Returns the run's id. With both pools
        full nothing is spawned: a busy worker reaches the row when it finishes its current
-       one, and the cron tick covers the rest. A process that called
-       Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
+       one, and the cron tick covers the rest. Called inside a database transaction, the
+       worker (and the task daemon's poke) waits for the transaction to COMMIT - a worker
+       started sooner could not see the uncommitted row - and a rollback starts nothing.
+       A process that called Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
        SPAWNING OFF and TESTING).
 
        $options (any other key throws):
@@ -586,8 +588,9 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     are all free right now; a run it cannot start is skipped, not held. Nothing reserves a
     lock for a waiting run: if a younger run can go with just one free lock it goes, and a
     run needing several waits for a window where all of them are free. Skipped runs are
-    looked at again after every run a worker finishes and at every cron tick (once a
-    minute), so a waiting run starts in the first such window.
+    looked at again after every run a worker finishes and at every tick (once a minute
+    under cron; at least once a minute in the container while anything runs), so a
+    waiting run starts in the first such window.
 
     Never take the group's lock yourself inside a task body to get the same effect: by
     then the run occupies a worker slot, and tasks waiting there starve the pool.
@@ -829,7 +832,7 @@ THE WORKER POOLS
     exits, so two are plenty on any box.
 
     A TASK WORKER IS LIMITED LIKE A REQUEST. The CLI's memory_limit is the same as
-    php-fpm's - 320 MB in production, 256 MB in development, set by the container at start
+    php-fpm's - 352 MB in production, 320 MB in development, set by the container at start
     (RSPADE_PHP_MEMORY_LIMIT_MB changes both). A run that needs more raises its own limit
     with ini_set('memory_limit', ...) at its start, saying why beside it; anything else that
     grows past the limit fails with "Allowed memory size exhausted", which the run records
@@ -1475,7 +1478,8 @@ THE SILENCE LIMIT
     ALIVE on the host the tick runs on, silent past the limit, gets a force-kill request
     with the explanation "no report for Ns (cap Ms)", carried out by a kill worker and
     settled KILLED (status_reason and an operator line carry the explanation); one
-    [TASK TIMEOUT] line is logged. Granularity is the cron tick (one minute).
+    [TASK TIMEOUT] line is logged. Granularity is the tick: one minute, under cron and in
+    the container alike (rspade-taskd ticks every minute while anything runs).
     rsx.tasks.silent_timeout = 0 is no silence limit.
 
     NOT UNDER IT:
@@ -1682,6 +1686,32 @@ COMMANDS
     rsx:task:process is the scheduler/dispatcher tick. Install it in cron:
 
         * * * * * cd /var/www/html && php artisan rsx:task:process
+
+    INSIDE THE RSPADE CONTAINER there is no cron line: its `tasks` program, rspade-taskd,
+    runs the same tick only when it is wanted. Each tick tells it when that is (the
+    internal flag --_report-next-wake prints RSX_TASK_NEXT_WAKE_MS): the next schedule, a
+    few seconds early; the next deferred pending run (a scheduled_for, a #[Debounce]
+    delay, an abandoned run's retry); and one minute while anything is RUNNING or a kill
+    is owed on the host, so dead workers are reaped and the silence limit is enforced as
+    under cron. Between those moments an idle container runs no PHP process and asks the
+    database nothing. The application POKES the daemon (Task_Daemon::poke(), a line on
+    /run/rspade-taskd/taskd.sock, only where /.rspade_container exists) whenever the next
+    due moment may have moved earlier: a dispatch, set_next_run() / run_again_in(), a
+    worker that ran something exiting, a manifest rebuild, rsx:tasks:enable (which
+    rsx:maintenance:disable runs). Pokes are debounced to one tick per 2 s; with nothing
+    due the daemon still asks every 3 hours; a failing tick is asked again every minute,
+    and one the maintenance gate refuses (exit 75) every 5 minutes. A poke nobody answers
+    costs nothing, and dispatch() spawns its own worker either way.
+    `rspade-taskd status` shows the last tick and the next one. Supervisor runs it under
+    the image's retry runner, like every long-running service: a daemon that dies is
+    started again, forever, 2 s doubling to a minute between attempts, and its first tick
+    picks up whatever was dispatched while it was down.
+
+    WHEN IS A RUN DUE. A schedule, and a pending run a schedule produced, is due
+    Task_Daemon::SCHEDULE_LEAD_SECONDS (5) before its time, so a tick or a wake a moment
+    early still runs the 3:00 run; it then advances from the later of now and the time it
+    was due, so claiming it early never runs that minute twice. A dispatched run is due at
+    its scheduled_for exactly.
 
     Each tick it: (1) settles abandoned runs and requests force kills for runs silent
     past the silence limit (or past a requested timeout);
