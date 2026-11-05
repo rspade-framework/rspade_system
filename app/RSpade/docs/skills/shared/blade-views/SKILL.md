@@ -34,9 +34,13 @@ Every Blade view starts with `@rsx_id`:
 - **NO inline event handlers** - Use `on_app_ready()` pattern
 - **jqhtml components** work fully in Blade (but no slots)
 - **A credential field on an auth page** writes `id`, `name` and `autocomplete` on the `<input>`
-  directly (`autocomplete="username"` / `"current-password"` / `"new-password"`) - a Blade
-  field is not jqhtml, so the framework's `autocomplete="off"` default does not reach it and
-  nothing else will add the token (`reference_app/app/login/CLAUDE.md`, CREDENTIAL FIELDS)
+  directly (`autocomplete="username"` / `"current-password"` / `"new-password"`)
+  (`reference_app/app/login/CLAUDE.md`, CREDENTIAL FIELDS)
+- **Every Blade-written `<input>` / `<textarea>` with no `autocomplete` attribute gets
+  `autocomplete="off"` at boot** (`Rsx_Blade_Autocomplete`, the same policy jqhtml applies to
+  template fields). Only an `autocomplete` attribute exempts a field - an `id` or `name` does
+  not - so a field that SHOULD autofill states its token. A field your own JS inserts later
+  with raw jQuery is not swept; build it with jqhtml or set the attribute yourself
 
 ---
 

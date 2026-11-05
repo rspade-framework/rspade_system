@@ -57,8 +57,9 @@ handler, the error-screen components - because the first SPA page draws before `
 - `Rsx_External_Resources.js` — `Rsx.load_external()`'s registry, baked from `*.externals.php`.
 - `Rsx_Jq_Helpers.js`, `Width_Group.js`, `Rsx_Droppable.js`, `Rsx_Behaviors.js`,
   `Responsive.js`, `Rsx_View_Transitions.js`, `Rsx_Dark_Mode.js`, `Rsx_Portal.js`,
-  `Login_Redirect.js`, `Turnstile.js`, `Rsx_Text_Abstract.js`, `Debugger.js` — the jQuery
-  extensions, responsive tiers, dark mode, portal routing, login redirect sanitizer, Turnstile
+  `Login_Redirect.js`, `Rsx_Blade_Autocomplete.js`, `Turnstile.js`, `Rsx_Text_Abstract.js`, `Debugger.js` — the jQuery
+  extensions, responsive tiers, dark mode, portal routing, login redirect sanitizer, the Blade
+  `autocomplete="off"` default (jqhtml's `autocomplete_off`, applied to Blade-written fields), Turnstile
   widget, text-type registration and `console_debug` transport.
 
 ## Invariants

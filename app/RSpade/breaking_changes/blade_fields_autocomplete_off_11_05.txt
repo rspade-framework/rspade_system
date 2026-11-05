@@ -1,0 +1,41 @@
+BLADE-WRITTEN FIELDS WITH NO AUTOCOMPLETE TOKEN RENDER autocomplete="off"
+Date: 2026-11-05
+
+IF YOU DO NOTHING: every <input> and <textarea> one of your Blade pages writes without an autocomplete attribute now carries autocomplete="off" once the page boots - including a sign-in, sign-up or password field on a Blade page of your own, which password managers then fill poorly. Fields that already declare a token are unchanged, and SPA pages are unaffected.
+
+SUMMARY
+    Category 1 (a /rsx/ template change).
+
+    jqhtml already renders a template-written field with no autocomplete
+    token as autocomplete="off". The framework now applies the same policy
+    to server-rendered Blade pages: at boot (_on_framework_core_init), on a
+    page that is not an SPA page, every <input> and <textarea> in the
+    document with no autocomplete attribute is given autocomplete="off".
+    Only an autocomplete attribute exempts a field; an id or a name does
+    not. A <select> is not touched. A field your own JS inserts later with
+    raw jQuery is not swept.
+
+AFFECTED FILES
+    Any /rsx/**/*.blade.php that writes an <input> or <textarea>.
+    The reference app's credential Blade pages already declare their
+    tokens and need nothing.
+
+CHANGES REQUIRED
+
+    1. Find the Blade fields:
+           grep -rnE '<(input|textarea)\b' rsx --include='*.blade.php'
+
+    2. Give every field that SHOULD autofill its token in the markup:
+       a sign-in identifier autocomplete="username", a password
+       "current-password" (or "new-password" when it is being chosen,
+       and on its confirmation), a one-time code "one-time-code", a name,
+       email, phone or address field its standard token. Follow the
+       "Credential fields" section of
+       system/app/RSpade/resource/reference_app/app/login/CLAUDE.md.
+       Every other field may be left as it is: "off" is the intended
+       default for a business form.
+
+VERIFICATION
+    Render each of your Blade pages (rsx:debug /path) and read the fields'
+    autocomplete attributes: every credential field carries its token,
+    the rest carry "off". rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL.

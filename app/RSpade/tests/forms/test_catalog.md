@@ -204,3 +204,19 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | FES-03 | a programmatic val() is reported though the form stays clean | `val()` | reported, `dirty()` false | implemented |
 | FES-04 | a before_submit value is reported | hook adds a key | `_changed` names it | implemented |
 | FES-05 | a successful submit moves the snapshot and version | answer with `updated_at` | next submit reports nothing, new version | implemented |
+
+## blade_autocomplete_off.js (playwright) - Blade fields default to autocomplete="off"
+
+`Rsx_Blade_Autocomplete._on_framework_core_init()` applies jqhtml's `autocomplete_off` policy to
+the fields a Blade page wrote: on a page that is not an SPA page, every `<input>` and `<textarea>`
+with no `autocomplete` attribute gets `"off"`. Probe fields are written into `/_sys` at run time
+and the class is called with `window.rsxapp.is_spa` set to each value.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-blade-ac-01 | a token-less field becomes "off" | `<input>`, hidden `<input>`, `<textarea>`, `is_spa` false | `autocomplete="off"` on each | implemented |
+| forms-blade-ac-02 | only the attribute exempts a field | `<input id name>` with no token | `autocomplete="off"` | implemented |
+| forms-blade-ac-03 | a declared token is kept | `autocomplete="username"`, `"current-password"`, `"off"` | unchanged | implemented |
+| forms-blade-ac-04 | a `<select>` is not touched | `<select>` | no attribute | implemented |
+| forms-blade-ac-05 | an SPA page is left alone | the same fields, `is_spa` true | token-less fields carry no attribute; tokens kept | implemented |
+| forms-blade-ac-06 | the page reported no error | - | no `pageerror` / `console.error` | implemented |

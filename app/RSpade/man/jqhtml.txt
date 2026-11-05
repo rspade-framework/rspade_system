@@ -2886,8 +2886,20 @@ AUTOCOMPLETE AND AUTOFILL
         $autofill_id. It applies inside every component, framework and
         application alike. Not affected: a <select>; a component's own
         root element (<Define:X tag="input">); an element built in JS
-        ($('<input>')); server-rendered Blade markup. "off" is a hint:
-        a browser may still offer address or contact suggestions.
+        ($('<input>')); server-rendered Blade markup (covered by the
+        Blade default below). "off" is a hint: a browser may still offer
+        address or contact suggestions.
+
+    The Blade default - ON in every mode (Rsx_Blade_Autocomplete.js):
+        On a page that is not an SPA page (window.rsxapp.is_spa false),
+        every <input> and <textarea> in the document with no
+        autocomplete attribute is given autocomplete="off" once, in the
+        _on_framework_core_init boot phase - after the Blade markup is
+        parsed and before any component or application code runs. A
+        field carrying any autocomplete attribute keeps it; an id or a
+        name exempts nothing. A <select> is not touched. A field
+        inserted later by raw jQuery is the inserting code's to mark;
+        one rendered by a jqhtml component gets jqhtml's own default.
 
         Consequence: a field that SHOULD autofill declares its token -
         a sign-in identifier (username), a password (current-password,

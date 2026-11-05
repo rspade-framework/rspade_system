@@ -145,7 +145,7 @@ nowhere for statements to write output, so build the value first and interpolate
 
 ## Form fields and autofill
 
-RSpade configures jqhtml's `autocomplete_off`: every `<input>` and `<textarea>` written in a template renders `autocomplete="off"` unless the tag carries an `autocomplete=""` attribute (a conditional one counts) or a truthy `$autofill_id`. Inside every component, framework or app; not a `<select>`, a `<Define tag="input">` root, a JS-built element or Blade markup. **So a field that SHOULD autofill declares its token** - `username`, `current-password`, `new-password`, `one-time-code`, `name`, `email`, `tel`, an address token.
+RSpade configures jqhtml's `autocomplete_off`: every `<input>` and `<textarea>` written in a template renders `autocomplete="off"` unless the tag carries an `autocomplete=""` attribute (a conditional one counts) or a truthy `$autofill_id`. Inside every component, framework or app; not a `<select>`, a `<Define tag="input">` root or a JS-built element. Blade markup gets the same default from `Rsx_Blade_Autocomplete` at boot (any `autocomplete` attribute exempts a field there). **So a field that SHOULD autofill declares its token** - `username`, `current-password`, `new-password`, `one-time-code`, `name`, `email`, `tel`, an address token.
 
 A credential field also gets a STABLE id, because the `<sid>:<cid>` id changes with mount order and its colon breaks `'#' + id` (a password manager that replays saved ids fills nothing):
 
