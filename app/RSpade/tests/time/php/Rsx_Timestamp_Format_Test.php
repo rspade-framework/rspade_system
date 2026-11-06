@@ -77,7 +77,7 @@ class Rsx_Timestamp_Format_Test extends Rsx_Test_Abstract
 
         static::__assert_equals('Jul 9, 2026 2:30 PM', Rsx_Timestamp_Format::timestamp($july, 'America/Chicago', 'America/Chicago'), 'the viewer\'s own zone: no suffix');
         static::__assert_equals('Jul 10, 2026 1:00 AM IST', Rsx_Timestamp_Format::timestamp($july, 'Asia/Kolkata', 'America/Chicago'));
-        static::__assert_equals('Jul 9, 2026 2:30 PM', Rsx_Timestamp_Format::timestamp($july, 'America/Winnipeg', 'America/Chicago'), 'same offset, same name: no suffix');
+        static::__assert_equals('Jul 9, 2026 2:30 PM', Rsx_Timestamp_Format::timestamp($july, 'America/Menominee', 'America/Chicago'), 'same offset, same name: no suffix');
         static::__assert_equals('Jul 9, 2026 4:30 PM UTC-3', Rsx_Timestamp_Format::timestamp($july, 'America/Sao_Paulo', 'America/Chicago'), 'a numeric tz name prints as UTC-3');
 
         // The instant decides standard vs daylight, for the printed zone and the viewer's.

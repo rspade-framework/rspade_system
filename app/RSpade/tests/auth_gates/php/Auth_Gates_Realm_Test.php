@@ -11,6 +11,7 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Check_Fixture;
 use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Seam_Fixture_Controller;
@@ -279,6 +280,7 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
                 'kinds' => ['ajax'],
                 'realm' => $realm,
                 'auth' => $gates,
+                'site_lock' => Site_Lock_Directives::default_for(['ajax']),
                 'file' => 'fixture/realm.php',
                 'member' => 'fixture',
             ],

@@ -9,6 +9,7 @@ namespace App\RSpade\Sys\App\Sys\Email;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Blocked_Address_Model;
@@ -178,6 +179,7 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {id, status, status_label}
      */
     #[Ajax_Endpoint]
+    #[Manual_Lock]
     public static function resend(Request $request, array $params = [])
     {
         return Email_Queue_Model::without_site_scope(function () use ($params) {
@@ -188,7 +190,15 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
             }
 
             $force = filter_var($params['force'] ?? false, FILTER_VALIDATE_BOOLEAN);
-            $outcome = Rsx_Mail::resend($record, $force);
+
+            // The email belongs to ITS site, seldom the panel user's: the resend is a section on
+            // that site's write lock (#[Manual_Lock] - an automatic writer would lock the panel
+            // user's own site). The record is re-read inside, as a section always does.
+            $outcome = Site_Lock::write((int) $record->site_id, function () use (&$record, $force) {
+                $record = Email_Queue_Model::find((int) $record->id);
+
+                return Rsx_Mail::resend($record, $force);
+            });
 
             if ($outcome === Rsx_Mail::RESEND_ALREADY_QUEUED) {
                 return response_error(

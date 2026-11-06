@@ -1507,9 +1507,10 @@ SUBSYSTEM PRIMERS
     alone. TASK-CONCURRENCY-01 refuses only a malformed argument.
 
     THESE GUARD ONE IDENTITY AGAINST ITSELF AND NOTHING ELSE. They do not
-    protect a shared table from other writers. Tasks run concurrently and
-    unguarded; a task shares tables with web requests and with other tasks,
-    and must never assume it is the only writer. Use a lock for that.
+    protect a shared table from other writers. Tasks run concurrently; a task
+    shares tables with web requests and with other tasks, and writes a site's
+    data inside one Site_Lock::write() section per item (rsx:man site_locks).
+    Other shared state takes a named lock.
 
     LIFECYCLE CONTROL. A graceful stop only stamps the run; the task decides.
     A force stop and a force kill write a kill request bound to the target's

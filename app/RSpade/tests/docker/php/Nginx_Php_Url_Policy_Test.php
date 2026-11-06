@@ -138,8 +138,8 @@ class Nginx_Php_Url_Policy_Test extends Rsx_Test_Abstract
         }
 
         static::__assert_true(
-            str_contains(static::__docker_file('supervisor/conf.d/proxority.conf'), "\ncommand=bash /opt/rspade/proxority/proxority-run.sh\n"),
-            'supervisor runs the image\'s copy of Proxority, never one from the checkout'
+            str_contains(static::__docker_file('supervisor/conf.d/proxority.conf'), "\ncommand=bash /usr/local/bin/rspade-retry-run proxority bash /opt/rspade/proxority/proxority-run.sh\n"),
+            'supervisor runs the image\'s copy of Proxority, never one from the checkout, under the retry runner'
         );
 
         $entrypoint = static::__docker_file('entrypoint.sh');

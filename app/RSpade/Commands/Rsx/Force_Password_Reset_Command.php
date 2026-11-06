@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Portal_User_Model;
 
 /**
@@ -56,9 +57,14 @@ class Force_Password_Reset_Command extends Command
             $identity->password_reset_required = $required ? 1 : 0;
 
             // A portal user belongs to a site and a command serves none: the write is made
-            // across sites, like the lookup.
+            // across sites, like the lookup, under that site's write lock (a command is
+            // enforced: Site_Lock_Cli). A staff identity is not site-scoped.
             if ($is_portal) {
-                Portal_User_Model::without_site_scope(fn () => $identity->save());
+                Site_Lock::write(
+                    (int) $identity->site_id,
+                    fn () => Portal_User_Model::without_site_scope(fn () => $identity->save()),
+                    $required ? 'Password reset required' : 'Password reset requirement cleared'
+                );
             } else {
                 $identity->save();
             }

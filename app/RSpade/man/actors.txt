@@ -71,8 +71,13 @@ Choose by the TABLE's shape, never by taste:
     the table does not          ->  Rsx_Actor_Model_Abstract
 
 Extending the site abstract installs the site global scope, the forced site_id on write,
-and the site write locks. Putting those on a cross-site identity table is wrong; omitting
-them on a site-scoped table is a cross-tenant read leak.
+and the site write lock ENFORCEMENT: a save() of a staff or portal user inside an endpoint,
+task, command or hook needs that site's write lock (#[Writer], a Site_Lock::write()
+section - rsx:man site_locks). That is why a sign-in that stamps the user is a writer, and
+why entering a site goes through RsxAuth::enter_site(). The cross-site identity
+(Login_User_Model) is not site-scoped and is written under no site lock. Putting the site
+controls on a cross-site identity table is wrong; omitting them on a site-scoped table is a
+cross-tenant read leak.
 
 The canonical contract docblock - the long-form version of this man page - lives on
 Rsx_Actor_Model_Abstract. Rsx_Site_Actor_Model_Abstract points back at it.
@@ -302,6 +307,7 @@ Reaching for an Rsx_Actor_Model_Interface. There isn't one, on purpose - see THE
 ABSTRACTS above.
 
 SEE ALSO
+    rsx:man site_locks             the write lock a site-scoped actor save needs
     rsx:man model_normalization    the audit columns and the auto-stamp matrix
     rsx:man polymorphic            how *_type / *_id pairs work
     rsx:man auth_gates             #[Auth], #[Auth_Check], can_access()

@@ -36,6 +36,12 @@ retention task, and the REVISION-01 declaration rule.
   two write-effect hooks, `_resolve_context_actor()`, and the `toArray()` system-column strip.
 - `app/RSpade/CodeQuality/Rules/Manifest/RevisionParent_CodeQualityRule.php` - REVISION-01.
 - `config('rsx.revisions')` - `retention_days`, `dictionary_max_age_days`.
+- `app/RSpade/Core/Revisions/Request_History.php`, `Request_History_Call.php`,
+  `Request_History_Answer.php` - the writer request history on `_transactions` and replay
+  by `_request_ref`, wired through `Ajax::execute()` / `handle_calls()` and
+  `Api_Dispatcher` (`stamp_response()`), with the eager mint in
+  `Site_Lock::_run_request()`; `Revision_Cleanup_Service::prune_request_payloads()`;
+  `config('rsx.request_history.payload_retention_days')`.
 
 ## Behavior of record
 
@@ -62,7 +68,10 @@ retention task, and the REVISION-01 declaration rule.
   database transaction that rolls back takes its revisions with it, because they describe
   writes that also rolled back.
 - **The transaction is minted LAZILY**, on the first revisioned write of a unit of work, so
-  a request that changed nothing leaves nothing behind. A unit of work is one web request,
+  a unit that changed nothing leaves nothing behind - except a WRITER REQUEST (`#[Writer]`,
+  or a `#[Manual_Lock]` that took a site write lock), whose row the site lock boundary mints
+  eagerly inside its transaction, so every committed writer request is in the request
+  history (`Request_History`). A unit of work is one web request,
   one API request, one batched or nested Ajax call, one task, one test, one script run -
   each of those resets the facade. Inside one, code declares further units with
   `Revision::begin_unit_of_work()` / `unit_of_work()` (source and endpoint carried, the
@@ -111,3 +120,6 @@ retention task, and the REVISION-01 declaration rule.
 | Retention task (0 = forever, N, cascade, chunked drain) | php | yes |
 | REVISION-01 (all three checks + the exception marker) | php | yes |
 | Reset seams in the live dispatchers (web / API / Ajax / task) | - | covered by the facade tests; the call sites themselves are single lines |
+| Request history: replay, 409 / 410, actor identity, readers, echo, timing, eager mint, `#[Manual_Lock]` (Ajax and API) | php | yes |
+| Two simultaneous identical writer requests run once | php (separate processes) | yes |
+| Payload prune (three columns only, window, chunks, 0 = never) | php | yes |

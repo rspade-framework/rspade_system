@@ -20,6 +20,7 @@ use App\RSpade\Core\Companion\Companion_Verifier;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Env\Rsx_Install_State;
 use App\RSpade\Core\Env\Rsx_Tenancy;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Site_Model;
@@ -250,17 +251,26 @@ class Companion_Dispatcher
         $fqcn = $row['fqcn'];
         $method = $row['method'];
 
+        // THE SITE LOCK BOUNDARY (Site_Lock::_run_request(), shared with Ajax, the API and page
+        // routes): a companion endpoint is a READER unless it declares #[Writer] or
+        // #[Manual_Lock]. The site is the signed header's, declared above before any lock.
+        // The enforcement window is exactly the endpoint; post_dispatch and the response are
+        // built under the lock, so a throw there rolls a writer back.
+        $label = 'Companion ' . $target;
+
         try {
-            $result = $fqcn::$method($request, $params);
+            return Site_Lock::_run_request(Site_Lock::_surface_mode($target), $label, function () use ($fqcn, $method, $request, $params, $label) {
+                $result = Site_Lock::_enforce($label, fn () => $fqcn::$method($request, $params));
 
-            Rsx::trigger_action('rsx.post_dispatch', [
-                'request' => $request,
-                'params' => $params,
-                'raw_input' => $params,
-                'result' => $result,
-            ]);
+                Rsx::trigger_action('rsx.post_dispatch', [
+                    'request' => $request,
+                    'params' => $params,
+                    'raw_input' => $params,
+                    'result' => $result,
+                ]);
 
-            return Api_Dispatcher::build_response($result);
+                return Api_Dispatcher::build_response($result);
+            }, $site);
         } catch (Throwable $e) {
             $coded = Api_Dispatcher::coded_error_response($e);
 

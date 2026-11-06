@@ -66,12 +66,22 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
 
     private static function __invoke_pre_dispatch(string $class_name)
     {
-        // The non-controller pre_dispatch runs inside __call_action, immediately before
-        // the action.
-        $method = new ReflectionMethod(Dispatcher::class, '__call_action');
-        $method->setAccessible(true);
+        // The non-controller pre_dispatch runs in __call_pre_dispatch(); a null answer goes on
+        // to __call_action(), the action - the order Dispatcher::__run_matched() calls them in.
+        $params = ['_handler' => $class_name];
 
-        return $method->invokeArgs(null, [$class_name, 'index', ['_handler' => $class_name], request()]);
+        $pre_dispatch = new ReflectionMethod(Dispatcher::class, '__call_pre_dispatch');
+        $pre_dispatch->setAccessible(true);
+        $result = $pre_dispatch->invokeArgs(null, [$class_name, $params, request()]);
+
+        if ($result !== null) {
+            return $result;
+        }
+
+        $action = new ReflectionMethod(Dispatcher::class, '__call_action');
+        $action->setAccessible(true);
+
+        return $action->invokeArgs(null, [$class_name, 'index', $params, request()]);
     }
 
     private static function __invoke_handle_special_response(Error_Response $response)

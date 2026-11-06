@@ -14,6 +14,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Concurrency;
@@ -232,7 +233,7 @@ class Task_Runner
                 }
             }
 
-            $outcome = Task_Run_Outcome::from_return($invoke());
+            $outcome = Task_Run_Outcome::from_return(static::_run_body($instance, $invoke));
         } catch (Throwable $e) {
             // Throwable, not Exception: a TypeError inside a task is a failed run like any other.
             $outcome = Task_Run_Outcome::from_throwable($e);
@@ -255,6 +256,50 @@ class Task_Runner
         $instance->cleanup_temp_dir();
 
         return $outcome;
+    }
+
+    /**
+     * Run a task body inside its site lock ENFORCEMENT WINDOW, and close any database
+     * transaction it left open.
+     *
+     * Inside the window a write to a site-scoped model needs that site's write lock - the
+     * task takes it per item with Site_Lock::write($site_id, fn () => ...) - or a
+     * Site_Lock::bypass() with a reason. A task has no automatic lock and no automatic
+     * transaction: it manages its own (Site_Lock).
+     *
+     * A transaction the body opened and never closed is a defect in the task. It is rolled
+     * back here - before any lock it held is released, so nothing half-written becomes
+     * visible to the next writer - and reported on the run and in the log.
+     *
+     * Every way a task body runs comes through here: a worker, rsx:task:process --once, an
+     * inline Task::internal(), and the test harness's __run_task_method().
+     *
+     * @param Task_Instance $instance The run
+     * @param callable $body The body (pre_task() and the method)
+     * @return mixed What the body returned
+     */
+    public static function _run_body(Task_Instance $instance, callable $body): mixed
+    {
+        $label = 'task ' . class_basename($instance->get_class()) . '::' . $instance->get_method() . ' (run #' . $instance->get_id() . ')';
+        $level = DB::transactionLevel();
+
+        Site_Lock::_enter_enforcement($label);
+
+        try {
+            return $body();
+        } finally {
+            Site_Lock::_leave_enforcement();
+
+            $leaked = DB::transactionLevel() - $level;
+            if ($leaked > 0) {
+                DB::rollBack($level);
+
+                $message = "Task ended with {$leaked} database transaction(s) still open - rolled back by the runner. "
+                    . 'Close every transaction you open (DB::transaction(fn) or Site_Lock::write() do it for you).';
+                $instance->stderr($message);
+                Log::warning("[TASK #{$instance->get_id()}] {$label}: {$message}");
+            }
+        }
     }
 
     /**

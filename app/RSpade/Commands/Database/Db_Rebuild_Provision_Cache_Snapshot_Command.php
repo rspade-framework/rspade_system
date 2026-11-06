@@ -65,6 +65,9 @@ use Illuminate\Console\Command;
  */
 class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'rebuilds the provisioning snapshot from a fresh database';
+
     protected $signature = 'rsx:db:rebuild_provision_cache_snapshot';
 
     protected $description = 'Rebuild the shipped schema cache (rsx/resource/db/schema_cache.sql.gz + uploads_cache.tar.gz) that a fresh install restores instead of replaying every migration. Backs the live database and blob store up, builds the cache from zero, and restores them.';

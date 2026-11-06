@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher], request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, or a run 'returned an array', is stuck Pending, or was killed with 'no report for Ns'."
+description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher], per-item Site_Lock::write() sections, request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, moving slow endpoint work to a task, or a run 'returned an array', is stuck Pending, was killed with 'no report for Ns', or failed with 'Site lock enforcement: ... by task'."
 ---
 
 # Background Tasks
@@ -423,7 +423,11 @@ Each declaration is a `_task_schedules` row (cadence + statistics); **each run o
 
 ## Concurrency - the one thing you must get right
 
-**Tasks run concurrently and UNGUARDED.** Nothing takes a global application lock. Multiple workers run at once and your task shares the database with web requests and other tasks. **A `#[Task]` must not assume it is the only writer.**
+**A task takes NO automatic lock and no automatic transaction**, but its body is a site lock ENFORCEMENT WINDOW: a `save()` / `delete()` of a site-scoped model fatals (`Site lock enforcement: <Model> save on site N by task X::y (run #M) without site N's write lock`) unless it is inside **one `Site_Lock::write($site_id, fn () => ...)` section PER ITEM that RE-READS the record inside** (it may have changed or gone since the list was read). Inside a section nothing else writes the site, so the read and the write need no re-check; between sections other writers run - never one section around the whole run. A maintenance pass that tolerates concurrent writers (a queue drain, a sweep) uses `Site_Lock::bypass($site_id, '<reason>', fn)` / `bypass_all_sites('<reason>', fn)`. `#[Writer]` on a `#[Task]` fails the build (`SITE-LOCK-01`); a `#[Run_As_Dispatcher]` task follows the same rules. Worked example and rules: skill `rspade:site-locks`.
+
+**The architecture principle: an Ajax or API endpoint returns right away.** Data-processing or export-shaped work (a pass over thousands of records, encoding, compression, a large aggregation, building a file) is a task: the endpoint validates, `Task::dispatch()`es, returns the run's handle; the caller waits for the run and fetches the result through the feature's own endpoint (the external API has no generic task interface). Every request holds its site's lock for its whole handler, so a slow endpoint holds back every writer on the site. A dispatch from a `#[Writer]` starts after its commit (or never, on rollback); a coalesced `#[Exclusive]` dispatch inside a writer may leave a second pending run, which is safe to repeat.
+
+Multiple workers run at once and your task shares the database with web requests and other tasks. **A `#[Task]` must not assume it is the only writer.**
 
 | Marker | Identity | Meaning |
 |---|---|---|
@@ -441,7 +445,7 @@ Each declaration is a `_task_schedules` row (cadence + statistics); **each run o
 
 **Every call is a call, whatever made it.** `dispatch()`, a due `#[Schedule]` and an inline run all go through the same rules: a scheduled task can be started on demand at any time, and a schedule that comes due while that run is still going becomes its ONE pending follow-up (debounced by the delay, if any), exactly like a second dispatch. **A call never moves a pending run**: its due time is set when queued and re-anchored only when a run settles, so a due debounced run just waits for its locks and further calls join it. **Which run starts next**: at every claim a worker walks the due pending runs most overdue first and starts the first whose locks are ALL free right now; nothing reserves a lock, so a younger run needing one free lock goes ahead of an older run needing two, which runs in the first window where both are free (re-checked after every finished run and every cron tick).
 
-`rsx:check` (`TASK-CONCURRENCY-01`) refuses only a malformed argument: `#[Debounce]` takes nothing or one non-negative integer, `#[Exclusive]` nothing or one non-empty group name. **The delay is optional**: a bare `#[Debounce]` (or `#[Debounce(0)]`) coalesces with no delay - the one queued follow-up is due the moment the running instance finishes. `dispatch()` of a managed task returns THE pending run's id (existing or new); an inline run waits for a running instance. **They guard one identity against ITSELF**, never a shared table against other writers - take a lock for that:
+`rsx:check` (`TASK-CONCURRENCY-01`) refuses only a malformed argument: `#[Debounce]` takes nothing or one non-negative integer, `#[Exclusive]` nothing or one non-empty group name. **The delay is optional**: a bare `#[Debounce]` (or `#[Debounce(0)]`) coalesces with no delay - the one queued follow-up is due the moment the running instance finishes. `dispatch()` of a managed task returns THE pending run's id (existing or new); an inline run waits for a running instance. **They guard one identity against ITSELF**, never a shared table against other writers - a site's data takes `Site_Lock::write()` sections (above); other shared state a named lock:
 
 ```php
 $token = RsxLocks::named_write_lock('rebuild_report_cache');
@@ -482,4 +486,4 @@ Pools `on_demand`, `scheduled` and `kill` (`rsx.tasks.pools`); claim order is `#
 - **Refused under maintenance mode.** `rsx:task:process`/`:worker` are blocked (exit 75); `rsx:task:run` needs `--force` to pass the gate - and inside a full window the task system is off, so it then queues and waits for the window to end.
 - **A command or a request "hangs" in `Task::internal()`.** The task system is off and the call is waiting (the command said so on stderr): `php artisan rsx:tasks:enable`.
 
-Details: `rsx:man tasks`, `rsx:man task_commands`, `rsx:man locks`, `rsx:man sys_panel` (the Tasks and Task Workers screens). Colocated: `system/app/RSpade/Core/Task/CLAUDE.md`. Related: `rspade:task-commands`, `rspade:locks-and-subprocesses`, `rspade:event-hooks`, `rspade:realtime`.
+Details: `rsx:man tasks`, `rsx:man task_commands`, `rsx:man site_locks`, `rsx:man locks`, `rsx:man sys_panel` (the Tasks and Task Workers screens). Colocated: `system/app/RSpade/Core/Task/CLAUDE.md`. Related: `rspade:site-locks`, `rspade:task-commands`, `rspade:locks-and-subprocesses`, `rspade:event-hooks`, `rspade:realtime`.

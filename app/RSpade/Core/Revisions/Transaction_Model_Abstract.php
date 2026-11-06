@@ -16,8 +16,20 @@ use App\RSpade\Core\Session\Ip_Address;
  *
  * A "run" is whatever the framework treats as one unit of work: a web request, one call
  * inside an Ajax batch, one background task, one CLI invocation, one test. The row is
- * minted LAZILY by Revision::transaction_id() on the first revisioned write, so a request
- * that changed nothing leaves nothing behind.
+ * minted LAZILY by Revision::transaction_id() on the first revisioned write, so a unit
+ * that changed nothing leaves nothing behind - except a WRITER REQUEST (#[Writer], or a
+ * #[Manual_Lock] that took a site write lock), whose row the site lock boundary mints
+ * eagerly inside its transaction: every committed writer request has one.
+ *
+ * THE WRITER REQUEST HISTORY (Request_History) lives on the same row: request_ref (the
+ * client's _request_ref, kept with a successful answer), request_fingerprint (sha256 of the
+ * canonical validated params), request_payload (what was sent, redacted and capped),
+ * response_status / response_body (the answer as sent, kept only with a reference),
+ * duration_ms and completed_at. The payload and response columns are nulled after
+ * rsx.request_history.payload_retention_days (Revision_Cleanup_Service::
+ * prune_request_payloads()); request_history_held is a VIRTUAL column, true while any of
+ * the three still holds a value, indexed so the prune reads only the rows it owes. A
+ * replay's identity is (site_id, actor_type, actor_id, request_ref), UNIQUE.
  *
  * WHY THE GROUPING EXISTS. A revision on its own answers "this field changed". The
  * question an activity screen actually asks is "what did that one action change" - a
@@ -50,13 +62,21 @@ use App\RSpade\Core\Session\Ip_Address;
  * @property int $actor_type
  * @property int $api_request_log_id
  * @property int $audit_session_id
+ * @property string $completed_at
  * @property string $created_at
  * @property int $created_by_id
  * @property int $created_by_type
  * @property string $description
+ * @property int $duration_ms
  * @property string $endpoint
  * @property int $id
  * @property int $ip_address_id
+ * @property string $request_fingerprint
+ * @property int $request_history_held
+ * @property string $request_payload
+ * @property string $request_ref
+ * @property string $response_body
+ * @property int $response_status
  * @property int $revision_count
  * @property int $site_id
  * @property int $source_id
@@ -99,6 +119,14 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
     public static $unbounded = true;
 
     protected $table = '_transactions';
+
+    /**
+     * What a request was sent and what it answered are kept to serve a replay and for
+     * debugging, never shown: a screen that lists transactions reads the columns it needs.
+     *
+     * @var string[]
+     */
+    public static $neverExport = ['request_payload', 'response_body'];
 
     protected $fillable = []; // No mass assignment - always explicit
 

@@ -8,6 +8,7 @@
 namespace App\RSpade\Sys\App\Sys;
 
 use Illuminate\Http\Request;
+use App\RSpade\Core\Auth\RsxAuth;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
@@ -53,7 +54,8 @@ class _Sys_Impersonation_Controller extends _Sys_Endpoint_Controller_Abstract
      *   refused, and the impersonation is left exactly as it is - ending it is that
      *   code's business.
      * - Otherwise: Session::stop_impersonation(), the site stored at begin is restored
-     *   and forgotten, and the redirect lands on /_sys/users/<impersonated id>.
+     *   (RsxAuth::enter_site() - a page route takes no automatic lock) and forgotten, and
+     *   the redirect lands on /_sys/users/<impersonated id>.
      */
     #[Route('/_sys/stop-impersonating', methods: ['GET'])]
     public static function stop(Request $request, array $params = [])
@@ -74,7 +76,7 @@ class _Sys_Impersonation_Controller extends _Sys_Endpoint_Controller_Abstract
         Session::forget_value(self::RETURN_SITE_KEY, 'staff');
 
         if ($return_site_id !== null) {
-            Session::set_site_id((int) $return_site_id);
+            RsxAuth::enter_site((int) $return_site_id);
         }
 
         return redirect(Rsx::Route('_Sys_User_View_Action', $impersonated_login_user_id));

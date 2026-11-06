@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\Sms;
 
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Mail\Rsx_Test_Recipients;
 use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
@@ -43,7 +44,7 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
         // THE DRAIN SERVES EVERY SITE, exactly as the mail drain does: one queue, one
         // consumer, and a worker's declared site says nothing about which messages are due.
         $summary = null;
-        $task->state(Sms_Queue_Model::without_site_scope(function () use ($task, &$summary) {
+        $drain = function () use ($task, &$summary) {
             $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'test' => 0, 'reclaimed' => 0];
 
             if (Rsx_Sms::delivery_mode() === Rsx_Sms::MODE_DISABLED) {
@@ -116,7 +117,14 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 : "Done: {$counts['suppressed']} SMS message(s) recorded as suppressed, {$counts['test']} test.");
 
             return $counts;
-        }));
+        };
+
+        // Queue bookkeeping: a row's status columns are the drain's own, no user edits them,
+        // and the drain must never wait behind - or hold back - a tenant's writers.
+        $task->state(Site_Lock::bypass_all_sites(
+            'the SMS queue drain records delivery status on the queued rows of every site',
+            fn () => Sms_Queue_Model::without_site_scope($drain)
+        ));
 
         $task->summary($summary);
 
@@ -136,7 +144,10 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
         $task->status("Deleting SMS records older than {$days} days");
 
         // Every site's rows age out on the same clock: retention is install policy.
-        $deleted = Sms_Queue_Model::without_site_scope(fn () => Sms_Queue_Model::cleanup_old($days));
+        $deleted = Site_Lock::bypass_all_sites(
+            'SMS queue retention deletes the rows of every site past their retention window',
+            fn () => Sms_Queue_Model::without_site_scope(fn () => Sms_Queue_Model::cleanup_old($days))
+        );
         $task->stdout($deleted > 0
             ? "Deleted {$deleted} SMS record(s) older than {$days} days."
             : "No SMS records are older than {$days} days; nothing deleted.");

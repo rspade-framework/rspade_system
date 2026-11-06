@@ -734,6 +734,26 @@ with `ERROR_VALIDATION`, `ERROR_NOT_FOUND`, `ERROR_UNAUTHORIZED`,
 **Unhandled errors already log and already surface to the user**, so catch only
 what you specifically handle. Blanket try/catch is a bug here, not caution.
 
+**An endpoint is a reader unless it says it writes.** Every call holds its site's
+lock for as long as it runs: a reader the site's read lock (readers run together),
+an endpoint marked `#[Writer]` the site's write lock and one database transaction,
+committed when it returns and rolled back if it throws. Inside a writer nothing
+else changes the site, so read-then-write needs no re-check, retry or lock of your
+own — the serialization is a guarantee to design against. A reader that saves a
+site-scoped model fails loudly naming the endpoint, so a missing `#[Writer]` shows
+up the first time the code runs:
+
+```php
+#[Ajax_Endpoint]
+#[Writer]                                      // it saves
+public static function save(Request $request, array $params = []) { /* ... */ }
+```
+
+**Endpoints return right away.** A pass over thousands of records, an export, a
+large aggregation is handed to a background task (section 17): a slow endpoint
+holds its site's lock, and every writer on the site waits behind it.
+`rsx:man site_locks`.
+
 You can call an endpoint from the command line, which is invaluable when
 debugging:
 
@@ -839,6 +859,7 @@ class Frontend_Clients_Controller extends Rsx_Controller_Abstract
 {
     #[Ajax_Endpoint]
     #[Auth('can_manage_clients')]                    // method-level is ADDITIVE
+    #[Writer]
     public static function save(Request $request, array $params = []) { }
 }
 ```
@@ -944,19 +965,26 @@ page can show live with `<Task_Status_Badge>`, `<Task_Report>` and `<Task_Output
 once the application's task gates let the viewer see it. One cron entry drives the
 whole system.
 
-**Tasks run concurrently and unguarded.** There is no automatic application lock:
-several workers may run at once, and a task shares tables with web requests and
-other tasks. `#[Exclusive]` and `#[Debounce(seconds)]` guard one task against
-*itself*, not a shared table against other writers — for that, take a lock:
+**A task takes its own site locks, one item at a time.** A task gets no automatic
+lock: several workers run at once, and a task shares tables with web requests and
+other tasks. Its writes to site-scoped models go inside a write section per item,
+which re-reads the record — it may have changed since the list was read:
 
 ```php
-$token = RsxLocks::named_write_lock('client_import');
-try   { /* critical section */ }
-finally { RsxLocks::release_lock($token); }
+foreach ($invoice_ids as $id) {
+    Site_Lock::write($site_id, function () use ($id) {
+        $invoice = Invoice_Model::find($id);     // re-read inside the section
+        $invoice->status_id = Invoice_Model::STATUS_SENT;
+        $invoice->save();
+    }, "Send invoice {$id}");
+}
 ```
 
-Always release in a `finally`. A lock is held until you release it or your process
-dies — there is no lease and no TTL.
+A write outside a section fails loudly. Artisan commands and `system/script.php`
+scripts follow the same rule. `#[Exclusive]` and `#[Debounce(seconds)]` guard one
+task against *itself*; other shared state takes a named lock
+(`RsxLocks::named_write_lock()`, released in a `finally` — no lease, no TTL).
+`rsx:man site_locks`, `rsx:man locks`.
 
 ---
 
@@ -987,8 +1015,12 @@ the first non-null answer wins. `rsx:man event_hooks`.
 **The external API.** Static methods marked `#[Api_Endpoint]` on a class
 extending `Rsx_Api_Controller_Abstract`, with a path under `/api/vN/`. Auth is
 bearer-token only, which produces a cookie-less headless session — so site
-scoping applies automatically and you never hand-write a `site_id` clause. Live
-docs and a tester at `/apidocs`. `rsx:man external_api`.
+scoping applies automatically and you never hand-write a `site_id` clause. Every
+response body is a JSON object (a list goes inside one; "done" is
+`{"result": "success"}`) carrying `_duration_ms` and `_completed_at`, a writer
+declares `#[Writer]` exactly as an Ajax endpoint does, and a client may name a
+write with `_request_ref` so a retry is answered instead of run twice. Live
+docs and a tester at `/apidocs`. `rsx:man external_api`, `rsx:man request_history`.
 
 **The client portal.** A second authenticated experience for your customers,
 running parallel to the staff app with its own dispatcher, routing and permission

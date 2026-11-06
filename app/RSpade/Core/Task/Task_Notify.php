@@ -69,6 +69,17 @@ class Task_Notify
             return;
         }
 
+        // AFTER THE COMMIT. A run row written inside a database transaction (Task::dispatch()
+        // from a #[Writer] endpoint or a Site_Lock::write() section) does not exist for anyone
+        // else until it commits - and never does if it rolls back. The frames wait for the
+        // outermost commit and are dropped with a rollback (DB::afterCommit() runs at once
+        // when no transaction is open), so a watcher is never told about a run it cannot read.
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit(fn () => static::lifecycle($task_id));
+
+            return;
+        }
+
         static::__send('Task_Changed_Topic', ['id' => $task_id]);
 
         // A task-table read, which THE RULE allows under a pool lock.

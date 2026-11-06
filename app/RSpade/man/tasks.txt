@@ -59,15 +59,24 @@ DESCRIPTION
     keyed to it. A task WRITES all of it through its Task_Instance; outside code READS it
     through Task_Run_Model and acts on the run through the lifecycle methods.
 
-    THE ONE KEY POINT: TASKS RUN CONCURRENTLY AND UNGUARDED
-    -------------------------------------------------------
-    NOTHING takes a global application lock - not artisan, not task workers, and not web
-    requests. Multiple workers run at the same time, and a task shares the database with
-    concurrent web requests and other tasks. Therefore:
+    THE ONE KEY POINT: A TASK TAKES ITS OWN SITE LOCKS, PER ITEM
+    ------------------------------------------------------------
+    A task body takes NO automatic lock and no automatic transaction - there is no global
+    application lock - but it runs inside a site lock ENFORCEMENT WINDOW: a save() or
+    delete() of a Site_Scoped model fatals unless the task holds that site's write lock
+    (rsx:man site_locks). Multiple workers run at the same time, and a task shares the
+    database with concurrent web requests and other tasks. Therefore:
 
-      * A #[Task] method MUST NOT assume it is the only writer, or that only one kind of
-        task runs at a time. If a critical section cannot tolerate a concurrent writer,
-        the task acquires its own lock (RsxLocks, see LOCKS).
+      * A task writes inside one Site_Lock::write($site_id, fn () => ...) section PER ITEM,
+        and RE-READS the record inside the section - it may have changed or gone since the
+        list was read. Inside the section nothing else writes the site, so the read and
+        the write it decides need no re-check. Between sections other writers run: a task
+        never holds a site for its whole run.
+      * A maintenance pass that tolerates concurrent writers (a queue drain, a retention
+        sweep) writes inside Site_Lock::bypass($site_id, '<reason>', fn () => ...), or
+        Site_Lock::bypass_all_sites('<reason>', fn () => ...) when it walks every tenant.
+      * A #[Task] method MUST NOT assume it is the only kind of task running. A critical
+        section that is not one site's data takes a named lock (RsxLocks, see LOCKS).
       * #[Exclusive] / #[Debounce] guarantee single-instance for ONE identity - they do
         NOT protect a shared table from OTHER tasks or from web writers. Use a named or
         per-site lock for that. A group of TASKS that must never overlap each other
@@ -437,6 +446,18 @@ STARTING A RUN
        one, and the cron tick covers the rest. Called inside a database transaction, the
        worker (and the task daemon's poke) waits for the transaction to COMMIT - a worker
        started sooner could not see the uncommitted row - and a rollback starts nothing.
+       So a #[Writer] endpoint dispatches freely: the run starts after the endpoint's
+       commit, or never. A coalesced #[Exclusive]/#[Debounce] dispatch from inside a
+       writer may leave a second pending run (a concurrent dispatch cannot see the first
+       until the commit); the identity runs one at a time, so that is safe to repeat.
+
+       THE ARCHITECTURE PRINCIPLE. An Ajax or API endpoint executes and returns right
+       away; data-processing or export-shaped work (a pass over thousands of records,
+       encoding, compression, a large aggregation, building a file) is dispatched here.
+       The endpoint validates, dispatches and returns the run's handle; the caller waits
+       for the run and fetches the result through the feature's own endpoint. Every
+       request holds its site's lock for its whole handler (rsx:man site_locks), so a slow
+       endpoint holds back every writer on the site.
        A process that called Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
        SPAWNING OFF and TESTING).
 
@@ -654,7 +675,7 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 
 LOCKS: PROTECTING CRITICAL SECTIONS
 
-    Because tasks are unguarded and concurrent, a task that must serialize a critical
+    Because tasks run concurrently, a task that must serialize a critical
     section acquires its own lock. RsxLocks provides cluster reader/writer locks served by
     the rsx-lockd daemon. Every acquire returns a token; release it with
     RsxLocks::release_lock($token) in a finally.
@@ -678,10 +699,28 @@ LOCKS: PROTECTING CRITICAL SECTIONS
     AND named on its stderr and in a [WORKER] log warning - that is a defect in the task.
     An inline run keeps its caller's locks.
 
-    THE AUTOMATIC PER-TENANT WRITE LOCK IS CURRENTLY DISABLED (backlog B-87). A task that
-    wants tenant-wide exclusivity asks for RsxLocks::site_write_lock($site_id) - and for a
-    long sync, import or reindex, holding it blocks every web write to that tenant for the
-    whole run. Backlog B-85 tracks making that choice an explicit declaration.
+    SITE LOCKS IN A TASK. A task's writes to site-scoped models go in
+    Site_Lock::write($site_id, fn () => ...) sections, one per item, re-reading the record
+    inside; the section commits its own transaction before releasing the lock. Never hold
+    one section across a long sync, import or reindex: it blocks every web write to that
+    tenant for the whole run. #[Writer] / #[Reader] / #[Manual_Lock] on a #[Task] fail the
+    manifest build (SITE-LOCK-01). A transaction the body leaves open is rolled back and
+    reported on the run. A #[Run_As_Dispatcher] task follows the same rules.
+
+        foreach (Invoice_Model::where('status_id', Invoice_Model::STATUS_DUE)->pluck('id') as $id) {
+            $task->heartbeat();
+            Site_Lock::write($site_id, function () use ($id) {
+                $invoice = Invoice_Model::find($id);          // re-read inside
+                if ($invoice === null || $invoice->status_id !== Invoice_Model::STATUS_DUE) {
+                    return;                                    // changed since the list
+                }
+                $invoice->status_id = Invoice_Model::STATUS_SENT;
+                $invoice->save();
+            }, "Send invoice {$id}");
+        }
+
+    The task declares its site first (Session::set_temporary_site_id($site_id), cleared in
+    a finally; RUNNING AS THE DISPATCHER) and changes it only between sections.
 
     SPAWNING artisan from inside a task goes through Rsx_Artisan, never
     passthru/exec_safe - a subprocess is a different lock connection and would queue
@@ -1836,8 +1875,16 @@ TROUBLESHOOTING
           (TASK ACCESS AND THE BROWSER API).
 
     Two tasks corrupt shared data
-        - Tasks are unguarded and concurrent. Guard the critical section with a named or
-          per-site lock. #[Exclusive]/#[Debounce] only guard ONE identity.
+        - Site data: each read-then-write belongs in ONE Site_Lock::write() section that
+          re-reads inside it - a read outside the section followed by a write inside it
+          is not serialized. Other shared state: a named lock. #[Exclusive]/#[Debounce]
+          only guard ONE identity.
+
+    "Site lock enforcement: <Model> save on site <id> by task <Service>::<method> (run #N)
+     without site <id>'s write lock."
+        - Wrap the write in Site_Lock::write($site_id, fn () => ...), one section per
+          item, re-reading the record inside; or a reasoned Site_Lock::bypass() for a
+          pass that tolerates concurrent writers (rsx:man site_locks).
 
     "Cannot reach rsx-lockd ..." from Task::dispatch() or rsx:task:process
         - The daemon is down (rsx:health "Lock Server"; rsx:man locks). A dispatch() that
@@ -1861,6 +1908,7 @@ TROUBLESHOOTING
 SEE ALSO
     rsx:man task_commands - #[Command] and the console output contract
     rsx:man sys_panel - the Tasks and Task Workers screens of the developer console
+    rsx:man site_locks - per-item write sections, bypass, enforcement in a task body
     rsx:man locks - cluster/system locks, wait-forever timeouts, the pool daemon
     rsx:man realtime - topics, subscriptions, refresh() vs reload()
     rsx:man file_disposal - declared blob references; task attachments are one

@@ -12,7 +12,9 @@ use App\RSpade\Core\Mail\Rsx_Email_Abstract;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Test_Email;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
 use Illuminate\Console\Command;
 
@@ -66,7 +68,9 @@ class Mail_Test_Command extends Command
 
         $mode = Rsx_Mail_Transport::delivery_mode();
 
-        $record = $email->to($address)->send();
+        // The queue row belongs to this process's site (the CLI's, 0 unless Main::init()
+        // declared one) and is written under that site's write lock: a command is enforced.
+        $record = Site_Lock::write((int) Session::get_site_id(), fn () => $email->to($address)->send(), 'Test email queued');
 
         $transport_error = null;
 

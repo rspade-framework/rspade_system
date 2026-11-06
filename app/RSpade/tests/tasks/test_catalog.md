@@ -409,6 +409,7 @@ Fixture: `Task_Access_Fixture_Service` (undeclared, `dispatcher`, portal `dispat
 | task-notify-04 | nobody watching publishes nothing | registry for another run | nothing | implemented |
 | task-notify-05 | under a pool lock frames wait for flush_deferred(), once | two changes under the lock | nothing; one frame; second flush nothing | implemented |
 | task-notify-06 | a run's own writes announce themselves | report, output line, operator line | changed; output; output | implemented |
+| task-notify-14 | a lifecycle move inside a database transaction waits for the commit; a rollback sends nothing | lifecycle() inside DB::beginTransaction(), then commit; again with a rollback | nothing, then the frame at the commit; nothing after the rollback | implemented |
 
 ## Task_Spawn_Admission_Test (php, per-test transaction, live rsx-lockd) - who enters a pool, who is never started
 

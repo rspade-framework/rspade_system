@@ -211,6 +211,29 @@ return [
         'dictionary_max_age_days' => 30,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Writer request history (Core/Revisions/Request_History)
+    |--------------------------------------------------------------------------
+    |
+    | Every Ajax / external API writer request that commits records on its
+    | _transactions row what it was sent (request_payload, redacted and capped)
+    | and, when the client named it with _request_ref, what it answered
+    | (response_status, response_body) so a retry is answered from the record.
+    |
+    | - payload_retention_days: how many days those three columns are kept.
+    |   Revision_Cleanup_Service::prune_request_payloads (the maintenance hour,
+    |   #[Exclusive('maintenance')]) nulls them on older rows; the row, its
+    |   reference, fingerprint, timing and revisions are kept (they follow
+    |   rsx.revisions.retention_days). A retry of a pruned request answers 410
+    |   request_response_expired. 0 means NEVER PRUNE.
+    |
+    */
+
+    'request_history' => [
+        'payload_retention_days' => 7,
+    ],
+
 
     /*
     |--------------------------------------------------------------------------
@@ -1860,6 +1883,18 @@ return [
         // Application behavior, not deployment-specific -> config, not .env.
         'connect_retries' => 3,
         'connect_retry_delay_ms' => 1000,
+
+        // SITE LOCK HOLD-TIME WARNINGS (Site_Lock). When a site lock is RELEASED after
+        // being held longer than its threshold, a WARNING goes to the Laravel log naming
+        // the site, the holder (endpoint or task), the time held and the time spent
+        // waiting for the grant - so a slow holder and a slow queue can be told apart.
+        // Nothing is killed or capped: these are observations, never limits. Seconds,
+        // fractions allowed; 0 turns that warning off.
+        //
+        // A write lock: one writer per site at a time, every reader waits behind it.
+        'warn_write_hold_seconds' => 2,
+        // A read lock held by one request or one Site_Lock::read() section.
+        'warn_read_hold_seconds' => 2,
     ],
 
     /*

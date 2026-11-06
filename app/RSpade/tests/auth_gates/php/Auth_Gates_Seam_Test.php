@@ -15,6 +15,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Orm_Controller;
 use App\RSpade\Core\Dispatch\Dispatcher;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
@@ -533,7 +534,8 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * One synthetic surface entry.
+     * One synthetic surface entry, carrying the site lock mode the manifest build gives its
+     * kinds (Site_Lock_Directives) - every dispatcher reads it.
      */
     private static function __surface(string $realm, array $gates): array
     {
@@ -541,6 +543,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
             'kinds' => ['ajax'],
             'realm' => $realm,
             'auth' => $gates,
+            'site_lock' => Site_Lock_Directives::default_for(['ajax']),
             'file' => 'fixture/seam.php',
             'member' => 'fixture',
         ];

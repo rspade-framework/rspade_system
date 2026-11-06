@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\InitialUser\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Env\Rsx_Initial_User;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\InitialUser\Php\Initial_User_Fixture_Handler;
@@ -168,6 +169,27 @@ class Initial_User_Test extends Rsx_Test_Abstract
             $payload['source'],
             'the payload names the path that created the account'
         );
+    }
+
+    public static function test_the_account_and_its_handlers_are_one_write_section_on_the_initial_site()
+    {
+        static::__clear_initial_user();
+
+        Initial_User_Fixture_Handler::reset();
+        Initial_User_Fixture_Handler::$recording = true;
+
+        Rsx_Initial_User::create('locked@rspade.test', 'a-password-nobody-uses', [
+            'site_id' => 1,
+            'source' => Rsx_Initial_User::SOURCE_MANUAL,
+        ]);
+
+        Initial_User_Fixture_Handler::$recording = false;
+        $held = Initial_User_Fixture_Handler::$held[0] ?? null;
+
+        static::__assert_not_null($held, 'the handler ran holding a site lock');
+        static::__assert_equals([1, Site_Lock::MODE_WRITE], [$held['site_id'], $held['mode']], "the handler ran under site 1's write lock");
+        static::__assert_contains('Create the initial user', $held['label'], 'the lock is the create() write section');
+        static::__assert_null(Site_Lock::_held(), 'the lock is released when create() returns');
     }
 
     public static function test_env_seed_is_a_no_op_once_an_account_exists()

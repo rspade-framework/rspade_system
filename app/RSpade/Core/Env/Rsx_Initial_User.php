@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Env;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Env\Rsx_Tenancy;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Rsx;
@@ -92,6 +93,13 @@ class Rsx_Initial_User
      * are null, and is_logged_in() is false. Nobody has signed in; the account
      * has only just come into existence. Use the payload's 'user' for authorship
      * rather than reading it from the session.
+     *
+     * THE HANDLER RUNS UNDER THE SITE'S WRITE LOCK. create() writes the account and
+     * fires this event inside one Site_Lock::write() section on the founding site, so a
+     * handler's writes to that site's site-scoped models need no lock of their own and
+     * commit (or roll back) with the account. A handler never changes the site and never
+     * locks another site in it (one site's lock at a time); slow work goes to a task,
+     * which starts after the commit.
      */
     public const EVENT_CREATED = 'user.initial.created';
 
@@ -153,49 +161,76 @@ class Rsx_Initial_User
         // created the founding account.
         Session::set_temporary_site_id($site_id);
 
-        // Every field assigned explicitly - never mass assignment, so what this
-        // writes is visible here rather than inferred from an array.
-        $login_user = new Login_User_Model();
-        if ($connection_name !== null) {
-            $login_user->setConnection($connection_name);
+        // THE WRITE LOCK. The account and everything the user.initial.created handlers
+        // write for the founder are one write section on the initial site
+        // (Site_Lock::write()): the site's write lock, one transaction committed before the
+        // lock is released. A handler's site-scoped writes are therefore covered from any
+        // caller - the first-run screen (outside every request window), migrate, the test
+        // baseline seed, an operator command - and whatever a caller does after create()
+        // returns (the first-run screen's sample-data dispatch) starts after the commit.
+        $create = function () use ($connection_name, $email, $password, $options, $site_id, $source): User_Model {
+            // Every field assigned explicitly - never mass assignment, so what this
+            // writes is visible here rather than inferred from an array.
+            $login_user = new Login_User_Model();
+            if ($connection_name !== null) {
+                $login_user->setConnection($connection_name);
+            }
+            $login_user->incrementing = false;
+            $login_user->id = self::INITIAL_USER_ID;
+            $login_user->email = $email;
+            $login_user->password = Hash::make($password);
+            $login_user->is_activated = 1;
+            $login_user->is_verified = 1;
+            $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
+            // The first account on an installation belongs to whoever is building it.
+            $login_user->is_developer = 1;
+            $login_user->save();
+            $login_user->incrementing = true;
+
+            $user = new User_Model();
+            if ($connection_name !== null) {
+                $user->setConnection($connection_name);
+            }
+            $user->incrementing = false;
+            $user->id = self::INITIAL_USER_ID;
+            $user->login_user_id = $login_user->id;
+            $user->site_id = $site_id;
+            $user->email = $email;
+            $user->first_name = $options['first_name'] ?? self::DEFAULT_FIRST_NAME;
+            $user->last_name = $options['last_name'] ?? self::DEFAULT_LAST_NAME;
+            $user->role_id = array_key_exists('role_id', $options) ? $options['role_id'] : null;
+            $user->is_enabled = 1;
+            $user->save();
+            $user->incrementing = true;
+
+            // Handlers run INLINE, in whatever request or command created the account.
+            Rsx::trigger_action(self::EVENT_CREATED, [
+                'user' => $user,
+                'login_user' => $login_user,
+                'site_id' => $site_id,
+                'source' => $source,
+            ]);
+
+            return $user;
+        };
+
+        // A named connection is the database being written - the test baseline seed writes
+        // the 'test' connection while the default is still the development database. The
+        // section runs with it as the default, so the lock is that database's site lock
+        // (RsxLocks scopes every lock by the default connection's database), the section's
+        // transaction is on it, and a handler's own models land in it.
+        if ($connection_name !== null && $connection_name !== DB::getDefaultConnection()) {
+            $previous_connection = DB::getDefaultConnection();
+            DB::setDefaultConnection($connection_name);
+
+            try {
+                return Site_Lock::write($site_id, $create, 'Create the initial user');
+            } finally {
+                DB::setDefaultConnection($previous_connection);
+            }
         }
-        $login_user->incrementing = false;
-        $login_user->id = self::INITIAL_USER_ID;
-        $login_user->email = $email;
-        $login_user->password = Hash::make($password);
-        $login_user->is_activated = 1;
-        $login_user->is_verified = 1;
-        $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
-        // The first account on an installation belongs to whoever is building it.
-        $login_user->is_developer = 1;
-        $login_user->save();
-        $login_user->incrementing = true;
 
-        $user = new User_Model();
-        if ($connection_name !== null) {
-            $user->setConnection($connection_name);
-        }
-        $user->incrementing = false;
-        $user->id = self::INITIAL_USER_ID;
-        $user->login_user_id = $login_user->id;
-        $user->site_id = $site_id;
-        $user->email = $email;
-        $user->first_name = $options['first_name'] ?? self::DEFAULT_FIRST_NAME;
-        $user->last_name = $options['last_name'] ?? self::DEFAULT_LAST_NAME;
-        $user->role_id = array_key_exists('role_id', $options) ? $options['role_id'] : null;
-        $user->is_enabled = 1;
-        $user->save();
-        $user->incrementing = true;
-
-        // Handlers run INLINE, in whatever request or command created the account.
-        Rsx::trigger_action(self::EVENT_CREATED, [
-            'user' => $user,
-            'login_user' => $login_user,
-            'site_id' => $site_id,
-            'source' => $source,
-        ]);
-
-        return $user;
+        return Site_Lock::write($site_id, $create, 'Create the initial user');
     }
 
     /**

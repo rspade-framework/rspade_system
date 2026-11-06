@@ -2,32 +2,25 @@
 
 namespace App\RSpade\Tests\Locks\Php;
 
-use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * RsxLocks::_checkpoint() / _release_since() - bounding a unit of work inside one process.
  *
- * WHY THIS EXISTS. An ordinary application lock is held until the PROCESS exits: nothing
- * in a request ever releases the site write lock that the first `save()` took, because a
- * request IS the unit of work and its end is process-shaped. A task WORKER breaks that
- * assumption - one long-lived process runs many unrelated tasks back to back, so without
- * an explicit boundary the first task to touch a tenant would hold that tenant's write
- * lock against the whole cluster for the worker's entire lifetime, and every later task
- * in the same worker would silently inherit exclusivity it never asked for.
+ * WHY THIS EXISTS. A lock nobody released is held until the PROCESS exits. A task WORKER
+ * is one long-lived process running many unrelated tasks back to back, so without an
+ * explicit boundary a lock one task leaked would be held against the whole cluster for the
+ * worker's entire lifetime, and every later task in the same worker would silently inherit
+ * exclusivity it never asked for.
  *
  * The contract these tests pin down:
  *   - locks taken AFTER a checkpoint are released by _release_since();
  *   - locks held BEFORE it are not touched (the worker's own locks survive);
  *   - reentrancy counts are flattened, so a task that nested acquires still lets go;
- *   - the site-lock registry is purged in step, or the next task would believe it still
- *     holds a lock that has been released and would write to the tenant holding nothing;
  *   - each released lock is REPORTED, because a task ending with a lock is a defect.
  *
- * Sole production caller: Task_Worker_Command::execute_task(). See backlog B-85 for the
- * open policy question this exposed (a task should DECLARE whether it wants the site lock
- * at all, rather than acquiring one implicitly on its first write).
+ * Sole production caller: Task_Runner::execute() for a worker run.
  */
 class Lock_Checkpoint_Test extends Rsx_Test_Abstract
 {
@@ -92,30 +85,6 @@ class Lock_Checkpoint_Test extends Rsx_Test_Abstract
         );
     }
 
-    public static function test_release_since_purges_the_site_lock_registry()
-    {
-        $checkpoint = RsxLocks::_checkpoint();
-
-        // Take the site lock the way the ORM does, and register it the way the ORM does.
-        $site_id = 987655;
-        $token = RsxLocks::site_write_lock($site_id);
-        Rsx_Site_Model_Abstract::_forget_site_lock_tokens([]);   // no-op; proves it is safe
-
-        RsxLocks::release_lock($token);
-
-        // The real assertion: _forget_site_lock_tokens() drops entries by TOKEN and leaves
-        // everything else alone, so a purge can never release the wrong site's lock.
-        Rsx_Site_Model_Abstract::_forget_site_lock_tokens([$token]);
-
-        $reacquired = RsxLocks::site_write_lock($site_id);
-        static::__assert_true(
-            RsxLocks::release_lock($reacquired),
-            'the site lock is acquirable again after the registry purge'
-        );
-
-        RsxLocks::_release_since($checkpoint);
-    }
-
     public static function test_release_since_is_a_no_op_when_nothing_was_taken()
     {
         $checkpoint = RsxLocks::_checkpoint();
@@ -130,6 +99,5 @@ class Lock_Checkpoint_Test extends Rsx_Test_Abstract
         foreach (['rsxtest_cp_after', 'rsxtest_cp_worker', 'rsxtest_cp_task', 'rsxtest_cp_nested'] as $name) {
             RsxLocks::force_clear_lock(RsxLocks::CLUSTER_LOCK, $name);
         }
-        RsxLocks::force_clear_lock(RsxLocks::CLUSTER_LOCK, RsxLocks::LOCK_SITE_PREFIX . '987655');
     }
 }

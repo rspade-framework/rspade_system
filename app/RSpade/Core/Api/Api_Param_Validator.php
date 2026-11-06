@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
+use App\RSpade\Core\Revisions\Request_History;
 use App\RSpade\Core\Turnstile\Rsx_Turnstile;
 
 /**
@@ -58,6 +59,19 @@ class Api_Param_Validator
             // as a typo'd parameter - and it is not copied into $params below either
             // (those are built from the declared specs alone).
             if ($key === Rsx_Turnstile::FIELD) {
+                continue;
+            }
+
+            // The request history's system parameter (Request_History) is accepted on every
+            // endpoint and never copied into $params: the dispatcher reads it off the raw
+            // input. Only its shape is checked here, with the declared params.
+            if ($key === Request_History::REF_PARAM) {
+                $problem = Request_History::ref_problem($value);
+
+                if ($problem !== null) {
+                    $fields[$key] = ucfirst($problem);
+                }
+
                 continue;
             }
 

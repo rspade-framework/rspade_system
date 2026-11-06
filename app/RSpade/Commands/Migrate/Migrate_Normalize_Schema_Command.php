@@ -41,6 +41,9 @@ use Illuminate\Support\Facades\Schema;
  */
 class Migrate_Normalize_Schema_Command extends Command
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'the schema pass of the migrate pipeline: raw DDL, outside every window';
+
     protected $signature = 'migrate:normalize_schema {--production : Run in production mode, skipping snapshot requirements}';
 
     protected $description = 'Normalizes database schema by standardizing data types, character encodings, and adding required columns';

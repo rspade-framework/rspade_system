@@ -239,9 +239,15 @@ THE DISPATCH PIPELINE
         before the action. A non-null return from either halts dispatch and
         becomes the response. Neither performs authorization.
 
-    15. Action. The static method is invoked as $class::$method($request,
-        $params). Its return value is passed to response building, after the
-        rsx.post_dispatch event (rsx:man event_hooks).
+    15. Action, at the SITE LOCK BOUNDARY. A route takes no automatic site lock
+        unless it declares #[Reader] or #[Writer] (#[Manual_Lock]: none, the
+        action takes its own); a #[Writer] route holds the site's write lock and
+        one transaction from here through post_dispatch and response building,
+        committed before the release. The static method is invoked as
+        $class::$method($request, $params) inside an ENFORCEMENT WINDOW - a
+        site-scoped write in it needs the site's write lock, whatever the mode
+        (rsx:man site_locks). Its return value is passed to response building,
+        after the rsx.post_dispatch event (rsx:man event_hooks).
 
     16. Response build + transform. The return value becomes an HTTP response
         (see RETURN VALUES AND RESPONSES); the FPC header is added if step 11
@@ -377,6 +383,20 @@ MAIN HOOKS
     portal's /rsx/portal_main.php (Portal_Main_Abstract) has the same two hooks,
     called the same way for a portal request, plus init() (see step 1 of THE
     DISPATCH PIPELINE).
+
+    HOOKS RUN UNLOCKED BUT CHECKED. init(), both pre_dispatch hooks (Main's and
+    the controller's) and unhandled_route() run with NO site lock, on every
+    channel - the request's own lock is taken after them, around the handler
+    only - but inside an enforcement window: a write to a Site_Scoped model
+    there fatals unless the hook wraps it in Site_Lock::write($site_id, fn ()
+    => ...), opens a Site_Lock::bypass(), or the model is #[Site_Lock_Exempt]
+    (a "last seen" column written on every request is the case that attribute
+    exists for). A hook must hand over clean: a site lock it still holds or a
+    transaction it left open is released / rolled back and the request fails
+    naming the hook. The site may be set in a hook (init() declaring the
+    tenant), never under a lock. #[Writer] / #[Reader] / #[Manual_Lock] on a
+    hook fail the build (SITE-LOCK-01). rsx:man site_locks, THE REQUEST
+    BOUNDARY.
 
 ROUTE MATCHING
     Supported pattern syntax (RouteResolver):
@@ -592,6 +612,7 @@ RSX VS LARAVEL
       freezes env() and breaks RSX runtime configuration.
 
 SEE ALSO
+    rsx:man site_locks          (the site lock boundary; hooks unlocked but checked)
     rsx:man auth_gates          (the #[Auth] gate system)
     rsx:man spa                 (client-side SPA routing / actions)
     rsx:man external_api        (/api/vN external REST dispatch)

@@ -179,9 +179,17 @@ ENDPOINTS
           task does. A #[Run_As_Dispatcher] task is refused: a companion is not a
           person a dispatcher run can stand in for.
         - rsx.post_dispatch fires after the method, with raw_input beside params.
+        - THE SITE LOCK. An endpoint is a READER of its site unless it declares
+          #[Writer] (the site's write lock and one transaction, committed after
+          the response is built; a throw rolls it back) or #[Manual_Lock] (no
+          automatic lock; the method takes Site_Lock::write() sections itself).
+          A reader that saves a site-scoped model fails with "Site lock
+          enforcement: ..." (rsx:man site_locks). Return right away; slow work
+          goes to a task.
 
-    THE ANSWER, as an external API endpoint answers: an array, a model or a
-    collection is 200 JSON; null is 204; an Rsx_Api helper (Rsx_Api::error(),
+    THE ANSWER, built by the external API's serializer: an array, a model or a
+    collection is 200 JSON; null is 204 (the external API's object-only rule is
+    not applied here); an Rsx_Api helper (Rsx_Api::error(),
     validation_error(), not_found()) answers its own status; abort(404) and the
     Ajax*Exception family map to not_found / forbidden / unauthenticated. An
     unexpected throw is 500 internal_error with an error_id, logged. Never answer 503
@@ -782,6 +790,7 @@ SEE ALSO
     rsx:man event_hooks - companion.error and the two companion gates
     rsx:man revisions - the companion source
     rsx:man locks - rsx-lockd, which elects single-instance companions
+    rsx:man site_locks - readers by default, #[Writer] / #[Manual_Lock] on an endpoint
     rsx:man caching - the Redis database map
     rsx:man server_sizing - RSPADE_RESERVED_MB
     rsx:man config_rsx - rsx.companions

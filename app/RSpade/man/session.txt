@@ -112,10 +112,32 @@ SIGNING IN AND OUT
         session (and any portal sign-in on it); the staff realm's session
         values are cleared. Portal_Session::logout() is the portal twin.
 
+    RsxAuth::enter_site(int $site_id)
+        THE way a sign-in, a site switch or an impersonation moves the
+        browser onto a site: takes that site's WRITE lock, sets the session's
+        site (set_site_id() underneath), writes the sign-in's site-scoped
+        records (the user session for the site, the site sign-in history
+        row), commits, releases; a throw rolls all of it back. Refused while
+        this process holds any site lock or bypass. An Ajax or API endpoint
+        that calls it declares #[Manual_Lock] (no automatic lock); a page
+        route that declares no lock mode calls it as it is. Site 0 is entered
+        like any other. rsx:man site_locks, SITE CHANGES.
+
     Session::set_site_id(int $site_id)
         Move the staff sign-in to another site (a site switch keeps the
         sign-in's clocks). With nobody signed in it declares the tenant for
         this request only and writes nothing.
+
+    THE SITE NEVER CHANGES INSIDE A REQUEST HANDLER OR UNDER A LOCK.
+        set_site_id(), set_temporary_site_id(), clear_temporary_site_id(),
+        impersonate(), reset_impersonation() and Portal_Session::set_site_id()
+        THROW inside an Ajax / API / companion / page-route handler ("...
+        refused inside Ajax X::y: the framework manages a request's site, so
+        a handler never changes it"), and anywhere while a site lock or a
+        Site_Lock bypass is held. They are allowed in Main::init() and
+        pre_dispatch() (no lock is held there), and in a task or command
+        between its lock sections. In a handler, RsxAuth::enter_site() is the
+        one way.
 
     Session::set_temporary_site_id(int) / clear_temporary_site_id()
         Declare the tenant for the rest of this script, writing nothing
@@ -240,7 +262,10 @@ COMMANDS AND TASKS
         Session::set_login_user_id($login_user_id);    // writes nothing
         Session::set_site_id($site_id);
 
-    and every accessor then answers that identity. A task worker starts every
+    and every accessor then answers that identity. The site is set between
+    Site_Lock sections, never inside one; the command's site-scoped writes go
+    in Site_Lock::write($site_id, fn () => ...) sections (rsx:man
+    site_locks). A task worker starts every
     run blank. A task that is a person's request moved off the request thread
     declares #[Run_As_Dispatcher] and runs as that person - TASKS RUN AS THEIR
     DISPATCHER in part two, and rsx:man tasks.
@@ -1576,12 +1601,12 @@ IMPERSONATION
         on a Users detail (rsx:man sys_panel, IMPERSONATION) - developers only,
         never onto a developer, onto one of the identity's ACTIVE memberships.
         It stores the developer's current site as a session value
-        ('sys.impersonation.return_site'), calls set_site_id(<chosen site>)
-        and then begin_impersonation(), and loads `/`. GET
+        ('sys.impersonation.return_site'), calls RsxAuth::enter_site(<chosen
+        site>) and then begin_impersonation(), and loads `/`. GET
         /_sys/stop-impersonating (Rsx.Route('_Sys_Impersonation_Controller::stop'),
         published into every bundle) requires the IMPERSONATOR to be a
-        developer, calls stop_impersonation(), restores and forgets the stored
-        site, and lands on /_sys/users/<id>. It is the one panel route gated
+        developer, calls stop_impersonation(), restores the stored site with
+        RsxAuth::enter_site() and forgets it, and lands on /_sys/users/<id>. It is the one panel route gated
         is_logged_in rather than is_sysadmin, since the effective identity is
         not a developer while impersonating.
 
@@ -2259,6 +2284,7 @@ SYSTEM TABLES ARE PRIVATE
     extended (rsx:man database_schema_architecture).
 
 SEE ALSO
+    rsx:man site_locks        - RsxAuth::enter_site(), site changes refused under a lock
     skill rspade:session-auth - login pages, session screens, termination,
                                 impersonation, lifetimes
     skill rspade:audit-session - recording, reading and joining audit sessions

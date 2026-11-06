@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Revisions;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Revision_Cleanup_Service
@@ -25,6 +26,10 @@ use App\RSpade\Core\Task\Task_Instance;
  * config('rsx.revisions.retention_days') = 0 means KEEP FOREVER, and it is the default. A
  * history is the kind of data whose value shows up years later, so the framework does not
  * decide to throw any of it away; an operator who wants a window sets one.
+ *
+ * prune_request_payloads() is the writer request history's shorter window: it nulls a
+ * transaction's request_payload / response_status / response_body after
+ * config('rsx.request_history.payload_retention_days') (default 7) and keeps the row.
  */
 class Revision_Cleanup_Service extends Rsx_Service_Abstract
 {
@@ -106,6 +111,93 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
             'kept_forever' => false,
         ]);
         $task->summary("Deleted {$total} revision transactions older than {$retention_days} days.");
+
+        return null;
+    }
+
+    /**
+     * Null the writer request history's short-lived columns - request_payload,
+     * response_status, response_body - on _transactions rows older than
+     * config('rsx.request_history.payload_retention_days') (default 7; 0 = never prune).
+     * The row, its reference, fingerprint, timing and revisions are kept; a retry of a
+     * pruned request answers 410 request_response_expired (Request_History).
+     *
+     * Chunked UPDATEs over the request_history_held index (a virtual column true while any
+     * of the three columns holds a value), so each run touches exactly the rows it still
+     * owes work on, never the rows earlier runs already nulled. _transactions is framework
+     * bookkeeping, not a site-scoped model, and the writes are raw: nothing here is a site
+     * write, so the task needs no site lock under the task enforcement window.
+     *
+     * @param Task_Instance $task Task instance for heartbeats
+     * @param array $params Task parameters (chunk_size: rows per UPDATE, testing;
+     *                      retention_days: override the config, testing)
+     * @return null
+     */
+    #[Task('Prune request history payloads past their retention window')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
+    public static function prune_request_payloads(Task_Instance $task, array $params = [])
+    {
+        $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
+        $retention_days = (int) ($params['retention_days'] ?? config('rsx.request_history.payload_retention_days', 7));
+
+        if ($retention_days <= 0) {
+            $task->stdout('rsx.request_history.payload_retention_days is 0 - request payloads and responses are kept forever and nothing was pruned.');
+
+            $task->state([
+                'pruned' => 0,
+                'retention_days' => $retention_days,
+                'kept_forever' => true,
+            ]);
+            $task->summary('Request payloads and responses are kept forever; nothing was pruned.');
+
+            return null;
+        }
+
+        $cutoff = Rsx_Time::to_database(Rsx_Time::subtract(Rsx_Time::now_iso(), $retention_days * 86400));
+        $owed = fn () => DB::table('_transactions')->where('request_history_held', 1)->where('created_at', '<', $cutoff);
+
+        $backlog = $owed()->count();
+        if ($backlog > 0) {
+            $task->status("Pruning the request payload and response of {$backlog} transaction(s) older than {$retention_days} days");
+        }
+
+        $total = 0;
+        while (true) {
+            if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after pruning {$total} of {$backlog} transaction(s).");
+                $task->summary("Stopped after pruning {$total} of {$backlog} request payloads.");
+
+                return null;
+            }
+
+            $pruned = $owed()
+                ->limit($chunk_size)
+                ->update([
+                    'request_payload' => null,
+                    'response_status' => null,
+                    'response_body' => null,
+                ]);
+            $total += $pruned;
+            $task->progress_count($total, max($backlog, $total));
+
+            if ($pruned < $chunk_size) {
+                break;
+            }
+
+            $task->heartbeat();
+        }
+
+        $task->stdout($total > 0
+            ? "Pruned the request payload and response of {$total} transaction(s) older than {$retention_days} days."
+            : "No request payloads are older than {$retention_days} days; nothing pruned.");
+
+        $task->state([
+            'pruned' => $total,
+            'retention_days' => $retention_days,
+            'kept_forever' => false,
+        ]);
+        $task->summary("Pruned {$total} request payloads older than {$retention_days} days.");
 
         return null;
     }

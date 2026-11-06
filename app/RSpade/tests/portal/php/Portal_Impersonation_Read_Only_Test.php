@@ -28,12 +28,19 @@ class Portal_Impersonation_Read_Only_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
+    /** The baseline site the simulated portal request belongs to. */
+    private const SITE_ID = 1;
+
     /**
      * setup()/teardown() run once per CLASS; each test starts from zero counts itself.
+     *
+     * A portal request always has its site: the framework declares the one its URL resolved
+     * before anything runs, and the request boundary locks it. In-process, the test declares it.
      */
     private static function __fresh(bool $impersonating): void
     {
         Rsx_Portal::set_portal_request(true);
+        Portal_Session::set_site_id(self::SITE_ID);
         Portal_Session::cli_set_impersonator_user_id($impersonating ? 1 : null);
         Portal_Impersonation_Fixture_Controller::$reads = 0;
         Portal_Impersonation_Fixture_Controller::$writes = 0;

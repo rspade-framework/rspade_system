@@ -16,8 +16,12 @@ RESPONSE FORMATS
     All Ajax endpoints return HTTP 200 with one of these formats:
 
     Every envelope also carries "_server_time" and "_user_timezone" (the
-    client syncs its clock from them), "console_debug" when there are debug
-    messages, and "flash_alerts" when flash messages are pending.
+    client syncs its clock from them), "_duration_ms" (integer milliseconds)
+    and "_completed_at" (ISO 8601 UTC) - for a recorded writer its recorded
+    values, for a replay the originals - "_request_ref" echoed unchanged
+    whenever the call sent one, "_replayed": true on a replay (rsx:man
+    request_history), "console_debug" when there are debug messages, and
+    "flash_alerts" when flash messages are pending.
 
     Success Response
     ----------------
@@ -31,7 +35,7 @@ RESPONSE FORMATS
     -----------------------------------------
     {
         "_success": false,
-        "error_code": "validation|not_found|unauthorized|auth_required|session_expired|too_many_requests|question|generic",
+        "error_code": "validation|not_found|unauthorized|auth_required|session_expired|too_many_requests|question|request_ref_reused|request_response_expired|generic",
         "reason": "User-friendly message",
         "metadata": { /* optional, e.g., field-specific validation errors */ },
         "console_debug": [ /* optional debug messages */ ]
@@ -174,6 +178,24 @@ ERROR TYPES
 
     Full protocol: rsx:man form_conventions, the QUESTIONS section.
 
+    Ajax::ERROR_REQUEST_REF_REUSED / ERROR_REQUEST_RESPONSE_EXPIRED
+    ---------------------------------------------------------------
+    'request_ref_reused' and 'request_response_expired': a writer call
+    carrying a _request_ref this actor already used on this site. Reused: the
+    reference names a request with different parameters or another endpoint.
+    Expired: the request already ran and its stored response was pruned
+    (metadata {completed_at}). Nothing ran in either case. Raised by the
+    framework, never returned by an endpoint (rsx:man request_history).
+
+    WRITERS
+    -------
+    An endpoint is a READER of its site unless it declares #[Writer]. A writer
+    runs under the site's write lock in one transaction: a coded result the
+    endpoint RETURNS commits what it wrote; a THROWN one (or any exception)
+    rolls the whole call back. A reader that saves a site-scoped model fails
+    with a fatal "Site lock enforcement: ..." naming the endpoint (rsx:man
+    site_locks).
+
     server_error / network_error (client-side only)
     -----------------------------------------------
     network_error: server unreachable (xhr.status === 0). server_error: an
@@ -283,7 +305,8 @@ CLIENT-SIDE IMPLEMENTATION
 
         error.code       - 'validation'|'not_found'|'unauthorized'|
                            'auth_required'|'session_expired'|
-                           'too_many_requests'|'question'|'generic'|'fatal', or one the client raises
+                           'too_many_requests'|'question'|'request_ref_reused'|
+                           'request_response_expired'|'generic'|'fatal', or one the client raises
                            itself: 'php_exception' (a fatal carrying
                            file/line, for a developer caller),
                            'server_error', 'network_error'
@@ -677,3 +700,5 @@ SEE ALSO
     rsx:man model_fetch    - ORM fetch, where overlapping reads coalesce
     rsx:man config_rsx     - rsx.ajax.batching, rsx.ajax.batch_max_calls
     rsx:man proxority      - #[Priority] endpoints and /_ajax/_priority
+    rsx:man site_locks     - readers by default, #[Writer], #[Manual_Lock]
+    rsx:man request_history - _request_ref replay, timing fields

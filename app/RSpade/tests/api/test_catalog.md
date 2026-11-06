@@ -91,18 +91,18 @@ paths there are inert literals that resolve to nothing.
 | SER-NESTED | a model nested in an array is serialized | php | {meta, record} | scalar + serialized model | implemented | 2026-07-23 |
 | SER-PASSTHROUGH | scalars and null pass through | php | 'hello'/42/null | unchanged | implemented | 2026-07-23 |
 | RESP-BUILD-ARRAY | build_response(array) -> 200 JSON | php | ['ok'=>true] | 200, decoded ok | implemented | 2026-07-23 |
-| RESP-BUILD-NULL | build_response(null) -> 204 | php | null | 204 | implemented | 2026-07-23 |
+| RESP-BUILD-NULL | build_response(null) -> 204 (the companion channel's empty answer; the API refuses it, see API-RESP-OBJECT-ONLY) | php | null | 204 | implemented | 2026-11-06 |
 | RESP-BUILD-PASS | a JsonResponse flows through untouched | php | JsonResponse | same instance | implemented | 2026-07-23 |
 | RESP-BUILD-MODEL | build_response(model) -> 200 with __MODEL | php | User_Model | 200, __MODEL | implemented | 2026-07-23 |
 | RESP-BUILD-SCALAR | a bare scalar fails loud | php | 'scalar' | RuntimeException "unsupported type" | implemented | 2026-07-23 |
 | HELP-CREATED | created() is 201 with a bare body | php | ['id'=>5] | 201, no error envelope | implemented | 2026-07-23 |
-| HELP-NOCONTENT | no_content() is 204 empty | php | - | 204, empty body | implemented | 2026-07-23 |
 | HELP-NOTFOUND | not_found() is 404 error shape | php | - | 404, code not_found | implemented | 2026-07-23 |
 | HELP-UNAUTH | unauthorized() is 401 | php | - | 401, code unauthorized | implemented | 2026-07-23 |
 | HELP-FORBIDDEN | forbidden() is 403 | php | - | 403, code forbidden | implemented | 2026-07-23 |
 | HELP-VALIDATION | validation_error() is 422 with fields | php | {email:Required} | 422, fields present | implemented | 2026-07-23 |
 | HELP-ERROR | error() builds an arbitrary status, omits absent fields | php | 418 | 418, no fields key | implemented | 2026-07-23 |
 | HELP-ERROR-FIELDS | error() includes fields when present | php | 422 + fields | fields present | implemented | 2026-07-23 |
+| HELP-ERROR-ONE-SHAPE | Rsx_Api::error() is byte-identical to Api_Dispatcher::_error() | php | 418 + fields | same body and status | implemented (`Api_Response_Helpers_Test`) | 2026-11-06 |
 | HTTP-401 | unauth -> 401 error shape, no Set-Cookie | http | no bearer | 401, auth_required, no cookie | implemented | 2026-07-23 |
 | HTTP-200 | authed -> 200 bare JSON, no Set-Cookie | http | bearer GET `/api/v1/me` | 200, user_id, no success envelope, no cookie | implemented | 2026-09-08 |
 | HTTP-PUT-405 | PUT -> 405 | http | bearer + PUT | 405 | implemented | 2026-07-23 |
@@ -265,3 +265,8 @@ paths there are inert literals that resolve to nothing.
 | API-VER-OPENAPI-ONE-VERSION | document(null, N) is version N's resolved surface with info.version vN; an unknown version throws | php | version 2; version 99 | v2 rows + the unrevised v1 row only; InvalidArgumentException | implemented (`Api_Versioning_Test`) | 2026-10-06 |
 | API-VER-ROUTES-AND-USAGE | a range's v2 row dispatches to the v1 handler, and the call is recorded in _api_route_usage under v2 | php | Bearer GET of the v2 copy, probe Main | 200 from the v1 handler; one v2 usage row | implemented (`Api_Versioning_Test`) | 2026-10-06 |
 | API-ROUTE-USAGE-THROTTLE | Api_Route_Usage::record() inserts once, changes nothing inside a minute, refreshes past it; one row per pattern | php | record(); stamped -30s; stamped -2min | inserted; unchanged; refreshed; count 1 | implemented (`Api_Versioning_Test`) | 2026-10-06 |
+| SCAN-PARAM-UNDERSCORE | an #[Api_Param] name starting with '_' is refused (the system parameter namespace) | php | `_request_ref` declared | RuntimeException "reserved for system parameters" | implemented (`Api_Scan_Validation_Test`) | 2026-11-06 |
+| API-RESP-OBJECT-ONLY | an endpoint answering null, a list, an empty array, a scalar, a collection or a JSON-list response is refused as the channel's 500 naming the endpoint; an object passes; a non-JSON download is sent untouched | php | `Api_Response_Contract_Fixture_Api_Controller` | 500 `internal_error` "Every external API response body is a JSON object" + Class::method; 200 object; CSV bytes unchanged | implemented (`Api_Response_Contract_Test`) | 2026-11-06 |
+| API-RESP-TIMING | `_duration_ms` (int) and `_completed_at` (ISO UTC) at the top level of a success, a 422, a 404, a 401, a thrown 500 and a 410 | php | the contract fixture | both fields on every body | implemented (`Api_Response_Contract_Test`) | 2026-11-06 |
+| API-RESP-TIMING-REPLAY | a recorded writer's answer carries its recorded timing, and the replay of it the same values | php | POST with `_request_ref`, twice | identical `_duration_ms` / `_completed_at`; `_replayed`; one write | implemented (`Api_Response_Contract_Test`) | 2026-11-06 |
+| API-VERSION-RETIRED-410 | a path its version does not serve but another does is 410 `api_version_retired` naming those versions (`:param` patterns matched); a path no version serves, or under a version above every declared one, is 404 | php | GET /api/v2/.../old (v1 only); /api/v1/test-probe/contract/items/7/extra (v2 only); /api/v(max+1)/...; /api/v2/.../never | 410 versions [v1]; 410 [v2]; 404; 404 | implemented (`Api_Response_Contract_Test`) | 2026-11-06 |

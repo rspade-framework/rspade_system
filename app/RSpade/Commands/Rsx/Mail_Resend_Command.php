@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use Illuminate\Console\Command;
@@ -61,7 +62,15 @@ class Mail_Resend_Command extends Command
                 return 1;
             }
 
-            $outcome = Rsx_Mail::resend($record, (bool) $this->option('force'));
+            $force = (bool) $this->option('force');
+
+            // A command is enforced: the resend is a section on the row's own site's write
+            // lock, re-reading the row inside it.
+            $outcome = Site_Lock::write((int) $record->site_id, function () use (&$record, $force) {
+                $record = Email_Queue_Model::find((int) $record->id);
+
+                return Rsx_Mail::resend($record, $force);
+            }, "Email #{$id} resent");
 
             if ($outcome === Rsx_Mail::RESEND_ALREADY_QUEUED) {
                 $this->line(

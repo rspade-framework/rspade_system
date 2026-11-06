@@ -60,6 +60,9 @@ use Symfony\Component\Process\Process;
  */
 class Rsx_Test_Command extends FrameworkDeveloperCommand
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'the test runner: fixture code is unchecked; every endpoint, task and command a test drives opens its own window';
+
     /**
      * Cache format version. Bump this whenever a change to the provisioning
      * logic (schema normalization, seed data, etc.) would make the resulting

@@ -17,8 +17,8 @@ redaction, and its scan-time declaration rules all matter for correctness and se
 - `app/RSpade/Core/Api/Api_Endpoint_ManifestSupport.php` - scan-time enforcement + docblock/param baking
 - `app/RSpade/Core/Api/Api_Param_Validator.php` - standalone validate + coerce
 - `app/RSpade/Core/Api/Api_Catalog.php` - version parse / group / resolve / scope narrowing / LLM catalog
-- `app/RSpade/Core/Api/Api_Dispatcher.php` - request pipeline, serialize(), build_response()
-- `app/RSpade/Core/Api/Rsx_Api.php` - response helpers (created/no_content/error family)
+- `app/RSpade/Core/Api/Api_Dispatcher.php` - request pipeline, serialize(), build_response(), the object-only response rule, stamp_response() (timing + `_request_ref`), the 410 for a retired version
+- `app/RSpade/Core/Api/Rsx_Api.php` - response helpers (created + the error family, built by the dispatcher's one `_error()`)
 - `app/RSpade/Core/Api/Api_Key_Model.php` - `_api_keys` (generate incl. read_only/find_by_key/is_valid/set_scopes/has_malformed_scopes)
 - `app/RSpade/Core/Api/Api_Scopes.php` - the scope path grammar (validate/normalize/matches/parse_all/decide/reaches_route)
 - `app/RSpade/Core/Api/Api_Scope_Validation_Exception.php` - the one validation failure every write path throws
@@ -41,6 +41,12 @@ redaction, and its scan-time declaration rules all matter for correctness and se
 - Scan-time enforcement: bad prefix, missing route segment, non-GET/POST verb, empty
   methods, missing/duplicate/contradictory/mistyped/overflowing `#[Api_Param]`,
   conflicting attributes, base-class lineage, duplicate route pattern. (php - no DB)
+- Response contract: every body a JSON object (null / list / empty array / scalar /
+  collection / JSON-list answers refused as a 500 naming the endpoint; a non-JSON download
+  passes untouched), `_duration_ms` + `_completed_at` on every object answer (success, 422,
+  404, 401, 500, a recorded writer and its replay with identical values), 410
+  `api_version_retired` for a path only another version serves. (php - through the front
+  controller)
 - Param validation + coercion: undeclared-key rejection, required/default handling, the
   int/float/bool/string coercion matrix, compound-value rejection. (php - no DB)
 - Catalog: version parse, path-key stripping, version grouping/resolution, LLM catalog

@@ -35,7 +35,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  *   - Rsx_Site_Actor_Model_Abstract - the table carries site_id and the actor lives
  *     inside a tenant. Framework examples: User_Model, Portal_User_Model.
  *
- * Extending the site abstract installs the site global scope and site write locks, which
+ * Extending the site abstract installs the site global scope and site write lock enforcement, which
  * a cross-site identity table must not have; omitting it on a site-scoped table is a
  * cross-tenant read leak. Code that must accept EITHER kind tests both class names
  * (there is no shared interface - the manifest indexes classes, so an interface here

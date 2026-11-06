@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Database\Models;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Models\Site_Scoped;
 /**
- * Abstract base model for site-scoped models with automatic concurrency control
+ * Abstract base model for site-scoped models
  *
  * THE IMPLEMENTATION LIVES IN THE Site_Scoped TRAIT, and this class is a model that
  * adopts it and declares nothing else. Extending this class and adopting that trait
@@ -22,7 +22,7 @@ use App\RSpade\Core\Database\Models\Site_Scoped;
  * - Automatically scope queries by site_id from session
  * - Include site_id column in the database
  * - Support soft deletes when configured
- * - Provide automatic site-level database locking for write operations
+ * - Require the site's write lock for every write inside an endpoint or task (Site_Lock)
  * - Strict enforcement of site boundaries - no cross-site data access
  *
  * SITE ISOLATION:
@@ -37,19 +37,12 @@ use App\RSpade\Core\Database\Models\Site_Scoped;
  * - Portal request: the site the portal URL resolved to (Portal_Session::get_site_id;
  *   throws when there is none - a portal request has no site to guess at)
  *
- * CONCURRENCY CONTROL:
- * Site locks key on that same resolved site, so a portal request locks the portal's
- * tenant and never the staff session's:
- * - A READ-ONLY request takes NO lock at all and never contacts the lock daemon
- * - The first save() takes the CLUSTER-wide WRITE lock for that site (rsx-lockd), held
- *   until the end of the script
- * - No automatic transactions - handle manually when needed
- *
- * This prevents race conditions for critical operations like:
- * - Inventory management
- * - Auction bidding
- * - Financial transactions
- * - Any operation requiring strict consistency within a site
+ * CONCURRENCY CONTROL (Site_Lock):
+ * One readers-writer lock per site (rsx-lockd), taken at a boundary and never because a
+ * write happened. Inside an enforcement window (an endpoint handler, a task body) a save()
+ * or delete() for site X fatals unless the process holds X's write lock - a #[Writer]
+ * endpoint, or a Site_Lock::write() section, which also opens the transaction - or is inside
+ * a Site_Lock::bypass(). The enforcement lives in Site_Scoped::save() / delete().
  */
 abstract class Rsx_Site_Model_Abstract extends Rsx_Model_Abstract
 {

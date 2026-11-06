@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Auth;
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Auth\Password_Verifier;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Login_History;
@@ -262,6 +263,33 @@ class RsxAuth
         Session::set_login_user_id($login_user->id, $touch_last_login);
 
         return true;
+    }
+
+    /**
+     * Enter a site: THE call for the moment a sign-in (or a site switch, or an impersonation
+     * the panel starts) moves the browser's staff session onto $site_id.
+     *
+     * In order: takes $site_id's WRITE lock, sets the session's site (Session::set_site_id()
+     * - permitted inside this call only), writes every site-scoped record of the sign-in
+     * (the browser's user session for that site, the site sign-in history row), commits,
+     * releases. A throw rolls all of it back.
+     *
+     * Callable from a #[Manual_Lock] endpoint, a page route that declares no lock, a command,
+     * a task between its sections, or a test. Refused while this process holds any site lock
+     * or bypass: the site never changes under a lock, so a handler that enters a site takes
+     * no automatic lock - an Ajax or API endpoint declares #[Manual_Lock]. Everywhere else
+     * inside a handler window the bare site setter is refused (Site_Lock): this is the one
+     * way in.
+     *
+     * Entering the site the session is already on still takes the lock and changes nothing.
+     *
+     * @param int $site_id The site to enter (0 included: site 0 is locked and entered like any other)
+     * @return void
+     * @throws \RuntimeException While a site lock or bypass is held
+     */
+    public static function enter_site(int $site_id): void
+    {
+        Site_Lock::_enter_site($site_id, fn () => Session::set_site_id($site_id));
     }
 
     /**

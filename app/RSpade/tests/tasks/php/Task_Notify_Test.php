@@ -371,6 +371,35 @@ class Task_Notify_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * A lifecycle move inside a database transaction (a run dispatched by a #[Writer]
+     * endpoint or a write section) is told only once the transaction commits, and never
+     * when it rolls back: a watcher is never sent to a run it cannot read.
+     */
+    public static function test_a_lifecycle_move_inside_a_transaction_waits_for_the_commit()
+    {
+        static::__clean();
+        $id = static::__run()->get_id();
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $id, 1);
+
+        DB::beginTransaction();
+        Task_Notify::lifecycle($id);
+        static::__assert_equals([], static::__published(), 'nothing is sent before the commit');
+        DB::commit();
+
+        static::__assert_equals([['Task_Changed_Topic', 1, $id]], static::__published(), 'sent at the commit');
+
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $id, 1);
+
+        DB::beginTransaction();
+        Task_Notify::lifecycle($id);
+        DB::rollBack();
+
+        static::__assert_equals([], static::__published(), 'a rolled-back move is never sent');
+    }
+
+    /**
      * Under a pool lock a frame is held back (no outbound call under the lock), and
      * flush_deferred() sends each held frame once.
      */

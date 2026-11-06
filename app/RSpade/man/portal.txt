@@ -375,6 +375,10 @@ PORTAL MAIN HOOKS
     For an unmatched URL both hooks receive the query string as $params. For a
     matched route $params carries the synthetic keys _method, _route and
     _handler, exactly as in the staff realm.
+    All three hooks run with NO site lock but inside an enforcement window, as in
+    the staff realm (rsx:man dispatch, MAIN HOOKS): a per-request stamp on a
+    site-scoped row (a portal user's last activity) writes inside a reasoned
+    Site_Lock::bypass(), anything else inside a Site_Lock::write() section.
     Order: the URL's site declared (framework) -> Portal_Main::init -> CSRF ->
     dev auth -> route match -> #[Auth] gates -> Portal_Main::pre_dispatch ->
     controller pre_dispatch (if any) -> handler. A request whose address serves
@@ -692,6 +696,18 @@ PORTAL LOGIN FLOW
       Portal_Session::logout()                      signs the portal account out
                                                     (the browser survives, along
                                                     with any staff sign-in on it)
+      Site_Lock::write(Portal_Session::get_site_id(), fn () => ...)
+                                                    the lock a sign-in's writes
+                                                    take: a portal login, register
+                                                    or reset page route declares no
+                                                    lock mode, so it wraps the
+                                                    sign-in (and the records that
+                                                    go with it) in one section; an
+                                                    Ajax sign-in step (a second
+                                                    factor) declares #[Writer]. The
+                                                    portal's site comes from the
+                                                    URL, so nothing here switches
+                                                    site (rsx:man site_locks)
       Login_Redirect::capture/params/hidden_input/consume
                                                     intended-URL threading
                                                     (rsx:man login_redirect)
@@ -1243,7 +1259,9 @@ IMPERSONATION (VIEW AS CLIENT)
     Ajax endpoint runs only when it declares #[Portal_Impersonation_Readable];
     every other one is refused (ERROR_UNAUTHORIZED, "This is a read-only session;
     changes are disabled.") by Ajax::execute, after the gates and before any
-    endpoint code - both transports, batched calls included. A forgotten mark
+    endpoint code - both transports, batched calls included. The site lock mode
+    is a separate declaration: a portal write declares #[Writer] (the site's
+    write lock), and #[Portal_Impersonation_Readable] goes only on readers. A forgotten mark
     fails SAFE: the read is refused, never a write left open. Staff-realm calls
     are untouched. The mark is baked into the auth surface index at manifest
     build ('impersonation_readable').
@@ -1678,6 +1696,7 @@ NOTES
     - There is exactly one Portal_Main and one Portal_Spa_Controller per app.
 
 SEE ALSO
+    rsx:man site_locks - readers by default, #[Writer], hooks unlocked but checked
     rsx:man portal_tenancy - rsx.tenancy, the product layouts, custom domains
     rsx:man session
     rsx:man spa

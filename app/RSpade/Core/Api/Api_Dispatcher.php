@@ -13,14 +13,21 @@ use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Api\Api_Request_Log_Model;
 use App\RSpade\Core\Api\Api_Route_Usage;
 use App\RSpade\Core\Api\Api_Scopes;
+use App\RSpade\Core\Api\Request_Payload_Redactor;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Locks\Site_Lock;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
+use App\RSpade\Core\Revisions\Request_History;
+use App\RSpade\Core\Revisions\Request_History_Answer;
+use App\RSpade\Core\Revisions\Request_History_Call;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Api_Dispatcher - request pipeline for external REST API endpoints (/api/vN/...).
@@ -42,7 +49,8 @@ use App\RSpade\Core\Session\Session;
  *   6. declarative param validation against baked #[Api_Param] specs (422 per field);
  *   7. declarative #[Auth] gates (403 forbidden);
  *   8. controller invocation (no auth of its own - the controller trusts this dispatcher);
- *   9. bare-JSON response building (models serialize via toArray(); null -> 204).
+ *   9. bare-JSON response building (models serialize via toArray()); the body must be a JSON
+ *      OBJECT - see __api_response().
  *
  * EVERY request is recorded in _api_request_log (success and every failure path). A
  * CODED failure from the endpoint - abort(404), a thrown AjaxUnauthorizedException - is
@@ -50,34 +58,17 @@ use App\RSpade\Core\Session\Session;
  * Throwable is logged as a 500 row then rethrown to Rsx_Front_Controller, whose API channel
  * policy (Api_Exception_Handler) renders the JSON 500 - never an HTML error page.
  *
- * Responses are bare JSON with real HTTP status codes. Errors are {"error":{"code",
- * "message","fields"?}}. There is no {success,data} envelope.
+ * Responses are bare JSON with real HTTP status codes, and every body is a JSON object.
+ * Errors are {"error":{"code","message","fields"?}}, built only by _error(). There is no
+ * {success,data} envelope. Every object answer - success, refusal, replay, the channel's
+ * 500 - carries _duration_ms and _completed_at at its top level (stamp_response()).
+ *
+ * A path no route of its version serves, but another version does, answers 410
+ * api_version_retired naming the versions that serve it (__retired_version_response()); a
+ * path no version serves is the 404.
  */
 class Api_Dispatcher
 {
-    /**
-     * Whole-payload ceiling for the stored request body. The log is an activity record,
-     * not a copy of the traffic: a body larger than this is truncated with a marker.
-     */
-    private const LOG_BODY_MAX_BYTES = 25000;
-
-    /**
-     * Per-value ceiling inside that payload, so one enormous field cannot consume the
-     * whole budget and push every other field out of the record.
-     */
-    private const LOG_VALUE_MAX_BYTES = 4000;
-
-    /**
-     * Appended wherever a cap bit, so a truncated value is never mistaken for the value.
-     */
-    private const LOG_TRUNCATION_MARKER = '...[truncated]';
-
-    /**
-     * Keys whose VALUE is replaced with [redacted] before the body is stored. Credentials
-     * only - see _redact() for why a bare 'key' is deliberately absent.
-     */
-    private const LOG_REDACT_KEYS = '/pass(word|wd)?|secret|token|authorization|api[_-]?key|credential|private[_-]?key/i';
-
     /**
      * The key that authenticated this request; see current_key().
      */
@@ -115,6 +106,18 @@ class Api_Dispatcher
     private static ?int $_last_request_log_id = null;
 
     /**
+     * hrtime(true) at the start of THIS dispatch - the clock _duration_ms is read from - or
+     * null before one began (a failure the channel's policy renders before dispatch).
+     */
+    private static ?int $_started_ns = null;
+
+    /**
+     * The request history of THIS dispatch's writer, or null: a writer that recorded itself
+     * answers with the timing it recorded (stamp_response()).
+     */
+    private static ?Request_History_Call $_history = null;
+
+    /**
      * Dispatch an API request. Always returns a Response; never returns null.
      *
      * EXTERNAL API REQUESTS RESOLVE ONLY AGAINST DECLARED ROUTE PATTERNS. The one and only
@@ -139,8 +142,74 @@ class Api_Dispatcher
             Session::_reset_api_identity();
         }
         self::$_current_key = null;
+        self::$_started_ns = null;
+        self::$_history = null;
 
-        return self::__dispatch($url, $method, $extra_params, $request);
+        $request = $request ?? request();
+        $response = self::__dispatch($url, $method, $extra_params, $request);
+
+        return self::stamp_response($response, $request);
+    }
+
+    /**
+     * The fields every API response object carries beside its own, added at the one point
+     * every answer passes - success, refusal, replay alike, and the channel's 500
+     * (Api_Exception_Handler stamps through here too):
+     *
+     *   _duration_ms    whole milliseconds from the start of this dispatch (a failure
+     *                   rendered before dispatch began: from the start of the request)
+     *   _completed_at   ISO timestamp, UTC (Rsx_Time::now_iso()), the Ajax envelope's format
+     *   _request_ref    the request's reference, echoed unchanged whenever one was sent
+     *
+     * A writer that recorded itself in the request history answers with exactly the timing
+     * it recorded, and a replay's body already carries the original timing. A field the body
+     * already carries is left as it is. Only a JSON OBJECT body is stamped: the one other
+     * kind of answer an endpoint may give is a download (a file or streamed response, a
+     * non-JSON body), which is sent as it is.
+     *
+     * @param Response $response
+     * @param Request $request
+     * @return Response
+     */
+    public static function stamp_response(Response $response, Request $request): Response
+    {
+        if (!($response instanceof JsonResponse)) {
+            return $response;
+        }
+
+        $data = $response->getData();
+
+        if (!($data instanceof \stdClass)) {
+            return $response;
+        }
+
+        if (!property_exists($data, '_duration_ms')) {
+            $recorded = self::$_history?->recorded_timing();
+
+            if ($recorded !== null) {
+                [$duration_ms, $completed_at] = $recorded;
+            } elseif (self::$_started_ns !== null) {
+                $duration_ms = (int) round((hrtime(true) - self::$_started_ns) / 1_000_000);
+                $completed_at = Rsx_Time::now_iso();
+            } else {
+                // Rendered before any dispatch began: timed from the start of the request,
+                // as the Ajax channel times a refusal no call began (Ajax::request_refusal()).
+                $started_at = (float) $request->server('REQUEST_TIME_FLOAT', microtime(true));
+                $duration_ms = max(0, (int) round((microtime(true) - $started_at) * 1000));
+                $completed_at = Rsx_Time::now_iso();
+            }
+
+            $data->_duration_ms = $duration_ms;
+            $data->_completed_at = $completed_at;
+        }
+
+        [$ref_sent, $ref] = Request_History::api_ref($request);
+
+        if ($ref_sent && !property_exists($data, Request_History::REF_PARAM)) {
+            $data->{Request_History::REF_PARAM} = $ref;
+        }
+
+        return $response->setData($data);
     }
 
     /**
@@ -155,6 +224,8 @@ class Api_Dispatcher
             Session::_reset_api_identity();
         }
         self::$_current_key = null;
+        self::$_started_ns = null;
+        self::$_history = null;
     }
 
     /**
@@ -164,6 +235,7 @@ class Api_Dispatcher
     private static function __dispatch(string $url, string $method, array $extra_params, ?Request $request): Response
     {
         $start = hrtime(true);
+        self::$_started_ns = $start;
         $request = $request ?? request();
 
         // One API request is one unit of work for revision history. The _api_request_log row
@@ -246,10 +318,14 @@ class Api_Dispatcher
         }
 
         // --- Route match (exact, api routes only) ---
+        // A path another version serves is a retired address (410), told apart from one no
+        // version serves (404) here, after authentication like the 404 itself: an anonymous
+        // caller learns nothing about which paths exist in which version.
         $route = self::_match_route($path, $method);
         if ($route === null) {
-            $response = self::_error('not_found', 'Unknown API endpoint', 404);
-            self::_log($request, $start, $method, $path, null, 404, $api_key_id, $user_id, $site_id, $response);
+            $response = self::__retired_version_response($path, $method) ?? self::_error('not_found', 'Unknown API endpoint', 404);
+            $status = $response->getStatusCode();
+            self::_log($request, $start, $method, $path, null, $status, $api_key_id, $user_id, $site_id, $response);
 
             return $response;
         }
@@ -351,27 +427,72 @@ class Api_Dispatcher
             return $response;
         }
 
+        // THE CONTROLLER'S PRE_DISPATCH, then THE SITE LOCK BOUNDARY (Site_Lock::_run_request(),
+        // shared with Ajax, companion endpoints and page routes). Main::pre_dispatch above and
+        // the controller's pre_dispatch run with NO automatic lock, each in an enforcement
+        // window of its own (Site_Lock::_run_hook()). Then the site's lock - the key's site,
+        // fixed at authentication - is taken (with a #[Writer]'s transaction) and released
+        // after the response is built: a post_dispatch handler or a response that cannot be
+        // built rolls a writer back. The enforcement window is exactly the action. A
+        // transaction the endpoint leaves open is rolled back and fails the request. The
+        // request log row is written after the release - the commit or the rollback has
+        // already happened.
+        $label = 'API ' . $route['surface'];
+        $mode = Site_Lock::_surface_mode($route['surface']);
+
+        // THE REQUEST HISTORY (Request_History): a writer records its fingerprint, payload and
+        // timing on its _transactions row inside its transaction, keeps a sent _request_ref
+        // with a 2xx object answer, and a reference it already holds is answered from the
+        // history - a replay or a 409 / 410, thrown from inside the boundary so nothing runs
+        // and nothing is written.
+        $history = null;
+        if ($mode === Site_Lock_Directives::WRITER || $mode === Site_Lock_Directives::MANUAL) {
+            $ref = $raw[Request_History::REF_PARAM] ?? null;
+
+            $history = new Request_History_Call(
+                $mode,
+                $site_id,
+                is_string($ref) ? $ref : null,
+                Request_History::fingerprint($params),
+                Request_Payload_Redactor::capture_request($request),
+                $start
+            );
+            self::$_history = $history;
+        }
+
         try {
             $pre = method_exists($controller, 'pre_dispatch')
-                ? $controller::pre_dispatch($request, $params)
+                ? Site_Lock::_run_hook(class_basename($controller) . "::pre_dispatch() for {$label}", fn () => $controller::pre_dispatch($request, $params))
                 : null;
 
-            $result = $pre !== null ? $pre : $controller::$action($request, $params);
+            if ($pre !== null) {
+                self::__post_dispatch($request, $params, $raw, $pre);
+                $response = self::__api_response($pre, $handler);
+            } else {
+                $boundary = fn () => Site_Lock::_run_request($mode, $label, function () use ($controller, $action, $request, $params, $raw, $label, $history, $handler) {
+                    $history?->open();
 
-            // rsx.post_dispatch - fired immediately after the handler returns and before
-            // response shaping, on the SUCCESS path only (never after an exception).
-            // Handlers run INLINE and may throw; that is the point (the Turnstile
-            // completeness guard is one). Handlers must not mutate 'result'. 'params' are
-            // the VALIDATED params; 'raw_input' is what arrived before validation.
-            // See: php artisan rsx:man event_hooks
-            \App\RSpade\Core\Rsx::trigger_action('rsx.post_dispatch', [
-                'request' => $request,
-                'params' => $params,
-                'raw_input' => $raw,
-                'result' => $result,
-            ]);
+                    $result = Site_Lock::_enforce($label, fn () => $controller::$action($request, $params));
 
-            $response = self::build_response($result);
+                    self::__post_dispatch($request, $params, $raw, $result);
+
+                    $response = self::__api_response($result, $handler);
+
+                    if ($history !== null) {
+                        self::__record_history($history, $response);
+                    }
+
+                    return $response;
+                }, $site_id);
+
+                $response = $history !== null ? $history->run($boundary) : $boundary();
+            }
+        } catch (Request_History_Answer $answer) {
+            // Answered from the request history: never a fault.
+            $response = $answer->api_response();
+            self::_log($request, $start, $method, $path, $handler, $response->getStatusCode(), $api_key_id, $user_id, $site_id, $response);
+
+            return $response;
         } catch (Throwable $e) {
             // A CODED outcome (abort(404), a thrown AjaxUnauthorizedException) is an answer:
             // the JSON error for its status, logged with that status.
@@ -392,6 +513,112 @@ class Api_Dispatcher
         self::_log($request, $start, $method, $path, $handler, $status, $api_key_id, $user_id, $site_id, $response);
 
         return $response;
+    }
+
+    /**
+     * Record a writer request on its _transactions row, inside its transaction: the
+     * response's status and body; a 2xx JSON response is a SUCCESS (its reference is kept),
+     * anything else records the row without one.
+     *
+     * @param Request_History_Call $history
+     * @param Response $response
+     */
+    private static function __record_history(Request_History_Call $history, Response $response): void
+    {
+        $status = $response->getStatusCode();
+        $body = $response instanceof JsonResponse ? $response->getContent() : null;
+
+        $history->record($status, $body === false ? null : $body, $status >= 200 && $status < 300);
+    }
+
+    /**
+     * rsx.post_dispatch - fired immediately after the handler (or a halting controller
+     * pre_dispatch) returns and before response shaping, on the SUCCESS path only (never
+     * after an exception). Handlers run INLINE and may throw; that is the point (the
+     * Turnstile completeness guard is one). Handlers must not mutate 'result'. 'params' are
+     * the VALIDATED params; 'raw_input' is what arrived before validation.
+     * See: php artisan rsx:man event_hooks
+     *
+     * @param Request $request
+     * @param array $params
+     * @param array $raw
+     * @param mixed $result
+     * @return void
+     */
+    private static function __post_dispatch(Request $request, array $params, array $raw, $result): void
+    {
+        \App\RSpade\Core\Rsx::trigger_action('rsx.post_dispatch', [
+            'request' => $request,
+            'params' => $params,
+            'raw_input' => $raw,
+            'result' => $result,
+        ]);
+    }
+
+    /**
+     * The 410 for a path its own version does not serve but another version does, or null
+     * for the caller's 404: no version serves the path, or the requested version is above
+     * every version the catalogue declares (a version that never existed is not retired; a
+     * decommissioned one below the newest is, even when none of its endpoints remain).
+     *
+     * Each api_endpoints row of another version that accepts this method is tried with the
+     * request path re-addressed to that row's version, through the matcher _match_route()
+     * uses, so a ':param' segment matches exactly as it would when routed. The answer names
+     * every version that serves the path, ascending: a client of a retired version (one
+     * pinned through: an earlier version, or a path introduced later) learns where the path
+     * lives now. 410, never 5xx: the address will not come back, so retry logic must stop.
+     *
+     * @param string $path The request path, /api/vN/...
+     * @param string $method GET or POST
+     * @return JsonResponse|null
+     */
+    private static function __retired_version_response(string $path, string $method): ?JsonResponse
+    {
+        if (!preg_match('#^/api/v([0-9]+)(/.*)$#', $path, $m)) {
+            return null;
+        }
+
+        $requested = (int) $m[1];
+        $rest = $m[2];
+
+        $endpoints = Api_Catalog::get_endpoint_list(true);
+
+        $newest = 0;
+        foreach ($endpoints as $endpoint) {
+            $newest = max($newest, (int) $endpoint['version']);
+        }
+
+        if ($requested > $newest) {
+            return null;
+        }
+
+        $serving = [];
+        foreach ($endpoints as $endpoint) {
+            $version = (int) $endpoint['version'];
+
+            if ($version === $requested || isset($serving[$version]) || !in_array($method, $endpoint['methods'], true)) {
+                continue;
+            }
+
+            if (RouteResolver::match('/api/v' . $version . $rest, $endpoint['pattern']) !== false) {
+                $serving[$version] = 'v' . $version;
+            }
+        }
+
+        if (empty($serving)) {
+            return null;
+        }
+
+        ksort($serving);
+        $versions = array_values($serving);
+
+        return self::_error(
+            'api_version_retired',
+            "API version v{$requested} does not serve this path. It is served by " . implode(', ', $versions) . '.',
+            410,
+            null,
+            ['versions' => $versions]
+        );
     }
 
     /**
@@ -417,7 +644,12 @@ class Api_Dispatcher
                 continue;
             }
 
-            $result = $main_class_name::pre_dispatch($request, $main_params);
+            // No automatic lock, enforced (Site_Lock::_run_hook()): the hook is not a reader
+            // or writer surface, and hands over holding nothing it took.
+            $result = Site_Lock::_run_hook(
+                class_basename($main_class_name) . '::pre_dispatch() for API ' . $controller,
+                fn () => $main_class_name::pre_dispatch($request, $main_params)
+            );
             if ($result !== null) {
                 return $result;
             }
@@ -480,6 +712,8 @@ class Api_Dispatcher
                     'api_params' => Api_Catalog::params_for_pattern($pattern),
                     // The gate list lives ONCE, in auth.surfaces; the row names its surface.
                     'auth' => Auth_Gates::surface_gates($route['surface'] ?? ''),
+                    // The auth surface key, which also carries the resolved site lock mode.
+                    'surface' => $route['surface'],
                 ];
             }
         }
@@ -527,11 +761,82 @@ class Api_Dispatcher
     }
 
     /**
-     * Build the bare-JSON response from an endpoint's return value.
+     * An external API endpoint's answer: build_response(), then the API's own rule - EVERY
+     * body is a JSON OBJECT (a model, an associative array, an Rsx_Api helper's answer).
+     *
+     * Refused, loudly and naming the endpoint (a RuntimeException: the channel's 500, with
+     * the detail for a developer): null (no body - a 204), a list (a bare array, an empty
+     * array, a collection - a list goes inside an object, e.g. {items, meta}), a scalar, and
+     * a passthrough response whose JSON body is not an object or whose body is empty.
+     *
+     * Exempt: a DOWNLOAD - a file or streamed response, or any non-empty body that is not
+     * JSON. Its bytes are the answer, so there is no object to carry; it is sent as it is
+     * (stamp_response() adds nothing to it).
+     *
+     * @param mixed $result What the endpoint (or its halting pre_dispatch) returned
+     * @param string $handler Class::method, named in the refusal
+     * @return Response
+     */
+    private static function __api_response($result, string $handler): Response
+    {
+        if ($result === null) {
+            self::__refuse_non_object($handler, 'null (an empty 204 answer)');
+        }
+
+        if (!($result instanceof Response)
+            && !($result instanceof Rsx_Model_Abstract)
+            && !($result instanceof Collection)
+            && !is_array($result)) {
+            self::__refuse_non_object($handler, 'a ' . gettype($result));
+        }
+
+        $response = self::build_response($result);
+
+        if ($response instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse
+            || $response instanceof \Symfony\Component\HttpFoundation\StreamedResponse) {
+            return $response;
+        }
+
+        $content = (string) $response->getContent();
+
+        if ($response->getStatusCode() === 204 || $content === '') {
+            self::__refuse_non_object($handler, 'an empty body');
+        }
+
+        $is_json = $response instanceof JsonResponse
+            || stripos((string) $response->headers->get('Content-Type', ''), 'json') !== false;
+
+        if ($is_json && !(json_decode($content, false) instanceof \stdClass)) {
+            self::__refuse_non_object($handler, 'a JSON ' . (is_array(json_decode($content, true)) ? 'list' : 'value that is not an object') . ' (' . substr($content, 0, 40) . ')');
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param string $handler
+     * @param string $what
+     * @return never
+     */
+    private static function __refuse_non_object(string $handler, string $what): never
+    {
+        throw new \RuntimeException(
+            "External API endpoint {$handler} answered {$what}.\n"
+            . "  Every external API response body is a JSON object. Return a model or an associative array:\n"
+            . "  a list goes inside an object (['items' => \$list]), and an endpoint with nothing else to say\n"
+            . "  answers ['result' => 'success']."
+        );
+    }
+
+    /**
+     * Build the bare-JSON response from an endpoint's return value - the serializer the
+     * external API (through __api_response(), which also requires a JSON object) and the
+     * companion channel share.
      *
      * A JsonResponse / Symfony Response (including Rsx_Api helpers) passes through. A model
      * serializes via toArray(); a collection or array is recursed for nested models; null
-     * becomes 204 No Content. Anything else (a scalar) is a programming error and fails loud.
+     * becomes 204 No Content (a companion endpoint's empty answer - the API refuses it).
+     * Anything else (a scalar) is a programming error and fails loud.
      */
     public static function build_response($result): Response
     {
@@ -693,7 +998,7 @@ class Api_Dispatcher
         $log->ip = $request->ip();
         // An unauthenticated request's body is not stored: the row still records that the
         // call happened, but an anonymous caller cannot make the log hold its payload.
-        $log->request_body = $api_key_id === null ? null : self::_capture_request_body($request);
+        $log->request_body = $api_key_id === null ? null : Request_Payload_Redactor::capture_request($request);
 
         $facts = self::_response_facts($response);
         $log->response_error_code = $facts['error_code'];
@@ -734,104 +1039,6 @@ class Api_Dispatcher
     public static function last_request_log_id(): ?int
     {
         return self::$_last_request_log_id;
-    }
-
-    /**
-     * The request body as it will be stored: redacted, per-value capped, whole-payload
-     * capped - or NULL when there is nothing to store or it must not be stored.
-     *
-     * NEVER FOR AN UPLOAD. A multipart request carries file bytes, and the log is not a
-     * copy of the blob store: the test is the REQUEST (files present, or a multipart
-     * content type), not the endpoint name, so it holds for POST /api/v1/files and for
-     * any future upload endpoint without either knowing about the other.
-     */
-    private static function _capture_request_body(Request $request): ?string
-    {
-        if (!empty($request->allFiles())) {
-            return null;
-        }
-
-        $content_type = (string) $request->header('Content-Type', '');
-        if (stripos($content_type, 'multipart/form-data') !== false) {
-            return null;
-        }
-
-        if (stripos($content_type, 'application/json') !== false) {
-            $raw = (string) $request->getContent();
-            $decoded = $raw === '' ? null : json_decode($raw, true);
-
-            // An unparseable body cannot be redacted - there are no keys to find a password
-            // under - so it is never stored as the text it was. Its size is the evidence
-            // kept; the row's invalid_json error code says why the request failed.
-            if (!is_array($decoded)) {
-                return $raw === '' ? null : '[unparseable JSON body, ' . strlen($raw) . ' bytes, not stored]';
-            }
-
-            $body = $decoded;
-        } else {
-            $body = $request->post();
-        }
-
-        if (empty($body)) {
-            return null;
-        }
-
-        $encoded = json_encode(self::_redact($body), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if ($encoded === false) {
-            return null;
-        }
-
-        return self::_cap($encoded, self::LOG_BODY_MAX_BYTES);
-    }
-
-    /**
-     * Redact secret-looking keys and cap every scalar, at any depth.
-     *
-     * WHAT IS NOT REDACTED MATTERS AS MUCH AS WHAT IS: a bare 'key' is left alone,
-     * because in this API that is the attachment key an upload hands back - the thing you
-     * most need to see when tracing an attach - and it is single-use, tenant-scoped and
-     * already spent by the time anyone reads the log. The list names credentials.
-     */
-    private static function _redact(array $body): array
-    {
-        $out = [];
-
-        foreach ($body as $key => $value) {
-            if (is_string($key) && preg_match(self::LOG_REDACT_KEYS, $key)) {
-                $out[$key] = '[redacted]';
-                continue;
-            }
-
-            if (is_array($value)) {
-                $out[$key] = self::_redact($value);
-                continue;
-            }
-
-            $out[$key] = is_string($value) ? self::_redact_value($value) : $value;
-        }
-
-        return $out;
-    }
-
-    /**
-     * Cap one scalar. A value over the per-value ceiling is truncated with a marker, so a
-     * reader can tell a truncated value from one that was genuinely that long.
-     */
-    private static function _redact_value(string $value): string
-    {
-        return self::_cap($value, self::LOG_VALUE_MAX_BYTES);
-    }
-
-    /**
-     * Truncate to $max, marking it when truncation happened.
-     */
-    private static function _cap(string $value, int $max): string
-    {
-        if (strlen($value) <= $max) {
-            return $value;
-        }
-
-        return substr($value, 0, $max) . self::LOG_TRUNCATION_MARKER;
     }
 
     /**
@@ -876,7 +1083,7 @@ class Api_Dispatcher
         $error = $decoded['error'];
         $facts['error_code'] = isset($error['code']) ? substr((string) $error['code'], 0, 64) : null;
         $facts['error_message'] = isset($error['message'])
-            ? self::_cap((string) $error['message'], self::LOG_VALUE_MAX_BYTES)
+            ? Request_Payload_Redactor::cap((string) $error['message'], Request_Payload_Redactor::VALUE_MAX_BYTES)
             : null;
 
         return $facts;

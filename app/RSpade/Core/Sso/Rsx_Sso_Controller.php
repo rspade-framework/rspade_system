@@ -195,6 +195,7 @@ class Rsx_Sso_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function identity_unlink(Request $request, array $params = [])
     {
         static::_refuse_impersonation();
@@ -225,6 +226,7 @@ class Rsx_Sso_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function link_begin(Request $request, array $params = [])
     {
         static::_refuse_impersonation();

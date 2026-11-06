@@ -7,13 +7,15 @@
 
 namespace App\RSpade\Tests\Api\Php;
 
+use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Rsx_Api response helpers - the app-facing success/error family. Each returns a
- * JsonResponse with the right status code and the uniform {"error":{code,message,fields?}}
- * error shape (success bodies are bare). No database.
+ * JsonResponse with the right status code and a JSON object body: the uniform
+ * {"error":{code,message,fields?}} error shape, built by the dispatcher's one error builder
+ * (Api_Dispatcher::_error()), or a bare success object. No database.
  */
 class Api_Response_Helpers_Test extends Rsx_Test_Abstract
 {
@@ -32,14 +34,6 @@ class Api_Response_Helpers_Test extends Rsx_Test_Abstract
         $body = static::__decode($response);
         static::__assert_equals(5, $body['id'], 'success body is bare (no error envelope)');
         static::__assert_false(array_key_exists('error', $body));
-    }
-
-    public static function test_no_content_is_204_empty()
-    {
-        $response = Rsx_Api::no_content();
-
-        static::__assert_equals(204, $response->getStatusCode());
-        static::__assert_equals('', $response->getContent(), '204 body is empty');
     }
 
     public static function test_not_found_is_404_error_shape()
@@ -94,5 +88,14 @@ class Api_Response_Helpers_Test extends Rsx_Test_Abstract
 
         $body = static::__decode($response);
         static::__assert_equals('nope', $body['error']['fields']['x']);
+    }
+
+    public static function test_error_is_the_dispatchers_one_error_shape()
+    {
+        $helper = Rsx_Api::error('teapot', 'I am a teapot', 418, ['x' => 'nope']);
+        $dispatcher = Api_Dispatcher::_error('teapot', 'I am a teapot', 418, ['x' => 'nope']);
+
+        static::__assert_equals($dispatcher->getContent(), $helper->getContent(), 'one implementation of the error body');
+        static::__assert_equals($dispatcher->getStatusCode(), $helper->getStatusCode());
     }
 }

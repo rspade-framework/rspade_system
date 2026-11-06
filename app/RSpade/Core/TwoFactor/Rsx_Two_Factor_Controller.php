@@ -84,6 +84,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function totp_begin(Request $request, array $params = [])
     {
         // A way into the account is being added or removed: the user re-confirmed recently.
@@ -100,6 +101,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function totp_confirm(Request $request, array $params = [])
     {
         // A way into the account is being added or removed: the user re-confirmed recently.
@@ -134,6 +136,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function passkey_register_begin(Request $request, array $params = [])
     {
         // A way into the account is being added or removed: the user re-confirmed recently.
@@ -153,6 +156,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function passkey_register_confirm(Request $request, array $params = [])
     {
         // A way into the account is being added or removed: the user re-confirmed recently.
@@ -215,6 +219,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function credential_remove(Request $request, array $params = [])
     {
         static::_refuse_impersonation();
@@ -247,6 +252,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function recovery_regenerate(Request $request, array $params = [])
     {
         // A way into the account is being added or removed: the user re-confirmed recently.
@@ -292,6 +298,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('public')]
+    #[Writer]
     public static function challenge_abandon(Request $request, array $params = [])
     {
         Rsx_Two_Factor::abandon_challenge();
@@ -306,6 +313,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('public')]
+    #[Writer]
     public static function challenge_passkey_options(Request $request, array $params = [])
     {
         try {
@@ -330,6 +338,7 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('public')]
+    #[Writer]
     public static function passkey_login_options(Request $request, array $params = [])
     {
         return Rsx_Two_Factor::begin_passkey_login();

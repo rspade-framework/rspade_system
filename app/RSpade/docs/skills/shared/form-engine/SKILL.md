@@ -1,6 +1,6 @@
 ---
 name: form-engine
-description: "Building forms on the Rsx_Form engine - <Rsx_Form $controller $method>, form.submit(), server-only validation with response_form_error(), the mandatory <Form_Errors />, populate() / set_loading(), form.dirty(), Form_Edit::run() for record edits, response_form_question(). Use when creating or converting a form, writing its save endpoint, or on 'no <Form_Errors /> in this form' or values arriving blank."
+description: "Building forms on the Rsx_Form engine - <Rsx_Form $controller $method>, form.submit(), server-only validation with response_form_error(), the mandatory <Form_Errors />, populate() / set_loading(), form.dirty(), Form_Edit::run() for record edits, response_form_question(). Use when creating or converting a form, writing its save endpoint (#[Writer]), or on 'no <Form_Errors /> in this form', 'Site lock enforcement' from a save, or values arriving blank."
 ---
 
 # The Rsx_Form engine
@@ -94,6 +94,7 @@ state cannot be expressed to the server at all. Skill `rspade:form-input-contrac
 ```php
 #[Ajax_Endpoint]
 #[Auth('can_manage_tasks')]          // #[Auth] is MANDATORY - the build fails without it
+#[Writer]                            // it saves: the site's write lock + one transaction
 public static function save(Request $request, array $params = [])
 {
     $errors = [];
@@ -118,7 +119,9 @@ public static function save(Request $request, array $params = [])
 }
 ```
 
-**A form that edits a record saves through `Form_Edit`.** The form sends `_changed` and `_loaded_updated_at` beside all the values; `run()` takes a row lock, refreshes the record and asks a `field_conflict` question ONLY when another save changed a field this submission also changed. `$edit->set()` assigns a field only if it is being written; `$edit->changed($field)` is the test for a pivot, a detail field or a composed value. **Required: the model declares `$revisions = true`, and the `$data` seed carries `updated_at`** (both fail loud). Never inside your own `DB::transaction()`. `rsx:man form_conventions`, EDITING A RECORD.
+**A form that edits a record saves through `Form_Edit`.** The form sends `_changed` and `_loaded_updated_at` beside all the values; `run()` takes a row lock, refreshes the record and asks a `field_conflict` question ONLY when another save changed a field this submission also changed. `$edit->set()` assigns a field only if it is being written; `$edit->changed($field)` is the test for a pivot, a detail field or a composed value. **Required: the model declares `$revisions = true`, and the `$data` seed carries `updated_at`** (both fail loud). Never inside your own `DB::transaction()`. **Inside a `#[Writer]` that warning does not apply**: the writer's transaction opened after the site's write lock was granted, so `run()` nests as a savepoint on a current snapshot. `rsx:man form_conventions`, EDITING A RECORD.
+
+**A save endpoint is a `#[Writer]`.** An Ajax endpoint is a reader unless it declares it, and a reader that saves fails (`Site lock enforcement: ... without site N's write lock`). Validate before the first write: a RETURNED `response_form_error()` / `response_form_question()` commits whatever the endpoint wrote before it; a throw rolls everything back. Skill `rspade:site-locks`.
 
 **The conflict question hands over facts, never presentation**: `editors` and each change's `by` are `{type, id}` references (a staff user, a portal user, an app's own actor class, or `null` for nobody), times are ISO, and each field row says its `kind` (`value`, `enum`, `reference`, `formatted_text`, `structured`, `secret`) with `loaded`/`current`/`yours`. Only fields this save would actually change are listed. The application renders it; the expected dialog lists what will be overwritten, names one editor in the notice or several per row, links `view_url` in a new window, and offers Back and Overwrite. `rsx:man form_conventions`, QUESTIONS.
 

@@ -1,11 +1,13 @@
 ---
 name: locks-and-subprocesses
-description: "Serializing work with RsxLocks and spawning artisan with Rsx_Artisan - cluster vs system locks, named and per-site read/write locks, semaphores, wait-forever with no lease or TTL, deadlock refusal, lock groups, ARTISAN-SPAWN-01. Use when guarding a critical section or tenant, capping concurrency, spawning php artisan from PHP, finding who held a lock (RsxLocks::set_lock_logging), or on a hang or 'lock daemon restarted'."
+description: "Serializing work with RsxLocks and spawning artisan with Rsx_Artisan - cluster vs system locks, named read/write locks, the raw RsxLocks::site_write_lock() / site_read_lock(), semaphores, wait-forever with no lease or TTL, deadlock refusal, lock groups, ARTISAN-SPAWN-01. Use when guarding a non-site critical section, capping concurrency, spawning php artisan from PHP (also from a #[Writer] or Site_Lock::write() section), finding who held a lock (RsxLocks::set_lock_logging), or on a hang, 'Deadlock: ... would close a wait-for cycle' or 'lock daemon restarted'. A site's data is skill rspade:site-locks."
 ---
 
 # Locks and Subprocesses
 
 Two subjects, one topic: a lock belongs to a **connection**, and a subprocess opens its own - which is why the artisan-spawn mandate lives here.
+
+**Writing a site's data is not this skill.** Every request already holds its site's lock, a `#[Writer]` endpoint the write lock, and a site-scoped `save()` without the write lock fatals - that contract (`#[Writer]`, `Site_Lock::write()`, `bypass()`, `RsxAuth::enter_site()`) is skill `rspade:site-locks` / `rsx:man site_locks`. This skill is the primitive underneath it, plus named locks for shared state that is not one site's data.
 
 ```php
 use App\RSpade\Core\Locks\RsxLocks;
@@ -22,8 +24,8 @@ finally { RsxLocks::release_lock($token); }
 ```php
 RsxLocks::named_write_lock(string $name, ?int $timeout = null): string   // exclusive
 RsxLocks::named_read_lock(string $name, ?int $timeout = null): string    // shared
-RsxLocks::site_write_lock(int $site_id, ?int $timeout = null): string    // per-tenant, exclusive
-RsxLocks::site_read_lock(int $site_id, ?int $timeout = null): string     // per-tenant, shared
+RsxLocks::site_write_lock(int $site_id, ?int $timeout = null): string    // raw per-site lock - prefer Site_Lock::write()
+RsxLocks::site_read_lock(int $site_id, ?int $timeout = null): string     // raw per-site lock - prefer Site_Lock::read()
 RsxLocks::system_lock(string $name, ?int $timeout = null): string        // THIS BOX ONLY, exclusive only
 RsxLocks::upgrade_lock(string $read_token, ?int $timeout = null): string // read -> write, NOT atomic
 RsxLocks::release_lock(string $token): bool
@@ -68,7 +70,7 @@ finally { RsxLocks::release_semaphore($slot); }
 
 **`release_lock($token)` returns a bool.** `true` = we still held it (including a nested release leaving an outer hold). **`false` = the backend no longer had us as the holder - for a cluster lock that means rsx-lockd RESTARTED while we held it, so mutual exclusion was not in force for the whole critical section.** It is logged as an error either way; check the return value if your section can act on the news. `release_lock()` never throws.
 
-**Reentrancy is client-side**: a nested acquire increments a count and returns the same token; the daemon sees one acquire per lock per connection. `upgrade_lock()` is deliberately NOT atomic - the read hold is dropped first and the write request joins the tail, so **re-verify whatever you read before the upgrade**; the payoff is that two simultaneous upgraders cannot deadlock.
+**Reentrancy is client-side**: a nested acquire increments a count and returns the same token; the daemon sees one acquire per lock per connection. `site_read_lock()` while this process holds the site's WRITE lock nests on the write hold. `upgrade_lock()` is deliberately NOT atomic - the read hold is dropped first and the write request joins the tail, so **re-verify whatever you read before the upgrade**; the payoff is that two simultaneous upgraders cannot deadlock. **A SITE lock is never upgraded** (`Refused to take the WRITE lock on site N while holding its READ lock`): the raw site locks obey the site-lock rules - no upgrade, one site per process, never inside a foreign `DB::transaction()` (`Site lock rule 1: ...`). See `rspade:site-locks`.
 
 ---
 
@@ -90,7 +92,7 @@ Command name and argv tokens stay **separate** (the helper escapes each).
 
 **Why it is a mandate.** A lock belongs to a connection, so a child is a stranger to the daemon **including a stranger to its own parent**. Any lock this process holds that the child also needs produces a child queued behind its own parent while the parent blocks in `waitpid`. Neither can move, and **NOTHING REPORTS IT**: the deadlock detector walks lock state, and the parent's half of this cycle is an OS wait. It wedged a framework test run for twelve hours on 2026-08-11.
 
-*(That incident came from the AUTOMATIC per-tenant write lock, which took `cluster:SITE_<id>` on the first `save()` to a site-scoped model. That mechanism is DISABLED as of 2026-08-11 - backlog B-87 - but the hazard is general: it applies to every lock, and named locks are taken by hand all the time.)*
+The hazard applies to every lock, and a SITE lock is held by every request: a child spawned from a `#[Writer]` endpoint or a `Site_Lock::write()` section is a separate process in its own enforcement window, so it takes its OWN `Site_Lock::write()` section for its writes - the lock group below grants it instantly - and it cannot see the parent's uncommitted writes.
 
 **Lock groups** are the ONE hole in per-connection ownership. A connection may name a `group_id` at handshake; when its group already holds a lock it is granted immediately, **past any queue**. Bypassing the queue is required, not an optimization - queueing behind a foreign waiter deadlocks just as hard, and it costs that waiter nothing (the group already excluded it). Three boundaries keep the hole from widening:
 
@@ -116,7 +118,7 @@ A task worker is ONE long-lived process running many unrelated tasks, so "held u
 
 **This is a safety net, not a licence.** Release your own in a `finally` - a task that ends holding one is released AND named in a `[WORKER]` warning.
 
-The automatic per-tenant write lock being disabled means a task wanting tenant-wide exclusivity must ask: `RsxLocks::site_write_lock($site_id)`. Think before you do - for a long sync/import/reindex it blocks every web write to that tenant for the whole run, and such a task is usually better written to tolerate concurrent writers. **Backlog B-85** covers making that an explicit declaration.
+A task takes NO automatic site lock. Its site-scoped writes go in one `Site_Lock::write($site_id, fn () => ...)` section per item, re-reading the record inside; never one section around a whole sync/import/reindex (it blocks every web write to that tenant for the whole run). A transaction the body left open is rolled back by the runner before its locks go. Skill `rspade:site-locks`, `rspade:background-tasks`.
 
 ---
 
@@ -128,4 +130,4 @@ The automatic per-tenant write lock being disabled means a task wanting tenant-w
 - **`Failed to acquire ... after N seconds`.** A WAIT budget elapsed, not a held-too-long lock. Usually the right fix is to drop the number and wait. **The exception cannot say WHO held it - never report "another process holds it" from the exception alone.** Ask the daemon: `RsxLocks::set_lock_logging(true)` (or `node system/bin/rsx-lockd/lockd.js log on`) switches event logging on in the RUNNING daemon - never restart rsx-lockd to diagnose a lock, a restart drops every lock on the box. Reproduce, then read the `TIMEOUT` line in the file the call names: it gives the holder's host and pid, or `still held by nobody`; no `WAIT` line at all means the lock was never contended. The default level records contention only and is meant to stay on; `set_lock_logging(true, null, true)` adds every acquire and release for tracing one sequence. `rsx:man locks`, EVENT LOGGING.
 - **Every cluster lock throws.** rsx-lockd is down (`rsx:health` -> "Lock Server"). There is no degraded mode by design.
 
-Details: `php artisan rsx:man locks`. Related: `rspade:background-tasks`, `rspade:maintenance-mode`, `rspade:shell-invocation`.
+Details: `rsx:man locks`, `rsx:man site_locks`. Related: `rspade:site-locks`, `rspade:background-tasks`, `rspade:maintenance-mode`, `rspade:shell-invocation`.

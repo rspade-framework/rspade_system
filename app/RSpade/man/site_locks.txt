@@ -1,0 +1,474 @@
+SITE_LOCKS(1)                     RSpade Manual                     SITE_LOCKS(1)
+
+NAME
+    site_locks - per-site reader/writer locks: every write to a site runs alone
+
+TAGS
+    tenancy, tasks, models
+
+SYNOPSIS
+    // An Ajax / API / companion endpoint is a READER unless it says otherwise.
+    #[Ajax_Endpoint]
+    #[Auth('is_logged_in')]
+    #[Writer]
+    public static function save(Request $request, array $params = [])
+    {
+        $client = Client_Model::find($params['id']);   // nothing else changes the
+        $client->name = $params['name'];                // site until this returns
+        $client->save();
+
+        return ['id' => $client->id];
+    }
+
+    // Everywhere else (a task, a command, a hook): one write section per item.
+    Site_Lock::write($site_id, function () use ($id) {
+        $invoice = Invoice_Model::find($id);           // re-read INSIDE the section
+        $invoice->status_id = Invoice_Model::STATUS_SENT;
+        $invoice->save();
+    }, 'Send invoice');
+
+    // Inventory every surface and the mode it runs under.
+    php artisan rsx:site_lock:endpoints --app --mode=reader
+
+DESCRIPTION
+    Every site (tenant) has ONE readers-writer lock, served cluster-wide by
+    rsx-lockd (RsxLocks::site_write_lock() / site_read_lock(), cluster:SITE_<id>).
+    Any number of readers run together. A writer waits until every reader has
+    finished, holds back new readers while it waits, and then runs ALONE on the
+    site, inside one database transaction that commits before the lock is let go.
+
+    THE GUARANTEE. Inside a #[Writer] endpoint or a Site_Lock::write() section,
+    nothing else changes the site. Code that reads a record, decides, and writes
+    needs no re-check, no optimistic retry and no private lock: what it read is
+    still true when it writes. A reader sees data that is not changing while it
+    reads. This serialization is a CONTRACT you are entitled to rely on and to
+    design against - drop race conditions on a site's data from your mental model
+    - not an implementation detail and not a crutch. Narrowing the scope of the
+    lock would be a contract change, made only with an audit of code that relies
+    on it and a breaking_changes document.
+
+    THE ENFORCEMENT. Inside an ENFORCEMENT WINDOW, a save(), delete(), per-record
+    bulk write, or raw bulk update/delete of a Site_Scoped model for site X
+    FATALS unless the process has WRITE AUTHORITY for X: it holds X's write lock
+    (a #[Writer] endpoint, a Site_Lock::write() section, a raw
+    RsxLocks::site_write_lock()) or is inside a Site_Lock::bypass() covering X.
+    Nothing is ever acquired because a write happened: a lock is taken at the
+    request boundary, or by code that asks for it.
+
+    #[Writer] DECLARES INTENT - "this endpoint writes". The framework decides how
+    that is locked. A reader that writes a site-scoped model fails loudly at the
+    write, naming the endpoint, so a missing declaration is found the first time
+    the code runs, never in production under contention.
+
+THE ARCHITECTURE PRINCIPLE
+    AN AJAX OR API ENDPOINT EXECUTES AND RETURNS RIGHT AWAY. "Right away"
+    includes a datagrid page with a hundred extra queries. It excludes anything
+    data-processing or export shaped: a pass over 10,000 records, encoding,
+    compression, a large aggregation, building an export file. That work is
+    handed to an on-demand background task: the endpoint validates, calls
+    Task::dispatch(), and returns the run's handle; the caller waits for the run
+    to finish and then asks for the result through the feature's own endpoint
+    (the external API has no generic task interface, so a feature exposes its own
+    status and result endpoints).
+
+    The reason is this page. Every request holds its site's lock for its whole
+    handler, readers included. A slow reader holds back every writer on the
+    site, and every reader queued behind that writer. Endpoints that return right
+    away are what make site-wide reader/writer locking cheap.
+
+MODES AND DEFAULTS
+    A surface's mode is resolved at manifest build and baked onto the auth
+    surface index; the dispatchers read it per request.
+
+        Surface                                  Default   May declare
+        ---------------------------------------------------------------------
+        #[Ajax_Endpoint]                         reader    #[Writer], #[Manual_Lock]
+        #[Api_Endpoint]                          reader    #[Writer], #[Manual_Lock]
+        #[Companion_Endpoint]                    reader    #[Writer], #[Manual_Lock]
+        model fetch / fetchable relationship     reader    (nothing: a fetch reads)
+        #[Route], #[SPA], #[Portal_Route]        none      #[Reader], #[Writer],
+                                                           #[Manual_Lock]
+        JS @route action                         none      (no server handler)
+
+    reader         The site's READ lock around the handler.
+    writer         The site's WRITE lock, then one database transaction (and the
+                   request's revision unit of work), committed after the handler
+                   and rsx.post_dispatch, before the release.
+    manual         #[Manual_Lock]: no automatic lock. The handler takes site
+                   write locks itself (MANUAL LOCK below). For a sign-in that
+                   enters a site, and for work that may take more than a few
+                   moments.
+    none           A page route that declares nothing: no lock, no transaction.
+                   Its action is STILL an enforcement window, so a page route
+                   that writes site-scoped data declares #[Writer].
+
+    THE ATTRIBUTES GO ONLY on Ajax endpoints, API endpoints, MVC routes and
+    companion endpoints. A #[Task], pre_dispatch(), init(), unhandled_route(), a
+    class, an instance method or any other function is refused (SITE-LOCK-01,
+    manifest-build FATAL): those take no implicit lock and manage their own with
+    Site_Lock::write() / read() / bypass(). #[Reader] is refused on an Ajax, API
+    or companion endpoint (it is already the default), a method declares at most
+    one of the three, and a #[Writer] GET #[Api_Endpoint] is refused by
+    API-GET-PURE-01 (GET reads).
+
+    Attribute-only metadata, like every RSpade attribute: there is no PHP class.
+
+THE REQUEST BOUNDARY
+    Every channel - Ajax, the external API, companion endpoints, page routes -
+    runs one call in this order:
+
+        1. Main::pre_dispatch() (and Portal_Main's)   unlocked, enforced
+        2. the controller's own pre_dispatch()         unlocked, enforced
+        3. the site lock is taken (mode above); a writer opens its transaction
+           and mints its _transactions row
+        4. the handler                                 THE request window
+        5. rsx.post_dispatch handlers (a throw rolls a writer back)
+        6. (API, companion) the response is built
+        7. a writer commits
+        8. the lock is released
+
+    Main::init(), Portal_Main::init(), the pre_dispatch hooks and
+    Main::unhandled_route() run with NO automatic lock - they are not reader or
+    writer surfaces - but inside an enforcement window: a site-scoped write there
+    needs its own Site_Lock::write() section, a bypass, or an exempt model. A
+    hook hands over CLEAN: a site lock or transaction it acquired and did not
+    release is let go or rolled back and the request fails naming the hook.
+
+    The site is the experience's current one: the session's site for the staff
+    and portal realms, the API key's site, the companion request's signed site.
+
+    An AJAX BATCH takes and releases the lock per call: each call's own
+    Main::pre_dispatch and controller pre_dispatch run unlocked, then its own
+    lock. Nothing is held between calls.
+
+    COMMIT AND ROLLBACK. A writer whose handler RETURNS commits - a coded result
+    (response_form_error(), response_form_question(), an API error response) is
+    a return, so what the call wrote before answering commits; that is what keeps
+    a failed attempt that records itself recorded. A THROW anywhere from the
+    handler through post_dispatch rolls the whole request back. A database
+    transaction the handler opened and left open is rolled back and fails the
+    request naming it.
+
+    NESTING. A handler called in-process from inside another (Ajax::internal())
+    runs under the outer hold: a reader under any hold, a writer under a WRITE
+    hold (inside the outer transaction). A writer called from inside a READER
+    fatals - there is no upgrade.
+
+ENFORCEMENT WINDOWS
+    Checked (a site-scoped write needs write authority):
+
+        - the handler of every Ajax, API, companion and page-route call
+        - init(), pre_dispatch() (Main's, Portal_Main's, a controller's) and
+          unhandled_route()
+        - every task body (Task_Runner), worker-run or Task::internal()
+        - every artisan command's handle() (opened on Symfony's COMMAND event,
+          closed on TERMINATE; Artisan::call() from anywhere opens one, and a
+          #[Command] task's body opens its own inside it)
+        - every script booted through system/script.php, for the life of the
+          process
+
+    Unchecked (outside every window):
+
+        - a command declaring const SITE_LOCK_EXEMPT = '<reason>':
+          migrate and its family, migrate:normalize_schema, migrate:restore,
+          db:seed, rsx:test, rsx:database_and_storage_reset,
+          rsx:db:rebuild_provision_cache_snapshot
+        - Laravel's own migration and seed commands, exempt by their vendor base
+          class
+        - migrations and seeders themselves (they run inside those commands)
+        - test fixture code (rsx:test is exempt). Every endpoint, task and
+          command a test DRIVES still opens its own window.
+        - the four pre-boot commands (rsx:framework:pull, rsx:maintenance:*,
+          rsx:git), which never reach PHP
+
+    SITE_LOCK_EXEMPT is a class constant (command classes are not
+    manifest-indexed), inherited by subclasses, and requires a reason. It is for commands that PROVISION OR REPLACE THE DATABASE
+    WHOLESALE. Never put it on a command that edits tenant data: that command
+    takes Site_Lock::write() sections like any other code.
+
+    A REQUEST window (a handler) also refuses every change of the site
+    (SITE CHANGES below). A task, command or hook window does not: they change
+    site between sections.
+
+THE PROGRAMMER API
+    use App\RSpade\Core\Locks\Site_Lock;
+
+    Site_Lock::write(int $site_id, callable $work, ?string $description = null): mixed
+        Write lock -> revision unit of work ($description names it) ->
+        transaction -> $work -> commit -> release. A throw rolls back, releases
+        and rethrows. Reentrant: inside a write section (or holding the write
+        lock) for $site_id, $work just runs - no second lock, no second
+        transaction, no new unit of work. Returns what $work returns.
+
+    Site_Lock::read(int $site_id, callable $work): mixed
+        Read lock -> $work -> release. Holding ANY lock on the site already (a
+        write hold satisfies a read) just runs $work.
+
+    Site_Lock::bypass(int $site_id, string $reason, callable $work): mixed
+        Writes to $site_id are permitted WITHOUT a lock for the duration of
+        $work. No transaction is opened (a bypass must never become a long
+        transaction holding row locks against every writer). The reason is
+        mandatory and logged. Outside the callable, enforcement is back.
+
+    Site_Lock::bypass_all_sites(string $reason, callable $work): mixed
+        The same for a framework or maintenance pass that walks EVERY site's
+        rows outside the site scope (a queue drain, a retention sweep) and so
+        cannot name one site.
+
+    Site_Lock::has_write_authority(int $site_id): bool
+        Does this process hold the site's write lock, or a bypass covering it?
+
+    The raw RsxLocks::site_write_lock() / site_read_lock() are held to the same
+    rules and nest on the same counts (rsx:man locks).
+
+THE RULES
+    Each is enforced; each refusal is a RuntimeException naming its remedy.
+
+    NO UPGRADE. A write lock is never taken while the same site's read lock is
+    held: two readers that both upgraded would each wait for the other forever.
+    Code decides at its start whether it reads or writes. READ-THEN-WRITE wraps
+    the READ inside the write lock - declare #[Writer], or put the whole
+    algorithm in one Site_Lock::write() and do the read inside it.
+
+    NESTING IS COUNTED. A nested read or write of a hold this process already
+    has never reaches the daemon; it bumps a count, and the real lock is let go
+    only when the OUTERMOST holder releases. A READ INSIDE A WRITE IS FREE: it
+    nests on the write hold, and its release unwinds that one level, never the
+    write itself.
+
+    NO LOCK INSIDE A FOREIGN TRANSACTION. A site lock is never acquired while a
+    database transaction the lock layer did not open is open: waiting in
+    rsx-lockd while holding MySQL row locks is a cycle neither deadlock detector
+    can see. Take the lock FIRST - Site_Lock::write() opens the transaction for
+    you. Never call it inside DB::transaction().
+
+    ONE SITE PER PROCESS AT A TIME. Taking site B's lock while holding any lock
+    on site A fatals. Finish the section on A first.
+
+    COMMIT BEFORE RELEASE. A write lock is released only after its transaction
+    committed or rolled back. A section that commits or rolls back the
+    section's own transaction from inside, or returns with a transaction of its
+    own still open, is rolled back and refused.
+
+    CHILD PROCESSES through Rsx_Artisan only (ARTISAN-SPAWN-01). A child is a
+    separate process with its own enforcement window: it takes its OWN
+    Site_Lock::write() section, which its lock group grants instantly while the
+    parent holds the site. It cannot see the parent's uncommitted writes.
+
+SITE 0
+    Site 0 is a site like any other. A Site_Scoped table is lock-protected even
+    when no real tenant is in play: an application may run sessionless and keep
+    its business data in site_id = 0 rows, and the framework queues identity-
+    level mail there before any site is entered. A request with no tenant takes
+    SITE_0's lock; a site-0 row needs site 0's write lock.
+
+SITE CHANGES
+    The site never changes inside a request handler, under a site lock or inside
+    a bypass. Session::set_site_id(), set_temporary_site_id(),
+    clear_temporary_site_id(), impersonate(), reset_impersonation() and
+    Portal_Session::set_site_id() are refused there.
+
+    RsxAuth::enter_site(int $site_id) is the one way a sign-in, a site switch or
+    a panel impersonation moves the browser onto a site: no lock may be held ->
+    that site's write section -> the session's site is set -> the sign-in's
+    site-scoped records are written -> commit -> release. A throw rolls all of it
+    back. Entering the current site still takes the lock and changes nothing.
+
+    So an Ajax or API endpoint that signs in or switches site declares
+    #[Manual_Lock] and calls RsxAuth::enter_site() from its body; a page route
+    that does it declares nothing. A task or command changes site between its
+    sections (Session::set_temporary_site_id(), cleared in a finally).
+
+MANUAL LOCK
+    #[Manual_Lock] takes no automatic lock. The handler's first raw
+    RsxLocks::site_write_lock() grant begins a REQUEST TRANSACTION, committed
+    when the handler returns and rolled back on a throw - even if the handler
+    released the lock earlier. Releasing early is logged as a warning:
+
+        Site lock released early: <endpoint> released the write lock on site
+        <id> while its request transaction is still open. ...
+
+    because until the handler returns, another writer on the site may block on
+    the transaction's row locks, and the no-foreign-transaction rule refuses a
+    second site lock. A Site_Lock::write() section (and RsxAuth::enter_site())
+    inside a manual handler keeps its own transaction, committed at the section's
+    end - the right shape for a handler that does work in several sections. A
+    manual request that took any site write lock is a writer request: it has its
+    _transactions row and its request history (rsx:man request_history).
+
+EXEMPT MODELS
+    #[Site_Lock_Exempt('<reason>')] on a Site_Scoped model's class turns
+    enforcement off for that model: its writes are never checked. Attribute-
+    only, inherited by subclasses, the reason required.
+
+    IT IS FOR ANALYTICS AND SESSION BOOKKEEPING ONLY - a record of what
+    happened, which no user edits: a "last viewed" column written from every
+    pre_dispatch(), a page-view counter. That is the case it exists for: a write
+    from every request, which would otherwise make every page a writer.
+
+    NEVER put it on real business data. NEVER put it on a table whose values
+    are READ TO DECIDE a value written into business data - an exempt table is
+    written concurrently with everything, so a decision taken from it carries
+    no guarantee, and the race this page exists to remove comes back. When in
+    doubt, it is business data.
+
+    No framework model declares it: the framework's own bookkeeping (sessions,
+    sign-in history, _transactions / _revisions, audit sessions, _tasks,
+    _api_request_log) is not site-scoped models.
+
+FORMS AND RECORD EDITS
+    Form_Edit::run() inside a #[Writer] endpoint nests as a savepoint inside the
+    writer's transaction. Its "never call it inside your own transaction"
+    warning does not apply there: the write lock was granted BEFORE the
+    transaction began, so the snapshot is current and nothing else writes the
+    site meanwhile. A form's save endpoint is a #[Writer] (rsx:man
+    form_conventions).
+
+TASKS, REALTIME AND COMMIT
+    Task::dispatch() from a writer writes the run row inside the writer's
+    transaction; the worker spawn and the scheduler poke wait for the commit,
+    and a rollback takes the run away. Task_Notify lifecycle frames are sent
+    after the commit too. Model realtime frames go out for committed writes
+    only.
+
+    A COALESCED #[Exclusive] / #[Debounce] dispatch releases its enqueue lock
+    before the writer commits, so a concurrent dispatch may not see the pending
+    run and enqueue a second one. That is safe to repeat: the identity runs one
+    at a time, and a second run finds the work already done.
+
+    A TASK takes no automatic lock and no automatic transaction. The standard
+    shape is one write section per item: list the work unlocked (or under
+    Site_Lock::read()), then per item Site_Lock::write($site_id, fn () => ...),
+    which RE-READS the record inside - it may have changed or gone since the
+    list was read. A long maintenance pass that tolerates concurrent writers
+    uses Site_Lock::bypass() / bypass_all_sites() with a reason (rsx:man tasks).
+
+HOLD-TIME WARNINGS
+    Releasing a lock held longer than its threshold logs a WARNING naming the
+    site, the holder, the time held and the time waited for the grant (a slow
+    queue and a slow holder can be told apart):
+
+        Site lock held too long: WRITE lock on site 7 held by Ajax
+        Reports_Controller::save for 3.412s (waited 0.002s for the grant;
+        rsx.locks.warn_write_hold_seconds = 2).
+
+        rsx.locks.warn_write_hold_seconds   2   a write lock
+        rsx.locks.warn_read_hold_seconds    2   a read lock
+
+    0 disables a warning. Nothing is killed or capped: a long hold is a design
+    problem to fix (THE ARCHITECTURE PRINCIPLE), never a timeout.
+
+LIMITS
+    A raw DB::table() / DB::statement() / raw SQL write, and ->raw_bulk(), are
+    never seen by the enforcement - the documented limit, not a hole to close.
+    They are still serialized when the code that issues them holds the lock;
+    write them inside the same section as the model writes they belong with.
+
+    The locks are ADVISORY: they serialize RSpade code. A process writing the
+    database directly (a SQL client, another application) is not part of it.
+
+CONVERTING EXISTING CODE
+    php artisan rsx:site_lock:endpoints lists every server-dispatched surface
+    (Ajax, API, companion, page routes, model fetches) with its mode; a mode the
+    surface DECLARED is marked '*'.
+
+        --mode=reader|writer|manual|none   (repeatable)
+        --kind=ajax|api|companion|route|spa|portal_route|model_fetch|
+               model_relationship          (repeatable)
+        --app                              only rsx/ surfaces
+        --json                             {surface, kinds, mode, declared, file}
+
+    Walk the readers that save, delete or dispatch, and declare #[Writer]. A
+    task, command or script that writes gets one Site_Lock::write() section per
+    item; a hook that writes gets a section of its own.
+
+TROUBLESHOOTING
+    "Site lock enforcement: Client_Model save on site 3 by Ajax
+     Clients_Controller::save without site 3's write lock."
+        A reader (or a task, command, hook) wrote a site-scoped model. Declare
+        #[Writer] on the endpoint, or wrap the write in
+        Site_Lock::write(3, fn () => ...) - in a task or command one section
+        per item, re-reading the record inside - or, for a pass that tolerates
+        concurrent writers, Site_Lock::bypass(3, '<reason>', fn () => ...).
+
+    "Refused to take the WRITE lock on site 3 while holding its READ lock"
+        No upgrade. The read part of the algorithm belongs inside the write
+        lock: declare #[Writer], or wrap the whole read-then-write in one
+        Site_Lock::write(). Also raised by a #[Writer] endpoint called through
+        Ajax::internal() from inside a reader, and by RsxLocks::upgrade_lock()
+        on a site lock.
+
+    "Site lock rule 1: refused to acquire the WRITE lock on site 3 inside 1
+     open database transaction(s) the lock layer did not open."
+        Take the lock first. Site_Lock::write() opens the transaction; never
+        call it inside DB::transaction(). In a #[Manual_Lock] handler that
+        released its first write lock early, the request transaction is still
+        open until the handler returns.
+
+    "Site lock rule 5: refused to lock site 4 while holding the lock on site 3"
+        One site at a time per process. Finish the section on site 3 first.
+
+    "Session::set_site_id() refused inside Ajax Foo_Controller::bar: the
+     framework manages a request's site, so a handler never changes it."
+        Declare #[Manual_Lock] on the endpoint and call
+        RsxAuth::enter_site($site_id).
+
+    "... refused: this process holds the WRITE lock on site 3 (...). A site lock
+     names a site, so the site never changes under one."
+        Change the site between sections, never inside one.
+
+    "RsxAuth::enter_site(4) refused: this process holds the READ lock on site 3"
+        The endpoint has an automatic lock. Declare #[Manual_Lock].
+
+    "<hook> returned still holding the ... (released) and with 1 database
+     transaction(s) still open (rolled back ...). A hook runs with no automatic
+     lock and must hand over clean"
+        Release every lock a hook takes, close every transaction it opens:
+        Site_Lock::write($site_id, fn () => ...) does both.
+
+    "Ajax Foo_Controller::bar returned with 1 database transaction(s) still
+     open. They have been rolled back"
+        Commit or roll back every transaction an endpoint begins
+        (DB::transaction(fn) does both).
+
+    "Site write section on site 3 (...): the section's own database transaction
+     was committed or rolled back by the code inside it."
+        Never commit or roll back a transaction you did not open; throw to
+        abandon the section.
+
+    "Invalid site lock mode: <Class::method in file>
+       SITE-LOCK-01: declares #[Writer] on a #[Task] method."
+        Locking attributes belong on Ajax, API, MVC-route and companion
+        surfaces. The task, hook or function manages its lock itself with
+        Site_Lock::write() / read() / bypass().
+
+    "SITE-LOCK-01: declares #[Reader] on #[Ajax_Endpoint], which is already a
+     reader by default."
+        Remove #[Reader]; declare #[Writer] only when the endpoint writes.
+
+    "#[Site_Lock_Exempt] on <Class> gives no reason."
+    "<Class> declares SITE_LOCK_EXEMPT with no reason."
+    "Site_Lock::bypass(3) requires a reason"
+        Say what it records or why the pass may write unlocked; it is logged.
+
+    "Site lock held too long: ..." in the log
+        A request or section that should hand its slow work to a task.
+
+    Everything waits and nothing errors
+        A slow writer holds the site; every request queues behind it. The
+        hold-time warning names it after the fact; `node lockd.js dump` names
+        the holder now (rsx:man locks, THE RSX LOCKD CLI).
+
+SEE ALSO
+    rsx:man locks - RsxLocks, rsx-lockd, lock groups, reentrancy
+    rsx:man request_history - _request_ref replay on writer requests
+    rsx:man tasks - per-item write sections in a task body
+    rsx:man session - Session::set_site_id(), RsxAuth::enter_site()
+    rsx:man form_conventions - Form_Edit::run() inside a writer
+    rsx:man revisions - the writer's _transactions row
+    rsx:man dispatch - MAIN HOOKS and the request pipelines
+    rsx:man task_commands - commands are enforced too
+    skill rspade:site-locks - writing writer endpoints, sections and conversions
+    skill rspade:locks-and-subprocesses - RsxLocks and Rsx_Artisan
+
+SITE_LOCKS(1)                     RSpade Manual                     SITE_LOCKS(1)

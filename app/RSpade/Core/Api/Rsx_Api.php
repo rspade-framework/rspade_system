@@ -8,11 +8,13 @@ use App\RSpade\Core\Api\Api_Dispatcher;
 /**
  * Rsx_Api - app-facing facade for building external API responses.
  *
- * External API controllers (extending Rsx_Api_Controller_Abstract) return arrays, models,
- * collections or null directly for 200/204; these helpers cover the remaining shapes -
- * 201 Created, explicit 204, and the error family. Every helper returns a JsonResponse with
- * a real HTTP status code. Errors are always {"error":{"code","message","fields"?}} - the
- * same shape Api_Dispatcher emits - so success and failure bodies stay uniform.
+ * External API controllers (extending Rsx_Api_Controller_Abstract) return an associative
+ * array or a model directly for a 200; these helpers cover the remaining shapes - 201 Created
+ * and the error family. Every helper returns a JsonResponse with a real HTTP status code, and
+ * its body is a JSON object like every API body (Api_Dispatcher::build_response() refuses
+ * anything else, a 201 included). An endpoint with nothing else to say answers an object such
+ * as ['result' => 'success']. Errors are {"error":{"code","message","fields"?}}, built by
+ * Api_Dispatcher::_error() - the one implementation of the error shape.
  *
  * Success payloads serialize through the one shared serializer (Api_Dispatcher::serialize),
  * so a model passed to created() is redacted via toArray() exactly as a bare return would be.
@@ -25,17 +27,6 @@ class Rsx_Api
     public static function created($data): JsonResponse
     {
         return response()->json(Api_Dispatcher::serialize($data), 201);
-    }
-
-    /**
-     * 204 No Content (empty body).
-     */
-    public static function no_content(): JsonResponse
-    {
-        $response = response()->json(null, 204);
-        $response->setContent('');
-
-        return $response;
     }
 
     /**
@@ -75,11 +66,6 @@ class Rsx_Api
      */
     public static function error(string $code, string $message, int $status, ?array $fields = null): JsonResponse
     {
-        $error = ['code' => $code, 'message' => $message];
-        if ($fields !== null) {
-            $error['fields'] = $fields;
-        }
-
-        return response()->json(['error' => $error], $status);
+        return Api_Dispatcher::_error($code, $message, $status, $fields);
     }
 }

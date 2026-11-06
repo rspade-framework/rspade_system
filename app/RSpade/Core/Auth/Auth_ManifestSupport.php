@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Database\Model_Fetch_Lineage;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Proxority\Proxority_Directives;
@@ -40,6 +41,12 @@ use App\RSpade\Core\Proxority\Proxority_Directives;
  *          'throttle' => 'unthrottled'|'priority'|'media',  // present only when the member
  *                                             // carries #[Unthrottled] / #[Priority] /
  *                                             // #[Media] (Proxority_Directives, PROXORITY-01)
+ *          'site_lock' => 'reader'|'writer'|'manual'|null,  // ALWAYS present: the RESOLVED
+ *                                             // site lock mode - #[Writer] / #[Reader] /
+ *                                             // #[Manual_Lock] when declared, else 'reader'
+ *                                             // for ajax/api/companion/model fetch kinds and
+ *                                             // null (no automatic lock) for page routes and
+ *                                             // JS actions (Site_Lock_Directives, SITE-LOCK-01)
  *       ],
  *     ],
  *   ]
@@ -84,6 +91,11 @@ use App\RSpade\Core\Proxority\Proxority_Directives;
  *   - PROXORITY-01: #[Unthrottled] / #[Priority] / #[Media] on a member whose surface
  *     kinds do not honour it, on a non-surface, a class or an instance method, or more
  *     than one of them on one member (Proxority_Directives)
+ *   - SITE-LOCK-01: #[Writer] / #[Reader] / #[Manual_Lock] on a member whose surface kinds
+ *     do not honour it (#[Reader] where reader is already the default included), on a
+ *     #[Task], a pre_dispatch() / init() / unhandled_route() hook or any other non-surface,
+ *     a class or an instance method, or more than one of them on one member
+ *     (Site_Lock_Directives)
  *
  * CLOSED BY DEFAULT (the validation pass, validate()). After the index is built,
  * every surface is validated and ALL findings are raised as ONE RuntimeException -
@@ -336,6 +348,15 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
         static::__collect_unmarked_fetch_overrides($records_by_class, $violations);
 
         static::_collect_js_action_surfaces($surfaces, $dirty);
+
+        // Every surface carries its resolved site lock mode. A PHP member resolved its own
+        // (declared or default) above; the inherited model fetch entries, the fetchable
+        // relationships and the JS actions take the default for their kinds.
+        foreach ($surfaces as $target => $surface) {
+            if (!array_key_exists('site_lock', $surface)) {
+                $surfaces[$target]['site_lock'] = Site_Lock_Directives::default_for($surface['kinds']);
+            }
+        }
 
         ksort($surfaces);
 
@@ -987,6 +1008,7 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             $class_attributes = $metadata['attributes'] ?? null;
 
             Proxority_Directives::assert_none($class_attributes, 'a class', "{$class} in {$file}");
+            Site_Lock_Directives::assert_none($class_attributes, 'a class', "{$class} in {$file}");
 
             // Resolved once per class: every #[Ajax_Endpoint] it declares serves the
             // same realm (the declaration is class-level).
@@ -1070,6 +1092,21 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                     $surfaces[$target]['throttle'] = $throttle;
                 }
 
+                // #[Writer] / #[Reader] / #[Manual_Lock]: the site lock mode, validated against
+                // the kinds just recorded (SITE-LOCK-01, a FATAL) and resolved to the kinds'
+                // default when nothing is declared. Read by the dispatchers.
+                $site_lock = Site_Lock_Directives::resolve(
+                    $method_attributes,
+                    $is_surface ? $surfaces[$target]['kinds'] : [],
+                    static::_method_has_attribute($method_data, 'Task'),
+                    $location,
+                    $method_name
+                );
+
+                if ($is_surface) {
+                    $surfaces[$target]['site_lock'] = $site_lock;
+                }
+
                 if ($is_surface) {
                     static::_record_public_contradiction(
                         $violations,
@@ -1085,6 +1122,11 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             // through fetch() or portal_fetch(), so their realm is the request's.
             foreach (($metadata['public_instance_methods'] ?? []) as $method_name => $method_data) {
                 Proxority_Directives::assert_none(
+                    $method_data['attributes'] ?? null,
+                    'an instance method',
+                    "{$class}::{$method_name} in {$file}"
+                );
+                Site_Lock_Directives::assert_none(
                     $method_data['attributes'] ?? null,
                     'an instance method',
                     "{$class}::{$method_name} in {$file}"

@@ -53,6 +53,20 @@ DESCRIPTION
     All locks are ADVISORY: they coordinate cooperating callers, they do not
     enforce anything at the data layer.
 
+SITE LOCKS
+    The per-site readers-writer lock cluster:SITE_<id> is the one lock every
+    application touches without asking: every Ajax, API and companion request
+    holds its site's READ lock around its handler, a #[Writer] endpoint holds
+    the WRITE lock and one transaction, and a write to a Site_Scoped model in an
+    endpoint, task, command or hook FATALS without the site's write lock
+    ("Site lock enforcement: ..."). Inside a writer nothing else changes the
+    site - a guarantee to design against. Site_Lock::write() / read() /
+    bypass() are the programmer API, and RsxLocks::site_write_lock() /
+    site_read_lock() below are held to the same rules (no upgrade, one site per
+    process, never inside a foreign transaction). The whole contract - modes,
+    defaults, the request boundary, enforcement windows, exemptions - is
+    rsx:man site_locks.
+
 TWO KINDS OF LOCK
     The choice between them is not a tuning knob. They are different things.
 
@@ -83,13 +97,11 @@ DOMAIN ASSIGNMENT
 
         Lock                    Kind     Why
         ---------------------------------------------------------------------
-        SITE_<id>               cluster  the tenant write lock - two servers
-                                         mutating one tenant is corruption.
-                                         NOTE: the AUTOMATIC acquisition (on the
-                                         first save() to a site-scoped model) is
-                                         DISABLED as of 2026-08-11, backlog B-87.
-                                         site_write_lock() still works when a
-                                         caller asks for it deliberately.
+        SITE_<id>               cluster  the per-site readers-writer lock -
+                                         two servers mutating one tenant is
+                                         corruption. Taken at every request
+                                         boundary and by Site_Lock sections
+                                         (rsx:man site_locks).
         FILE_WRITE              cluster  the blob store is shared; a box must
                                          not race another box's upload
         file_blob:<hash>        cluster  one per blob, readers-writer: reference
@@ -104,9 +116,10 @@ DOMAIN ASSIGNMENT
                                          build elsewhere is wasted work, not
                                          corruption
 
-    A read-only web request takes NO LOCK AT ALL and never opens a socket. The
-    old per-request application read lock is gone; nothing ever took it as a
-    writer, so it only cost a connection.
+    There is no global application lock. The per-request lock is the SITE
+    lock: an Ajax, API or companion call holds its site's read lock (or, as a
+    #[Writer], its write lock) around the handler; a page route that declares
+    no mode takes none (rsx:man site_locks).
 
 WAITING AND TIMEOUTS
     $timeout is a WAIT budget and nothing else. It never bounds how long a
@@ -199,6 +212,11 @@ REENTRANCY
     At shutdown the counts are ignored and everything is released outright - a
     nested count is a fact about a call stack that no longer exists.
 
+    site_read_lock() for a site this process holds for WRITE nests on the write
+    hold (a write hold satisfies a read): it returns the write token, counts one
+    level, and its release unwinds that level, never the write. A nested
+    acquire returns the CALLER'S token, so release exactly once per acquire.
+
 LOCK GROUPS AND SUBPROCESSES
     A lock belongs to a CONNECTION, and a subprocess opens its own. So a child is
     a stranger to the daemon - including a stranger to its own parent.
@@ -213,10 +231,12 @@ LOCK GROUPS AND SUBPROCESSES
     state, and the parent's half of this cycle is an OS wait. It wedged a framework
     test run for twelve hours on 2026-08-11.
 
-    (That incident was caused by the AUTOMATIC per-tenant write lock, which took
-    cluster:SITE_<id> on the first save() to any site-scoped model. That mechanism
-    is DISABLED as of 2026-08-11 - see backlog B-87 - but the hazard is general:
-    it applies to every lock, and named locks are taken by hand all the time.)
+    The hazard applies to every lock - and a site lock is held by every
+    request and every write section, so a child spawned from a #[Writer]
+    endpoint or a Site_Lock::write() section meets it whenever it writes the
+    same site. The child takes its OWN Site_Lock::write() section (it runs in an
+    enforcement window of its own), and the lock group below grants it
+    instantly. It cannot see the parent's uncommitted writes.
 
     A GROUP is that process tree. A connection may name a group_id at handshake;
     when its group already holds a lock it is granted immediately, past any queue.
@@ -294,8 +314,8 @@ LOCKS INSIDE A TASK
     in its finally. Locks acquired during
     the task are released at its boundary; locks the WORKER holds are in the
     checkpoint and survive. Reentrancy counts are flattened (a count describes a
-    call stack that has ended), and the site-lock registry is purged in step so the
-    next task re-acquires rather than believing it still holds one.
+    call stack that has ended). A database transaction the task body left open is
+    rolled back first, so nothing half-written becomes visible when its lock goes.
 
     This is a safety net, not a licence. Release your own locks in a finally - a
     task that ends still holding one is released AND named on the run's stderr and
@@ -305,9 +325,11 @@ LOCKS INSIDE A TASK
     Both methods are framework-internal (the `_` prefix). Application code has no
     reason to call them.
 
-    Backlog B-85 covers the open policy question this exposed: a task should
-    DECLARE whether it wants the site write lock at all, since a long-running task
-    that reads and writes alongside other writers usually should not have it.
+    A task takes NO automatic site lock and no automatic transaction. Its body
+    is an enforcement window: it writes site-scoped models inside one
+    Site_Lock::write($site_id, fn () => ...) section per item, re-reading the
+    record inside, or inside a reasoned Site_Lock::bypass() for a maintenance
+    pass that tolerates concurrent writers (rsx:man site_locks, rsx:man tasks).
 
 UPGRADING A READ LOCK
     upgrade_lock($read_token, $timeout = null): string
@@ -327,6 +349,12 @@ UPGRADING A READ LOCK
     same token unchanged, so an unconditional call is safe. No framework code
     calls this today; it is here for an application that holds a
     named_read_lock() and discovers it must write.
+
+    A SITE lock is never upgraded: upgrade_lock() on a site read lock throws
+    "Refused to take the WRITE lock on site <id> while holding its READ
+    lock ...". The serialization guarantee of a site writer depends on nothing
+    running between its read and its write, so read-then-write on a site takes
+    the write lock first and reads inside it (rsx:man site_locks).
 
 COUNTING SEMAPHORES
     acquire_semaphore(name, max_slots, timeout = null): ?string
@@ -733,6 +761,7 @@ NOTES
       design removes.
 
 SEE ALSO
+    rsx:man site_locks        The per-site reader/writer locks every request takes
     rsx:man maintenance_mode  The no-op grant and why the daemon stops
     rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock)
                               and the worker pools the daemon accounts

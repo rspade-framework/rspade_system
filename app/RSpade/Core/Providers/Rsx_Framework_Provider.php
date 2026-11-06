@@ -360,7 +360,9 @@ class Rsx_Framework_Provider extends ServiceProvider
                 shouldnt_happen("Main_Abstract extending class from manifest not found: {$class_name}");
             }
             if (method_exists($class_name, 'init')) {
-                $class_name::init();
+                // No automatic lock, enforced (Site_Lock::_run_hook()): a site-scoped write in
+                // init() takes its own Site_Lock::write() section or a bypass.
+                \App\RSpade\Core\Locks\Site_Lock::_run_hook(class_basename($class_name) . '::init()', fn () => $class_name::init());
             }
         }
 

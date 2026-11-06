@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building external REST endpoints - #[Api_Endpoint] + #[Api_Param] on Rsx_Api_Controller_Abstract under /api/vN/, Bearer rsx_ keys, rsx:api:key:create, key scopes and --read-only, POST /api/v1/files, /apidocs. Use when exposing an API or minting a key, or on a 401, 403 insufficient_scope, 403 read_only_key, a 422 on an undeclared param, API-GET-PURE-01, or a scan dying on an attribute argument."
+description: "Building external REST endpoints - #[Api_Endpoint] + #[Api_Param] on Rsx_Api_Controller_Abstract under /api/vN/, Bearer rsx_ keys, rsx:api:key:create, key scopes and --read-only, POST /api/v1/files, /apidocs, #[Writer] on a POST, object-only response bodies, _duration_ms / _completed_at, _request_ref replay. Use when exposing an API or minting a key, or on a 401, 403 insufficient_scope, 403 read_only_key, a 422 on an undeclared param, 409 request_ref_reused, 410 request_response_expired, 410 api_version_retired, 'Every external API response body is a JSON object', API-GET-PURE-01, or a scan dying on an attribute argument."
 ---
 
 # External API
@@ -27,6 +27,8 @@ class Contacts_Api_Controller extends Rsx_Api_Controller_Abstract {
 - `#[Api_Param]` is repeatable, one per accepted parameter.
 - The docblock's `@api-response` sample is what `/apidocs` shows as the response shape.
 - `#[Auth]` is mandatory here as on every dispatchable surface.
+- **An endpoint is a READER of its site unless it declares `#[Writer]`.** A POST that creates, updates, deletes or dispatches declares it: the request runs under the site's write lock in one transaction (nothing else changes the site meanwhile; a throw rolls it all back; a returned error response commits what was written - validate first). A reader that saves a site-scoped model fails with `Site lock enforcement: ... by API X::y without site N's write lock`. `#[Writer]` on a GET is refused (`API-GET-PURE-01`). Skill `rspade:site-locks`.
+- **Return right away**: an export or batch pass is a task, with the feature's own status and result endpoints (the API has no generic task interface).
 
 **GET IS FOR READS, POST IS FOR WRITES.** A GET endpoint is a READ; anything that changes application data — create, update, delete, a state change, a send, a queued job that will do one of those — is a POST. Incidental bookkeeping a GET performs (a request log row, a last-used stamp, a counter, a cache fill) is fine: the test is whether a caller who never made the request could tell from the app's own screens. This is not REST style — it is the only thing that gives "read" a meaning, and it is enforced from both ends: **`API-GET-PURE-01`** at build time on the handler, and **`_api_keys.read_only`** at runtime on the caller (see Read-only keys). Waive `API-GET-PURE-01` with `@API-GET-PURE-01-EXCEPTION <rationale>` for that incidental bookkeeping only — never to let a GET mutate, because the waiver removes the meaning of every read-only key in the system.
 
@@ -49,19 +51,23 @@ The failure looks like a broken manifest build with a class-not-found deep in th
 
 ## Response contract
 
+**Every body is a JSON object.**
+
 | You return | Client gets |
 |---|---|
-| a model or Collection | redacting `toArray()` - `neverExport` fields stripped, enum `__label` + `__MODEL` included |
-| a plain array | 200 with that JSON |
-| `null` | 204 No Content |
+| a model | 200, redacting `toArray()` - `neverExport` fields stripped, enum `__label` + `__MODEL` included |
+| an associative array | 200 with that JSON object |
+| nothing to report | return `['result' => 'success']` |
 | `Rsx_Api::created($data)` | 201 |
-| `Rsx_Api::no_content()` | 204 |
 | `Rsx_Api::not_found()` / `unauthorized()` / `forbidden()` | 404 / 401 / 403 |
 | `Rsx_Api::validation_error($fields)` | 422 |
 | `Rsx_Api::error(...)` | the error you name |
-| a scalar | **`shouldnt_happen`** - a bare scalar is never a valid API response |
+| a file / streamed response | sent as it is (downloads are exempt) |
+| `null`, a list, `[]`, a scalar, a Collection | **refused**: a 500 naming the endpoint (`Every external API response body is a JSON object ... a list goes inside an object (['items' => $list])`), a writer rolled back |
 
-Error shape is always `{"error":{"code","message","fields"?}}`.
+There is no 204. Error shape is always `{"error":{"code","message","fields"?, ...documented extras}}`, built only by `Api_Dispatcher::_error()` - branch on `error.code`, never the message.
+
+**Every object answer carries `_duration_ms` and `_completed_at`** (ISO UTC) at the top level. **`_request_ref`** (a system param on every endpoint, 1-128 chars, never in `$params`; `#[Api_Param]` names never start with `_`) is echoed on every response; on a writer it names the request, so a retry with the same ref and body is answered from the record (`_replayed: true`, original timing) instead of run twice - a different body is 409 `request_ref_reused`, a pruned record 410 `request_response_expired`. Only a success records its ref; nobody signed in = echoed, never honoured. `rsx:man request_history`.
 
 ## Authentication
 
@@ -177,7 +183,7 @@ Indexed by key, by address (`ip_address_id`), and by `created_at`. Retention is 
 
 ## Versioning
 
-URL-only, **exact-match at runtime** - there is no fallthrough from `/api/v2/x` to a v1 handler (it would let a `/api/v2/*`-scoped key reach v1 handlers; never add one). Ship a new version as a new path.
+URL-only, **exact-match at runtime** - there is no fallthrough from `/api/v2/x` to a v1 handler (it would let a `/api/v2/*`-scoped key reach v1 handlers; never add one). Ship a new version as a new path. A path another version serves but this one does not answers **410 `api_version_retired`** with `error.versions` naming the serving versions; a path no version serves is 404. A version whose endpoints answer non-objects (a bare list, a 204) is moved to a version that answers objects and then retired (end its range).
 
 **Carry unchanged endpoints into v2 by declaring a range, never by copying attributes**: `#[Api_Versions(through: 2)]` on the controller serves every endpoint in it at v1 AND v2 (the manifest expands real `/api/v2/...` route rows, one handler); `through: N` on an `#[Api_Endpoint]` overrides it - the endpoint v2 revises says `through: 1`. A range below the pattern's own version, or an expanded address another declaration claims, fails the build ("Duplicate route definition" naming the range).
 

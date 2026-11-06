@@ -20,12 +20,28 @@ endpoint, and every caller goes through it:
 4. As ONE UNIT - its own Turnstile latch, its own revision transaction, and `request()` /
    the `Request` facade bound to the call's own request, all restored for the calling
    scope afterwards - the controller's `pre_dispatch`, the action, and
-   `rsx.post_dispatch`.
+   `rsx.post_dispatch`. The controller's `pre_dispatch` runs with NO lock, in an
+   enforcement window of its own (`Site_Lock::_run_hook()`; a lock or transaction it leaks
+   fails the call). Then the SITE LOCK BOUNDARY (`Site_Lock::_run_request()`): the
+   surface's resolved mode (reader by default, `#[Writer]` = write lock + one database
+   transaction committed after `rsx.post_dispatch`, `#[Manual_Lock]` = no lock) is taken;
+   the enforcement window is the action alone (`Site_Lock::_enforce()`). A call made from
+   inside another (`internal()` in an endpoint) runs under the outer call's hold.
 5. A result that is an HTTP response (Symfony `Response`, a `View`, `Responsable`,
    `Renderable` - a redirect, a page, a download) from the action or the controller's
    `pre_dispatch` THROWS: an Ajax call answers a value or a coded result, never a page.
 6. A DB transaction the call left open is rolled back, and the call THROWS naming the
-   endpoint - its writes inside it are gone.
+   endpoint - its writes inside it are gone (and a writer's whole transaction with them).
+7. THE REQUEST HISTORY (`Core/Revisions/Request_History`), for a browser call to a writer
+   (`#[Writer]`, or a `#[Manual_Lock]` that takes a site write lock): the call's
+   `_transactions` row (minted eagerly by the boundary) records its fingerprint, redacted
+   payload and timing inside its transaction, and - for a SUCCESS that carried a
+   `_request_ref` - the reference and the envelope outcome `{_success: true,
+   _ajax_return_value}` (status 200). A reference this actor already used on this site is
+   answered from the history before the endpoint runs: a replay (`_replayed: true`, the
+   original `_duration_ms` / `_completed_at`), or `request_ref_reused` /
+   `request_response_expired` - thrown as `Request_History_Answer`, so nothing is written,
+   and rendered by `call_envelope()`. `_request_ref` never reaches `$params`.
 
 It returns the raw result (a value or an `Rsx_Response_Abstract`) or throws.
 
@@ -59,6 +75,8 @@ Every browser call, alone or batched, runs on `call_request()` - the REAL reques
 (address, headers, cookies, session) carrying that call's parameters as its input, method
 POST, no query string - through, in order:
 
+0. **`_request_ref`** is taken out of the call's params (`Request_History::take_ref()`),
+   before anything else sees them.
 1. **Session lifetime** for the request's own experience: `Session::enforce_timeouts(false)` /
    `Portal_Session::enforce_timeouts(false)`. Not strict - an Ajax call gets
    `rsx.sessions.ajax_grace_minutes` past the limit. A cookie carrying the token the
@@ -68,13 +86,27 @@ POST, no query string - through, in order:
    call in the request answers the same envelope.
 2. **Site membership**, staff realm only: `Session::enforce_enabled_membership()` ends a
    session whose membership was disabled; the call answers `auth_required`.
-3. **The realm's `Main::pre_dispatch`**, once PER CALL (`Dispatcher::ajax_main_pre_dispatch()`),
+3. A `_request_ref` that is not a string of 1 to 128 characters refuses the call as
+   `validation` (metadata keyed `_request_ref`).
+4. **The realm's `Main::pre_dispatch`**, once PER CALL (`Dispatcher::ajax_main_pre_dispatch()`,
+   unlocked and enforced through `Site_Lock::_run_hook()`),
    with `$request` = the call's request and `$params` = `controller`, `action`, `_route`
    `'/_ajax/:controller/:action'`, `_method` `'POST'`, `_handler` the `Ajax` class. A
    non-null answer refuses THAT call: an `Rsx_Response_Abstract` becomes its coded envelope
    with its reason (`response_unauthorized('Account suspended')`); any other value becomes
    `unauthorized` "This request was refused.". Never rendered as a page.
-4. `call_envelope()`.
+5. `call_envelope()`, with the call's request history input.
+
+Every envelope then carries `_duration_ms` / `_completed_at` (ISO UTC; the recorded values
+for a recorded writer, the original ones for a replay) and, whenever one was sent, the
+call's `_request_ref`, echoed unchanged (`__stamp_call()`); a whole-request refusal
+(`request_refusal()`) stamps them per call too.
+
+**Site locks across a batch.** Every call takes its own lock, inside `execute()`, after its
+`Main::pre_dispatch` and controller `pre_dispatch` have run with none; nothing is held
+between calls. Calls do not share a read lock: a lock held across calls would be held while
+the next call's pre_dispatch hooks run, and those run with no lock (a hook that opens its own
+`Site_Lock::write()` section would be refused as an upgrade).
 
 The checks are per call because a call can change who is signed in (a sign-in, a logout, a
 site switch) and the next call is judged as the identity it runs under.
@@ -88,12 +120,13 @@ envelope: the sign-in rotated the browser's tokens, and the client swaps
 
 `call_envelope()` builds exactly what both URLs send:
 
-- success: `{_success: true, _ajax_return_value, _server_time, _user_timezone[, _csrf][, console_debug][, flash_alerts]}`
+- success: `{_success: true, _ajax_return_value, _server_time, _user_timezone[, _csrf][, console_debug][, flash_alerts], _duration_ms, _completed_at[, _request_ref][, _replayed]}`
 - coded result (`coded_envelope()`): `{_success: false, error_code, reason, metadata, ...}`
 - anything thrown (`error_envelope()`): the coded exception family keeps its code
   (`AjaxUnauthorizedException` -> `unauthorized`, `AjaxNotFoundException` -> `not_found`,
   `AjaxFormErrorException` -> `validation`, `AjaxQuestionException` -> `question`,
-  `AjaxAuthRequiredException` -> `auth_required`; an `HttpException` 401/403/404 likewise, 429 `too_many_requests`,
+  `AjaxAuthRequiredException` -> `auth_required`; a `Request_History_Answer` refusal ->
+  `request_ref_reused` / `request_response_expired`; an `HttpException` 401/403/404 likewise, 429 `too_many_requests`,
   any other status `generic`); everything else is `error_code: fatal` with an `error`
   object - file, line, message, backtrace for a caller `Rsx_Diagnostics` admits, a generic
   sentence and an `error_id` otherwise. `Ajax::is_coded_failure($e)` is the coded/fault

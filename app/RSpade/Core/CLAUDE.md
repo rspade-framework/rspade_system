@@ -8,6 +8,12 @@ An application's `/rsx/main.php` (and the portal's `/rsx/portal_main.php`) exten
 halts, and it is never an authorization hook) and `unhandled_route()`. The contract - order,
 arguments per channel, what a non-null return does - is `rsx:man dispatch`, MAIN HOOKS.
 
+Every one of them - and a controller's own `pre_dispatch()` - runs through
+`Locks/Site_Lock::_run_hook()`: NO automatic site lock, inside an enforcement window (a
+site-scoped write needs a `Site_Lock::write()` section, a bypass, or a `#[Site_Lock_Exempt]`
+model), and it must hand over holding no lock or transaction it took. The request's own lock
+is taken after the pre_dispatch hooks, around the handler only.
+
 ## Core JavaScript and dispatch
 
 Every class in `Js/` is in every bundle - never check for its existence; the boot order and the

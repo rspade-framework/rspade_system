@@ -228,6 +228,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /** Graceful stop. @param array $params task_id, explanation (optional) */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function stop(Request $request, array $params = [])
     {
         return static::__act($params, 'stop', fn (Task_Run_Model $task) => $task->request_stop(static::__explanation($params)));
@@ -235,6 +236,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /** Force stop. @param array $params task_id, grace_seconds (optional), explanation (optional) */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function force_stop(Request $request, array $params = [])
     {
         $grace = isset($params['grace_seconds']) && $params['grace_seconds'] !== '' ? (int) $params['grace_seconds'] : null;
@@ -247,6 +249,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /** Force kill. @param array $params task_id, explanation (optional) */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function force_kill(Request $request, array $params = [])
     {
         return static::__act($params, 'force_kill', fn (Task_Run_Model $task) => $task->force_kill(static::__explanation($params)));
@@ -254,6 +257,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /** Cancel a pending run. @param array $params task_id, explanation (optional) */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function cancel(Request $request, array $params = [])
     {
         return static::__act($params, 'cancel', fn (Task_Run_Model $task) => $task->cancel(static::__explanation($params)));
@@ -266,6 +270,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
      * @param array $params task_id
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function rerun(Request $request, array $params = [])
     {
         $task = static::__viewable($params);

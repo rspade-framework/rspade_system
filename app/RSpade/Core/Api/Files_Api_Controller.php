@@ -129,6 +129,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
     #[Media]
     #[Api_Param('file', type: 'file', required: true, description: 'The file to upload, as a multipart/form-data part.')]
     #[Api_Param('filename_override', type: 'string', description: 'Store the file under this name instead of the uploaded part\'s own filename.')]
+    #[Writer]
     public static function upload(Request $request, array $params = [])
     {
         // Same mandatory precondition POST /_upload enforces, for the same reason: an app that

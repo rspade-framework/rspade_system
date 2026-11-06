@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Rsx\Models\File_Attachment_Model;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 
 /**
  * File Detach Command
@@ -68,9 +69,15 @@ class RsxFileDetachCommand extends Command
         $lock = RsxLocks::named_write_lock(RsxLocks::LOCK_FILE_WRITE);
 
         try {
-            $attachment->fileable_type = null;
-            $attachment->fileable_id = null;
-            $attachment->save();
+            // Under the attachment's site write lock (a command is enforced), re-reading it.
+            $attachment = Site_Lock::write((int) $attachment->site_id, function () use ($attachment) {
+                $attachment = File_Attachment_Model::find($attachment->id);
+                $attachment->fileable_type = null;
+                $attachment->fileable_id = null;
+                $attachment->save();
+
+                return $attachment;
+            }, 'File detached from the command line');
 
             $this->info('');
             $this->info('[OK] File detached from model');

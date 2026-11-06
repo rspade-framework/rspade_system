@@ -80,8 +80,8 @@ class Rsx_Locks_Api_Test extends Rsx_Test_Abstract
         $token = RsxLocks::site_write_lock(self::TEST_SITE_ID);
         static::__assert_true(is_string($token) && $token !== '', 'site_write_lock returns a non-empty token');
 
-        // Proves site_write_lock is the SAME lock the framework takes automatically for a
-        // web request mutating this tenant: cluster domain, SITE_<id> name, WRITE type.
+        // Proves site_write_lock is the tenant lock Site_Lock and a #[Writer] endpoint hold:
+        // cluster domain, SITE_<id> name, WRITE type.
         $stats = RsxLocks::get_lock_stats(RsxLocks::CLUSTER_LOCK, $name);
         static::__assert_true($stats['writer_active'], 'writer active on the tenant lock');
 

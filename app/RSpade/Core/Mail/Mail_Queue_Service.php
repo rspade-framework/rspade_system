@@ -18,6 +18,7 @@ use Symfony\Component\Mailer\Exception\UnexpectedResponseException;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Component\Mime\Email;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
@@ -86,7 +87,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
         // claimed row's own status updates and the recipient counters included, therefore
         // runs outside the site scope; each row keeps the site_id it was queued under.
         $summary = null;
-        $task->state(Email_Queue_Model::without_site_scope(function () use ($task, &$summary) {
+        $drain = function () use ($task, &$summary) {
             $counts = [
                 'sent' => 0,
                 'server_errors' => 0,
@@ -293,7 +294,14 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 : 'Done: ' . $outcome() . '.');
 
             return $counts;
-        }));
+        };
+
+        // Queue bookkeeping: a row's status columns are the drain's own, no user edits them,
+        // and the drain must never wait behind - or hold back - a tenant's writers.
+        $task->state(Site_Lock::bypass_all_sites(
+            'the email queue drain records delivery status on the queued rows of every site',
+            fn () => Email_Queue_Model::without_site_scope($drain)
+        ));
 
         $task->summary($summary);
 
@@ -314,7 +322,10 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
         $task->status("Deleting email records older than {$days} days");
 
         // Every site's rows age out on the same clock: retention is install policy.
-        $deleted = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::cleanup_old($days));
+        $deleted = Site_Lock::bypass_all_sites(
+            'email queue retention deletes the rows of every site past rsx.mail.retention_days',
+            fn () => Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::cleanup_old($days))
+        );
         $task->stdout($deleted > 0
             ? "Deleted {$deleted} email record(s) older than {$days} days."
             : "No email records are older than {$days} days; nothing deleted.");

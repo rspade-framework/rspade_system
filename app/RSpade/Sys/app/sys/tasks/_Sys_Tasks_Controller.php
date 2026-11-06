@@ -112,6 +112,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {task, rerun_id: ?int}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function act(Request $request, array $params = [])
     {
         $task = Task_Run_Model::find((int) ($params['task_id'] ?? 0));
@@ -169,6 +170,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {task_id}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function start_sample(Request $request, array $params = [])
     {
         return ['task_id' => Task::dispatch('_Sys_Oregon_Trail_Service', 'travel')];
@@ -255,6 +257,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {id, outcome: dispatched|coalesced, concurrency: exclusive|debounce|null}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function run_schedule_now(Request $request, array $params = [])
     {
         $class = (string) ($params['class'] ?? '');

@@ -72,6 +72,7 @@ public static function verify(Request $request, array $params = [])
 
 ```php
 #[Ajax_Endpoint]                        // class is #[Auth('public')] - the session is NOT signed in
+#[Manual_Lock]                          // the destination enters a site: RsxAuth::enter_site()
 public static function verify_2fa(Request $request, array $params = [])
 {
     try {
@@ -87,6 +88,8 @@ public static function verify_2fa(Request $request, array $params = [])
 ```
 
 `verify_challenge()` signs the identity in, stamps `last_login`, writes the success row, and records `STATUS_FAILED_2FA` on a wrong answer. **You record nothing.** Hand `$params` through untouched.
+
+**The lock mode of a sign-in endpoint.** A STAFF verify / passkey endpoint declares `#[Manual_Lock]`: the session has no site until the destination calls `RsxAuth::enter_site()`, which takes that site's write lock and is refused under any automatic lock (`RsxAuth::enter_site(N) refused: this process holds the READ lock ...`). A PORTAL one declares `#[Writer]`: the portal's site comes from the URL, nothing switches site, and the sign-in stamps the site-scoped portal user (a reader would fail with `Site lock enforcement: Portal_User_Model save ...`). The identity-level work (credentials, the challenge, the throttle, the login history) is not site-scoped and needs no lock. Skill `rspade:site-locks`.
 
 **Never show how many attempts remain** - "That code is not valid" and the form again, every time. A count tells an attacker how much budget is left and when to stop before the identity locks. Which failure it was is `$e->reason()`, for code only: `REASON_WINDOW_EXPIRED`, `REASON_WRONG_ANSWER`, `REASON_CHALLENGE_SPENT` (the wrong answer that destroyed the challenge), `REASON_IDENTITY_LOCKED`, `REASON_REFUSED`.
 
@@ -114,6 +117,7 @@ Any registered passkey can sign its owner in with no password (every passkey is 
 
 ```php
 #[Ajax_Endpoint]                        // class is #[Auth('public')]
+#[Manual_Lock]                          // as verify_2fa (portal: #[Writer])
 public static function passkey_login(Request $request, array $params = [])
 {
     if (!is_array($params['assertion'] ?? null)) {

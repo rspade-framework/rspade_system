@@ -19,7 +19,8 @@ SYNOPSIS
     </Rsx_Form>
 
     #[Ajax_Endpoint]
-    #[Auth('can_manage_tasks')]        // #[Auth] is MANDATORY - see auth_gates(7)
+    #[Auth('can_manage_tasks')]        // #[Auth] is MANDATORY - rsx:man auth_gates
+    #[Writer]                          // it saves: the site's write lock (rsx:man site_locks)
     public static function save(Request $request, array $params = [])
     {
         $errors = [];
@@ -485,8 +486,9 @@ EDITING A RECORD
     but the record does not hold it, so it is reported. So is one a before_submit hook
     altered. A form that stays open after saving moves to the updated_at in the result.
 
-    THE ENDPOINT. Validate first, as ever: every field still arrives, so required and
-    cross-field rules see the whole form. Then:
+    THE ENDPOINT is a #[Writer] (an Ajax endpoint is a reader unless it says so, and a
+    reader that saves fails). Validate first, as ever: every field still arrives, so
+    required and cross-field rules see the whole form. Then:
 
         $client = $params['id'] ? Client_Model::find($params['id']) : new Client_Model();
         if (!$client) {
@@ -527,6 +529,14 @@ EDITING A RECORD
 
     NEVER inside your own DB::transaction(): run() holds the transaction, and a snapshot
     taken before its lock is granted would hide the save it waited for.
+
+    INSIDE A #[Writer] that warning does not apply. The writer's transaction is the
+    framework's, opened AFTER the site's write lock was granted, so its snapshot is
+    current and nothing else writes the site meanwhile; run() nests in it as a
+    savepoint, and the writer commits once at the end. The same holds inside a
+    Site_Lock::write() section. A coded result the endpoint RETURNS
+    (response_form_error(), response_form_question()) commits what it wrote before
+    answering; a thrown one rolls the request back.
 
     WHEN IT ASKS. Only when another save changed a field this submission also changed,
     to a value other than the one this submission writes. A save that touched other

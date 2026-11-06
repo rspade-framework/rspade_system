@@ -40,6 +40,12 @@ use App\RSpade\Core\Task\Task;
  * THE CHECK IS `login_users`, not `users`: credentials and site profiles are
  * different tables, and asking the wrong one answers a different question. The
  * account itself is created by Rsx_Initial_User - see rsx:man initial_user.
+ *
+ * SITE LOCKS. check() runs from the front controller BEFORE dispatch, so it is in no
+ * request window and holds no lock: Rsx_Initial_User::create() declares the initial site
+ * and takes that site's write lock itself, and the account and its user.initial.created
+ * handler rows commit before the lock is released. The sample-data task is dispatched
+ * after create() has returned - after that commit - so it reads the finished account.
  */
 class Rsx_First_User_Setup
 {

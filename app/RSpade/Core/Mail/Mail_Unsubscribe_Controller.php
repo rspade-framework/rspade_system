@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Mail;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Errors\Error_Screens;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
@@ -61,6 +62,7 @@ class Mail_Unsubscribe_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_mail/unsubscribe', methods: ['GET', 'POST'])]
     #[Auth('public')]
+    #[Manual_Lock]
     public static function unsubscribe(Request $request, array $params = [])
     {
         $email = trim((string) $request->input('email', ''));
@@ -112,12 +114,16 @@ class Mail_Unsubscribe_Controller extends Rsx_Controller_Abstract
             return Error_Screens::not_found($request);
         }
 
-        // Both verbs stamp unsubscribed_at themselves (Email_Recipient_Model).
-        if ($scope === 'all') {
-            Email_Recipient_Model::block_all($site_id, $email);
-        } else {
-            Email_Recipient_Model::block($site_id, $email, $category_id);
-        }
+        // Both verbs stamp unsubscribed_at themselves (Email_Recipient_Model). The recipient row
+        // belongs to the SIGNED site, not the visitor's (who usually has none): one write
+        // section on that site (#[Manual_Lock]).
+        Site_Lock::write($site_id, function () use ($scope, $site_id, $email, $category_id) {
+            if ($scope === 'all') {
+                Email_Recipient_Model::block_all($site_id, $email);
+            } else {
+                Email_Recipient_Model::block($site_id, $email, $category_id);
+            }
+        }, 'Unsubscribe');
 
         // A one-click caller is not a browser: it gets a 200 and a line of text, never a
         // redirect and never a page. Anything else and the provider records a failure.

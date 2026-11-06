@@ -29,4 +29,32 @@ class Kernel extends ConsoleKernel
         require base_path('routes/console.php');
     }
 
+    /**
+     * Laravel's re-routing of the Symfony command events, plus the site lock ENFORCEMENT
+     * WINDOW every command runs in (Site_Lock_Cli): opened on ConsoleEvents::COMMAND, closed
+     * on ConsoleEvents::TERMINATE, for a command run from the shell and for Artisan::call()
+     * alike. A command declaring const SITE_LOCK_EXEMPT = '<reason>' runs unchecked.
+     *
+     * @return $this
+     */
+    public function rerouteSymfonyCommandEvents()
+    {
+        $first = $this->symfonyDispatcher === null;
+
+        parent::rerouteSymfonyCommandEvents();
+
+        if ($first) {
+            \App\RSpade\Core\Locks\Site_Lock_Cli::_listen($this->symfonyDispatcher);
+        }
+
+        // Laravel hands the dispatcher to the console Application only when it CREATES it
+        // (getArtisan()). Something that resolved Artisan during the boot - before this
+        // booted() callback ran - left it without one, and no command it runs would raise an
+        // event: no window. Attach it here, before the first command runs.
+        if ($this->artisan !== null) {
+            $this->artisan->setDispatcher($this->symfonyDispatcher);
+        }
+
+        return $this;
+    }
 }

@@ -212,6 +212,13 @@ DECLARING ENDPOINTS
     #[Api_Param] naturally invites an enum default.)
 
 PARAMETERS AND VALIDATION
+    SYSTEM PARAMETERS. A key starting with `_` is the framework's: an
+    #[Api_Param] name never starts with `_` (a build failure). One is defined,
+    _request_ref - accepted on every endpoint undeclared, a string of 1 to 128
+    characters (422 on the field otherwise), never copied into $params, echoed
+    on the response and honoured by writers as a replay key (rsx:man
+    request_history).
+
     Api_Param_Validator runs after routing and before the controller. It:
         - REJECTS any key not declared by an #[Api_Param] -> 422 "Unknown parameter"
         - reports a missing required param       -> 422 "This field is required"
@@ -276,28 +283,74 @@ PARAMETERS AND VALIDATION
     likewise refused, so a temp path can never be smuggled into a string.
 
 RESPONSE CONTRACT
-    The endpoint's return value becomes the HTTP response:
+    EVERY RESPONSE BODY IS A JSON OBJECT. The endpoint's return value becomes
+    the HTTP response:
 
         Rsx_Model_Abstract   -> 200, redacting toArray() (see SERIALIZATION)
-        Eloquent Collection  -> 200, ordered array of redacted models
-        array                -> 200, JSON as-is (recursed: nested models redacted)
-        null                 -> 204 No Content (empty body)
-        JsonResponse         -> passed through unchanged (the Rsx_Api helpers)
-        scalar (int/string)  -> shouldnt_happen() - a bare scalar is never a
-                                valid API body; wrap it in an array
+        associative array    -> 200, a JSON object (recursed: nested models
+                                redacted)
+        JsonResponse         -> passed through (the Rsx_Api helpers); its body
+                                must be an object
+        a file / streamed    -> sent as it is (a download is exempt)
+        response, or any
+        non-JSON body
+
+    Refused - a RuntimeException naming the endpoint, answered as the
+    channel's 500 and rolling a writer back:
+
+        null, a list, an empty array, a scalar, an Eloquent Collection, a
+        JsonResponse whose body is a JSON list
+
+            External API endpoint Contacts_Api_Controller::list answered a list.
+              Every external API response body is a JSON object. Return a model
+              or an associative array: a list goes inside an object
+              (['items' => $list]), and an endpoint with nothing else to say
+              answers ['result' => 'success'].
+
+    There is no 204: an endpoint with nothing to report answers
+    {"result": "success"}. An object can always gain a field without breaking a
+    client; a bare list or an empty body cannot, and an object is what carries
+    the timing fields and _request_ref below.
 
     All success responses are BARE JSON with a real HTTP status. There is NO
-    {success, data} envelope (this was the pre-epic shape and is gone).
+    {success, data} envelope.
 
-    Rsx_Api response helpers (return JsonResponse; error shape
-    {"error": {"code", "message", "fields"?}}):
+    TIMING FIELDS. Every JSON object answer - success, error, replay, the 500 -
+    carries at the top level:
+
+        "_duration_ms": 41,                          // integer milliseconds
+        "_completed_at": "2026-11-06T14:02:11.204Z"  // ISO 8601 UTC
+
+    timed from the dispatch's start (a failure answered before dispatch began:
+    from the request's start). A writer that recorded itself answers with its
+    recorded values, a replay with the originals (rsx:man request_history).
+    A sent _request_ref is echoed at the top level of every object answer.
+
+    THE ERROR SHAPE is the standard for every error the API answers, built in
+    one place (Api_Dispatcher::_error()):
+
+        {"error": {"code": "<machine code>", "message": "<sentence>",
+                   "fields": {"<param>": "<message>"},     // validation only
+                   ...extra keys a code documents}}         // e.g. versions
+
+    A client branches on error.code and the HTTP status, never on the message.
+
+    Rsx_Api response helpers (return JsonResponse):
         Rsx_Api::created($data)                 201, serialized like a return
-        Rsx_Api::no_content()                   204
         Rsx_Api::not_found(?$message)           404  code not_found
         Rsx_Api::unauthorized(?$message)        401  code unauthorized
         Rsx_Api::forbidden(?$message)           403  code forbidden
         Rsx_Api::validation_error($fields, ?$message)  422  code validation
         Rsx_Api::error($code, $message, $status, ?$fields)   arbitrary status
+
+    WRITERS. An endpoint is a READER of its site unless it declares #[Writer]
+    (POST only: a #[Writer] GET is refused by API-GET-PURE-01). A writer runs
+    under the site's write lock inside one transaction - nothing else changes
+    the site while it runs, and a throw rolls everything back; a returned error
+    response commits what it wrote. A reader that saves a site-scoped model
+    fails with "Site lock enforcement: ...". An endpoint executes and returns
+    right away; export- or batch-shaped work is dispatched to a task, with the
+    feature's own status and result endpoints (rsx:man site_locks).
 
 SERIALIZATION
     A returned model is serialized with the SAME redacting toArray() the
@@ -1190,8 +1243,16 @@ READ-ONLY KEYS
 
 VERSIONING
     Versioning is URL-only (/api/v1/..., /api/v2/...) and EXACT-MATCH at runtime
-    - there is NO fallthrough from v2 to v1. A request to a path that does not
-    exist at its stated version is a 404 (after auth). Fallthrough is not a
+    - there is NO fallthrough from v2 to v1. A request to a path that another
+    version serves but its stated version does not is a 410 (after auth):
+
+        {"error": {"code": "api_version_retired",
+                   "message": "API version v1 does not serve this path. It is served by v2.",
+                   "versions": ["v2"]}}
+
+    A path no version serves - or any path under a version above the newest
+    declared one, which never existed and so is not retired - is the 404.
+    Fallthrough is not a
     missing feature: it would let a key scoped /api/v2/* reach v1 handlers (the
     scope grammar's version prefix is a promise), it would turn two versions
     sharing a path into a per-request precedence rule, and the 404 is the right
@@ -1259,6 +1320,11 @@ VERSIONING
 
     Before narrowing a key's scopes to one version, prefer the ? version
     segment (/api/?/contacts/*) for an integration meant to follow the API.
+
+    A version whose endpoints answer anything but a JSON object (a bare list,
+    an empty 204) cannot be served under the RESPONSE CONTRACT: carry its
+    callers to a version that answers objects, then end the old version's range
+    so its paths answer 410 api_version_retired.
 
     DOCS DISPLAY RULE (Api_Catalog, the single implementation both the docs page
     and the LLM catalog consume): endpoints are grouped by (verb, path with the
@@ -1679,7 +1745,7 @@ TEMPLATE ENDPOINTS
         GET  /api/v1/contacts/:id        one record (or 404)
         POST /api/v1/contacts/create     create -> 201
         POST /api/v1/contacts/:id/update present-only update -> 200
-        POST /api/v1/contacts/:id/delete soft delete -> 204
+        POST /api/v1/contacts/:id/delete soft delete -> {"result": "success"}
         ... and the same five for /api/v1/clients
 
     Plus the app-owned half of the file story - the three-endpoint attachment
@@ -1759,6 +1825,17 @@ RSX VS LARAVEL
         RSX:     /apidocs and /apidocs/openapi.json are generated from the manifest.
 
 TROUBLESHOOTING
+    "External API endpoint X::y answered a list." (or null, a scalar, ...)
+        Every body is a JSON object: wrap a list as ['items' => $list]; answer
+        ['result' => 'success'] when there is nothing else to say.
+
+    410 api_version_retired
+        The path exists, at the versions named in error.versions. Move the
+        client to one of them.
+
+    "Site lock enforcement: ... by API X::y without site N's write lock."
+        The endpoint writes: declare #[Writer] (rsx:man site_locks).
+
     Manifest build fails after adding an endpoint
         Read the RuntimeException - it names the exact rule (bad /api/vN prefix,
         a verb other than GET/POST, a :token with no #[Api_Param], required+
@@ -1822,6 +1899,8 @@ TROUBLESHOOTING
 
 SEE ALSO
     rsx:man file_upload - attachments, the upload gate, the claim window
+    rsx:man site_locks       readers by default, #[Writer], the request boundary
+    rsx:man request_history  _request_ref replay, timing fields
     rsx:man auth_gates       the mandatory #[Auth] gate on every endpoint
     rsx:man session          API KEY SESSIONS, audit sessions, Session accessors
     rsx:man acls             Permission:: checks, role_id, the reserved override

@@ -52,6 +52,7 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function adopt_tester_key(Request $request, array $params = [])
     {
         $key = trim((string) ($params['key'] ?? ''));
@@ -115,6 +116,7 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
      * @return array{key: string, expires_at: string}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function mint_temporary_key(Request $request, array $params = [])
     {
         $user_id = Session::get_user_id();
@@ -150,6 +152,7 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
      * Ajax: drop the adopted key. The caller reloads afterwards, for the same reason.
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function forget_tester_key(Request $request, array $params = [])
     {
         Api_Tester_Key::forget();

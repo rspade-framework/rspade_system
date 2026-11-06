@@ -331,6 +331,17 @@ DATABASE ISOLATION
     may have committed and restores the baseline before the following class, so
     a transaction-based class never inherits another class's committed rows.
 
+    Site locks. rsx:test is exempt from site lock enforcement
+    (the SITE_LOCK_EXEMPT constant), so FIXTURE code - setup(), a test body
+    saving a model directly - writes unchecked. What a test DRIVES is not:
+    an endpoint called through Ajax::internal() or an HTTP request, a task run
+    through Task::internal() or __run_task_method(), and an artisan command
+    each open their own enforcement window and take their real locks, so a
+    reader that writes fails in its test exactly as in production. The
+    per-test transaction is registered as a tolerated baseline for the
+    no-lock-inside-a-foreign-transaction rule, in the suite process only
+    (rsx:man site_locks).
+
 THE TEST DATABASE
 
     Tests run against DB_TEST_DATABASE (the `test` connection; default

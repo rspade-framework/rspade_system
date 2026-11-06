@@ -1133,6 +1133,15 @@ AUTOMATIC ROLLBACK
    says so before it starts - unless --dump-rollback was given, which rolls back by
    restoring a mysqldump (DUMP ROLLBACK).
 
+SITE LOCKS
+       Migrations and seeders run OUTSIDE every site lock enforcement window:
+       migrate (and its family: migrate:restore, migrate:normalize_schema,
+       rsx:database_and_storage_reset), db:seed and Laravel's own migration and seed
+       commands declare const SITE_LOCK_EXEMPT = '<reason>' (or are exempt by
+       their vendor base class), so a migration's raw SQL and a seeder's model writes
+       are unchecked. The initial user migrate creates afterwards takes its own
+       site write lock. Every other command is enforced (rsx:man site_locks).
+
 SECURITY CONSIDERATIONS
 
    SQL Injection
@@ -1179,6 +1188,7 @@ SEE ALSO
        rsx:man rsx_git - The git proxy, which key-union merges a conflicted
                                   .migration_whitelist and completes the pull
        rsx:man database_schema_architecture - Database system overview
+       rsx:man site_locks - Which commands are enforced, and why migrate is not
        rsx:man coding_standards - General coding standards
        rsx:man error_handling - Error handling patterns
 

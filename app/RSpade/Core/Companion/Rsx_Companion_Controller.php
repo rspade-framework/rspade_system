@@ -110,6 +110,7 @@ class Rsx_Companion_Controller extends Rsx_Controller_Abstract
      * @param array $params name, companion_action
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function act(Request $request, array $params = [])
     {
         $name = (string) ($params['name'] ?? '');

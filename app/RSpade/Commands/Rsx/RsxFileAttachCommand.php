@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Rsx\Models\File_Attachment_Model;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 
 /**
  * File Attach Command
@@ -82,52 +83,68 @@ class RsxFileAttachCommand extends Command
         $lock = RsxLocks::named_write_lock(RsxLocks::LOCK_FILE_WRITE);
 
         try {
-            $updated_fields = [];
-
-            // Update model attachment
-            if ($model_spec = $this->option('model')) {
-                if (!str_contains($model_spec, ':')) {
-                    $this->error('Error: --model format must be Model:ID (e.g., User_Model:42)');
-                    return 1;
-                }
-
-                list($model_class, $model_id) = explode(':', $model_spec, 2);
-                $attachment->fileable_type = $model_class;
-                $attachment->fileable_id = (int)$model_id;
-                $updated_fields[] = "Attached to {$model_class}:{$model_id}";
+            // The options are read and checked before anything is written.
+            $model_spec = $this->option('model');
+            if ($model_spec && !str_contains($model_spec, ':')) {
+                $this->error('Error: --model format must be Model:ID (e.g., User_Model:42)');
+                return 1;
             }
 
-            // Update category
-            if ($category = $this->option('category')) {
-                $attachment->fileable_category = $category;
-                $updated_fields[] = "Category: {$category}";
-            }
-
-            // Update type meta
-            if ($type_meta = $this->option('type-meta')) {
-                $attachment->fileable_type_meta = $type_meta;
-                $updated_fields[] = "Type Meta: {$type_meta}";
-            }
-
-            // Update meta JSON
-            if ($meta_json = $this->option('meta')) {
+            $meta_json = $this->option('meta');
+            $meta = null;
+            if ($meta_json) {
                 $meta = json_decode($meta_json, true);
                 if ($meta === null && json_last_error() !== JSON_ERROR_NONE) {
                     $this->error('Error: Invalid JSON in --meta option');
                     return 1;
                 }
-                $attachment->set_meta($meta);
-                $updated_fields[] = "Meta JSON updated";
             }
 
-            // Update order
-            if ($this->option('order') !== null) {
-                $order = (int)$this->option('order');
-                $attachment->fileable_order = $order;
-                $updated_fields[] = "Order: {$order}";
-            }
+            $category = $this->option('category');
+            $type_meta = $this->option('type-meta');
+            $order = $this->option('order');
 
-            $attachment->save();
+            // Under the attachment's site write lock (a command is enforced), re-reading it.
+            [$attachment, $updated_fields] = Site_Lock::write((int) $attachment->site_id, function () use ($attachment, $model_spec, $meta_json, $meta, $category, $type_meta, $order) {
+                $attachment = File_Attachment_Model::find($attachment->id);
+                $updated_fields = [];
+
+                // Update model attachment
+                if ($model_spec) {
+                    list($model_class, $model_id) = explode(':', $model_spec, 2);
+                    $attachment->fileable_type = $model_class;
+                    $attachment->fileable_id = (int)$model_id;
+                    $updated_fields[] = "Attached to {$model_class}:{$model_id}";
+                }
+
+                // Update category
+                if ($category) {
+                    $attachment->fileable_category = $category;
+                    $updated_fields[] = "Category: {$category}";
+                }
+
+                // Update type meta
+                if ($type_meta) {
+                    $attachment->fileable_type_meta = $type_meta;
+                    $updated_fields[] = "Type Meta: {$type_meta}";
+                }
+
+                // Update meta JSON
+                if ($meta_json) {
+                    $attachment->set_meta($meta);
+                    $updated_fields[] = "Meta JSON updated";
+                }
+
+                // Update order
+                if ($order !== null) {
+                    $attachment->fileable_order = (int)$order;
+                    $updated_fields[] = "Order: " . (int)$order;
+                }
+
+                $attachment->save();
+
+                return [$attachment, $updated_fields];
+            }, 'File attachment updated from the command line');
 
             // Output success
             $this->info('');

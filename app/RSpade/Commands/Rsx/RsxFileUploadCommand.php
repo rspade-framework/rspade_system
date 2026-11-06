@@ -11,6 +11,7 @@ use Illuminate\Console\Command;
 use App\Models\File_Storage_Model;
 use Rsx\Models\File_Attachment_Model;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 
 /**
  * File Upload Command
@@ -137,10 +138,12 @@ class RsxFileUploadCommand extends Command
 
             // Store the bytes and save the row that pins them in one store_blob() reference scope.
             $this->info('Uploading file to storage...');
-            $storage = File_Storage_Model::store_blob($file_path, function (File_Storage_Model $storage) use ($attachment) {
+            // Under the attachment's site write lock (a command is enforced), inside the file
+            // write lock - the order every file command takes them in.
+            $storage = Site_Lock::write((int) $site_id, fn () => File_Storage_Model::store_blob($file_path, function (File_Storage_Model $storage) use ($attachment) {
                 $attachment->file_storage_id = $storage->id;
                 $attachment->save();
-            });
+            }), 'File uploaded from the command line');
 
             // Output success information
             $this->info('');

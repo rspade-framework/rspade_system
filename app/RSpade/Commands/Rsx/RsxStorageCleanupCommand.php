@@ -12,6 +12,7 @@ use App\Models\File_Storage_Model;
 use Rsx\Models\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -167,9 +168,23 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
             // Keyset-walked (result_set) so the loop terminates whether force_destroy()
             // removes the row outright or leaves a tombstone the orphan predicate still
             // matches - either way the cursor only moves forward.
+            // One write section per attachment on its own site (a command is enforced), inside
+            // the file write lock, re-reading the row: it may have been attached since.
             foreach ($orphaned_attachments()->result_set(self::BATCH_SIZE) as $attachment) {
-                $attachment->force_destroy();
-                $deleted_attachments++;
+                $destroyed = Site_Lock::write((int) $attachment->site_id, function () use ($attachment, $orphaned_attachments) {
+                    $current = $orphaned_attachments()->find($attachment->id);
+                    if ($current === null) {
+                        return false;
+                    }
+
+                    $current->force_destroy();
+
+                    return true;
+                }, "Destroyed orphaned attachment #{$attachment->id}");
+
+                if ($destroyed) {
+                    $deleted_attachments++;
+                }
             }
 
             // Release orphaned storage through the retention-aware disposal guard: it

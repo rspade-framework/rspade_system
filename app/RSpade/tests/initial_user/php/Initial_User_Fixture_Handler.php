@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Tests\InitialUser\Php;
 
+use App\RSpade\Core\Locks\Site_Lock;
+
 /**
  * Recording fixture for Initial_User_Test.
  *
@@ -23,9 +25,13 @@ class Initial_User_Fixture_Handler
     // Ordered log of the payloads seen while recording.
     public static array $recorded = [];
 
+    // The site lock this process held when each recorded payload arrived (Site_Lock::_held()).
+    public static array $held = [];
+
     public static function reset(): void
     {
         static::$recorded = [];
+        static::$held = [];
     }
 
     // Literal event name, never the class constant: attribute arguments are read by
@@ -38,5 +44,6 @@ class Initial_User_Fixture_Handler
         }
 
         static::$recorded[] = $data;
+        static::$held[] = Site_Lock::_held();
     }
 }

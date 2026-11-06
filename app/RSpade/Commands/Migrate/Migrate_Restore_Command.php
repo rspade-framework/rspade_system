@@ -30,6 +30,9 @@ use App\RSpade\Core\Locks\RsxLocks;
  */
 class Migrate_Restore_Command extends Maint_Migrate
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'restores the database from the migration snapshot wholesale';
+
     protected $signature = 'migrate:restore';
 
     protected $description = 'Restore the database to the pre-migration snapshot left by an interrupted migrate';

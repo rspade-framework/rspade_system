@@ -31,6 +31,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * - Declaring class MUST extend Rsx_Api_Controller_Abstract.
  * - Every :param token in the pattern MUST have a matching #[Api_Param].
  * - #[Api_Param] names are unique per method; required:true with a default is a contradiction.
+ * - An #[Api_Param] name never starts with '_': that namespace is the system parameters'
+ *   (_request_ref), which the dispatcher accepts undeclared.
  * - #[Api_Param] type is one of {string, int, float, bool, file} (default 'string').
  * - type 'file' is POST-only, may never be a :route token, and may never carry a default -
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
@@ -39,7 +41,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   #[Companion_Endpoint].
  * - An endpoint is GET or POST, never both: GET is for reads and POST for writes, and a
  *   handler reachable by both is a write a read-only key can reach.
- * - API-GET-PURE-01: a GET handler's body MUST NOT contain a write call (the
+ * - API-GET-PURE-01: a GET handler never declares #[Writer] (the site write lock), and its
+ *   body MUST NOT contain a write call (the
  *   GET_MUTATION_TOKENS list below: saves, deletes, updates, creates, relation writes,
  *   increments, raw DB writes, Task::dispatch ...). This is the BUILD-TIME half of the
  *   read-only guarantee - the runtime half is _api_keys.read_only, a key that may execute
@@ -286,6 +289,15 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
             // Read the docblock directly from source (the manifest does not store docblocks).
             $docblock = static::_read_method_docblock(base_path($file), $method_name);
+
+            // API-GET-PURE-01 - a GET endpoint may not mutate, so it is never a site writer.
+            if ($methods === ['GET'] && static::_method_has_attribute($method_data, 'Writer')) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] GET handler: {$location}\n" .
+                    "  API-GET-PURE-01: a GET endpoint must be side-effect free, and this one declares #[Writer].\n" .
+                    "  Move the write to a POST endpoint (GET reads, POST writes)."
+                );
+            }
 
             // API-GET-PURE-01 - a GET endpoint may not mutate.
             if ($methods === ['GET']) {
@@ -584,6 +596,17 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 throw new \RuntimeException(
                     "Invalid #[Api_Param] for '{$pattern}': {$location}\n" .
                     "  Each #[Api_Param] requires a non-empty name."
+                );
+            }
+
+            // A leading underscore is the system parameter namespace (_request_ref,
+            // __turnstile): the dispatcher accepts and consumes those itself, so a declared
+            // one would collide with a framework parameter now or later.
+            if (str_starts_with($name, '_')) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Param] name '{$name}' for '{$pattern}': {$location}\n" .
+                    "  A parameter name starting with '_' is reserved for system parameters (_request_ref).\n" .
+                    "  Rename the parameter."
                 );
             }
 

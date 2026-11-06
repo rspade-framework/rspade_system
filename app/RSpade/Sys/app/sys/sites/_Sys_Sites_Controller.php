@@ -98,6 +98,7 @@ class _Sys_Sites_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {site: ...} as detail()
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function rename(Request $request, array $params = [])
     {
         $site = static::__find_tenant($params['site_id'] ?? null);
@@ -148,6 +149,7 @@ class _Sys_Sites_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {site: ...} as detail()
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function set_enabled(Request $request, array $params = [])
     {
         $site = static::__find_tenant($params['id'] ?? null);

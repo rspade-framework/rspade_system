@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Portal;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -172,6 +173,10 @@ class Portal_Session
         }
 
         Session::_refuse_if_frozen('Portal_Session::set_site_id()');
+
+        // Refused under a site lock, inside a bypass, and inside a request handler window
+        // (RsxAuth::enter_site() is the sanctioned way to enter a site from a handler).
+        Site_Lock::_assert_site_change_permitted('Portal_Session::set_site_id()');
 
         self::$_declared_site_id = $site_id;
         self::$_site = null;

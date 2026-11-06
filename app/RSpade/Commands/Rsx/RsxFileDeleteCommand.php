@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Rsx\Models\File_Attachment_Model;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 
 /**
  * File Delete Command
@@ -107,7 +108,8 @@ class RsxFileDeleteCommand extends Command
             // (bypassing the retention window) and releases the blob if nothing else pins it.
             // A plain delete() would only SOFT-delete into retention, contradicting this
             // command's "physical storage will be deleted" contract.
-            $attachment->force_destroy();
+            // Under the attachment's site write lock (a command is enforced).
+            Site_Lock::write((int) $attachment->site_id, fn () => $attachment->force_destroy(), 'File deleted from the command line');
 
             $this->info('');
             $this->info('[OK] File attachment deleted');

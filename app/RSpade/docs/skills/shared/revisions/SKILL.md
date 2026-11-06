@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading revision history - $revisions = true, $revision_exclude, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
+description: "Recording and reading revision history - $revisions = true, $revision_exclude, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
 ---
 
 # Revision history
@@ -161,10 +161,19 @@ all of them - unless it declares each unit:
 
 ```php
 foreach ($rows as $row) {
-    Revision::unit_of_work("Imported invoice {$row['number']}", function () use ($row) {
-        import_invoice($row);                  // its writes are one transaction
-    });
-}                                              // the caller's own unit is handed back
+    Site_Lock::write($site_id, function () use ($row) {
+        import_invoice($row);                  // one lock, one transaction, one unit
+    }, "Imported invoice {$row['number']}");   // the unit's description
+}
+```
+
+**`Site_Lock::write($site_id, $work, $description)` already begins a unit of its own** (outside
+the transaction it opens) and hands the caller's back, so a script or task writing site-scoped
+records - which needs a write section per item anyway (skill `rspade:site-locks`) - gets one
+unit per item for free. For work that is not a site section:
+
+```php
+Revision::unit_of_work("Imported invoice {$row['number']}", fn () => import_invoice($row));
 ```
 
 `Revision::begin_unit_of_work($description = null, $endpoint = null)` is the non-closure form:
@@ -208,6 +217,14 @@ Never call the internal `_reset_request_state()` / `_snapshot_request_state()` y
   build that knows a format this one does not, or its `_revision_dictionaries` row is gone.
   **Dictionary rows are append-only and must never be deleted** - every stored payload
   names the dictionary it was written against, in its prefix byte.
+- **Every committed WRITER request has a `_transactions` row**, minted eagerly inside its
+  transaction at the site lock boundary (a `#[Writer]`, or a `#[Manual_Lock]` that took a
+  write lock), even when it saved nothing - the lazy mint above is for every other unit. An
+  Ajax / API writer's row also carries the request history: `request_fingerprint`,
+  `request_payload` (redacted, capped), `duration_ms`, `completed_at`, and for a success
+  sent with `_request_ref` the `request_ref` / `response_status` / `response_body` a retry is
+  replayed from. Payloads are nulled after `rsx.request_history.payload_retention_days`
+  (default 7). `rsx:man request_history`.
 - **Retention defaults to KEEP FOREVER** (`rsx.revisions.retention_days` = 0). Only
   `_transactions` is ever deleted; `_revisions` follows by FK cascade.
 

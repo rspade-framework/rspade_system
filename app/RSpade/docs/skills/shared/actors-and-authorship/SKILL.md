@@ -73,7 +73,7 @@ The N+1 a list page would pay is absorbed by a per-request memo keyed on the **v
 | has `site_id` | `Rsx_Site_Actor_Model_Abstract` |
 | does not | `Rsx_Actor_Model_Abstract` |
 
-Extending the site abstract installs the site global scope, the forced `site_id` on write, and the site write locks. Putting those on a cross-site identity table is wrong; omitting them on a site-scoped table is a cross-tenant read leak.
+Extending the site abstract installs the site global scope, the forced `site_id` on write, and the site write lock enforcement - a `save()` of a staff or portal user in an endpoint, task, command or hook needs that site's write lock (`#[Writer]`, a `Site_Lock::write()` section; skill `rspade:site-locks`), which is why a sign-in that stamps the user is a writer and entering a site goes through `RsxAuth::enter_site()`. `Login_User_Model` is cross-site and takes no site lock. Putting the site controls on a cross-site identity table is wrong; omitting them on a site-scoped table is a cross-tenant read leak.
 
 **There is NO shared interface.** The manifest indexes classes, not interfaces, so an interface here could not be imported by the code that needs it (the namespace linter would strip the `use`). Code that must accept either kind tests both class names:
 

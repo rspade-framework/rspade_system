@@ -8,8 +8,8 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\User_Model;
 
 /**
@@ -24,8 +24,11 @@ use App\RSpade\Core\Models\User_Model;
  * former mailbox. So every users row of this identity whose email equals the OLD address is
  * rewritten too, across every site and including trashed memberships; a membership whose
  * address an administrator had already set to something else is left as it is, because that
- * was a deliberate choice this command has no reason to undo. Everything is written in ONE
- * transaction, through each model's own save(), so revisions and realtime fire per record.
+ * was a deliberate choice this command has no reason to undo. Every row is written through
+ * its model's own save(), so revisions and realtime fire per record: the memberships in one
+ * Site_Lock::write() section per site (a process holds one site's lock at a time, so no
+ * single transaction spans sites), then the identity last - a run that failed part-way is
+ * completed by running it again.
  *
  * THE NEW ADDRESS MUST BE FREE ACROSS EVERY IDENTITY, TRASHED ONES INCLUDED. login_users.email
  * is UNIQUE at the database, and the index does not know about soft deletes, so an address
@@ -75,12 +78,14 @@ class Login_User_Email_Set_Command extends Command
             return 0;
         }
 
-        $memberships_updated = DB::transaction(function () use ($login_user, $old_email, $new_email) {
-            $login_user->email = $new_email;
-            $login_user->save();
+        // The memberships first, one site write section each (a command is enforced, and a
+        // process holds one site's lock at a time), then the identity. That order makes a
+        // run that failed part-way safe to repeat: the identity still carries the old
+        // address, and the memberships already moved no longer match it.
+        $memberships_updated = $this->__update_memberships((int) $login_user->id, $old_email, $new_email);
 
-            return $this->__update_memberships((int) $login_user->id, $old_email, $new_email);
-        });
+        $login_user->email = $new_email;
+        $login_user->save();
 
         if ($as_json) {
             return Api_Key_Cli_Support::json_ok($this, [
@@ -160,29 +165,36 @@ class Login_User_Email_Set_Command extends Command
     }
 
     /**
-     * Rewrite every membership of this identity that showed the old address, on every site.
+     * Rewrite every membership of this identity that showed the old address, on every site:
+     * one Site_Lock::write() section per site, re-reading that site's memberships inside it.
      *
      * @return array<int, array{id: int, site_id: int}>
      */
     private function __update_memberships(int $login_user_id, string $old_email, string $new_email): array
     {
-        return User_Model::without_site_scope(function () use ($login_user_id, $old_email, $new_email) {
-            $updated = [];
+        $matching = fn () => User_Model::withTrashed()
+            ->where('login_user_id', $login_user_id)
+            ->where('email', $old_email);
 
-            $memberships = User_Model::withTrashed()
-                ->where('login_user_id', $login_user_id)
-                ->where('email', $old_email)
-                ->orderBy('id')
-                ->get();
+        $site_ids = User_Model::without_site_scope(
+            fn () => $matching()->distinct()->orderBy('site_id')->pluck('site_id')->map(fn ($id) => (int) $id)->all()
+        );
 
-            foreach ($memberships as $membership) {
-                $membership->email = $new_email;
-                $membership->save();
+        $updated = [];
 
-                $updated[] = ['id' => (int) $membership->id, 'site_id' => (int) $membership->site_id];
-            }
+        foreach ($site_ids as $site_id) {
+            Site_Lock::write($site_id, function () use ($matching, $site_id, $new_email, &$updated) {
+                User_Model::without_site_scope(function () use ($matching, $site_id, $new_email, &$updated) {
+                    foreach ($matching()->where('site_id', $site_id)->orderBy('id')->get() as $membership) {
+                        $membership->email = $new_email;
+                        $membership->save();
 
-            return $updated;
-        });
+                        $updated[] = ['id' => (int) $membership->id, 'site_id' => (int) $membership->site_id];
+                    }
+                });
+            }, 'Login email changed');
+        }
+
+        return $updated;
     }
 }

@@ -7,6 +7,7 @@ use RuntimeException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
@@ -2769,6 +2770,10 @@ class Session extends Rsx_System_Model_Abstract
 
         self::_refuse_if_frozen('Session::set_site_id()');
 
+        // Refused under a site lock, inside a bypass, and inside a request handler window
+        // (RsxAuth::enter_site() is the sanctioned way to enter a site from a handler).
+        Site_Lock::_assert_site_change_permitted('Session::set_site_id()');
+
         // CLI mode: set the tenant override. Mints nothing - same laziness as the web branch
         // below, which stores a request-scoped override rather than creating a row.
         if (self::__is_virtual()) {
@@ -2869,6 +2874,10 @@ class Session extends Rsx_System_Model_Abstract
 
         self::_refuse_if_frozen('Session::set_temporary_site_id()');
 
+        // Refused under a site lock, inside a bypass, and inside a request handler window
+        // (RsxAuth::enter_site() is the sanctioned way to enter a site from a handler).
+        Site_Lock::_assert_site_change_permitted('Session::set_temporary_site_id()');
+
         self::$_temporary_site_id = $site_id;
 
         // Drop the resolved site so the next get_site() re-derives from the declaration
@@ -2887,6 +2896,10 @@ class Session extends Rsx_System_Model_Abstract
     public static function clear_temporary_site_id(): void
     {
         self::_refuse_if_frozen('Session::clear_temporary_site_id()');
+
+        // Refused under a site lock, inside a bypass, and inside a request handler window
+        // (RsxAuth::enter_site() is the sanctioned way to enter a site from a handler).
+        Site_Lock::_assert_site_change_permitted('Session::clear_temporary_site_id()');
 
         self::$_temporary_site_id = null;
 
@@ -3021,6 +3034,9 @@ class Session extends Rsx_System_Model_Abstract
 
         self::_refuse_if_frozen('Session::impersonate()');
 
+        // It declares the site: refused under a site lock, a bypass or a request handler window.
+        Site_Lock::_assert_site_change_permitted('Session::impersonate()');
+
         self::$_cli_site_id = $site_id;
         self::$_cli_login_user_id = $login_user_id;
         self::$_cli_user_id = $user_id;
@@ -3046,6 +3062,9 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         self::_refuse_if_frozen('Session::reset_impersonation()');
+
+        // It declares the site: refused under a site lock, a bypass or a request handler window.
+        Site_Lock::_assert_site_change_permitted('Session::reset_impersonation()');
 
         self::$_cli_site_id = null;
         self::$_cli_login_user_id = null;

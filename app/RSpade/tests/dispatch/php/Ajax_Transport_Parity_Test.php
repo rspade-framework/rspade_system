@@ -361,8 +361,9 @@ class Ajax_Transport_Parity_Test extends Rsx_Test_Abstract
     private static function __normalize(array $envelope): array
     {
         static::__assert_true(isset($envelope['_server_time']), 'every envelope carries _server_time');
+        static::__assert_true(is_int($envelope['_duration_ms'] ?? null) && isset($envelope['_completed_at']), 'every envelope carries its timing');
 
-        unset($envelope['_server_time'], $envelope['error']['error_id'], $envelope['error']['backtrace']);
+        unset($envelope['_server_time'], $envelope['_duration_ms'], $envelope['_completed_at'], $envelope['error']['error_id'], $envelope['error']['backtrace']);
 
         return $envelope;
     }

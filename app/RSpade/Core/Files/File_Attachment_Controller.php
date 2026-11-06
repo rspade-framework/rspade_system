@@ -240,6 +240,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_upload', methods: ['POST'])]
     #[Portal_Route('/_upload', methods: ['POST'])]
     #[Media]
+    #[Writer]
     public static function upload(Request $request, array $params = [])
     {
         // The mandatory authorize-gate precondition (Rsx_File_Gates) and the whole ingest

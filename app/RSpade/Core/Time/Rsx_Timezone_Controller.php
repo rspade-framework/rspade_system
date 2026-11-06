@@ -75,6 +75,7 @@ class Rsx_Timezone_Controller extends Rsx_Controller_Abstract
      *               RESOLVED zone moved, which is what tells the client its page is stale.
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function set_timezone(Request $request, array $params = [])
     {
         $timezone = $params['timezone'] ?? null;

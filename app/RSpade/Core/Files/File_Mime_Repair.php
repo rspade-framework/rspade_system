@@ -6,6 +6,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Core\Locks\Site_Lock;
 
 /**
  * Shared repair for document attachments a per-file-flaky byte sniff mis-routed at ingest
@@ -81,9 +82,20 @@ class File_Mime_Repair
                         }
 
                         // Recompute file_type_id only; mime_type (the raw sniff) is the serve-time
-                        // value and is intentionally NOT rewritten.
-                        $attachment->file_type_id = $correct_type;
-                        $attachment->save();
+                        // value and is intentionally NOT rewritten. One write section per
+                        // attachment on its own site (enforced code - the command - writes a
+                        // site-scoped row only under that site's write lock).
+                        Site_Lock::write((int) $attachment->site_id, function () use ($attachment, $correct_type) {
+                            File_Attachment_Model::without_site_scope(function () use ($attachment, $correct_type) {
+                                $current = File_Attachment_Model::find($attachment->id);
+                                if ($current === null) {
+                                    return;
+                                }
+
+                                $current->file_type_id = $correct_type;
+                                $current->save();
+                            });
+                        }, 'Document file type repaired');
                     }
                 });
         });

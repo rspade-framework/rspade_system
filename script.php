@@ -20,6 +20,10 @@
  * progress bar. The script's own arguments are the script's business - the framework
  * reads no command name out of them.
  *
+ * SITE LOCKS. The script body runs inside a site lock enforcement window for the life of
+ * the process (Site_Lock_Cli): a write to a site-scoped model needs that site's write lock,
+ * taken by the script itself with Site_Lock::write($site_id, fn () => ...).
+ *
  * REVISIONS. The run is ONE unit of work, whose transaction row names the script file
  * as its endpoint. A script that writes many records declares its own boundaries with
  * Revision::begin_unit_of_work() / Revision::unit_of_work(), or its whole life is filed
@@ -79,6 +83,13 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 // script performing many units (an import) declares each one itself with
 // Revision::begin_unit_of_work() or Revision::unit_of_work() - rsx:man scripting.
 \App\RSpade\Core\Revisions\Revision::_reset_request_state('cli', basename((string) ($_SERVER['argv'][0] ?? 'script')));
+
+// SITE LOCKS. The script is command-line code and is enforced like an artisan command: from
+// here to the end of the process it runs inside a site lock enforcement window with no
+// automatic lock, so a write to a site-scoped model takes that site's write lock with
+// Site_Lock::write($site_id, fn () => ...) (or a reasoned Site_Lock::bypass()). The site may
+// change between sections, never inside one. rsx:man locks.
+\App\RSpade\Core\Locks\Site_Lock_Cli::_open_script_window(basename((string) ($_SERVER['argv'][0] ?? 'script')));
 
 // EXIT STATUS. PHP ends a script with status 0 once a registered exception handler has
 // returned, and the application's handler is one: it reports and prints an uncaught

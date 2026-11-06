@@ -18,8 +18,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * A model becomes its redacting toArray(): enum __label + __MODEL present, $neverExport
  * columns absent. Collections and nested arrays recurse; scalars and null pass through.
- * build_response() maps array->200, null->204, JsonResponse->passthrough, and fails loud
- * on a scalar. Models are constructed unsaved (attribute-only), so no database.
+ * build_response() maps array->200, null->204 (the companion channel's empty answer; the
+ * external API refuses it - Api_Response_Contract_Test), JsonResponse->passthrough, and
+ * fails loud on a scalar. Models are constructed unsaved (attribute-only), so no database.
  */
 class Api_Serialization_Test extends Rsx_Test_Abstract
 {

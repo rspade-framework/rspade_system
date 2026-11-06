@@ -30,6 +30,7 @@ use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Files\Rsx_File_Name;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Portal_User_Model;
@@ -536,22 +537,58 @@ class Dispatcher
             return static::__build_response($realm, $pre_dispatch_result);
         }
 
-        $result = static::__call_action($handler_class, $handler_method, $params, $request);
+        // THE CONTROLLER'S PRE_DISPATCH, then THE SITE LOCK BOUNDARY (Site_Lock::_run_request(),
+        // shared with Ajax, the API and companion endpoints). Main::pre_dispatch above and the
+        // controller's pre_dispatch here run with NO automatic lock, each in an enforcement
+        // window of its own (Site_Lock::_run_hook()): a site-scoped write there takes its own
+        // Site_Lock::write() section or a bypass, and the hook hands over holding nothing.
+        // Then the route's lock is taken: none unless it declares #[Reader] or #[Writer];
+        // #[Manual_Lock] takes none either but gets the request transaction of its first raw
+        // site write lock. Whatever the mode, the action runs in an ENFORCEMENT WINDOW
+        // (__call_action()): a site-scoped write needs the site's write lock or a bypass, and
+        // the site may not change there except through RsxAuth::enter_site().
+        // rsx.post_dispatch and the response are built inside the boundary, so a declared
+        // writer commits only once the page has been built.
+        $pre_dispatch_result = static::__call_pre_dispatch($handler_class, $params, $request);
 
-        // rsx.post_dispatch - fired immediately after the handler returns and before
-        // response shaping, on the SUCCESS path only (never after an exception). Handlers
-        // run INLINE and may throw; that is the point (the Turnstile completeness guard is
-        // one). Handlers must not mutate 'result'. NOTE: $params here is GET + route params
-        // only - the POST body is never merged into it, so a handler reading submitted
-        // fields must read them off the Request.
-        // See: php artisan rsx:man event_hooks
+        if ($pre_dispatch_result !== null) {
+            static::__post_dispatch($request, $params, $pre_dispatch_result);
+
+            return static::__build_response($realm, $pre_dispatch_result);
+        }
+
+        $surface = class_basename($handler_class) . '::' . $handler_method;
+
+        return Site_Lock::_run_request(Site_Lock::_surface_mode($surface), 'Route ' . $surface, function () use ($realm, $handler_class, $handler_method, $params, $request) {
+            $result = static::__call_action($handler_class, $handler_method, $params, $request);
+
+            static::__post_dispatch($request, $params, $result);
+
+            return static::__build_response($realm, $result);
+        });
+    }
+
+    /**
+     * rsx.post_dispatch - fired immediately after the handler (or a halting controller
+     * pre_dispatch) returns and before response shaping, on the SUCCESS path only (never
+     * after an exception). Handlers run INLINE and may throw; that is the point (the
+     * Turnstile completeness guard is one). Handlers must not mutate 'result'. NOTE: $params
+     * here is GET + route params only - the POST body is never merged into it, so a handler
+     * reading submitted fields must read them off the Request.
+     * See: php artisan rsx:man event_hooks
+     *
+     * @param Request $request
+     * @param array $params
+     * @param mixed $result
+     * @return void
+     */
+    private static function __post_dispatch(Request $request, array $params, $result): void
+    {
         Rsx::trigger_action('rsx.post_dispatch', [
             'request' => $request,
             'params' => $params,
             'result' => $result,
         ]);
-
-        return static::__build_response($realm, $result);
     }
 
     /**
@@ -575,7 +612,9 @@ class Dispatcher
 
         foreach (Manifest::php_class_records_extending($realm['main_abstract']) as $main_class) {
             if (!empty($main_class['fqcn'])) {
-                $result = $main_class['fqcn']::unhandled_route($request, $params);
+                // A handler of last resort: no automatic lock, enforced (Site_Lock::_run_hook()).
+                $fqcn = $main_class['fqcn'];
+                $result = Site_Lock::_run_hook(class_basename($fqcn) . '::unhandled_route()', fn () => $fqcn::unhandled_route($request, $params));
 
                 if ($result !== null) {
                     return static::__build_response($realm, $result);
@@ -589,6 +628,10 @@ class Dispatcher
     /**
      * The realm's Main::pre_dispatch: the first non-null answer halts dispatch with it.
      *
+     * Each runs with NO automatic lock, in an enforcement window (Site_Lock::_run_hook()): a
+     * site-scoped write there takes its own Site_Lock::write() section or a bypass, or is to
+     * a #[Site_Lock_Exempt] model, and the hook hands over holding nothing.
+     *
      * @param array $realm
      * @param Request $request
      * @param array $params
@@ -598,7 +641,8 @@ class Dispatcher
     {
         foreach (Manifest::php_class_records_extending($realm['main_abstract']) as $main_class) {
             if (!empty($main_class['fqcn'])) {
-                $result = $main_class['fqcn']::pre_dispatch($request, $params);
+                $fqcn = $main_class['fqcn'];
+                $result = Site_Lock::_run_hook(class_basename($fqcn) . '::pre_dispatch()', fn () => $fqcn::pre_dispatch($request, $params));
 
                 if ($result !== null) {
                     return $result;
@@ -615,7 +659,8 @@ class Dispatcher
      * The portal twin of the staff Main::init() the framework provider runs at boot. It
      * cannot ride that seam: the provider boots for EVERY request, and Portal_Main is
      * portal-only application code. Once per process, not once per dispatch: init() is
-     * bootstrap.
+     * bootstrap. It runs with no automatic lock, in an enforcement window
+     * (Site_Lock::_run_hook()), exactly as the staff Main::init() does.
      *
      * @return void
      */
@@ -628,7 +673,8 @@ class Dispatcher
 
         foreach (Manifest::php_class_records_extending('Portal_Main_Abstract') as $portal_main_class) {
             if (!empty($portal_main_class['fqcn'])) {
-                $portal_main_class['fqcn']::init();
+                $fqcn = $portal_main_class['fqcn'];
+                Site_Lock::_run_hook(class_basename($fqcn) . '::init()', fn () => $fqcn::init());
             }
         }
     }
@@ -1015,8 +1061,44 @@ class Dispatcher
     }
 
     /**
-     * Call the action: the controller's pre_dispatch (a non-null answer halts with it),
-     * then the action itself.
+     * The handler's pre_dispatch: a controller's (Rsx_Controller_Abstract declares one, so
+     * every controller has it), or a public static pre_dispatch on any other handler class.
+     * Runs with NO automatic lock, in an enforcement window (Site_Lock::_run_hook()), before
+     * the route's site lock boundary. A non-null answer halts dispatch with it.
+     *
+     * NO try/catch: a pre_dispatch that THROWS is denying access (or failing for a real
+     * reason), and swallowing it would dispatch the request AS IF AUTHORIZED. The exception
+     * reaches the channel's error policy.
+     *
+     * @param string $class_name
+     * @param array $params
+     * @param Request $request
+     * @return mixed|null
+     */
+    protected static function __call_pre_dispatch($class_name, $params, Request $request)
+    {
+        $label = class_basename($class_name) . '::pre_dispatch()';
+
+        if (static::__is_controller($class_name)) {
+            return Site_Lock::_run_hook($label, fn () => $class_name::pre_dispatch($request, $params));
+        }
+
+        $reflection = new ReflectionClass($class_name);
+
+        if ($reflection->hasMethod('pre_dispatch')) {
+            $pre_dispatch = $reflection->getMethod('pre_dispatch');
+
+            if ($pre_dispatch->isStatic() && $pre_dispatch->isPublic()) {
+                return Site_Lock::_run_hook($label, fn () => $pre_dispatch->invoke(null, $request, $params));
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Call the action - and only the action - in the site lock enforcement window. The
+     * handler's pre_dispatch has already run (__call_pre_dispatch()).
      *
      * @param string $class_name
      * @param string $method_name
@@ -1039,37 +1121,17 @@ class Dispatcher
             throw new Exception("Method not public: {$class_name}::{$method_name}");
         }
 
-        // NO try/catch around either call: a pre_dispatch that THROWS is denying access (or
-        // failing for a real reason), and swallowing it would dispatch the request AS IF
-        // AUTHORIZED. The exception reaches the channel's error policy.
+        $label = 'Route ' . class_basename($class_name) . '::' . $method_name;
+
         if (static::__is_controller($class_name)) {
-            // Rsx_Controller_Abstract declares pre_dispatch, so every controller has it
-            $result = $class_name::pre_dispatch($request, $params);
-
-            if ($result !== null) {
-                return $result;
-            }
-
-            return $class_name::$method_name($request, $params);
-        }
-
-        if ($reflection->hasMethod('pre_dispatch')) {
-            $pre_dispatch = $reflection->getMethod('pre_dispatch');
-
-            if ($pre_dispatch->isStatic() && $pre_dispatch->isPublic()) {
-                $result = $pre_dispatch->invoke(null, $request, $params);
-
-                if ($result !== null) {
-                    return $result;
-                }
-            }
+            return Site_Lock::_enforce($label, fn () => $class_name::$method_name($request, $params));
         }
 
         if (!$method->isStatic()) {
-            return $method->invoke(app()->make($class_name), $request, $params);
+            return Site_Lock::_enforce($label, fn () => $method->invoke(app()->make($class_name), $request, $params));
         }
 
-        return $method->invoke(null, $request, $params);
+        return Site_Lock::_enforce($label, fn () => $method->invoke(null, $request, $params));
     }
 
     /**

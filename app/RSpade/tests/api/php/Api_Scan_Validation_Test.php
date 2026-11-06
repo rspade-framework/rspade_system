@@ -198,6 +198,17 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         );
     }
 
+    public static function test_underscore_param_name_is_reserved()
+    {
+        static::__assert_scan_throws(
+            static::__manifest([
+                'Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]],
+                'Api_Param' => [['_request_ref', 'string']],
+            ]),
+            "A parameter name starting with '_' is reserved"
+        );
+    }
+
     public static function test_required_with_default_throws()
     {
         static::__assert_scan_throws(

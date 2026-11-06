@@ -139,7 +139,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   (shallow: every filter key equal) in the relay's registry, nothing when nobody watches;
   each topic's `can_subscribe()` is `Task_Gates`. `lifecycle()` also sends
   `Task_Changed_Topic` for every PENDING run on the moved run's run lock
-  (`pending_ids_on_run_lock()`).
+  (`pending_ids_on_run_lock()`). Called inside a database transaction (a dispatch from a
+  `#[Writer]` endpoint or a `Site_Lock::write()` section), `lifecycle()` waits for the
+  outermost commit (`DB::afterCommit()`) and sends nothing on a rollback.
 - `Rsx_Task_Controller.php` — the browser's endpoints (both realms, `#[Auth('public')]`,
   `Task_Gates` decides; it can read and control runs, never start one; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
   `/_task/xterm-fit.mjs` module routes. `BundleCompiler` adds its JS stub to every bundle.
@@ -201,8 +203,10 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - **Kills are host-affine and never signal a web request.** A pid names a process on one
   machine, so a kill request carries the target's `worker_host` and only that host's kill
   workers claim it. An inline run inside php-fpm is settled moot, never signalled.
-- **Tasks run concurrently and unguarded.** Nothing here may reintroduce a global
-  application lock; a task serializes its own critical section with `RsxLocks`.
+- **Tasks run concurrently, with no automatic lock.** Nothing here may reintroduce a global
+  application lock or an automatic per-task site lock: a task body is an enforcement window
+  and takes its own `Site_Lock::write()` section per item (below), and serializes any other
+  critical section with `RsxLocks`.
 - **rsx-lockd is the ONE count of workers.** A worker's membership is its pool connection:
   it ends when the process does, however it ends, so there is no heartbeat, lease, TTL or
   reservation anywhere, and nothing here may add one. A worker ADMITS ITSELF under its pool
@@ -304,15 +308,17 @@ says what is in this DIRECTORY and what must stay true when editing it.
   that column must be guarded the same way.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]`/`#[Task_Access]` classes.
 
-## Open backlog touching this tree
+## Site locks in a task body
 
-- **B-85**: a task should DECLARE its site-lock posture (acquire, or explicitly opt out).
-- **B-87**: automatic per-tenant write locks on `save()` are DISABLED
-  (`AUTOMATIC_SITE_WRITE_LOCKS_ENABLED = false` in `Core/Database/Models/Site_Scoped.php`),
-  re-enable pending. The `Rsx_Artisan` spawn mandate stands regardless.
-
-Both in `docs.dev/backlog/BACKLOG.md`.
+Every task body runs inside a site lock ENFORCEMENT WINDOW (`Task_Runner::_run_body()`, which
+every runner path and the test harness's `__run_task_method()` go through): a write to a
+site-scoped model fatals unless the task holds that site's write lock - one
+`Site_Lock::write($site_id, fn () => ...)` section per item, re-reading the record inside - or
+is in a `Site_Lock::bypass()` / `bypass_all_sites()` with a reason. A task takes no automatic
+lock and no automatic transaction, and `#[Writer]` / `#[Reader]` / `#[Manual_Lock]` on a
+`#[Task]` fail the manifest build (SITE-LOCK-01). A transaction the body leaves open is rolled back there and
+reported on the run. The `Rsx_Artisan` spawn mandate stands regardless.
 
 ## See also
 
-`rsx:man tasks` · `rsx:man task_commands` · `rsx:man locks` · skills `rspade:background-tasks`, `rspade:task-access`, `rspade:locks-and-subprocesses`
+`rsx:man tasks` · `rsx:man task_commands` · `rsx:man site_locks` · `rsx:man locks` · skills `rspade:background-tasks`, `rspade:task-access`, `rspade:locks-and-subprocesses`

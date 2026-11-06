@@ -71,6 +71,9 @@ use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
  */
 class Maint_Migrate extends Command
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'schema migrations: raw SQL, outside every window; the post-migrate initial user takes its own site write lock';
+
     use PrivilegedCommandTrait;
 
     protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)}'

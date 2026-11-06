@@ -11,6 +11,7 @@ use App\RSpade\Core\Database\Rsx_Result_Set;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
 use App\RSpade\Core\Revisions\Revision_Parent_Registry;
 
@@ -632,6 +633,10 @@ class RestrictedEloquentBuilder extends Builder
     {
         // If $id is provided, allow it (deleting by primary key) — a raw base-builder path.
         if ($id !== null) {
+            if (!Rsx_Model_Abstract::_is_inside_single_model_write()) {
+                $this->_assert_site_lock_permits_raw_write('delete');
+            }
+
             return parent::delete($id);
         }
 
@@ -654,6 +659,8 @@ class RestrictedEloquentBuilder extends Builder
 
         // Escape hatch, or a plain model with no side-effect surface: one raw statement.
         if ($this->_raw_bulk || !$this->_has_side_effect_surface()) {
+            $this->_assert_site_lock_permits_raw_write('delete');
+
             return parent::delete();
         }
 
@@ -711,6 +718,8 @@ class RestrictedEloquentBuilder extends Builder
         // Escape hatch, a plain model with no surface, or a raw Expression value (DB::raw('n+1')
         // cannot be applied per-record safely): one raw statement.
         if ($this->_raw_bulk || $this->_values_contain_expression($values) || !$this->_has_side_effect_surface()) {
+            $this->_assert_site_lock_permits_raw_write('update');
+
             return parent::update($values);
         }
 
@@ -877,6 +886,20 @@ class RestrictedEloquentBuilder extends Builder
     public function result_set(int $chunk_size = Rsx_Result_Set::DEFAULT_CHUNK_SIZE)
     {
         return new Rsx_Result_Set($this, $chunk_size);
+    }
+
+    /**
+     * The site write lock enforcement for a raw bulk statement (Site_Lock::_check_bulk_write()).
+     * The per-record path needs no check here: each record's own save()/delete() is checked.
+     * Outside an enforcement window this costs one static read.
+     *
+     * @param string $operation 'update' | 'delete'
+     */
+    protected function _assert_site_lock_permits_raw_write(string $operation): void
+    {
+        if (Site_Lock::_is_enforcing()) {
+            Site_Lock::_check_bulk_write($this, $operation);
+        }
     }
 
     /**

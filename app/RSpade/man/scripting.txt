@@ -123,6 +123,27 @@ TASK DISPATCH: A WRITE MAY START A WORKER
        tick; the script itself is the spawner) and rsx:maintenance:enable (it stops
        rsx-lockd and Redis, which the script needs). Full contract: rsx:man tasks, SPAWNING OFF.
 
+SITE LOCKS
+       A script is command-line code and is ENFORCED for the life of the process:
+       system/script.php opens a site lock enforcement window right after the boot
+       (rsx:man site_locks). No lock is taken for the script, and a save() / delete()
+       of a site-scoped model fatals unless it runs inside a write section:
+
+           foreach ($rows as $row) {
+               Site_Lock::write($site_id, function () use ($row) {
+                   $contact = Contact_Model::find($row['id']);   // re-read inside
+                   $contact->phone = $row['phone'];
+                   $contact->save();
+               }, 'Import contact ' . $row['id']);
+           }
+
+       One section per item: each commits on its own and holds the site only for
+       that item, so the application keeps serving the tenant while the import
+       runs. Each section is its own revision unit, named by its description. A
+       pass that tolerates concurrent writers may use a reasoned
+       Site_Lock::bypass() instead. Change the declared site only between
+       sections; a process holds one site's lock at a time.
+
 EXIT STATUS
        Whatever runs a script - a shell && chain, `set -e`, cron, a CI step, a
        parent's passthru() - reads its exit status and nothing else:
@@ -257,6 +278,7 @@ SEE ALSO
        rsx:man maintenance_mode - the flag, the window, and what it blocks
        rsx:man session - the session lifecycle and the CLI identity statics
        rsx:man revisions - revision history, and declaring a script's units of work
+       rsx:man site_locks - the write section a script's site-scoped writes need
        rsx:man storage_directories - build/, tmp/ and storage/, and which helper reaches each
        skill rspade:bounded-result-sets - result_set() and why a bare LIMIT is the bug
        system/script.php - the entry point itself

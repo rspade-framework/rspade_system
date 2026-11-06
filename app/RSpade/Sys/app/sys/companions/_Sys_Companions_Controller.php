@@ -72,6 +72,7 @@ class _Sys_Companions_Controller extends _Sys_Endpoint_Controller_Abstract
      * @param array $params name, companion_action (pause, resume, stop, start, restart)
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function act(Request $request, array $params = [])
     {
         $name = (string) ($params['name'] ?? '');

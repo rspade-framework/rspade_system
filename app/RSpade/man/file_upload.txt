@@ -202,7 +202,13 @@ DEDUPLICATION AND HASH COLLISION HANDLING
     uploads of the SAME content share the read lock - dedup and the collision
     retry rely on the byte-compare, not on a mutex. They wait only for a release of
     that same blob. The CLI upload command (rsx:file:upload) additionally takes the
-    FILE_WRITE named write lock.
+    FILE_WRITE named write lock, and the site's write lock inside it.
+
+    SITE LOCKS. The upload surfaces (/_upload, POST /api/v1/files) are #[Writer]:
+    the upload runs under the site's write lock in one transaction. An endpoint
+    that CLAIMS a file (attach_to(), add_to(), claim_for_embed(), delete()) writes
+    a site-scoped attachment row and declares #[Writer] too; a task or command
+    claims inside a Site_Lock::write() section (rsx:man site_locks).
 
 FILE LIFECYCLE
 
@@ -1938,8 +1944,10 @@ COMMON PITFALLS
     - Hardcoding /_thumbnail sizes. Prefer a named preset (get_thumbnail_url_
       preset) for fixed sizes; reserve dynamic thumbnails for runtime sizes.
 
-    - Assuming web /_upload serializes concurrent writers. It does not take an
-      application lock; only the CLI upload command does.
+    - Assuming /_upload serializes uploads against EACH OTHER across sites or
+      blobs. It holds its own site's write lock (#[Writer]), so it serializes
+      against that site's other writers; blob dedup relies on the per-blob lock
+      and the byte-compare, and only the CLI upload command takes FILE_WRITE.
 
     - Forgetting an authorization hook. All three file gates are MANDATORY: an
       app missing file.thumbnail.authorize or file.download.authorize throws on

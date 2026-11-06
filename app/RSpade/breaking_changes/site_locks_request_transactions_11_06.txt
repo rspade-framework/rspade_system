@@ -1,0 +1,110 @@
+SITE READER/WRITER LOCKS PER REQUEST, ONE TRANSACTION PER WRITE, REPLAYABLE WRITES, OBJECT-ONLY API RESPONSES
+Date: 2026-11-06
+
+IF YOU DO NOTHING: every Ajax, external API, companion and page-route handler of yours that saves or deletes a site-scoped model now fatals at its first such write ("... without site N's write lock"), and so does every task, artisan command, system/script.php script, init() and pre_dispatch() that writes one outside a Site_Lock::write() section. Session::set_site_id() inside a handler fatals. An external API endpoint returning null, a list, an empty array or calling Rsx_Api::no_content() answers a 500 instead of its old 204 or list.
+
+SUMMARY
+    Category 1 (a /rsx/ code change), plus a contract change for external
+    API clients.
+
+    The framework now serializes every site's writes. Each request is a
+    READER or a WRITER, decided before its handler runs:
+
+        Ajax / API / companion endpoint   reader by default; #[Writer] to write;
+                                          #[Manual_Lock] to manage locks itself
+        page route (#[Route] / #[SPA])    no automatic lock; #[Reader] / #[Writer]
+                                          to take one
+        task, command, script, init(),    no automatic lock; take a
+        pre_dispatch(), unhandled_route()  Site_Lock::write() section per write
+
+    A reader holds the site's read lock for the call: any number run in
+    parallel, and the data does not change under them. A writer holds the
+    site's write lock and ONE database transaction: committed when the
+    handler returns, rolled back when it throws, so a request that fails
+    part-way leaves nothing behind, and nothing else writes the site while it
+    runs. This serialization is a guarantee to rely on: read-then-write inside
+    a writer needs no re-check, retry or lock of your own.
+
+    A write to a Site_Scoped model (site 0 included) without the site's write
+    lock fatals inside any of those windows. Migrations, db:seed seeders,
+    rsx:test fixture code and the provisioning commands are not checked. Raw
+    DB::table() / SQL writes are never checked.
+
+    A read lock never turns into a write lock: decide at the start, and when
+    the algorithm reads then writes, wrap the read in the write section.
+
+    Also new, needing no change: _request_ref replay of writer requests,
+    _duration_ms / _completed_at on every Ajax envelope and API body, 410
+    api_version_retired for a path only another API version serves.
+
+AFFECTED FILES
+    Every /rsx/ controller with #[Ajax_Endpoint] or #[Api_Endpoint] methods
+    that write; page routes that write; /rsx/services/ tasks; /rsx/main.php
+    and /rsx/portal_main.php hooks; sign-in, site-selection and
+    invitation-acceptance controllers; external API controllers returning
+    null, lists or no_content(); user.initial.created handlers.
+
+CHANGES REQUIRED
+
+    1. List what is still a reader:
+           php artisan rsx:site_lock:endpoints --app --mode=reader
+       Mark #[Writer] on every Ajax, API and companion endpoint that writes
+       the database. A page route that writes declares #[Writer], or wraps
+       the write in Site_Lock::write($site_id, fn () => ...). Validate before
+       writing or throw: a returned response_form_error() COMMITS what the
+       writer already wrote; only a throw rolls back.
+
+    2. An endpoint that writes another site's rows, or changes the session's
+       site, declares #[Manual_Lock] and does the work in
+       Site_Lock::write($that_site, fn () => ...).
+
+    3. Signing in: replace every Session::set_site_id($id) inside a handler
+       with RsxAuth::enter_site($id) (the Ajax endpoint declares
+       #[Manual_Lock]; a page route declares nothing). Find them:
+           grep -rn "set_site_id\|set_temporary_site_id" rsx --include='*.php'
+       Worked example: the reference app's
+       rsx/app/login/login_controller.php (complete_sign_in),
+       site_selection_controller.php and accept_invite_controller.php.
+
+    4. Tasks, commands and scripts: wrap each record's write in
+           Site_Lock::write($record->site_id, function () use ($id) {
+               $record = Some_Model::find($id);   // re-read inside
+               ...
+           });
+       A cross-site maintenance pass that tolerates concurrent writers uses
+       Site_Lock::bypass_all_sites('<why>', fn () => ...). A command that
+       only provisions the database declares
+       const SITE_LOCK_EXEMPT = '<why>'.
+
+    5. init(), pre_dispatch() and unhandled_route() run with no lock but are
+       checked: a site-scoped write there takes a Site_Lock::write() section
+       or, for analytics / session bookkeeping only (a "last seen" stamp),
+       Site_Lock::bypass($site_id, '<why>', fn) or a
+       #[Site_Lock_Exempt('<why>')] model. Never exempt business data, nor a
+       table whose values decide a value written into business data.
+
+    6. Remove any #[Writer] / #[Reader] / #[Manual_Lock] from a task,
+       pre_dispatch(), init() or other non-endpoint method (SITE-LOCK-01 fails
+       the build) and remove #[Reader] from Ajax/API endpoints (it is the
+       default).
+
+    7. External API: an endpoint returning null, a list, an empty array or
+       Rsx_Api::no_content() returns an object instead - a delete answers
+       ['result' => 'success'], a list goes inside an object
+       (['items' => ..., 'meta' => ...]):
+           grep -rn "no_content\|return null;\|return \[\];" rsx/app/api
+       Rename any #[Api_Param] whose name starts with "_" (reserved).
+       Clients already depending on a version that answered 204s or bare
+       lists: rather than change that version's shapes, publish the corrected
+       endpoints in a new version and decommission the old one; a path only
+       the new version serves answers 410 api_version_retired on the old one.
+
+    8. user.initial.created handlers now run inside the initial site's write
+       section: they must not change the site or lock another site.
+
+VERIFICATION
+    rsx:debug each screen that saves and perform one save (a missed
+    #[Writer] fatals naming the endpoint and the remedy); run each task and
+    command that writes once; sign in, switch site and accept an invitation;
+    call each API write endpoint once. rsx:man site_locks, rsx:man
+    request_history, rsx:man external_api.

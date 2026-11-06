@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with the Session facade and staff login - RsxAuth::verify_credentials() then RsxAuth::login(), Login_History, Login_Throttle, Auth_Throttled_Exception, get_session_id() vs has_session(), put_value(), get_sessions_for_user() / terminate_session(), session lifetimes, Login_Redirect / Login_Notice, begin_impersonation(). Use when building a login or logout page, a where-you're-signed-in screen or an account-status check, or on 'You're doing that too fast' or every visitor throttled at once (TRUSTED_PROXIES)."
+description: "Working with the Session facade and staff login - RsxAuth::verify_credentials() then RsxAuth::login(), Login_History, Login_Throttle, Auth_Throttled_Exception, get_session_id() vs has_session(), put_value(), get_sessions_for_user() / terminate_session(), session lifetimes, Login_Redirect / Login_Notice, begin_impersonation(), RsxAuth::enter_site() under the site locks. Use when building a login or logout page, a site picker, a where-you're-signed-in screen or an account-status check, or on 'You're doing that too fast', 'Session::set_site_id() refused inside', 'RsxAuth::enter_site(N) refused' or every visitor throttled at once (TRUSTED_PROXIES)."
 ---
 
 # Sessions and Login
@@ -68,7 +68,8 @@ public static function index(Request $request, array $params = [])
 
         RsxAuth::login($login_user);             // the ONLY way into a staff session
         Login_History::record_success($login_user->id, $login_user->email);
-        Session::set_site_id($site_id);
+        RsxAuth::enter_site($site_id);           // the site's write lock, the session's site,
+                                                 // the site sign-in records, commit, release
 
         return redirect(Login_Redirect::consume(Rsx::Route('Dashboard_Index_Action')));
     }
@@ -160,7 +161,7 @@ Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (8), `seconds
 
 ### Declaring a site without a session
 
-`Session::set_temporary_site_id($site_id)` declares the tenant for the rest of the script and **writes nothing**: no `_sessions` row, no cookie, no change to an existing row - a browser mid-session has its own tenant back after `clear_temporary_site_id()`. `get_site_id()` answers the declared value and `has_session()` answers true meanwhile; it outranks the stored session and is refused inside an external API request. Use it where code must run in a site's context and no session should come into being (a first-run request, a webhook that names its tenant); `set_site_id()` is the call that changes a signed-in user's tenant. Staff realm and site only - a portal request's site is read from its URL by the framework (`Portal_Session::set_site_id()` is for commands, tasks and tests).
+`Session::set_temporary_site_id($site_id)` declares the tenant for the rest of the script and **writes nothing**: no `_sessions` row, no cookie, no change to an existing row - a browser mid-session has its own tenant back after `clear_temporary_site_id()`. `get_site_id()` answers the declared value and `has_session()` answers true meanwhile; it outranks the stored session and is refused inside an external API request. Use it where code must run in a site's context and no session should come into being (a first-run request, a webhook that names its tenant, a task); `set_site_id()` is the call that changes a signed-in user's tenant. **Neither is callable inside a request handler** (see Tenant context): a request declares its tenant in `Main::init()` / `pre_dispatch()`, which run before the request's lock is taken. Staff realm and site only - a portal request's site is read from its URL by the framework (`Portal_Session::set_site_id()` is for commands, tasks and tests).
 
 ### Account state is APPLICATION vocabulary; site membership is the FRAMEWORK's
 
@@ -370,13 +371,23 @@ Session::forget_value('wizard.step');
 
 `Session::set_site_id(int $id)` moves the browser's staff sign-in to that site - the user session for the new site is found or created and made current, the old one signed out "Switched site", carrying the sign-in's clocks (no rotation, no lifetime restart). With nobody signed in it is a request-scoped declaration that writes nothing. Everything site-scoped follows it (the model global scope, mail, settings, time zones, throttling). It is the STAFF app's tenancy only; a portal request's site comes from the app's own declaration (`rspade:portal-core`).
 
+**Inside a request handler the site never changes by a setter**: `set_site_id()`, `set_temporary_site_id()`, `clear_temporary_site_id()`, `impersonate()` and `reset_impersonation()` THROW there (`Session::set_site_id() refused inside Ajax X::y: the framework manages a request's site`), and anywhere under a site lock or bypass. **`RsxAuth::enter_site($site_id)` is the one way a sign-in, a site switch or an impersonation moves the browser onto a site**: it takes that site's WRITE lock, sets the site, writes the sign-in's site-scoped records (the user session for the site, the site sign-in history row), commits and releases. It is refused while any site lock is held, so an Ajax / API endpoint that calls it declares **`#[Manual_Lock]`** (no automatic lock; `RsxAuth::enter_site(4) refused: this process holds the READ lock on site 3` means it still has one); a page route that declares no lock mode calls it as it is. `Main::init()` may still call `set_site_id()` (no lock is held there), and a task or command changes site between its `Site_Lock` sections. Skill `rspade:site-locks`.
+
 A site-switcher endpoint validates membership itself - the framework will not check that the user belongs to the site you name:
 
 ```php
-$membership = User_Model::where('login_user_id', Session::get_login_user_id())
-    ->where('site_id', $params['site_id'])->active()->first();
-if (!$membership) { return response_unauthorized(); }
-Session::set_site_id((int) $params['site_id']);
+#[Ajax_Endpoint]
+#[Auth('is_logged_in')]
+#[Manual_Lock]
+public static function switch_site(Request $request, array $params = [])
+{
+    $membership = User_Model::where('login_user_id', Session::get_login_user_id())
+        ->where('site_id', $params['site_id'])->active()->first();
+    if (!$membership) { return response_unauthorized(); }
+    RsxAuth::enter_site((int) $params['site_id']);
+
+    return ['redirect' => Rsx::Route('Dashboard_Index_Action')];
+}
 ```
 
 ---

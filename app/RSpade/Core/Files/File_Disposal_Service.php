@@ -11,6 +11,7 @@ use App\RSpade\Core\Files\File_Blob_References;
 use App\RSpade\Core\Files\File_Embed_References;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
@@ -281,10 +282,22 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     }
 
                     $label = self::__attachment_label($attachment) . ", deleted {$attachment->deleted_at}";
-                    if (self::__destroy_attachment($attachment, $task)) {
+
+                    // One write section per attachment, on its own site, re-reading the row
+                    // inside it: it may have been undeleted (or destroyed) since the list was read.
+                    $outcome = Site_Lock::write((int) $attachment->site_id, function () use ($attachment, $task) {
+                        $current = File_Attachment_Model::withTrashed()->find($attachment->id);
+                        if ($current === null || $current->deleted_at === null || $current->destroyed_at !== null) {
+                            return null;
+                        }
+
+                        return self::__destroy_attachment($current, $task);
+                    }, "Destroyed attachment #{$attachment->id} past its retention window");
+
+                    if ($outcome === true) {
                         $destroyed++;
                         self::__item_line($task, $printed, "Destroyed attachment {$label}");
-                    } else {
+                    } elseif ($outcome === false) {
                         $held++;
                         self::__item_line($task, $printed, "Held attachment {$label}: a file.attachment.destroy.hold handler kept it, or its destroyed listener failed");
                     }
@@ -478,9 +491,23 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 }
                 $task->heartbeat();
 
-                self::__item_line($task, $printed, 'Swept stale unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at}");
-                $attachment->delete();   // soft-delete -> enters the retention window
-                $uploads_swept++;
+                // One write section per upload, on its own site, re-reading it inside: it may
+                // have been claimed or deleted since the list was read.
+                $swept_now = Site_Lock::write((int) $attachment->site_id, function () use ($attachment) {
+                    $current = File_Attachment_Model::find($attachment->id);
+                    if ($current === null || $current->fileable_id !== null) {
+                        return false;
+                    }
+
+                    $current->delete();   // soft-delete -> enters the retention window
+
+                    return true;
+                }, "Swept stale unattached upload #{$attachment->id}");
+
+                if ($swept_now) {
+                    self::__item_line($task, $printed, 'Swept stale unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at}");
+                    $uploads_swept++;
+                }
             }
 
             $task->stdout($released || $disk_deleted || $uploads_swept
@@ -570,9 +597,23 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 }
                 $task->heartbeat();
 
-                self::__item_line($task, $printed, 'Swept unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at} and never claimed");
-                $attachment->delete();   // soft-delete -> enters the retention window
-                $swept++;
+                // One write section per upload, on its own site, re-reading it inside: it may
+                // have been claimed or deleted since the list was read.
+                $swept_now = Site_Lock::write((int) $attachment->site_id, function () use ($attachment) {
+                    $current = File_Attachment_Model::find($attachment->id);
+                    if ($current === null || $current->fileable_type !== null || $current->fileable_id !== null) {
+                        return false;
+                    }
+
+                    $current->delete();   // soft-delete -> enters the retention window
+
+                    return true;
+                }, "Swept unclaimed upload #{$attachment->id}");
+
+                if ($swept_now) {
+                    self::__item_line($task, $printed, 'Swept unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at} and never claimed");
+                    $swept++;
+                }
                 $task->progress_count($swept, max($total, $swept));
             }
 

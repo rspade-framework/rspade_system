@@ -7,9 +7,8 @@
 
 namespace App\RSpade\Core\Database\Models;
 
-use Exception;
 use Illuminate\Database\Eloquent\Builder;
-use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
@@ -43,6 +42,20 @@ use App\RSpade\Core\Session\Session;
  * refuses a cross-site or site-changing write, and the defensive retrieved cross-check -
  * plus save()/update()/delete() guards and a tenant-pinned attachment reader.
  *
+ * THE SITE WRITE LOCK IS ENFORCED HERE. Inside an enforcement window (a task body, an
+ * endpoint handler - Site_Lock), save() and delete() of a site-scoped record for site X fatal
+ * unless the process holds X's write lock (#[Writer], a Site_Lock::write() section) or is
+ * inside a Site_Lock bypass covering X. RestrictedEloquentBuilder applies the same check to a
+ * raw bulk update/delete. Nothing is ever acquired here: the lock is taken at the boundary,
+ * never because a write happened.
+ *
+ * EXEMPTION. A site-scoped model that is BOOKKEEPING - a record of what happened, never
+ * tenant data a user edits - declares #[Site_Lock_Exempt('<what it records>')] on its class
+ * (attribute-only metadata, read by Site_Lock::_is_exempt(); inherited by subclasses; the
+ * reason is required). Its writes are never checked. No framework model declares it today:
+ * the framework's bookkeeping (sessions, sign-in history, _transactions / _revisions, audit
+ * sessions, _tasks, _api_request_log) is not site-scoped models at all.
+ *
  * INSTALLATION RIDES ON THE TRAIT BOOT, NOT ON booted(). Eloquent calls
  * bootSite_Scoped() from Model::bootTraits() for every class that adopts the trait, once,
  * before booted(). That is deliberately stronger than where this used to live: the
@@ -60,12 +73,6 @@ use App\RSpade\Core\Session\Session;
  * rest of the family. Read __attachment_query below with that in mind: its defense is
  * against the SHARED flag, and it stays correct either way.
  *
- * $site_lock_tokens is per adopting class for the same reason, which would matter if the
- * automatic per-tenant write lock were on. It is not (see
- * AUTOMATIC_SITE_WRITE_LOCKS_ENABLED and backlog B-87), so the registry is always empty
- * and RsxLocks::_release_since() - which calls _forget_site_lock_tokens() on
- * Rsx_Site_Model_Abstract alone - has nothing to miss. Re-enabling those locks means
- * revisiting that call so it reaches every adopter.
  *
  * See: php artisan rsx:man model, rsx:man class_override
  */
@@ -80,44 +87,12 @@ trait Site_Scoped
     protected static $apply_site_scope = true;
 
     /**
-     * MASTER SWITCH for the AUTOMATIC per-tenant write lock. Currently OFF.
-     *
-     * When true, the first save()/update()/delete() a script performs against any
-     * site-scoped model silently takes cluster:SITE_<id> WRITE and holds it until the
-     * process exits, making a multi-statement mutation of one tenant atomic against every
-     * other writer in the cluster.
-     *
-     * DISABLED 2026-08-11 (owner ruling): not ready for production. The mechanism is
-     * sound in isolation, but acquiring a cluster-wide lock IMPLICITLY - from a write
-     * nobody asked to be exclusive, held for the life of the process - has consequences
-     * that have not been worked through. The known one is rsx:debug: the CLI process
-     * takes the lock, then drives a real HTTP request through Playwright, and that request
-     * is a SEPARATE process which blocks on the same lock while the CLI waits for the page
-     * it will never get. Lock groups do not help there - the web request is not a spawned
-     * child, so there is nothing to inherit through.
-     *
-     * Everything else stays in place and working: the token registry, release_site_lock(),
-     * release_all_site_locks(), the worker's per-task release, and the explicit
-     * RsxLocks::site_write_lock($site_id) API that application code can still call
-     * deliberately. Flipping this back to true is the whole re-enable.
-     *
-     * Backlog B-87 owns the revisit.
-     */
-    private const AUTOMATIC_SITE_WRITE_LOCKS_ENABLED = false;
-
-    /**
-     * Site lock tokens by site_id
-     * @var array<int, string>
-     */
-    protected static $site_lock_tokens = [];
-
-    /**
      * Get the current site ID for the EXPERIENCE this request is serving.
      * Always returns fresh value - never cached.
      *
      * THE TENANT BOUNDARY. This one value feeds the `site` global scope, the `creating`
-     * forced site_id, the `saving` cross-site fatal, the `retrieved` cross-check, save(),
-     * insert and the site write lock - for every site-scoped model, portal models included.
+     * forced site_id, the `saving` cross-site fatal, the `retrieved` cross-check, save() and
+     * insert - for every site-scoped model, portal models included.
      *
      * It forks on the EXPERIENCE OF THE REQUEST (Rsx_Portal::is_portal_request()), never on
      * who is signed in: a browser has ONE session carrying BOTH identities, so an identity
@@ -187,98 +162,13 @@ trait Site_Scoped
     }
 
     /**
-     * DISABLED - see AUTOMATIC_SITE_WRITE_LOCKS_ENABLED and backlog B-87.
-     *
-     * Take this request's WRITE lock on the current tenant. Called automatically by the
-     * first save()/insert()/update() a script performs against a site-scoped model.
-     *
-     * There is no read lock to upgrade FROM: a request that only reads takes no site lock
-     * at all. The lock is CLUSTER-wide (rsx-lockd), waits for as long as it takes, and is
-     * held until release_site_lock()/shutdown - which is what makes a multi-statement
-     * mutation of one tenant atomic against every other writer, on this box or any other.
-     *
-     * @return void
+     * FRAMEWORK-INTERNAL. Is the site read scope in force for this model right now (it is
+     * suspended inside without_site_scope())? Site_Lock reads it to decide which sites a raw
+     * bulk write can reach.
      */
-    protected static function __upgrade_to_write_lock(): void
+    public static function _site_scope_is_applied(): bool
     {
-        if (!self::AUTOMATIC_SITE_WRITE_LOCKS_ENABLED) {
-            return;
-        }
-
-        $site_id = static::get_current_site_id();
-
-        if (isset(static::$site_lock_tokens[$site_id])) {
-            return;
-        }
-
-        static::$site_lock_tokens[$site_id] = RsxLocks::site_write_lock($site_id);
-
-        // Register shutdown handler to cleanup (only once)
-        static $shutdown_registered = false;
-        if (!$shutdown_registered) {
-            register_shutdown_function([static::class, 'release_all_site_locks']);
-            $shutdown_registered = true;
-        }
-    }
-
-    /**
-     * Release a specific site's lock
-     *
-     * @param int $site_id The site ID to release lock for
-     * @return void
-     */
-    public static function release_site_lock(int $site_id): void
-    {
-        if (isset(static::$site_lock_tokens[$site_id])) {
-            try {
-                RsxLocks::release_lock(static::$site_lock_tokens[$site_id]);
-            } catch (Exception $e) {
-                // Ignore errors during cleanup
-            }
-            unset(static::$site_lock_tokens[$site_id]);
-        }
-    }
-
-    /**
-     * Release all site locks
-     * Called automatically on shutdown
-     *
-     * @return void
-     */
-    public static function release_all_site_locks(): void
-    {
-        foreach (static::$site_lock_tokens as $site_id => $token) {
-            try {
-                RsxLocks::release_lock($token);
-            } catch (Exception $e) {
-                // Ignore errors during cleanup
-            }
-        }
-        static::$site_lock_tokens = [];
-    }
-
-    /**
-     * FRAMEWORK-INTERNAL. Drop registry entries for site locks that were ALREADY released
-     * by someone else - it releases nothing itself.
-     *
-     * The registry is a "this process already holds site N" cache, so a token released
-     * behind its back would leave the cache asserting a lock that is gone: the next write
-     * would take the fast path at __upgrade_to_write_lock() and mutate the tenant holding
-     * nothing. Sole caller is RsxLocks::_release_since(), which releases task-scoped locks
-     * between jobs in a long-lived worker.
-     *
-     * @param array<int, string> $tokens Lock tokens that have just been released
-     * @return void
-     */
-    public static function _forget_site_lock_tokens(array $tokens): void
-    {
-        $released = array_flip($tokens);
-
-        foreach (static::$site_lock_tokens as $site_id => $token) {
-            if (isset($released[$token])) {
-                unset(static::$site_lock_tokens[$site_id]);
-            }
-        }
+        return static::$apply_site_scope;
     }
 
     /**
@@ -396,16 +286,14 @@ trait Site_Scoped
     }
 
     /**
-     * Override save to handle site locking
+     * Save under the tenant boundary: the cross-site guard, the forced site_id for a new
+     * record, then the site write lock enforcement (Site_Lock) for the site the row lands in.
      *
      * @param array $options
      * @return bool
      */
     public function save(array $options = [])
     {
-        // Always upgrade to write lock for saves
-        static::__upgrade_to_write_lock();
-
         // Additional validation before save
         if (static::$apply_site_scope) {
             $current_site_id = static::get_current_site_id();
@@ -425,11 +313,13 @@ trait Site_Scoped
             }
         }
 
+        Site_Lock::_check_model_write($this, (int) ($this->exists ? $this->getOriginal('site_id') : $this->site_id), 'save');
+
         return parent::save($options);
     }
 
     /**
-     * Override update to handle site locking
+     * Refuse a site_id change through update(); the write itself goes through save().
      *
      * @param array $attributes
      * @param array $options
@@ -451,22 +341,17 @@ trait Site_Scoped
             unset($attributes['site_id']);
         }
 
-        // Always upgrade to write lock for updates
-        static::__upgrade_to_write_lock();
-
         return parent::update($attributes, $options);
     }
 
     /**
-     * Override delete to handle site locking
+     * Delete under the tenant boundary: the cross-site guard, then the site write lock
+     * enforcement (Site_Lock) for the record's site.
      *
      * @return bool|null
      */
     public function delete()
     {
-        // Always upgrade to write lock for updates
-        static::__upgrade_to_write_lock();
-
         // Validate site ownership before delete
         if (static::$apply_site_scope) {
             $current_site_id = static::get_current_site_id();
@@ -479,6 +364,8 @@ trait Site_Scoped
                 );
             }
         }
+
+        Site_Lock::_check_model_write($this, (int) $this->site_id, 'delete');
 
         return parent::delete();
     }

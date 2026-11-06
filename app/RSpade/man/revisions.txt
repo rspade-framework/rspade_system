@@ -193,8 +193,13 @@ THE TABLES
 
     _transactions
         One row per unit of work that produced at least one revision, minted
-        LAZILY on the first revisioned write - a request that changed nothing
-        leaves nothing behind.
+        LAZILY on the first revisioned write - a unit that changed nothing
+        leaves nothing behind - and one for EVERY WRITER REQUEST that commits,
+        minted EAGERLY at the site lock boundary (a #[Writer] endpoint or route,
+        or a #[Manual_Lock] one that took a site write lock; rsx:man
+        site_locks), a request that saved nothing included. The eager row is
+        written inside the writer's transaction, so a request that rolls back
+        takes it with it. That is what makes the request history complete.
 
         site_id             the tenant, adopted from the first revision when
                             the unit had none of its own (a portal write)
@@ -217,6 +222,23 @@ THE TABLES
         api_request_log_id  the _api_request_log row, when the source is api
         revision_count      how many revisions the action produced
         description         whatever Revision::describe() was given
+
+        The writer request history (rsx:man request_history), on an Ajax or
+        external API writer's row:
+
+        request_ref         the client's _request_ref, recorded only for a
+                            request that succeeded; else NULL
+        request_fingerprint sha256 of the canonical JSON of the validated
+                            params
+        request_payload     what was sent, redacted and capped (pruned)
+        response_status     the status it was answered with (pruned)
+        response_body       the response as sent, JSON (pruned)
+        duration_ms         the request's time to the moment it was recorded
+        completed_at        that moment (UTC)
+
+        UNIQUE (site_id, actor_type, actor_id, request_ref) is the replay
+        identity. The three pruned columns are nulled past
+        rsx.request_history.payload_retention_days (RETENTION).
 
     _revisions
         One row per recorded write. FK transaction_id ON DELETE CASCADE.
@@ -368,7 +390,12 @@ THE UNIT OF WORK
 
     What it composes with:
       - It is free when nothing is recorded: the mint is lazy, so a unit that
-        writes nothing leaves no row.
+        writes nothing leaves no row. (A writer REQUEST's own unit is the
+        exception: it is minted eagerly, above.)
+      - Site_Lock::write($site_id, $work, $description) begins a unit of its
+        own, named by $description, outside the transaction it opens, and
+        restores the caller's afterwards - the per-item section of a task or
+        command is one unit per item without further code.
       - It is not a database transaction and is safe inside one. But the
         _transactions row is written on the same connection as the writes, so
         a DB transaction that rolls back takes the unit's row with it - begin
@@ -535,6 +562,11 @@ RETENTION
     config('rsx.revisions.dictionary_max_age_days') - default 30. See THE
     DICTIONARY.
 
+    config('rsx.request_history.payload_retention_days') - default 7, 0 = keep.
+    Revision_Cleanup_Service::prune_request_payloads, a maintenance task, nulls
+    request_payload, response_status and response_body past it; the reference,
+    fingerprint and timing stay with the row (rsx:man request_history).
+
 WHAT THIS FEATURE DELIBERATELY DOES NOT DO
 
   No restore-this-revision.
@@ -683,6 +715,8 @@ TROUBLESHOOTING
         WORK). Existing rows are not regrouped.
 
 SEE ALSO
+    rsx:man request_history
+    rsx:man site_locks
     rsx:man scripting
     rsx:man model
     rsx:man realtime

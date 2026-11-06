@@ -51,6 +51,7 @@ class Rsx_Password_Confirmation_Controller extends Rsx_Controller_Abstract
      * @return array {confirmed: true, expires_in_seconds}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function verify(Request $request, array $params = [])
     {
         Rsx_Turnstile::validate($request, $params);
@@ -80,6 +81,7 @@ class Rsx_Password_Confirmation_Controller extends Rsx_Controller_Abstract
      * @return array
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function passkey_options(Request $request, array $params = [])
     {
         return Rsx_Password_Confirmation::passkey_options();
@@ -92,6 +94,7 @@ class Rsx_Password_Confirmation_Controller extends Rsx_Controller_Abstract
      * @return array {confirmed: true, expires_in_seconds}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function verify_passkey(Request $request, array $params = [])
     {
         $assertion = $params['assertion'] ?? null;
@@ -119,6 +122,7 @@ class Rsx_Password_Confirmation_Controller extends Rsx_Controller_Abstract
      * @return array {cleared: true}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function clear(Request $request, array $params = [])
     {
         Rsx_Password_Confirmation::clear();

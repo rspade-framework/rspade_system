@@ -50,6 +50,7 @@ class Rsx_Dark_Mode_Controller extends Rsx_Controller_Abstract
      * server's resolved answer, null under auto).
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function set_dark_mode(Request $request, array $params = [])
     {
         static::_refuse_portal();

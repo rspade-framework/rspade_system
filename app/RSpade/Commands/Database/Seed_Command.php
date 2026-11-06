@@ -12,6 +12,9 @@ use Illuminate\Database\Console\Seeds\SeedCommand as LaravelSeedCommand;
  */
 class Seed_Command extends LaravelSeedCommand
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'seeders: database provisioning, outside every window';
+
     protected $description = 'Seed the database with records (requires migration mode in development)';
 
 

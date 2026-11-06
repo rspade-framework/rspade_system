@@ -10,9 +10,11 @@ namespace App\RSpade\Core\Revisions;
 use RuntimeException;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Result_Set;
+use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Revisions\Revision_Codec;
 use App\RSpade\Core\Revisions\Revision_Model;
 use App\RSpade\Core\Revisions\Transaction_Model;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -24,8 +26,12 @@ use App\RSpade\Core\Session\Session;
  * revisions back (for_transaction(), transactions_for()).
  *
  * THE TRANSACTION IS MINTED LAZILY. Nothing is written until a revisioned model actually
- * saves, so a request that changed nothing leaves no row - and a process that never
- * touches a revisioned model never touches these tables at all.
+ * saves, so a unit that changed nothing leaves no row - and a process that never touches
+ * a revisioned model never touches these tables at all. The one EAGER mint is a writer
+ * request's: the site lock boundary (Site_Lock::_run_request()) mints the row of every
+ * #[Writer] request inside its transaction, and of every #[Manual_Lock] request that took
+ * a site write lock, so every committed writer request is in the request history
+ * (Request_History) - one that saved nothing included.
  *
  * THE STATE IS PER-PROCESS AND MUST BE RESET AT EVERY UNIT BOUNDARY. A web request is one
  * process and one unit, so the two coincide; a task worker, a test runner and an Ajax
@@ -161,6 +167,36 @@ class Revision
         }
 
         return (int) self::$transaction->id;
+    }
+
+    /**
+     * Resolve, OUTSIDE any database transaction, every bookkeeping row a mint references:
+     * the audit session, the client address and the actor's type reference. Each of them
+     * is found-or-created and then memoized for the process; created inside a writer's
+     * transaction that later rolls back, the memo would name a row that no longer exists,
+     * and the next mint in the same process (the next call of an Ajax batch) would fail its
+     * foreign key. Site_Lock calls this right after a writer's lock is granted, before the
+     * writer's transaction begins and the request's row is minted inside it.
+     */
+    public static function _prepare_mint(): void
+    {
+        $actor = Rsx_Model_Abstract::_resolve_context_actor();
+
+        if ($actor !== null) {
+            Type_Ref_Registry::class_to_id($actor['type']);
+        }
+
+        Session::get_audit_session_id();
+        Ip_Address::id(self::_current_ip());
+    }
+
+    /**
+     * The endpoint the current unit of work is serving, exactly as a mint right now would
+     * store it - what the request history compares a reference's original endpoint with.
+     */
+    public static function _current_endpoint(): ?string
+    {
+        return self::$endpoint === null ? null : substr(self::$endpoint, 0, 255);
     }
 
     /**

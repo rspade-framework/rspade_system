@@ -11,7 +11,6 @@ use Exception;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\InputBag;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -22,16 +21,22 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
+use App\RSpade\Core\Api\Request_Payload_Redactor;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
+use App\RSpade\Core\Locks\Site_Lock;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
+use App\RSpade\Core\Revisions\Request_History;
+use App\RSpade\Core\Revisions\Request_History_Answer;
+use App\RSpade\Core\Revisions\Request_History_Call;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -91,6 +96,8 @@ class Ajax
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
     const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
+    const ERROR_REQUEST_REF_REUSED = 'request_ref_reused';              // The _request_ref names a different request (nothing ran)
+    const ERROR_REQUEST_RESPONSE_EXPIRED = 'request_response_expired';  // The request already ran; its stored response was pruned
     const ERROR_SERVER = 'server_error';      // Client-generated (HTTP 5xx, or an answer missing a call)
     const ERROR_NETWORK = 'network_error';    // Client-generated (connection failed)
 
@@ -206,6 +213,8 @@ class Ajax
             self::ERROR_NETWORK => 'Could not connect to server. Please check your connection.',
             self::ERROR_GENERIC => 'An error has occurred',
             self::ERROR_QUESTION => 'A question is pending',
+            self::ERROR_REQUEST_REF_REUSED => 'This request reference was already used for a different request',
+            self::ERROR_REQUEST_RESPONSE_EXPIRED => 'This request already ran, and its response is no longer kept',
             default => 'An error has occurred',
         };
     }
@@ -218,7 +227,12 @@ class Ajax
      * realm (a denial answers response_unauthorized(), and the endpoint never runs); text
      * envelopes rehydrated into their value objects; then, as ONE UNIT - its own Turnstile
      * latch, its own revision transaction, both handed back to the calling scope afterwards
-     * - the controller's pre_dispatch, the action, and the rsx.post_dispatch event.
+     * - the controller's pre_dispatch, the action, and the rsx.post_dispatch event. The
+     * controller's pre_dispatch runs with NO lock, in its own enforcement window
+     * (Site_Lock::_run_hook()); then, at the site lock boundary (Site_Lock::_run_request()),
+     * the surface's lock - read for a reader (the default), write plus one database
+     * transaction for a #[Writer], none for #[Manual_Lock] - is taken, the action runs in its
+     * enforcement window, rsx.post_dispatch fires, and the lock is released.
      *
      * $request is what the endpoint receives. The browser transport passes the real
      * request; a batch passes one call_request() per call - the real request (its IP, its
@@ -227,12 +241,25 @@ class Ajax
      * @param string $controller_name The controller's SIMPLE class name
      * @param string $action_name The endpoint method
      * @param array $params The call's parameters, as sent (envelopes not yet rehydrated)
+     * THE REQUEST HISTORY (Request_History). A browser call passes $history_input
+     * ['ref' => a valid _request_ref or null, 'started_ns' => hrtime at the call's start]: a
+     * writer call (#[Writer], or #[Manual_Lock]) then records its fingerprint, payload and
+     * timing on its _transactions row inside its transaction, keeps a sent reference with a
+     * successful answer, and a reference it already holds is answered from the history
+     * (Request_History_Answer, thrown: nothing runs, nothing is written). $history is set to
+     * that call's Request_History_Call (null for a reader). _request_ref never reaches the
+     * endpoint's $params, whoever called.
+     *
      * @param Request $request The request the endpoint receives
+     * @param array|null $history_input ['ref' => ?string, 'started_ns' => int], or null (no history)
+     * @param Request_History_Call|null $history Set to the call's request history, or null
      * @return mixed The endpoint's raw result - a value, or an Rsx_Response_Abstract
      * @throws Throwable Whatever the endpoint raised
+     * @throws Request_History_Answer The call was answered from the request history
      */
-    public static function execute(string $controller_name, string $action_name, array $params, Request $request)
+    public static function execute(string $controller_name, string $action_name, array $params, Request $request, ?array $history_input = null, ?Request_History_Call &$history = null)
     {
+        $history = null;
         $controller_class = static::_resolve_endpoint_class($controller_name, $action_name);
         Rsx_Metrics::name_ajax_call($controller_name . '::' . $action_name);
 
@@ -247,6 +274,11 @@ class Ajax
             return response_unauthorized(self::IMPERSONATION_READ_ONLY_MESSAGE);
         }
 
+        // _request_ref is the transport's (handle_calls() takes it out of a browser call); an
+        // endpoint never receives it, whoever called.
+        unset($params[Request_History::REF_PARAM]);
+        $sent_params = $params;
+
         $params = Rsx_Text_Abstract::wrap_request_envelopes($params);
 
         // The call is its own unit, whatever called it. A fresh Turnstile latch, so a batch
@@ -258,7 +290,6 @@ class Ajax
         $previous_turnstile_checked = Rsx_Turnstile::_was_checked();
         $previous_revision_state = Revision::_snapshot_request_state();
 
-        static::$__in_endpoint_call = true;
         Rsx_Turnstile::_reset_request_state();
         Revision::_reset_request_state('ajax', $controller_name . '::' . $action_name);
 
@@ -268,49 +299,80 @@ class Ajax
         $previous_request = app('request');
         static::__bind_request($request);
 
-        // A call that leaves a database transaction open would carry its siblings in the
-        // same request into it: their realtime frames wait for level 0, and their writes
-        // are rolled back when the request ends after they reported success.
-        $transaction_level = DB::transactionLevel();
-        $leaked_transactions = 0;
+        $target = $controller_name . '::' . $action_name;
+        $label = 'Ajax ' . $target;
+        $mode = Site_Lock::_surface_mode($target);
+
+        if ($history_input !== null && ($mode === Site_Lock_Directives::WRITER || $mode === Site_Lock_Directives::MANUAL)) {
+            $history = new Request_History_Call(
+                $mode,
+                Site_Lock::_request_site_id(),
+                $history_input['ref'],
+                Request_History::fingerprint($sent_params),
+                Request_Payload_Redactor::encode($sent_params),
+                $history_input['started_ns']
+            );
+        }
+
+        // THE PRE_DISPATCH HOOK, then THE SITE LOCK BOUNDARY (Site_Lock::_run_request(), the
+        // ordering every dispatcher shares):
+        //
+        //   - the controller's pre_dispatch runs with NO automatic lock, in an enforcement
+        //     window of its own (Site_Lock::_run_hook()): it is not a reader or a writer
+        //     surface, so a site-scoped write there takes its own Site_Lock::write() section
+        //     (or a bypass), and it must hand over holding nothing it took;
+        //   - then the call's lock - and, for a #[Writer], its transaction - is taken, and
+        //     released after the call has answered: after rsx.post_dispatch, after the commit.
+        //     A post_dispatch handler that throws (the Turnstile completeness guard) rolls a
+        //     writer's work back instead of failing a call whose writes already committed;
+        //   - the ENFORCEMENT WINDOW of the boundary is exactly the endpoint function
+        //     (Site_Lock::_enforce()).
+        //
+        // Every call takes its own lock, batched or not: a read lock shared across a batch's
+        // calls would be held while the next call's Main::pre_dispatch and controller
+        // pre_dispatch run, and those run with no lock. A call made in-process from inside
+        // another endpoint (Ajax::internal()) runs under the outer call's hold. A database
+        // transaction the call leaves open is rolled back and fails the call (it would
+        // otherwise carry its siblings in the batch into it: their realtime frames wait for
+        // level 0, and their writes would be rolled back when the request ends after they
+        // reported success).
+        static::$__in_endpoint_call = true;
 
         try {
-            $result = $controller_class::pre_dispatch($request, $params);
+            $result = Site_Lock::_run_hook(
+                class_basename($controller_class) . "::pre_dispatch() for {$label}",
+                fn () => $controller_class::pre_dispatch($request, $params)
+            );
 
             if ($result === null) {
-                $result = $controller_class::$action_name($request, $params);
+                $boundary = fn () => Site_Lock::_run_request($mode, $label, function () use ($controller_class, $controller_name, $action_name, $request, $params, $label, $history) {
+                    // A reference this writer already holds is answered from the history:
+                    // thrown, so the transaction rolls back and nothing runs.
+                    $history?->open();
+
+                    $result = Site_Lock::_enforce($label, fn () => $controller_class::$action_name($request, $params));
+
+                    static::__refuse_http_response($controller_name, $action_name, $result);
+                    static::__post_dispatch($request, $params, $result);
+
+                    if ($history !== null) {
+                        static::__record_history($history, $result);
+                    }
+
+                    return $result;
+                });
+
+                $result = $history !== null ? $history->run($boundary) : $boundary();
+            } else {
+                // A pre_dispatch that halts answers for the endpoint: no lock, no action.
+                static::__refuse_http_response($controller_name, $action_name, $result);
+                static::__post_dispatch($request, $params, $result);
             }
-
-            static::__refuse_http_response($controller_name, $action_name, $result);
-
-            // rsx.post_dispatch - fired immediately after the handler returns and before
-            // any response shaping, on the SUCCESS path only (never after an exception).
-            // Handlers run INLINE and may throw; that is the point (the Turnstile
-            // completeness guard is one). Handlers must not mutate 'result'.
-            // See: php artisan rsx:man event_hooks
-            Rsx::trigger_action('rsx.post_dispatch', [
-                'request' => $request,
-                'params' => $params,
-                'result' => $result,
-            ]);
         } finally {
             static::$__in_endpoint_call = $previous_in_call;
             Rsx_Turnstile::_set_request_checked($previous_turnstile_checked);
             Revision::_restore_request_state($previous_revision_state);
             static::__bind_request($previous_request);
-
-            while (DB::transactionLevel() > $transaction_level) {
-                DB::rollBack();
-                $leaked_transactions++;
-            }
-        }
-
-        if ($leaked_transactions > 0) {
-            throw new \RuntimeException(
-                "{$controller_name}::{$action_name} returned with {$leaked_transactions} database transaction(s) "
-                . 'still open. They have been rolled back, so whatever the call wrote inside them is gone. '
-                . 'Commit or roll back every transaction an endpoint begins - DB::transaction(fn) does both.'
-            );
         }
 
         return $result;
@@ -326,6 +388,50 @@ class Ajax
     {
         app()->instance('request', $request);
         \Illuminate\Support\Facades\Facade::clearResolvedInstance('request');
+    }
+
+    /**
+     * Record a writer call on its _transactions row, inside its transaction. A value is a
+     * SUCCESS and its envelope outcome {_success: true, _ajax_return_value} is the stored
+     * body (status 200: every Ajax response is); a coded result (response_form_error() ...)
+     * records the row without the reference. The value is validated here, inside the
+     * transaction, so a value no envelope can carry rolls the call back.
+     *
+     * @param Request_History_Call $history
+     * @param mixed $result
+     */
+    private static function __record_history(Request_History_Call $history, $result): void
+    {
+        if ($result instanceof Rsx_Response_Abstract) {
+            $history->record(200, null, false);
+
+            return;
+        }
+
+        static::_validate_ajax_response($result);
+
+        $history->record(200, json_encode(['_success' => true, '_ajax_return_value' => $result], JSON_THROW_ON_ERROR), true);
+    }
+
+    /**
+     * rsx.post_dispatch - fired immediately after the handler (or a halting pre_dispatch)
+     * returns and before any response shaping, on the SUCCESS path only (never after an
+     * exception). Handlers run INLINE and may throw; that is the point (the Turnstile
+     * completeness guard is one). Handlers must not mutate 'result'.
+     * See: php artisan rsx:man event_hooks
+     *
+     * @param Request $request
+     * @param array $params
+     * @param mixed $result
+     * @return void
+     */
+    private static function __post_dispatch(Request $request, array $params, $result): void
+    {
+        Rsx::trigger_action('rsx.post_dispatch', [
+            'request' => $request,
+            'params' => $params,
+            'result' => $result,
+        ]);
     }
 
     /**
@@ -446,14 +552,20 @@ class Ajax
      * @param string $action_name
      * @param array $params
      * @param Request $request The request the endpoint receives
-     * @return array The envelope
+     * @param array|null $history_input The request history input for execute(), or null
+     * @return array The envelope; a call the history recorded carries its recorded
+     *               _duration_ms / _completed_at, a replay the original ones
      */
-    public static function call_envelope(string $controller_name, string $action_name, array $params, Request $request): array
+    public static function call_envelope(string $controller_name, string $action_name, array $params, Request $request, ?array $history_input = null): array
     {
         $console_mark = count(Debugger::_get_console_messages());
+        $history = null;
 
         try {
-            $result = static::execute($controller_name, $action_name, $params, $request);
+            $result = static::execute($controller_name, $action_name, $params, $request, $history_input, $history);
+        } catch (Request_History_Answer $answer) {
+            // Answered from the request history: a replay, or a refusal. Never a fault.
+            return static::__side_channels($answer->ajax_fields(), $console_mark);
         } catch (Throwable $e) {
             // A fault is reported exactly as the front controller reports one that escapes
             // dispatch; a coded failure is an answer, not a fault.
@@ -464,11 +576,16 @@ class Ajax
             return static::error_envelope($e, $console_mark);
         }
 
-        if ($result instanceof Rsx_Response_Abstract) {
-            return static::coded_envelope($result, $console_mark);
+        $envelope = $result instanceof Rsx_Response_Abstract
+            ? static::coded_envelope($result, $console_mark)
+            : static::format_ajax_response($result, $console_mark);
+
+        $timing = $history?->recorded_timing();
+        if ($timing !== null) {
+            [$envelope['_duration_ms'], $envelope['_completed_at']] = $timing;
         }
 
-        return static::format_ajax_response($result, $console_mark);
+        return $envelope;
     }
 
     /**
@@ -774,12 +891,21 @@ class Ajax
      *   1. the session lifetime (rsx.sessions.*) - once a call ends the sign-in, every later
      *      call in the request answers the same session_expired envelope;
      *   2. the staff site membership (users.is_enabled);
-     *   3. the realm's Main::pre_dispatch, with the call's own controller and action - a
+     *   3. a _request_ref that is not a string of 1 to 128 characters refuses the call as a
+     *      validation error (the reference is taken out of the params first, so nothing
+     *      downstream ever sees it);
+     *   4. the realm's Main::pre_dispatch, with the call's own controller and action - a
      *      non-null answer refuses THAT call (main_pre_dispatch_refusal());
-     *   4. call_envelope().
+     *   5. call_envelope(), with the call's request history input.
+     *
+     * Every envelope then gets the call's _duration_ms / _completed_at and, when one was
+     * sent, its _request_ref (__stamp_call()).
      *
      * The checks are per call because a call can change who is signed in - a sign-in, a
      * logout, a site switch - and the next call must be judged as the identity it runs under.
+     *
+     * Site locks: every call takes its own lock in execute(), after its Main::pre_dispatch
+     * and its controller's pre_dispatch have run with none - nothing is held between calls.
      * Pending flash alerts are read once, after the last call, and ride on the LAST call's
      * envelope; console messages ride on the call that produced them.
      *
@@ -795,17 +921,27 @@ class Ajax
         $expired = null;
 
         foreach ($calls as $call) {
+            $started_ns = hrtime(true);
             $params = $call['params'] ?? [];
+
+            // The call's _request_ref is the transport's: taken out before anything sees the
+            // params, echoed on whatever the call is answered with.
+            [$ref_sent, $ref] = Request_History::take_ref($params);
+
             $call_request = static::call_request($request, $params);
             $console_mark = count(Debugger::_get_console_messages());
 
             $expired = $expired ?? static::__timeout_refusal($console_mark);
             $envelope = $expired
                 ?? static::__membership_refusal($console_mark)
+                ?? static::__request_ref_refusal($ref_sent, $ref, $console_mark)
                 ?? static::__main_pre_dispatch_refusal($call_request, $call['controller'], $call['action'], $console_mark)
-                ?? static::call_envelope($call['controller'], $call['action'], $params, $call_request);
+                ?? static::call_envelope($call['controller'], $call['action'], $params, $call_request, [
+                    'ref' => $ref_sent ? $ref : null,
+                    'started_ns' => $started_ns,
+                ]);
 
-            $responses['C_' . $call['call_id']] = $envelope;
+            $responses['C_' . $call['call_id']] = static::__stamp_call($envelope, $started_ns, $ref_sent, $ref);
         }
 
         $flash_messages = Flash_Alert::get_pending_messages();
@@ -814,6 +950,57 @@ class Ajax
         }
 
         return $responses;
+    }
+
+    /**
+     * The fields every call's envelope carries beside its outcome, added last: the call's
+     * timing (D2) - `_duration_ms` from the call's start and `_completed_at` (ISO, UTC),
+     * unless the envelope already carries the request history's recorded or replayed values
+     * - and the call's `_request_ref`, echoed unchanged whenever one was sent.
+     *
+     * @param array $envelope
+     * @param int $started_ns hrtime(true) at the call's start
+     * @param bool $ref_sent
+     * @param mixed $ref The reference as sent
+     * @return array
+     */
+    private static function __stamp_call(array $envelope, int $started_ns, bool $ref_sent, $ref): array
+    {
+        if (!array_key_exists('_duration_ms', $envelope)) {
+            $envelope['_duration_ms'] = (int) round((hrtime(true) - $started_ns) / 1_000_000);
+            $envelope['_completed_at'] = Rsx_Time::now_iso();
+        }
+
+        if ($ref_sent) {
+            $envelope['_request_ref'] = $ref;
+        }
+
+        return $envelope;
+    }
+
+    /**
+     * A call whose _request_ref is not a string of 1 to Request_History::REF_MAX_LENGTH
+     * characters is refused as a validation error before anything runs; null otherwise.
+     *
+     * @param bool $ref_sent
+     * @param mixed $ref
+     * @param int $console_mark
+     * @return array|null
+     */
+    private static function __request_ref_refusal(bool $ref_sent, $ref, int $console_mark): ?array
+    {
+        $problem = $ref_sent ? Request_History::ref_problem($ref) : null;
+
+        if ($problem === null) {
+            return null;
+        }
+
+        return static::__side_channels([
+            '_success' => false,
+            'error_code' => self::ERROR_VALIDATION,
+            'reason' => 'Invalid ' . Request_History::REF_PARAM,
+            'metadata' => [Request_History::REF_PARAM => Request_History::REF_PARAM . ' ' . $problem],
+        ], $console_mark);
     }
 
     /**
@@ -834,25 +1021,42 @@ class Ajax
     {
         $envelope = static::__side_channels($envelope + ['metadata' => []], 0, false);
 
-        $call_ids = [];
+        // Timed from the start of the request: no call began.
+        $started_at = (float) $request->server('REQUEST_TIME_FLOAT', microtime(true));
+        $envelope['_duration_ms'] = max(0, (int) round((microtime(true) - $started_at) * 1000));
+        $envelope['_completed_at'] = Rsx_Time::now_iso();
+
+        $calls = [];
         $path = '/' . ltrim($request->getPathInfo(), '/');
         if (str_ends_with($path, '/_ajax/_batch') || str_ends_with($path, '/_ajax/_priority')) {
             $batch_calls = json_decode((string) $request->getContent(), true)['batch_calls'] ?? null;
 
             foreach (is_array($batch_calls) ? $batch_calls : [] as $call) {
                 if (is_array($call) && is_int($call['call_id'] ?? null)) {
-                    $call_ids[] = $call['call_id'];
+                    $calls[] = $call;
                 }
             }
         }
 
-        if ($call_ids === []) {
+        if ($calls === []) {
+            $params = json_decode((string) $request->getContent(), true);
+
+            if (is_array($params) && array_key_exists(Request_History::REF_PARAM, $params)) {
+                $envelope['_request_ref'] = $params[Request_History::REF_PARAM];
+            }
+
             return response()->json($envelope);
         }
 
         $responses = [];
-        foreach ($call_ids as $call_id) {
-            $responses['C_' . $call_id] = $envelope;
+        foreach ($calls as $call) {
+            $call_envelope = $envelope;
+
+            if (is_array($call['params'] ?? null) && array_key_exists(Request_History::REF_PARAM, $call['params'])) {
+                $call_envelope['_request_ref'] = $call['params'][Request_History::REF_PARAM];
+            }
+
+            $responses['C_' . $call['call_id']] = $call_envelope;
         }
 
         return response()->json($responses);

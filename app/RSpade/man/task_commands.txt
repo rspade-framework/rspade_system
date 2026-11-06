@@ -219,6 +219,20 @@ BUILD-TIME RULES
        table, so nothing is registered and artisan boots normally - the aliases appear with
        the first build, like everything else the manifest provides.
 
+SITE LOCKS
+       A #[Command] alias is a task run, so its body is a task's enforcement window
+       (rsx:man site_locks): no automatic lock, and a save() / delete() of a site-scoped
+       model fatals unless it is inside Site_Lock::write($site_id, fn () => ...) - one
+       section per item, re-reading the record inside - or a reasoned
+       Site_Lock::bypass(). The --site the command runs as is declared before the body,
+       never changed inside a section.
+
+       Every OTHER artisan command is enforced the same way: its handle() runs in an
+       enforcement window opened by the console kernel. Only a command that provisions
+       or replaces the database wholesale (migrate, db:seed, rsx:test, the database
+       reset) runs unchecked, by a reasoned const SITE_LOCK_EXEMPT = '<reason>' on
+       its class - never a command that edits tenant data.
+
 WHEN NOT TO
        Not every task wants a name. Add #[Command] when a HUMAN or a SCRIPT invokes the
        work directly - a maintenance chore, an import, a report, a one-off repair.
@@ -240,6 +254,7 @@ SEE ALSO
        rsx:man tasks - #[Task], #[Schedule], dispatch, runs, reporting, the worker pools
        rsx:man artisan_commands - hand-written framework commands and why they are unlike
        rsx:man scripting - booting the shell from a PHP script OUTSIDE the application
+       rsx:man site_locks - the write sections a command's site-scoped writes need
        skill rspade:task-commands - the recipe, a worked transcript, the FATAL catalogue
        skill rspade:background-tasks - writing the task in the first place
        system/app/RSpade/resource/reference_app/services/sample_data/sample_data_service.php - rsx_app:seed

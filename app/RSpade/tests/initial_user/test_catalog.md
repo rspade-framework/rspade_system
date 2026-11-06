@@ -14,6 +14,7 @@
 | IU-10 | The test provisioning migrate never seeds an env account of its own (`--_no-initial-user`) | cli | provisioning run with `RSPADE_DEFAULT_*` configured | the baseline user is the account at id 1 | deferred - would require a provisioning run under two different env states; the flag is unconditional in `run_migrate_subprocess()` | 2026-08-24 |
 | IU-11 | The env seed is a no-op once an account exists (the property that makes running it after every migrate harmless) | php | `create_from_env_if_needed()` with the baseline present | null, nothing written | implemented | 2026-08-24 |
 | IU-12 | The env seed runs end to end on an empty database, and any account it produces is id 1 | php | initial account removed, then `create_from_env_if_needed()` | null (declined) or a user with id 1 - asserted both ways, since RSPADE_DEFAULT_* is a property of the box | implemented | 2026-08-24 |
+| IU-13 | The account and its `user.initial.created` handlers are ONE `Site_Lock::write()` section on the initial site, released when `create()` returns (so handler rows written from any caller - first-run screen, migrate, test baseline, a command - are under the lock, and a caller's follow-up dispatch starts after the commit) | php | `create(..., site_id: 1)` with the recording fixture handler capturing `Site_Lock::_held()` | the handler saw site 1's WRITE lock labelled "Create the initial user"; nothing held after | implemented | 2026-11-06 |
 
 ## First_User_Setup_Token_Test (php, no transactions) - the first-user screen's double-submit token
 

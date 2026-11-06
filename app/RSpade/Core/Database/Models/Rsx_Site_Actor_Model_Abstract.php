@@ -14,7 +14,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  *
  * The site-scoped half of the actor layer: everything Rsx_Actor_Model_Abstract declares,
  * on top of Rsx_Site_Model_Abstract's tenant isolation (site global scope, site_id forced
- * from the session on write, site write locks). Framework examples: User_Model (staff
+ * from the session on write, the site write lock enforcement). Framework examples: User_Model (staff
  * membership in a site) and Portal_User_Model (a client-portal account, one row per site).
  *
  * THE CANONICAL ACTOR CONTRACT IS ON Rsx_Actor_Model_Abstract - what get_printed_name()

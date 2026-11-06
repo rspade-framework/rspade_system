@@ -98,6 +98,7 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
      * @return RedirectResponse
      */
     #[Portal_Route('/_sso/:provider/callback', methods: ['GET', 'POST'])]
+    #[Writer]
     public static function callback(Request $request, array $params = [])
     {
         if ($request->is_post()) {
@@ -156,6 +157,7 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function identity_unlink(Request $request, array $params = [])
     {
         static::_refuse_impersonation();
@@ -186,6 +188,7 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
+    #[Writer]
     public static function link_begin(Request $request, array $params = [])
     {
         static::_refuse_impersonation();

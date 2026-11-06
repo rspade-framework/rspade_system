@@ -4,11 +4,11 @@ namespace App\RSpade\Core\Locks;
 
 use Exception;
 use RuntimeException;
-use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Locks\Lockd_Connection;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 // Ensure helpers are loaded since we run early in bootstrap
@@ -348,6 +348,13 @@ class RsxLocks
         unset(self::$held_locks[$lock_token]);
         unset(self::$lock_counts[$count_key]);
 
+        // The last hold of a site's write lock is gone: a #[Manual_Lock] request transaction
+        // that grant began now outlives its lock (logged; it commits when the endpoint returns).
+        if ($lock_info['domain'] === self::CLUSTER_LOCK && $lock_info['type'] === self::WRITE_LOCK
+            && str_starts_with($lock_info['name'], self::LOCK_SITE_PREFIX)) {
+            Site_Lock::_on_site_write_lock_released((int) substr($lock_info['name'], strlen(self::LOCK_SITE_PREFIX)));
+        }
+
         // Route to the backend that GRANTED this lock, never to the currently-selected one.
         if ($lock_info['backend'] === 'flock') {
             self::__release_flock($lock_info);
@@ -433,19 +440,36 @@ class RsxLocks
     /**
      * Acquire a WRITE (exclusive) lock on a single tenant (site) - CLUSTER-wide.
      *
-     * This is the SAME lock the framework takes automatically for a request that mutates a
-     * site's data (Rsx_Site_Model_Abstract). Exposed so a #[Task] operating on one tenant can
-     * serialize against those writers and other tasks: hold it around a multi-step mutation
-     * of site $site_id that must be atomic with respect to other writers.
+     * The low-level form of the site write lock that Site_Lock::write() and a #[Writer]
+     * endpoint hold. Prefer Site_Lock::write(), which also opens the section's database
+     * transaction and revision unit of work; this raw form is for code that cannot be written
+     * as a closure (a #[Manual_Lock] endpoint that releases mid-way). Holding it is WRITE
+     * AUTHORITY for the site (Site_Lock's enforcement accepts it).
+     *
+     * The site lock rules apply here too (Site_Lock::_assert_may_acquire): never acquired
+     * inside a database transaction the lock layer did not open, never while another site's
+     * lock is held, and never as an upgrade of a READ hold on the same site.
      *
      * @param int      $site_id Tenant/site id to lock.
      * @param int|null $timeout Seconds to wait, or NULL to wait forever (the default).
      * @return string Lock token - pass to release_lock() to release.
-     * @throws RuntimeException If a given $timeout elapses before the lock is granted.
+     * @throws RuntimeException If a given $timeout elapses before the lock is granted, or a
+     *                          site lock rule refuses the acquisition.
      */
     public static function site_write_lock(int $site_id, ?int $timeout = null): string
     {
-        return self::get_lock(self::CLUSTER_LOCK, self::LOCK_SITE_PREFIX . $site_id, self::WRITE_LOCK, $timeout);
+        Site_Lock::_assert_may_acquire($site_id, self::WRITE_LOCK);
+
+        $name = self::LOCK_SITE_PREFIX . $site_id;
+        $fresh = !self::holds(self::CLUSTER_LOCK, $name, self::WRITE_LOCK);
+        $token = self::get_lock(self::CLUSTER_LOCK, $name, self::WRITE_LOCK, $timeout);
+
+        // A #[Manual_Lock] endpoint's first write lock begins its request transaction.
+        if ($fresh) {
+            Site_Lock::_on_site_write_lock_granted($site_id);
+        }
+
+        return $token;
     }
 
     /**
@@ -454,14 +478,109 @@ class RsxLocks
      * The read counterpart of site_write_lock(): many readers of site $site_id proceed
      * concurrently and are blocked only while a site writer holds or awaits the lock.
      *
+     * A process that already holds the site's WRITE lock is granted a nested hold of that
+     * WRITE lock instead (a write hold satisfies a read): asking the daemon for READ on a
+     * name this connection holds WRITE on is refused, and is never what the caller meant.
+     * Release the returned token as usual; it unwinds one level of the write hold.
+     *
      * @param int      $site_id Tenant/site id to lock.
      * @param int|null $timeout Seconds to wait, or NULL to wait forever (the default).
      * @return string Lock token - pass to release_lock() to release.
-     * @throws RuntimeException If a given $timeout elapses before the lock is granted.
+     * @throws RuntimeException If a given $timeout elapses before the lock is granted, or a
+     *                          site lock rule refuses the acquisition.
      */
     public static function site_read_lock(int $site_id, ?int $timeout = null): string
     {
-        return self::get_lock(self::CLUSTER_LOCK, self::LOCK_SITE_PREFIX . $site_id, self::READ_LOCK, $timeout);
+        $name = self::LOCK_SITE_PREFIX . $site_id;
+
+        if (self::holds(self::CLUSTER_LOCK, $name, self::WRITE_LOCK)) {
+            return self::get_lock(self::CLUSTER_LOCK, $name, self::WRITE_LOCK, $timeout);
+        }
+
+        Site_Lock::_assert_may_acquire($site_id, self::READ_LOCK);
+
+        return self::get_lock(self::CLUSTER_LOCK, $name, self::READ_LOCK, $timeout);
+    }
+
+    /**
+     * Does THIS PROCESS hold the lock? Reads the in-process registry; never asks the daemon.
+     *
+     * A WRITE hold counts as a READ hold (it excludes everything a read lock excludes, and
+     * more). A lock granted as a maintenance-mode no-op counts as held: under maintenance it
+     * is exactly as exclusive as anything can be.
+     *
+     * @param string $domain CLUSTER_LOCK or SYSTEM_LOCK
+     * @param string $name   The lock name, e.g. RsxLocks::LOCK_SITE_PREFIX . $site_id
+     * @param string $type   READ_LOCK or WRITE_LOCK
+     * @return bool
+     */
+    public static function holds(string $domain, string $name, string $type): bool
+    {
+        if (isset(self::$lock_counts["{$domain}:{$name}:" . self::WRITE_LOCK])) {
+            return true;
+        }
+
+        return $type === self::READ_LOCK && isset(self::$lock_counts["{$domain}:{$name}:" . self::READ_LOCK]);
+    }
+
+    /**
+     * Every site lock this process holds, by site id: WRITE_LOCK or READ_LOCK (WRITE wins
+     * when both identities are held). Reads the in-process registry only.
+     *
+     * @return array<int, string>
+     */
+    public static function held_site_locks(): array
+    {
+        $prefix = self::CLUSTER_LOCK . ':' . self::LOCK_SITE_PREFIX;
+        $held = [];
+
+        foreach (array_keys(self::$lock_counts) as $count_key) {
+            if (!str_starts_with($count_key, $prefix)) {
+                continue;
+            }
+
+            [$site_id, $type] = explode(':', substr($count_key, strlen($prefix)), 2);
+            $site_id = (int) $site_id;
+
+            if (($held[$site_id] ?? null) !== self::WRITE_LOCK) {
+                $held[$site_id] = $type;
+            }
+        }
+
+        return $held;
+    }
+
+    /**
+     * Every site lock hold this process has, with its nesting count: one entry per lock
+     * identity (site and type), keyed 'site_id:type'. A nested acquisition of a hold already
+     * held - a read inside a read, a write inside a write, or a read inside a write, which is
+     * granted as a nested hold of the WRITE lock - adds 1 to that entry's count, and the
+     * real lock is let go only when its count returns to 0. Reads the in-process registry
+     * only. Site_Lock::_run_hook() compares two of these to find a hold a hook leaked.
+     *
+     * @return array<string, array{site_id: int, type: string, count: int, token: string}>
+     */
+    public static function site_lock_hold_counts(): array
+    {
+        $prefix = self::CLUSTER_LOCK . ':' . self::LOCK_SITE_PREFIX;
+        $holds = [];
+
+        foreach (self::$lock_counts as $count_key => $entry) {
+            if (!str_starts_with($count_key, $prefix)) {
+                continue;
+            }
+
+            [$site_id, $type] = explode(':', substr($count_key, strlen($prefix)), 2);
+
+            $holds[(int) $site_id . ':' . $type] = [
+                'site_id' => (int) $site_id,
+                'type' => $type,
+                'count' => (int) $entry['count'],
+                'token' => $entry['token'],
+            ];
+        }
+
+        return $holds;
     }
 
     /**
@@ -495,10 +614,10 @@ class RsxLocks
      * Upgrading a lock already held WRITE (which every SYSTEM lock is) returns the same token
      * unchanged, so an unconditional call is safe.
      *
-     * NO framework code calls this today - the read-then-upgrade site-lock pattern it existed
-     * for is gone (a read-only request now takes no lock at all). It is kept because it is a
-     * legitimate primitive the daemon implements correctly, and an application holding a
-     * named_read_lock() that discovers it must write is exactly its use case.
+     * NO framework code calls this. It is kept because it is a legitimate primitive the daemon
+     * implements correctly, and an application holding a named_read_lock() that discovers it
+     * must write is exactly its use case. A SITE lock is never upgraded (Site_Lock: a reader
+     * that must write was a writer from the start), so a site lock token is refused here.
      *
      * @param string   $lock_token Token of a held lock.
      * @param int|null $timeout    Seconds to wait, or NULL to wait forever (the default).
@@ -512,6 +631,13 @@ class RsxLocks
         }
 
         $lock_info = self::$held_locks[$lock_token];
+
+        if ($lock_info['domain'] === self::CLUSTER_LOCK && str_starts_with($lock_info['name'], self::LOCK_SITE_PREFIX)
+            && $lock_info['type'] === self::READ_LOCK) {
+            throw new RuntimeException(
+                'RsxLocks::upgrade_lock(): ' . Site_Lock::_no_upgrade_message((int) substr($lock_info['name'], strlen(self::LOCK_SITE_PREFIX)))
+            );
+        }
 
         // Already exclusive - including every flock-backed lock, which is exclusive by
         // construction. No count bump: the caller replaces its token and releases once.
@@ -624,12 +750,11 @@ class RsxLocks
     /**
      * FRAMEWORK-INTERNAL. Release everything acquired SINCE a checkpoint, and nothing else.
      *
-     * Why this exists: a lock taken by ordinary application code is held until the PROCESS
-     * exits (Rsx_Site_Model_Abstract::__upgrade_to_write_lock() registers a shutdown
-     * handler and nothing else ever lets go). In a web request that is exactly right - the
-     * request IS the unit of work. In a task WORKER it is not: one long-lived process runs
-     * many unrelated tasks, so the first task to write to a site would hold that tenant's
-     * write lock against the entire cluster for the worker's whole lifetime.
+     * Why this exists: a lock nobody released is held until the PROCESS exits (the shutdown
+     * handler, _cleanup_locks(), is the only other thing that lets go). In a web request the
+     * process boundary is close enough. In a task WORKER it is not: one long-lived process
+     * runs many unrelated tasks back to back, so a lock one task leaked would be held against
+     * the entire cluster for the worker's whole lifetime.
      *
      * Reentrancy counts are ignored, deliberately and for the same reason _cleanup_locks()
      * ignores them: a count describes a call stack, and the stack that built it is gone.
@@ -646,7 +771,6 @@ class RsxLocks
     {
         $known = array_flip($checkpoint);
         $released = [];
-        $released_tokens = [];
 
         foreach (array_keys(self::$held_locks) as $token) {
             if (isset($known[$token])) {
@@ -665,7 +789,6 @@ class RsxLocks
             try {
                 self::release_lock($token);
                 $released[] = "{$lock_info['domain']}:{$lock_info['name']} ({$lock_info['type']})";
-                $released_tokens[] = $token;
             } catch (Exception $e) {
                 // A lock we cannot release is not a reason to abandon the rest of them.
             }
@@ -684,13 +807,6 @@ class RsxLocks
             } catch (Exception $e) {
                 // Same reasoning as above.
             }
-        }
-
-        // The site-lock registry caches "this process already holds site N" and would
-        // otherwise never re-acquire for the next task, having just had that lock taken
-        // out from under it here.
-        if ($released_tokens !== []) {
-            Rsx_Site_Model_Abstract::_forget_site_lock_tokens($released_tokens);
         }
 
         return $released;

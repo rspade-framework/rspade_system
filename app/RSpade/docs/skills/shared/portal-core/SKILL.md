@@ -105,6 +105,8 @@ The portal is the one `Dispatcher` in the PORTAL realm (`rsx:man dispatch`, THE 
 
 **`pre_dispatch` performs NO authorization.** It is for tenant setup, redirects, and the login-redirect capture.
 
+**The hooks run with NO site lock but are enforced** (`rsx:man dispatch`, MAIN HOOKS): a site-scoped write in `init()` / `pre_dispatch()` / `unhandled_route()` needs a `Site_Lock::write(Portal_Session::get_site_id(), fn)` section, or a reasoned `Site_Lock::bypass()` for a per-request stamp that tolerates concurrent writers (a last-activity time). **Portal endpoints follow the staff lock rules**: readers by default, `#[Writer]` on anything that writes, and a `#[Portal_Route]` page that writes either declares `#[Writer]` or wraps its writes in a `Site_Lock::write()` section. The portal's site comes from its URL, so a portal sign-in never switches site - it writes the portal user under the site's write lock. Skill `rspade:site-locks`.
+
 ### The site - THE URL IS THE AUTHORITY
 
 **The framework reads the portal's site from the request's URL and declares it for the request before `Portal_Main::init()`.** The application declares nothing; `init()` just inits the session:
@@ -312,6 +314,7 @@ Every Ajax call is a POST, reads included, so the verb cannot tell a write from 
 public static function list(Request $request, array $params = []) { ... }
 
 #[Ajax_Endpoint]                  // a write: no mark - refused during View as Client
+#[Writer]                         // and the site's write lock, like every writer
 public static function reply(Request $request, array $params = []) { ... }
 ```
 

@@ -76,9 +76,10 @@ class Lockd_Client
      * liveness probe that says no hello and therefore needs no key.
      *
      * A down daemon is a FAIL, not a WARN: there is no degraded mode. Outside maintenance
-     * every cluster lock throws, which means a site write lock throws, which means the app
-     * is down. The ONE exception is a raised maintenance flag, where the daemon is stopped
-     * on purpose and cluster locks degrade to flock - that reports INFO, because a health
+     * every cluster lock throws, which means every site lock (Site_Lock, the per-request
+     * reader and writer locks) throws, which means the app is down. The ONE exception is a
+     * raised maintenance flag, where the daemon is stopped on purpose and cluster locks are
+     * granted as no-ops - that reports INFO, because a health
      * check that screams about a service you deliberately turned off is noise.
      *
      * The maintenance test reads the flag off DISK rather than the per-process snapshot:

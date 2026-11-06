@@ -36,8 +36,13 @@ again.**
   descriptor (`__realm()`) and everything that differs (route table, Main class, dev-auth
   header, site-membership check, FPC, the `/_/Controller/action` default route) is a key in
   it. PAGE order: public file, `/error/*` preview, route match, bearer key on a file route,
-  site membership, the `#[Auth]` gates, `Main::pre_dispatch`, the controller's
-  `pre_dispatch`, the action, `rsx.post_dispatch`, response shaping, FPC marker, CSP. A coded
+  site membership, the `#[Auth]` gates, `Main::pre_dispatch` and the controller's
+  `pre_dispatch` (each with NO site lock, in an enforcement window: `Site_Lock::_run_hook()`,
+  as are `Portal_Main::init()` and `Main::unhandled_route()`), then at the site lock
+  boundary (`Site_Lock::_run_request()`: no automatic lock unless the route declares
+  `#[Reader]` / `#[Writer]`) the action (ALWAYS in the enforcement window,
+  `Site_Lock::_enforce()`), `rsx.post_dispatch` and response shaping; then FPC marker, CSP.
+  A coded
   failure (an `abort()`, the `Ajax*Exception` family) answers through
   `page_failure_response()`. The Ajax channel is one core, `Core/Ajax/Ajax::execute()`.
 - `AssetHandler.php` — build artifacts (`/_compiled/`, `/_vendor/`) by strict filename

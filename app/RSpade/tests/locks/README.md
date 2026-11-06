@@ -41,6 +41,20 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
 ## Source under test
 
 - `system/app/RSpade/Core/Locks/RsxLocks.php` - the API, reentrancy counts, backend selection
+- `system/app/RSpade/Core/Locks/Site_Lock.php` - the per-site write / read sections, bypasses,
+  enforcement of the site write lock on site-scoped writes, the hard rules, hold warnings
+  (`Site_Lock_Test`, with `Site_Lock_Fixture_Service` for task bodies)
+- `system/app/RSpade/Core/Locks/Site_Lock_Directives.php` - `#[Writer]` / `#[Reader]` /
+  `#[Manual_Lock]`, SITE-LOCK-01 and the default mode per surface kind (`Site_Lock_Directives_Test`)
+- The request boundary every dispatcher shares (`Site_Lock::_run_request()`, wired in
+  `Ajax::execute()` / `handle_calls()`, `Api_Dispatcher`, `Companion_Dispatcher`,
+  `Dispatcher::__run_matched()`), `RsxAuth::enter_site()` and the `rsx:site_lock:endpoints`
+  inventory (`Site_Lock_Dispatch_Test` with `Site_Lock_Dispatch_Fixture_Controller`;
+  `Site_Lock_Concurrency_Test` with detached helper processes; `cli/Site_Lock_Endpoints_Command_Test`)
+- `system/app/RSpade/Core/Locks/Site_Lock_Cli.php` - the enforcement window of every artisan
+  command (wired in `app/Console/Kernel.php`) and every `system/script.php` script, and
+  `the SITE_LOCK_EXEMPT constant` (`Site_Lock_Cli_Test`, with `Site_Lock_Cli_Fixture_Command` /
+  `Site_Lock_Cli_Exempt_Fixture_Command` registered into Artisan by the test)
 - `system/app/RSpade/Core/Locks/Lockd_Client.php` - socket transport, hello handshake, the
   `#[Health_Check('Lock Server')]` probe
 - `system/bin/rsx-lockd/lib/protocol.js` - frames, the newline splitter, hello HMAC, THE

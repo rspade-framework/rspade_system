@@ -156,3 +156,34 @@ Cataloged here because the rule is part of this concern's contract.
 | RP-06 | an unresolvable parent is not judged | php | variable class name | 0 violations | implemented | 2026-08-28 |
 | RP-07 | @REVISION-01-EXCEPTION suppresses the finding | php | marker in the docblock | 0 violations | implemented | 2026-08-28 |
 | RU-09 | Task::internal() runs as its own unit and hands the caller's transaction back, so a caller's later write joins the caller's unit | php | write, Task::internal(echo), write | same transaction id before and after; caller row counts 2 | implemented |
+
+## Request_History_Test / Request_History_Concurrency_Test / Request_History_Prune_Test (php)
+
+The writer request history and replay by `_request_ref` (`Core/Revisions/Request_History`),
+through the Ajax browser transport and the external API front controller, against fixture
+endpoints (`Request_History_Fixture_Controller`, `Request_History_Fixture_Api_Controller`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RH-01 | the same reference resent is answered from the record | php | Ajax writer x2, same ref + params | `_replayed`, same value, original `_duration_ms` / `_completed_at`, one run, one write, `{}` kept | implemented | 2026-11-06 |
+| RH-02 | the record sits on the writer's `_transactions` row | php | Ajax writer with ref + a password param | ref, site, actor, status 200, envelope outcome body, fingerprint, redacted payload, timing | implemented | 2026-11-06 |
+| RH-03 | a different body under the same reference is refused | php | same ref, other params | `request_ref_reused`, nothing ran or written, ref echoed | implemented | 2026-11-06 |
+| RH-04 | the same reference on another endpoint is refused | php | same ref, other writer | `request_ref_reused`, nothing ran | implemented | 2026-11-06 |
+| RH-05 | another actor's reference is its own | php | second user, same ref | executes; two records | implemented | 2026-11-06 |
+| RH-06 | a reader with a reference runs every time and records nothing | php | reader x2 with ref | two runs, echo, no `_transactions` row, endpoint never sees the ref | implemented | 2026-11-06 |
+| RH-07 | a pruned record answers expired | php | record, age it, prune, resend | `request_response_expired` naming completed_at, nothing ran | implemented | 2026-11-06 |
+| RH-08 | a request that failed before commit leaves its reference reusable | php | writer throws after writing, then corrected | nothing written or recorded; corrected one runs | implemented | 2026-11-06 |
+| RH-09 | a returned coded failure commits but keeps no reference | php | writer returns response_form_error | write kept, no ref row, ref reusable | implemented | 2026-11-06 |
+| RH-10 | an invalid reference is a validation refusal, echoed | php | 129-character ref | `validation` keyed `_request_ref`, nothing ran | implemented | 2026-11-06 |
+| RH-11 | every envelope carries timing, and no ref field when none was sent | php | reader, no-op writer, writer | integer `_duration_ms`, ISO `_completed_at`, no `_request_ref` | implemented | 2026-11-06 |
+| RH-12 | the eager mint: a writer that saves nothing has its row, a reader none; its retry replays | php | reader, then no-op writer with ref x2 | row with endpoint; replay | implemented | 2026-11-06 |
+| RH-13 | a `#[Manual_Lock]` request that took a write lock is recorded and replays | php | manual writer x2 | replay, one run, one write | implemented | 2026-11-06 |
+| RH-14 | a `#[Manual_Lock]` request that took no write lock records nothing | php | manual reader x2 with ref | two runs, no row | implemented | 2026-11-06 |
+| RH-15 | API: replay, changed body 409, other endpoint 409 | php | fixture API writer | 200 + `_replayed` + original timing, one write; 409 `request_ref_reused` with echo | implemented | 2026-11-06 |
+| RH-16 | API: pruned record is 410 naming the original completion | php | nulled response | 410 `request_response_expired`, `completed_at` | implemented | 2026-11-06 |
+| RH-17 | API: echo on a reader, a 422, a 401; none when not sent; endpoint never sees the ref | php | GET with query ref, empty ref, bad key | echoes as sent; reader runs every time | implemented | 2026-11-06 |
+| RH-18 | two simultaneous identical writer requests run once | php | two processes, same site + actor + ref | second waits on the write lock, then is a replay; one record | implemented | 2026-11-06 |
+| RH-19 | the prune nulls only payload / status / body, only past the window | php | rows 30 and 1 days old | old row's three columns null, ref / fingerprint / timing / revisions kept; new row untouched | implemented | 2026-11-06 |
+| RH-20 | the prune drains the backlog in chunks | php | three old rows, chunk 1 | none still held | implemented | 2026-11-06 |
+| RH-21 | 0 disables the prune; the default window is 7 | php | retention 0 | nothing pruned, kept_forever | implemented | 2026-11-06 |
+| RH-22 | live HTTP replay with a temp key (curl) | http | rsx:api:key:temp + curl twice | one write, `_replayed` | deferred - verified by hand at landing; the php tests drive the same dispatcher in-process | 2026-11-06 |

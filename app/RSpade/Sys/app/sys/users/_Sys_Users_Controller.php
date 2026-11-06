@@ -9,6 +9,8 @@ namespace App\RSpade\Sys\App\Sys\Users;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Auth\RsxAuth;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
@@ -296,6 +298,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {status, status_label}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function set_status(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -340,6 +343,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {is_enabled, is_active}
      */
     #[Ajax_Endpoint]
+    #[Manual_Lock]
     public static function set_membership_enabled(Request $request, array $params = [])
     {
         $membership = static::__find_membership($params['id'] ?? null);
@@ -362,9 +366,14 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             }
         }
 
+        // The membership belongs to ITS site, which is seldom the panel user's: the write is a
+        // section on that site's write lock (#[Manual_Lock] - an automatic writer would lock
+        // the panel user's own site).
         if ((bool) $membership->is_enabled !== $enabled) {
-            $membership->is_enabled = $enabled;
-            User_Model::without_site_scope(fn () => $membership->save());
+            Site_Lock::write((int) $membership->site_id, function () use ($membership, $enabled) {
+                $membership->is_enabled = $enabled;
+                User_Model::without_site_scope(fn () => $membership->save());
+            });
         }
 
         return [
@@ -383,6 +392,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {count} - always 1
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function terminate_session(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -423,6 +433,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {count}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function terminate_all_sessions(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -448,6 +459,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {is_enabled} - whether the identity still has a second factor
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function remove_two_factor(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -490,6 +502,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {count} - the providers still connected
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function unlink_sso(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -527,7 +540,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * (_Sys_Impersonation_Controller::RETURN_SITE_KEY), and the way back is that
      * controller's stop route, which restores it.
      *
-     * Session::set_site_id() is called with the chosen site BEFORE the identity swap, so
+     * RsxAuth::enter_site() moves the session to the chosen site BEFORE the identity swap, so
      * the impersonation starts on that membership. That is where it STAYS only if the
      * application lets the session's site stand: an application that declares its staff
      * site on every request (Main::init() calling Session::set_site_id()) moves the
@@ -545,6 +558,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {destination} - the URL to load with a full page load (the bundle changes)
      */
     #[Ajax_Endpoint]
+    #[Manual_Lock]
     public static function sign_in_as(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
@@ -570,7 +584,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
         }
 
         Session::put_value(_Sys_Impersonation_Controller::RETURN_SITE_KEY, Session::get_site_id(), null, 'staff');
-        Session::set_site_id($site_id);
+        RsxAuth::enter_site($site_id);
         Session::begin_impersonation((int) $login_user->id);
 
         return ['destination' => '/'];

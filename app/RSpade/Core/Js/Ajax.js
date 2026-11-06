@@ -38,6 +38,8 @@ class Ajax {
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
     static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question
+    static ERROR_REQUEST_REF_REUSED = 'request_ref_reused';             // The _request_ref names a different request (nothing ran)
+    static ERROR_REQUEST_RESPONSE_EXPIRED = 'request_response_expired'; // The request already ran; its stored response was pruned
     static ERROR_SERVER = 'server_error';           // Client-generated (HTTP 5xx, or an answer missing a call)
     static ERROR_NETWORK = 'network_error';         // Client-generated (connection failed)
     static ERROR_PHP_EXCEPTION = 'php_exception';   // Client-generated (PHP exception with file/line/backtrace)

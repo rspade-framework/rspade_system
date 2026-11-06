@@ -55,6 +55,9 @@ use App\RSpade\Core\Prod\Rsx_Prod_Seal;
  */
 class Database_And_Storage_Reset_Command extends Maint_Migrate
 {
+    /** Site lock exemption (Site_Lock_Cli): this command provisions the database. */
+    public const SITE_LOCK_EXEMPT = 'drops every table and migrates to the fresh-install state';
+
     protected $signature = 'rsx:database_and_storage_reset
         {--yes : Confirm the wipe. Without it the command refuses and prints what it would destroy.}
         {--force : Additionally required when this box is running a sealed production build.}

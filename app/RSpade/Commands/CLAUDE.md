@@ -87,6 +87,29 @@ it.
 Use `--_` only for a switch whose caller is the updater or another framework command. A
 user-facing flag stays an ordinary option.
 
+## Site locks: every command is enforced
+
+Every command's run is a site lock ENFORCEMENT WINDOW with no automatic lock
+(`Core/Locks/Site_Lock_Cli.php`, wired in `app/Console/Kernel.php` on the Symfony
+`COMMAND` / `TERMINATE` events, so a shell run and an `Artisan::call()` alike; scripts booted
+through `system/script.php` get one for the life of the process). A command that saves,
+deletes or bulk-writes a `Site_Scoped` model takes that site's write lock itself -
+`Site_Lock::write($site_id, fn () => ...)`, one section per site (a process holds one site's
+lock at a time), re-reading the row inside - or a reasoned `Site_Lock::bypass()`. Changing
+the site (`Session::set_site_id()`, `Rsx_Cli_Actor::establish()`) is allowed between
+sections, never inside one. Unconverted, the write fatals naming `command <name>`.
+
+The file commands (`rsx:file:*`, `rsx:storage:cleanup`) take `RsxLocks::LOCK_FILE_WRITE`
+FIRST and the site lock inside it - keep that order in any new file command.
+
+**Exempt** (no window, unchecked) only by a reasoned class constant,
+`const SITE_LOCK_EXEMPT = '<reason>'` (inherited by subclasses), and only for commands
+that provision or replace the database wholesale: `migrate` (+ `migrate:restore`,
+`rsx:database_and_storage_reset` as subclasses), `migrate:normalize_schema`, `db:seed`,
+`rsx:test`, `rsx:db:rebuild_provision_cache_snapshot`. Laravel's own migration and seed
+commands are exempt by their vendor base class (`Site_Lock_Cli::VENDOR_EXEMPT_FAMILIES`).
+Never exempt a command that edits tenant data.
+
 ## Spawning and shelling out
 
 Artisan is spawned only through `Rsx_Artisan` (`ARTISAN-SPAWN-01`; skill

@@ -50,26 +50,24 @@ class Api_Exception_Handler extends Rsx_Exception_Handler_Abstract
 
         // A coded failure raised outside the endpoint (a global middleware's 413, ...)
         // keeps its status, exactly as one the endpoint raised does.
+        // Every answer echoes the request's _request_ref (Api_Dispatcher::stamp_response()).
         $coded = Api_Dispatcher::coded_error_response($e);
         if ($coded !== null) {
-            return $coded;
+            return Api_Dispatcher::stamp_response($coded, $request);
         }
 
         if (Rsx_Diagnostics::caller_sees_detail()) {
-            return response()->json([
-                'error' => [
-                    'code' => 'internal_error',
-                    'message' => $e->getMessage() . ' (' . get_class($e) . ')',
-                ],
-            ], 500);
+            return Api_Dispatcher::stamp_response(
+                Api_Dispatcher::_error('internal_error', $e->getMessage() . ' (' . get_class($e) . ')', 500),
+                $request
+            );
         }
 
-        return response()->json([
-            'error' => [
-                'code' => 'internal_error',
-                'message' => 'Internal server error',
+        return Api_Dispatcher::stamp_response(
+            Api_Dispatcher::_error('internal_error', 'Internal server error', 500, null, [
                 'error_id' => Rsx_Diagnostics::report_redacted($e, 'api'),
-            ],
-        ], 500);
+            ]),
+            $request
+        );
     }
 }

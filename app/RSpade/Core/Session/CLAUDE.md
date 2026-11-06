@@ -29,7 +29,11 @@ session for "who did this, from where".
   `terminate_session()`, `terminate_all_other_sessions()`). Impersonation
   (`begin_impersonation()` / `stop_impersonation()`). Tenant declaration for a task
   (`set_temporary_site_id()`). `enforce_enabled_membership()` ends a session whose membership
-  or site was disabled. **Virtual sessions** (`_begin_virtual()`): a command, a task or a test
+  or site was disabled. **Every site setter** (`set_site_id()`, `set_temporary_site_id()`,
+  `clear_temporary_site_id()`, `impersonate()`, `reset_impersonation()`) first calls
+  `Site_Lock::_assert_site_change_permitted()`: refused inside a request handler window and
+  under any site lock or bypass; `RsxAuth::enter_site()` (`Site_Lock::_enter_site()`) is the
+  one sanctioned change inside a handler (`rsx:man site_locks`, SITE CHANGES). **Virtual sessions** (`_begin_virtual()`): a command, a task or a test
   runs on a row-less session, so `get_session_id()` is null there. `Portal_Session`
   (`Core/Portal/`) is a facade over the portal pointer through the `_*_portal_*` seams at the
   bottom of this class.

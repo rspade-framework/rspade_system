@@ -134,6 +134,7 @@ class _Sys_Debug_Flags_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {override}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function save(Request $request, array $params = [])
     {
         $input = [
@@ -161,6 +162,7 @@ class _Sys_Debug_Flags_Controller extends _Sys_Endpoint_Controller_Abstract
      * @return array {override: null}
      */
     #[Ajax_Endpoint]
+    #[Writer]
     public static function reset(Request $request, array $params = [])
     {
         Console_Debug_Override::clear();

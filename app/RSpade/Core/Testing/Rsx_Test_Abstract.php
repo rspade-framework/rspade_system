@@ -361,9 +361,14 @@ abstract class Rsx_Test_Abstract
                 \App\RSpade\Core\Revisions\Revision::_reset_request_state('test', static::class . '::' . $method->getName());
 
                 $use_transaction = static::$use_database_transactions;
+                $previous_baseline = null;
 
                 if ($use_transaction) {
                     DB::beginTransaction();
+
+                    // The per-test transaction is the harness's, not the code under test's:
+                    // a site lock taken inside it is not "inside a foreign transaction".
+                    $previous_baseline = \App\RSpade\Core\Locks\Site_Lock::_set_test_transaction_baseline(DB::transactionLevel());
                 }
 
                 try {
@@ -397,10 +402,16 @@ abstract class Rsx_Test_Abstract
                         ];
                     }
                 } finally {
+                    // A test that threw mid-section must not hand an enforcement window, a
+                    // bypass or a held site lock to the next one. Before the rollback below:
+                    // a held write lock's transaction sits inside the per-test one.
+                    \App\RSpade\Core\Locks\Site_Lock::_testing_reset();
+
                     // Roll back the per-test transaction so each test is isolated.
                     // Rolled back even on failure - never leave a dangling transaction.
                     if ($use_transaction) {
                         DB::rollBack();
+                        \App\RSpade\Core\Locks\Site_Lock::_set_test_transaction_baseline($previous_baseline);
                     }
 
                     // Return Session to virgin, pre-init state: the browser the test acted
@@ -888,7 +899,9 @@ abstract class Rsx_Test_Abstract
      *
      * The method runs in the test's own context, like any inline run: a #[Run_As_Dispatcher]
      * task runs as the identity the test declared with __acting_as_user() (and is refused
-     * when the test declared nobody).
+     * when the test declared nobody). Like every task body it runs inside the site lock
+     * enforcement window (Task_Runner::_run_body()): a site-scoped write needs a
+     * Site_Lock::write() section or a bypass, exactly as in a worker.
      *
      * @param string $class Fully-qualified service class
      * @param string $method The static #[Task] method
@@ -906,7 +919,7 @@ abstract class Rsx_Test_Abstract
         );
         $task = \App\RSpade\Core\Task\Task_Instance::find($task_id);
 
-        $value = $class::$method($task, $params);
+        $value = \App\RSpade\Core\Task\Task_Runner::_run_body($task, fn () => $class::$method($task, $params));
 
         \App\RSpade\Core\Task\Task_Runner::settle($task, \App\RSpade\Core\Task\Task_Run_Outcome::from_return($value));
 

@@ -1,0 +1,185 @@
+REQUEST_HISTORY(1)                RSpade Manual                REQUEST_HISTORY(1)
+
+NAME
+    request_history - what every writer request was sent, and _request_ref replay
+
+TAGS
+    api, models
+
+SYNOPSIS
+    # External API: name the request; a retry with the same ref is answered
+    # from the record instead of running again.
+    curl -X POST https://example.com/api/v1/clients \
+         -H 'Authorization: Bearer rsx_...' -H 'Content-Type: application/json' \
+         -d '{"name": "Acme", "_request_ref": "import-2026-11-06-0042"}'
+
+    {"id": 512, "_duration_ms": 41, "_completed_at": "2026-11-06T14:02:11.204Z",
+     "_request_ref": "import-2026-11-06-0042"}
+
+    # The same request again:
+    {"id": 512, "_duration_ms": 41, "_completed_at": "2026-11-06T14:02:11.204Z",
+     "_request_ref": "import-2026-11-06-0042", "_replayed": true}
+
+    // Ajax: the same system parameter, beside the endpoint's own.
+    const result = await Clients_Controller.save({name: 'Acme', _request_ref: ref});
+
+DESCRIPTION
+    A network failure leaves a client not knowing whether its write happened. A
+    retry that writes twice is a duplicate invoice. The request history answers
+    the retry instead: a client that names a write with _request_ref and sends
+    it again gets the ORIGINAL answer back, and nothing runs a second time.
+
+    The history lives on the writer's _transactions row - the revision unit of
+    work every writer request already has (rsx:man revisions) - so the record of
+    what a write was SENT sits beside the record of what it CHANGED.
+
+WHAT IS RECORDED
+    Every writer request that commits has its _transactions row, a request that
+    saved nothing included: the row is minted eagerly at the site lock boundary,
+    inside the writer's transaction (rsx:man site_locks). A writer is a #[Writer]
+    endpoint, or a #[Manual_Lock] endpoint that took a site write lock. Readers
+    record nothing.
+
+    An Ajax or external API writer also records, inside its transaction:
+
+        request_fingerprint  sha256 of the canonical JSON of the validated
+                             params (object keys sorted); top-level
+                             `_`-prefixed system params excluded; an upload
+                             by its name and the sha256 of its bytes
+        request_payload      what was sent: credentials redacted, values and
+                             the payload capped, uploads never stored (the
+                             same rules as the API request log). API: the
+                             request body; Ajax: the call's params
+        duration_ms          from the start of the call to the moment of
+                             recording
+        completed_at         that moment (UTC)
+
+    and, when the request carried a _request_ref and SUCCEEDED:
+
+        request_ref          the reference
+        response_status      the HTTP status. An Ajax call is always 200; its
+                             outcome is in the body
+        response_body        the body as sent: the API response object, or for
+                             Ajax {_success: true, _ajax_return_value}. Side
+                             channels (server clock, CSRF rotation, console,
+                             flash alerts) belong to the response that carried
+                             them and are never replayed
+
+    Page routes and companion endpoints have their writer row and carry no
+    references.
+
+    SUCCESS ONLY. A request that THREW (a validation or question exception, a
+    403, a fault) rolled back and recorded nothing. A request that RETURNED a
+    coded failure (response_form_error(), response_form_question(), an API error
+    with a non-2xx status) commits what it wrote and records its row -
+    fingerprint, payload, timing - but never its reference. Either way the
+    corrected request may reuse the same reference.
+
+THE REFERENCE
+    _request_ref is a SYSTEM PARAMETER on every Ajax and external API endpoint;
+    any caller may send it. It is a string of 1 to 128 characters; anything else
+    refuses the call before it runs (API: 422 with the field `_request_ref`;
+    Ajax: error_code validation, metadata keyed `_request_ref`). It never
+    reaches the endpoint's $params, and an #[Api_Param] name never starts with
+    `_` (the system namespace; a build failure).
+
+    ECHO. Whenever it was sent it is echoed unchanged - reader or writer,
+    success or error, fresh or replayed: a top-level `_request_ref` in every API
+    response object (the channel's 500 included), `_request_ref` in the Ajax
+    call's envelope beside _success.
+
+    IDENTITY is site + actor + reference: the site the request's lock names and
+    the actor its _transactions row records (a staff user, a portal user, a
+    cross-site identity). The same string under another actor or site is a
+    different reference. A request with NO actor (nobody signed in) has no
+    identity to keep a reference under: it is echoed, never honoured.
+
+    Make references unique per logical write (a UUID, or an import's row key)
+    and reuse one only to retry that write.
+
+THE ORDER OF WORK
+    A writer request carrying a reference, under its site write lock (a
+    #[Manual_Lock] request also holds a named lock on site + actor + reference
+    for its whole run):
+
+        1. look the reference up for this site and actor
+        2. found, same endpoint, same fingerprint, response stored
+               -> nothing runs. The stored status and body, plus
+                  _replayed: true and the ORIGINAL _duration_ms /
+                  _completed_at
+        3. found, same endpoint, same fingerprint, response pruned
+               -> 410 request_response_expired, naming the original
+                  completed_at. Nothing runs
+        4. found with a different fingerprint, or on another endpoint
+               -> 409 request_ref_reused. Nothing runs
+        5. not found
+               -> the request runs and is recorded at commit, as above
+
+    Answering from the history writes nothing: the refusal or replay is thrown
+    from inside the boundary, so the writer's transaction - and the row its
+    eager mint wrote - rolls back.
+
+    Because the lookup runs under the site's write lock, two concurrent sends of
+    one reference are serialized: the second finds the first's record.
+
+THE ANSWERS
+    External API (error shape {"error": {"code", "message", ...}}):
+
+        409 request_ref_reused
+            "This _request_ref was already used for a request with different
+             parameters. Nothing was run; send a new reference for a new
+             request."  (or "... to a different endpoint ...")
+        410 request_response_expired
+            "This request already ran (completed <time>); its stored response
+             is no longer kept, so it cannot be answered again. Nothing was
+             run."  error.completed_at carries the time.
+
+    Ajax: the same refusals as coded envelopes, error_code
+    Ajax::ERROR_REQUEST_REF_REUSED ('request_ref_reused') and
+    Ajax::ERROR_REQUEST_RESPONSE_EXPIRED ('request_response_expired', metadata
+    {completed_at}); Ajax.ERROR_* in JS. A replay is an ordinary success
+    envelope with _replayed: true.
+
+TIMING FIELDS
+    Every Ajax call envelope and every external API response object carries:
+
+        _duration_ms     integer milliseconds
+        _completed_at    ISO 8601 UTC
+
+    A recorded writer answers with its recorded values; a replay with the
+    originals. They are how a client tells a replay from a fresh run.
+
+RETENTION
+    Revision_Cleanup_Service::prune_request_payloads, a maintenance task
+    (#[Schedule('maintenance')], #[Exclusive('maintenance')]), nulls
+    request_payload, response_status and response_body on rows older than
+
+        rsx.request_history.payload_retention_days    default 7, 0 = keep
+
+    The reference, fingerprint and timing stay with the row (so an old
+    reference answers 410, never runs again). Revision retention itself is
+    rsx:man revisions.
+
+TROUBLESHOOTING
+    409 request_ref_reused on a retry
+        The retry's body differs from the original (a regenerated timestamp, a
+        reordered list; object key order alone does not matter - keys are sorted
+        before hashing) or it went to another endpoint. A new write needs a new
+        reference.
+
+    A retry ran twice
+        Nobody was signed in (no actor: echoed, never honoured), the endpoint
+        is a reader, or the first attempt failed (success only).
+
+    410 request_response_expired
+        The original succeeded longer ago than the retention window. Treat the
+        write as done; read the record through the feature's own endpoint.
+
+SEE ALSO
+    rsx:man site_locks - writer requests and the lock the lookup runs under
+    rsx:man revisions - the _transactions row
+    rsx:man external_api - response contract, timing fields, error shape
+    rsx:man ajax_error_handling - the Ajax envelope and error codes
+    skill rspade:external-api - building API endpoints
+
+REQUEST_HISTORY(1)                RSpade Manual                REQUEST_HISTORY(1)
