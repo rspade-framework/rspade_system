@@ -1237,8 +1237,9 @@ MULTI-FILE ZIP DOWNLOAD
            download key, via
            Zip_Download_Request_Model::create_request($files, $zip_name).
            Hand the browser $request->get_download_url().
-        2. The browser navigates to that URL (window.location = url). Because
-           it is a GET, the response streams natively as a file download.
+        2. The browser navigates to that URL (Rsx.navigate(url)). Because it
+           is a GET, the response streams natively as a file download and the
+           page stays where it is - no new tab (rsx:man navigation).
 
     The file set is a JSON array of {key, name?} objects:
         key   the attachment key (as from an upload response)
@@ -1270,7 +1271,7 @@ MULTI-FILE ZIP DOWNLOAD
 
     Browser (navigate to the minted URL):
         const {url} = await My_Controller.zip_url();
-        window.location = url;
+        Rsx.navigate(url);
 
     Security (validated UP FRONT, before a single byte streams):
         Every entry is resolved and passed through BOTH the

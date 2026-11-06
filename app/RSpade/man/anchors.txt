@@ -153,9 +153,10 @@ ACCESSIBILITY
 TIMING
     Anchor scrolling runs in the action's ready() block, NOT at dispatch.
 
-    Spa.dispatch() deliberately does not await the action - it sets the
-    current action and moves on - so anything scrolling at dispatch time
-    races a page whose content has not rendered yet and finds nothing.
+    An in-app navigation deliberately does not await the action's ready -
+    Rsx.navigate() resolves once the action is created and moves on - so
+    anything scrolling at dispatch time races a page whose content has not
+    rendered yet and finds nothing.
 
     scroll_to_anchor() additionally retries on requestAnimationFrame for a
     bounded window (500ms by default) to cover targets that appear slightly
@@ -278,7 +279,7 @@ EXAMPLES
     Scrolling after the user picks a search result
 
         async on_result_click(result) {
-            await Spa.dispatch(Rsx.Route(result.action, {at: result.anchor}));
+            await Rsx.navigate(Rsx.Route(result.action, {at: result.anchor}));
         }
 
         No explicit scroll call is needed - the anchor in the URL is acted on

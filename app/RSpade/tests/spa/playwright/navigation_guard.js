@@ -15,7 +15,7 @@
  *      guard are exactly as they were.
  *   5. Clearing the guard restores interception on the very next click.
  *   6. Guard ON, dialog accepted: the target arrives as a full document.
- *   7. Navigation from code is not guarded: Spa.dispatch() and Spa.redirect() go ahead
+ *   7. Navigation from code is not guarded: Rsx.navigate() and Rsx.redirect() go ahead
  *      in the SPA with no dialog and leave the guard off.
  *   8. A dispatch to the page already showing (a fragment) is not a departure: no dialog,
  *      the action stays mounted, the guard stays on.
@@ -193,18 +193,18 @@ async function run() {
         // --- 7. navigation from code is not guarded, and turns the guard off ---
         const dialogs_before_code = session.dialogs.length;
         await page.evaluate(() => Rsx.set_navigation_guard());
-        await in_spa(page, () => page.evaluate((target) => { Spa.dispatch(target); }, TARGET_ROUTE));
+        await in_spa(page, () => page.evaluate((target) => { Rsx.navigate(target); }, TARGET_ROUTE));
         const dispatched = await state(page);
         check(dispatched.path === TARGET_ROUTE && dispatched.mark === 'original' && session.dialogs.length === dialogs_before_code,
-            'guard on: Spa.dispatch() navigates in the SPA with no dialog', { dispatched, dialogs: session.dialogs });
-        check(dispatched.guarded === false, 'Spa.dispatch() leaves the guard off', dispatched);
+            'guard on: Rsx.navigate() navigates in the SPA with no dialog', { dispatched, dialogs: session.dialogs });
+        check(dispatched.guarded === false, 'Rsx.navigate() leaves the guard off', dispatched);
 
         await page.evaluate(() => Rsx.set_navigation_guard());
-        await in_spa(page, () => page.evaluate((target) => { Spa.redirect(target); }, START_ROUTE));
+        await in_spa(page, () => page.evaluate((target) => { Rsx.redirect(target); }, START_ROUTE));
         const redirected = await state(page);
         check(redirected.path === START_ROUTE && redirected.mark === 'original' && redirected.guarded === false
             && session.dialogs.length === dialogs_before_code,
-            'guard on: Spa.redirect() navigates in the SPA with no dialog and leaves the guard off',
+            'guard on: Rsx.redirect() navigates in the SPA with no dialog and leaves the guard off',
             { redirected, dialogs: session.dialogs });
 
         // --- 8. a dispatch to the page already showing is not a departure ---
@@ -215,7 +215,7 @@ async function run() {
 
             await new Promise((resolve) => {
                 window.addEventListener('popstate', () => setTimeout(resolve, 0), { once: true });
-                Spa.dispatch(window.location.pathname + '#guard_probe=1');
+                Rsx.navigate(window.location.pathname + '#guard_probe=1');
             });
 
             return {

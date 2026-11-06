@@ -45,7 +45,7 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   portal path (a separate manifest route table the staff resolver never sees), and
   a route not registered at scan time. A hardcoded portal href shipped a real
   navigation bug through that hole: the portal is browsed under /_portal/,
-  Spa.dispatch strips the prefix to MATCH but writes history verbatim, and only
+  the SPA router strips the prefix to MATCH but writes history verbatim, and only
   Rsx_Portal.Route() puts it back.
 - `system/app/RSpade/CodeQuality/Rules/Convention/NameReservedReference_CodeQualityRule.php`
   (NAME-RESERVED-02) - the REFERENCE direction of the reserved framework-application
@@ -146,6 +146,26 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   clean; `nl2br()` alone is not safe; comments and strings never fire; the marker is
   per line, needs a rationale, and - through the real driver - does not suppress the
   rest of the file; out-of-scope paths are skipped.
+
+- **navigation tests (implemented):** `Navigation_Rule_Test` drives JS-NAVIGATE-01
+  (`Rules/JavaScript/Navigation_CodeQualityRule.php`) through the real node-service
+  analysis (`quality.analyze_navigation`) and the template pass. Coverage: every location
+  write receiver and part, aliasing and writes through an alias, `assign()` / `replace()`,
+  jQuery href/location writes, history `pushState()` / `replaceState()`, the removed
+  `Spa.dispatch()` / `Spa.redirect()`; reads, `reload()`, history traversal, the door and a
+  property merely named `location` are clean; the marker needs a reason and excuses ONLY a
+  history write (the report says so otherwise); through the real driver a granted marker
+  does not hide the rest of the file; framework and other out-of-scope paths are ignored;
+  `.jqhtml` code blocks and `@event=` values are checked.
+
+- **new-tab tests (implemented):** `New_Tab_Rule_Test` drives JS-NEW-TAB-01
+  (`Rules/JavaScript/NewTab_CodeQualityRule.php`) the same way (`quality.analyze_new_tab`).
+  Coverage: `window.open()` and its spellings, a dispatched synthetic click, an anchor or
+  form given target _blank and activated from code in the same function (seven creation
+  shapes, three form submits); a blob download, file-input and button clicks, a bound
+  `.click(fn)`, target _blank on a user-clicked element, another object's `open()` and a
+  file's own `open()` are clean; the heuristic is per function; marker, driver, scope and
+  template rows as above.
 
 - **eval / new Function tests (implemented):** `Eval_Usage_Rule_Test` drives
   JS-EVAL-01's public `check()` over synthetic JavaScript fixtures. Coverage: all

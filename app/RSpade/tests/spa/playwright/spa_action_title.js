@@ -25,6 +25,7 @@
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { poll_until } = require('../../_lib/playwright/sys_page.js');
 
 const BASE_URL = 'http://localhost';
 const STATIC_ROUTE = '/contacts';
@@ -38,15 +39,10 @@ function fail(msg) {
 
 /** Wait for the SPA action's full lifecycle on the page. */
 async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
-        }
-    }));
-
+    // A first visit can replace its document once (the timezone-cookie bootstrap), so this is
+    // a poll that survives a navigation, never an evaluate inside the first document.
+    await poll_until(page, 'the SPA booted and finished its initial load',
+        () => typeof Spa !== 'undefined' && !!Spa.action() && Spa._initial_load_complete);
 }
 
 /**
@@ -138,7 +134,10 @@ async function run() {
         }
 
         // A real contact id, straight off the rendered datagrid rows (href = /contacts/view/:id).
-        const contact_ids = await page.evaluate(() => {
+        // The grid loads its rows after the action is ready, so the rows are waited for; a
+        // site with no contact never renders one and the bound names that.
+        const contact_ids = await poll_until(page, 'a contact row (tr[data-href=/contacts/view/:id]) rendered on ' + STATIC_ROUTE
+            + ' - the dynamic case needs at least one contact on the site', () => {
             const ids = [];
             $('tr[data-href]').each(function () {
                 const m = ($(this).attr('data-href') || '').match(/\/contacts\/view\/(\d+)/);
@@ -146,17 +145,15 @@ async function run() {
                     ids.push(parseInt(m[1], 10));
                 }
             });
-            return ids;
+            return ids.length > 0 ? ids : null;
         });
 
-        if (contact_ids.length === 0) {
-            fail('need at least one contact row on ' + STATIC_ROUTE + ' to exercise the dynamic case');
-            await browser.close();
-            return;
-        }
-
         // --- 3 + 4. data-dependent action ---
-        await page.evaluate((id) => Spa.dispatch('/contacts/view/' + id), contact_ids[0]);
+        // Started, not awaited, inside the evaluate; then the target action is waited for.
+        await page.evaluate((id) => { Rsx.navigate('/contacts/view/' + id); }, contact_ids[0]);
+        await poll_until(page, 'the contact view action dispatched and done dispatching', (id) =>
+            location.pathname === '/contacts/view/' + id && !!Spa.action()
+                && Spa.action() instanceof Contacts_View_Action && !Spa.is_dispatching, contact_ids[0]);
         await page.evaluate(() => Spa.action().ready());
 
         const dynamic = await probe_title(page);

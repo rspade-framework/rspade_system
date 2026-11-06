@@ -18,11 +18,11 @@ SYNOPSIS
         system/app/RSpade/tests/preview/playwright/document_preview_spa.js
 
 DESCRIPTION
-    rsx:debug (man rsx_debug) drives one page load and reports on it. It is
+    rsx:debug (rsx:man rsx_debug) drives one page load and reports on it. It is
     the right tool for "does this route render, what did the console say,
     what does this element look like." It cannot follow a sequence of
     client-side SPA navigations, because after the initial document loads,
-    all further routing happens inside the browser via Spa.dispatch() and
+    all further routing happens inside the browser via Rsx.navigate() and
     never issues another document request rsx:debug could observe.
 
     When a test genuinely needs multi-step SPA interaction - navigate, click,
@@ -252,8 +252,8 @@ LIFECYCLE EVENTS
     reliably as window.Rsx / window.Spa. Guard with `typeof Rsx !== 'undefined'`
     and call Rsx / Spa unqualified, as the reference test does.
 
-    spa_dispatch_ready (each SPA navigation). Fires after a Spa.dispatch()
-    completes - the action's on_ready has run and its children are ready. The
+    spa_dispatch_ready (each SPA navigation). Fires after an in-app
+    navigation completes - the action's on_ready has run and its children are ready. The
     event carries { url, action }. Register the listener BEFORE dispatching, or
     the event fires before you are waiting and is missed:
 
@@ -262,7 +262,7 @@ LIFECYCLE EVENTS
                 Rsx.on('spa_dispatch_ready', () => resolve());
             }));
             try {
-                await page.evaluate((p) => { Spa.dispatch(p); }, path);
+                await page.evaluate((p) => { Rsx.navigate(p); }, path);
             } catch (e) { /* context may be destroyed mid-transition */ }
             await ready;
         }
@@ -286,7 +286,7 @@ SESSION VALIDATION
         });
 
     Do this AFTER _debug_ready (so Rsx exists and the first action is rendered)
-    and BEFORE the first Spa.dispatch(). This is a test-environment accommodation
+    and BEFORE the first Rsx.navigate(). This is a test-environment accommodation
     only; real sessions validate normally.
 
 SPA NAVIGATION
@@ -296,10 +296,12 @@ SPA NAVIGATION
 
         await page.goto(`${BASE_URL}${ROUTE}`, { waitUntil: 'commit' });
 
-    For everything after, call Spa.dispatch() directly through page.evaluate().
+    For everything after, call Rsx.navigate() directly through page.evaluate().
     Do NOT click sidebar links from the evaluation context - jQuery's overridden
     .click() (which prevents default and routes the SPA) does not fire reliably
-    through Playwright's bridge. Spa.dispatch() is deterministic.
+    through Playwright's bridge. Rsx.navigate() is deterministic. (A test file
+    is outside the scope of JS-NAVIGATE-01, but the door is still the way to
+    move: it is what the application does.)
 
     Context destruction. A SPA transition replaces the content area and can
     destroy Playwright's execution context, so a page.evaluate() running during
@@ -373,7 +375,7 @@ COMMON PITFALLS
         `typeof Rsx !== 'undefined'` and reference them unqualified.
 
     Registering spa_dispatch_ready after dispatching
-        Register the listener before calling Spa.dispatch(), or the event fires
+        Register the listener before calling Rsx.navigate(), or the event fires
         before you are waiting.
 
     validate_session false-positive reloads
@@ -453,9 +455,13 @@ FILES
         _rsx_core_boot() init phases, the _debug_ready trigger, and
         validate_session().
 
+    system/app/RSpade/Core/Js/Rsx_Navigation.js
+        Rsx.navigate() / Rsx.redirect(), the one navigation door
+        (rsx:man navigation).
+
     system/app/RSpade/Core/SPA/Spa.js
-        Spa.dispatch(), the spa_dispatch_start / spa_dispatch_ready triggers,
-        and Spa.action() / Spa.layout.
+        The in-app render path, the spa_dispatch_start / spa_dispatch_ready
+        triggers, and Spa.action() / Spa.layout.
 
     system/app/RSpade/tests/CLAUDE.md
         The framework test structure; defines the `playwright` test type and

@@ -1,0 +1,84 @@
+ONE NAVIGATION DOOR: Rsx.navigate() / Rsx.redirect(); NEW TABS ONLY FROM A USER-CLICKED LINK
+Date: 2026-11-06
+
+IF YOU DO NOTHING: the manifest build fails (JS-NAVIGATE-01) on every Spa.dispatch() / Spa.redirect() call, every raw write to location (location.href = ..., location.assign() / replace()) and every history.pushState() / replaceState() in your application code, and (JS-NEW-TAB-01) on every window.open(), synthetic click or scripted target="_blank" - so the site does not build until each is converted.
+
+SUMMARY
+    Category 1 (a /rsx/ code change) plus a call-shape change.
+
+    Application code navigates through ONE door:
+
+        Rsx.navigate(url, {
+            history:    'push' | 'replace',            default 'push'
+            via:        'carry' | 'drop' | 'continue', default 'carry'
+            load:       'auto' | 'full' | 'none',      default 'auto'
+            title_hint: string,
+        });
+        Rsx.redirect(url, opts)   // = navigate with history 'replace'
+
+    It classifies the target (a route of this SPA, another page of this
+    site, elsewhere), carries the breadcrumb origin (_via) - across full page
+    loads too - and is the only code that writes location or history. An
+    unknown option or value throws at the call.
+
+    Spa.dispatch() is internal (Spa._dispatch()); Spa.redirect(),
+    Spa_Action.dispatch() and Spa.VIA_OPTIONS are removed; {history: 'auto'}
+    and {history: 'none'} are no longer accepted.
+
+    Behaviour changes with no rule behind them:
+        - navigating to exactly the URL on screen reloads the document
+        - with the SPA disabled (after an unhandled error, a timezone change
+          or a planned recycle), link clicks still go through the door, so a
+          full load keeps the breadcrumb origin
+        - Rsx_Form follows result.redirect through the door; a create
+          endpoint answers redirect_via: 'continue' to keep the origin on the
+          record it created
+
+    The only sanctioned new tab is an <a target="_blank" rel="noopener"> the
+    user clicks. When its URL needs server work, the link points at a
+    same-site GET route that does the work and redirects, guarded by
+    $request->is_same_origin_navigation() when it changes anything.
+
+AFFECTED FILES
+    Every /rsx/**/*.js and *.jqhtml that navigates or opens a tab; create
+    endpoints whose record should keep the breadcrumb origin; the template's
+    View as Client (contacts_controller.php, Contacts_View_Action).
+
+CHANGES REQUIRED
+
+    1. grep -rnE 'Spa\.dispatch\(' rsx
+       -> Rsx.navigate(  (drop {history: 'auto'}; push is the default;
+          loader_title_hint becomes title_hint)
+
+    2. grep -rnE 'Spa\.redirect\(' rsx
+       -> Rsx.redirect(
+
+    3. grep -rnE '(window|document)\.location(\.href)?\s*=[^=]|location\.(assign|replace)\(' rsx
+       -> Rsx.navigate(url). Use {load: 'full'} when the target must be a
+          fresh document (a sign-in, impersonation), Rsx.redirect() for a
+          replace.
+
+    4. grep -rnE 'history\.(pushState|replaceState)\(' rsx
+       -> Rsx.navigate(url, {load: 'none', history: 'push' | 'replace'}).
+          A non-SPA page with its own router may keep a raw call marked
+          @JS-NAVIGATE-01-EXCEPTION <reason>.
+
+    5. grep -rnE 'window\.open\(|dispatchEvent\(\s*new\s+(Mouse)?Event' rsx
+       -> a user-clicked <a target="_blank" rel="noopener">, pointing at a
+          same-site GET route + redirect when server work is needed (guarded
+          by $request->is_same_origin_navigation()); a download navigates in
+          the same tab with Rsx.navigate(download_url).
+
+    6. View as Client: the template's Ajax endpoint
+       begin_portal_impersonation is replaced by the guarded GET route
+       Frontend_Contacts_Controller::view_as_client
+       (/contacts/view/:id/view-as-client), reached by a link with
+       target="_blank". Port both halves from the reference app.
+
+    7. A create endpoint whose new record should keep the breadcrumb origin
+       returns redirect_via: 'continue' beside redirect.
+
+VERIFICATION
+    rsx:debug / builds (both rules are manifest-time); click through each
+    converted navigation; open View as Client from a contact with portal
+    access. rsx:man navigation, rsx:man breadcrumb_origins.

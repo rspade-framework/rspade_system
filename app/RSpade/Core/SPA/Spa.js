@@ -81,7 +81,7 @@ class Spa {
     static VIA_CARRIED_ATTRIBUTE = 'data-spa-via-carried';
 
     // The breadcrumb-origin facts of the navigation in progress, handed to the action it
-    // creates (Rsx_Breadcrumb_Resolver.settle_via()): {arrival, previous}. See _carry_via().
+    // creates (Rsx_Breadcrumb_Resolver.settle_via()): {arrival, previous}. See Rsx_Navigation.augment().
     static _via_navigation = null;
 
     // Keys that scroll the page. One pressed outside a text field while a restoration
@@ -209,8 +209,22 @@ class Spa {
             options.scroll = history.state?.scroll || null;
         }
 
+        // How this document's _via arrived. The first page of a document is 'explicit' (a
+        // reload, a pasted URL, a new tab) - unless Rsx.navigate() brought it here by a full
+        // load and left the hand-off naming this URL: then it arrived exactly as an SPA
+        // navigation would have, and is judged against the decider of the page left. The
+        // hand-off is read once and deleted whatever it says.
+        const handoff = Rsx_Navigation._take_handoff();
+        if (handoff) {
+            options.arrival = handoff.arrival;
+            options.previous = handoff.previous_decider;
+        } else {
+            options.arrival = 'explicit';
+            options.previous = null;
+        }
+
         console_debug('Spa', 'Dispatching to initial URL: ' + initial_url);
-        await Spa.dispatch(initial_url, options);
+        await Spa._dispatch(initial_url, options);
     }
 
     /**
@@ -346,6 +360,56 @@ class Spa {
 
         // No match found
         return null;
+    }
+
+    /**
+     * The route match when a URL is a page of the SPA running NOW - a route this bundle
+     * knows whose action runs under this page's bootstrap (@spa) - else null. A route of
+     * another bootstrap is a page of another SPA: only the server can boot it.
+     *
+     * @param {string} url - Path and query (a fragment is ignored)
+     * @returns {object|null} as match_url_to_route()
+     */
+    static _route_of_this_spa(url) {
+        if (!window.rsxapp.is_spa) {
+            return null;
+        }
+
+        const route_match = Spa.match_url_to_route(url);
+        if (!route_match) {
+            return null;
+        }
+
+        const action_spa_controller = route_match.action_class._spa_controller_method;
+        const current_spa_controller = window.rsxapp.current_controller + '::' + window.rsxapp.current_action;
+
+        if (action_spa_controller && action_spa_controller !== current_spa_controller) {
+            console_debug('Spa', `${url} belongs to another SPA module: ${action_spa_controller}, not ${current_spa_controller}`);
+            return null;
+        }
+
+        return route_match;
+    }
+
+    /**
+     * Rewrite the address bar for the action on screen without dispatching
+     * (Rsx.navigate(url, {load: 'none'}) - the caller has checked the URL is this action's).
+     * The entry's state is kept; a push is a new entry one step along the stack, so it is
+     * stamped with the next index and the departing position is saved on the entry left.
+     *
+     * @param {string} url
+     * @param {string} history_mode - 'push' | 'replace'
+     */
+    static _rewrite_entry(url, history_mode) {
+        if (history_mode === 'replace') {
+            history.replaceState(history.state, '', url);
+        } else {
+            Spa._save_scroll_to_current_entry();
+            Spa._history_index = Spa._history_index + 1;
+            history.pushState({ ...(history.state || {}), spa_index: Spa._history_index }, '', url);
+        }
+
+        Spa._last_committed_url = window.location.pathname + window.location.search + window.location.hash;
     }
 
     /**
@@ -511,7 +575,7 @@ class Spa {
         // Handle browser back/forward buttons
         window.addEventListener('popstate', (e) => {
             console_debug('Spa', 'popstate event fired (back/forward navigation)');
-            console.warn('[Spa.dispatch] Handling history popstate event', {
+            console.warn('[Spa] Handling history popstate event', {
                 url: window.location.pathname + window.location.search + window.location.hash,
                 state: e.state
             });
@@ -582,9 +646,11 @@ class Spa {
             //   * Timing (must restore after form renders, possibly in on_ready)
             // const form_data = e.state?.form_data || {};
 
-            // Dispatch without modifying history (we're already at the target URL)
-            // Force SPA dispatch even if disabled - popstate navigates to cached history state
-            Spa.dispatch(url, {
+            // Dispatch without modifying history (we're already at the target URL). Not
+            // through Rsx.navigate(): this is already a navigation, the browser's, and its
+            // _via is restored as recorded, never re-carried. Dispatched even while the SPA
+            // is disabled - popstate returns to an entry this document already showed.
+            Spa._dispatch(url, {
                 history: 'none',
                 scroll: scroll,
                 force: true,
@@ -625,7 +691,7 @@ class Spa {
             let href = link.getAttribute('href');
 
             // A link whose _via the framework wrote (above) navigates as the link the
-            // application wrote: without it, so dispatch() CARRIES the current origin and the
+            // application wrote: without it, so Rsx.navigate() CARRIES the current origin and the
             // keep/strip decision judges it as carried rather than as an explicit claim.
             if (href && link.hasAttribute(Spa.VIA_CARRIED_ATTRIBUTE)) {
                 href = Spa_Via.without(href);
@@ -683,27 +749,16 @@ class Spa {
                     return;
                 }
 
-                // Check if SPA is enabled
-                if (!Spa._spa_enabled) {
-                    console_debug('Spa', 'SPA disabled, letting browser handle: ' + href);
-                    return; // Don't preventDefault - browser navigates normally
-                }
-
+                // Through the one navigation door, with the SPA enabled or not: a disabled
+                // SPA makes it a full page load, and the door hands the breadcrumb origin
+                // across it, which a native navigation would not.
                 console_debug('Spa', 'Intercepting link click: ' + href);
                 e.preventDefault();
 
-                // Check for loader title hint - provides immediate title feedback while page loads
-                const loader_title_hint = link.getAttribute('data-loader-title-hint');
-                const dispatch_options = { history: 'auto' };
+                // A loader title hint is the document title shown at once while the page loads.
+                const title_hint = link.getAttribute('data-loader-title-hint');
 
-                if (loader_title_hint) {
-                    // Set document title immediately for instant feedback
-                    document.title = loader_title_hint;
-                    dispatch_options.loader_title_hint = loader_title_hint;
-                    console_debug('Spa', 'Loader title hint: ' + loader_title_hint);
-                }
-
-                Spa.dispatch(href, dispatch_options);
+                Rsx.navigate(href, title_hint ? { title_hint: title_hint } : {});
             } else {
                 console_debug('Spa', 'No SPA route match, letting server handle: ' + href);
             }
@@ -734,23 +789,17 @@ class Spa {
         }
 
         const base = marked ? Spa_Via.without(href) : href;
-        const current = Spa_Via.raw(window.location.search);
 
-        if (current === null) {
-            if (marked) {
-                link.setAttribute('href', base);
-                link.removeAttribute(Spa.VIA_CARRIED_ATTRIBUTE);
-            }
-            return;
+        // The same carrying rule as every navigation (Rsx_Navigation.augment()).
+        const carried = Rsx_Navigation.augment(base, 'carry');
+
+        if (carried.arrival === 'carried') {
+            link.setAttribute('href', carried.url);
+            link.setAttribute(Spa.VIA_CARRIED_ATTRIBUTE, '1');
+        } else if (marked) {
+            link.setAttribute('href', base);
+            link.removeAttribute(Spa.VIA_CARRIED_ATTRIBUTE);
         }
-
-        const target = Spa.parse_url(base);
-        if (target.host !== window.location.host || !Spa.match_url_to_route(target.path + target.search)) {
-            return;
-        }
-
-        link.setAttribute('href', Spa_Via.with_value(base, current));
-        link.setAttribute(Spa.VIA_CARRIED_ATTRIBUTE, '1');
     }
 
     /**
@@ -799,88 +848,6 @@ class Spa {
     }
 
     /**
-     * The values a navigation's {via} option accepts. Absent means 'carry'.
-     *
-     * - 'carry'    the current _via rides along; kept only while the same page decides it.
-     * - 'drop'     the current _via is not carried.
-     * - 'continue' this navigation continues the same detour (a create page handing over to
-     *              the record it created): the current _via is carried as an explicit claim,
-     *              kept when any page in the new trail accepts and verifies it.
-     */
-    static VIA_OPTIONS = ['carry', 'drop', 'continue'];
-
-    /**
-     * Throw unless a navigation's {via} option is absent or one of Spa.VIA_OPTIONS - a
-     * typo is never read as the default. 'continue' also needs a history entry to carry
-     * the origin onto, so it refuses {history: 'none'}.
-     */
-    static _validate_via_option(options) {
-        if (!('via' in options) || options._is_popstate) {
-            return;
-        }
-
-        if (!Spa.VIA_OPTIONS.includes(options.via)) {
-            throw new Error(
-                `Spa navigation option {via: ${JSON.stringify(options.via)}} is not understood. ` +
-                `Accepted: 'carry' (the default), 'drop', 'continue'. See rsx:man breadcrumb_origins.`
-            );
-        }
-
-        if (options.via === 'continue' && options.history === 'none') {
-            throw new Error(
-                `Spa navigation option {via: 'continue'} cannot be combined with {history: 'none'}: ` +
-                `a navigation that writes no history entry carries no breadcrumb origin.`
-            );
-        }
-    }
-
-    /**
-     * Carry the current page's _via onto a navigation's target, and say how the target's
-     * _via got there.
-     *
-     * - A target naming its own _via keeps it: 'explicit'.
-     * - {via: 'drop'} never carries.
-     * - Otherwise, when the current URL has a _via and the target is a route of this SPA,
-     *   the current value is copied: 'carried' - or, under {via: 'continue'}, 'explicit'.
-     *   Dispatch does not ask whether the origin applies there - the resolver decides that
-     *   after the walk, and strips it if not.
-     * - The initial load (and a reload, a pasted URL, a new tab) is 'explicit'; a
-     *   Back/Forward is 'restored', judged against the decider its own entry recorded.
-     *
-     * @returns {{url: string, arrival: string|null}} arrival null = the target has no _via
-     */
-    static _carry_via(url, options) {
-        const target_via = Spa_Via.raw(url);
-
-        if (options._is_popstate) {
-            return { url: url, arrival: target_via === null ? null : 'restored' };
-        }
-
-        if (target_via !== null) {
-            return { url: url, arrival: 'explicit' };
-        }
-
-        if (options.via === 'drop' || options.history === 'none') {
-            return { url: url, arrival: null };
-        }
-
-        const current = Spa_Via.raw(window.location.search);
-        if (current === null) {
-            return { url: url, arrival: null };
-        }
-
-        const target = Spa.parse_url(url);
-        if (!Spa.match_url_to_route(target.path + target.search)) {
-            return { url: url, arrival: null };
-        }
-
-        return {
-            url: Spa_Via.with_value(url, current),
-            arrival: options.via === 'continue' ? 'explicit' : 'carried',
-        };
-    }
-
-    /**
      * True when a history move keeps the path and the query - the two parts that route
      * an action - so at most the fragment changed.
      *
@@ -899,69 +866,35 @@ class Spa {
         return from.host === to.host && from.path === to.path && from.search === to.search;
     }
 
-
     /**
-     * Navigate to a URL, replacing the current history entry instead of pushing.
-     * Use for programmatic redirects (e.g., in on_load() when a record should
-     * display at a different URL) so Back button skips the redirecting page.
-     * Takes dispatch()'s options, {via} included.
+     * The SPA's render transport: show a page of THIS SPA without a document load.
+     *
+     * Internal. Code navigates with Rsx.navigate() / Rsx.redirect(), which decide whether a
+     * target can be rendered here at all (a route of this SPA, this bootstrap, the SPA
+     * enabled), carry the breadcrumb origin and say how it arrived, and only then call this.
+     * Three callers arrive here directly, because each is already a navigation and must not
+     * be re-carried: the initial dispatch (_on_spa_init), Back/Forward (popstate), and the
+     * drain of a navigation queued during a dispatch (pending_redirect).
+     *
+     * @param {string} url - Relative URL (path + query + fragment)
+     * @param {object} options
+     * @param {string} options.history - 'push' | 'replace' | 'none' ('none': the browser is
+     *   already on the entry - the initial load, Back/Forward)
+     * @param {string|null} options.arrival - how the target's _via arrived: 'explicit' |
+     *   'carried' (null = it has none). Ignored for popstate, which is 'restored'.
+     * @param {string|null} [options.previous] - the decider a carried _via is judged against,
+     *   when it is already known (the full-load hand-off). Absent: the leaving action's.
+     * @param {string|null} [options.title_hint] - document title shown at once while loading
+     * @param {object|null} [options.scroll] - {x, y} to restore; null leaves the page alone;
+     *   absent scrolls to the top
+     * @param {boolean} [options.force] - Back/Forward: no session validation
+     * @param {boolean} [options._is_popstate]
      */
-    static async redirect(url, options = {}) {
-        return Spa.dispatch(url, { ...options, history: 'replace' });
-    }
-
-    /**
-     * Main dispatch method - navigate to a URL
-     *
-     * This is the single entry point for all navigation within the SPA.
-     * Handles route matching, history management, layout/action lifecycle, and scroll restoration.
-     *
-     * @param {string} url - Target URL (relative or absolute)
-     * @param {object} options - Navigation options
-     * @param {string} options.history - 'auto'|'push'|'replace'|'none' (default: 'auto')
-     *   - 'auto': Push for new URLs, replace for same URL
-     *   - 'push': Always create new history entry
-     *   - 'replace': Replace current history entry
-     *   - 'none': Don't modify history (used for back/forward)
-     * @param {object|null} options.scroll - Scroll position {x, y} to restore (default: null = scroll to top)
-     * @param {boolean} options.triggers - Fire before/after dispatch events (default: true)
-     * @param {boolean} options.force - Force SPA dispatch even if disabled (used by popstate) (default: false)
-     * @param {string} options.via - 'carry'|'drop'|'continue' (default: 'carry'): what
-     *   happens to the current page's breadcrumb origin (_via) when the target names none.
-     *   - 'carry': it rides along, kept only while the same page decides the trail
-     *   - 'drop': it is not carried
-     *   - 'continue': this navigation continues the same detour - a create page handing
-     *     over to the record it created - so it is carried as an explicit claim, kept when
-     *     any page in the new trail accepts and verifies it
-     *   Any other value throws. See rsx:man breadcrumb_origins.
-     *
-     * THE NAVIGATION GUARD DOES NOT GUARD THIS. Navigation from code - a button
-     * handler, a row click, a redirect after a save - goes ahead with no prompt, and a
-     * dispatch that leaves the page turns the guard off (Rsx.clear_navigation_guard()),
-     * so nothing is left armed for the page that follows. The guard asks about what
-     * the USER does to the browser: a link, Back/Forward, refresh, close. A dispatch
-     * to the page already showing (same path and query) is not a departure and leaves
-     * the guard as it is.
-     */
-    static async dispatch(url, options = {}) {
-        Spa._validate_via_option(options);
-
-        if (Rsx.has_navigation_guard() && !Spa._is_fragment_only_move(window.location.href, url)) {
-            Rsx.clear_navigation_guard();
-        }
-
+    static async _dispatch(url, options = {}) {
         // A Back/Forward that is going ahead: the browser is already on the target
         // entry, so that entry is now where the page sits in the stack.
         if (options._is_popstate) {
             Spa._adopt_current_entry();
-        }
-
-        // Check if SPA is disabled - do full page load
-        // Exception: popstate events always attempt SPA dispatch (force: true)
-        if (!Spa._spa_enabled && !options.force) {
-            console.warn('[Spa.dispatch] SPA disabled, forcing full page load');
-            Spa._navigate_away(url, options);
-            return;
         }
 
         if (Spa.is_dispatching) {
@@ -998,51 +931,19 @@ class Spa {
 
         try {
             const opts = {
-                history: options.history || 'auto',
+                history: options.history,
                 scroll: 'scroll' in options ? options.scroll : undefined,
-                triggers: options.triggers !== false,
-                loader_title_hint: options.loader_title_hint || null,
+                title_hint: options.title_hint || null,
             };
 
             console_debug('Spa', 'Dispatching to: ' + url + ' (history: ' + opts.history + ')');
 
-            // Handle fully qualified URLs
-            const current_domain = window.location.hostname;
-
-            if (url.startsWith('http://') || url.startsWith('https://')) {
-                try {
-                    const parsed_url = new URL(url);
-
-                    // Check if different domain
-                    if (parsed_url.hostname !== current_domain) {
-                        // External domain - navigate away
-                        console_debug('Spa', 'External domain, navigating: ' + url);
-                        console.warn('[Spa.dispatch] Navigating away (external domain)', {
-                            url: url,
-                            reason: 'External domain'
-                        });
-                        Spa._navigate_away(url, options);
-                        Spa.is_dispatching = false;
-                        return;
-                    }
-
-                    // Same domain - strip to relative URL
-                    url = parsed_url.pathname + parsed_url.search + parsed_url.hash;
-                    console_debug('Spa', 'Same domain, stripped to relative: ' + url);
-                } catch (e) {
-                    console.error('Spa: Invalid URL format:', url);
-                    Spa.is_dispatching = false;
-                    return;
-                }
+            // The title hint is shown at once, before anything loads.
+            if (opts.title_hint) {
+                document.title = opts.title_hint;
             }
 
-            // Breadcrumb origins: carry the current _via onto the target unless it names its
-            // own or the caller opted out ({via: 'drop'}). See _carry_via().
-            const carried = Spa._carry_via(url, options);
-            url = carried.url;
-            const via_arrival = carried.arrival;
-
-            // Parse the (now relative) URL
+            // Parse the URL
             const parsed = Spa.parse_url(url);
 
             // CRITICAL: Strip hash from URL before route matching
@@ -1052,44 +953,22 @@ class Spa {
 
             console_debug('Spa', 'URL for route matching (hash stripped): ' + url_without_hash);
 
-            // Try to match URL to a route (without hash)
-            const route_match = Spa.match_url_to_route(url_without_hash);
+            const route_match = Spa._route_of_this_spa(url_without_hash);
+            const is_same_url = url_without_hash === window.location.pathname + window.location.search;
 
-            // Check if this is the same URL we're currently on (without hash)
-            const current_url = window.location.pathname + window.location.search;
-            const is_same_url = url_without_hash === current_url;
-
-            // Same URL navigation with history: 'auto' should reload via server
-            // This mimics non-SPA behavior where clicking current page refreshes
-            // Exception: history: 'replace' means a redirect landed here — proceed with SPA dispatch
-            if (is_same_url && opts.history === 'auto') {
-                console_debug('Spa', 'Same URL with auto history, letting browser reload');
-                console.warn('[Spa.dispatch] Navigating away (same URL reload)', {
-                    url: url,
-                    reason: 'Same URL with auto history - mimics browser reload behavior'
-                });
-                Spa._navigate_away(url, options);
-                Spa.is_dispatching = false;
-                return;
-            }
-
-            if (is_same_url && !route_match) {
-                // We're being asked to navigate to the current URL, but it doesn't match
-                // any known route. This shouldn't happen - prevents infinite redirect loop.
+            if (!route_match && !options._is_popstate && is_same_url && !Spa.match_url_to_route(url_without_hash)) {
+                // The document was served for this URL (the initial load) and nothing claims
+                // it: loading it again would come straight back here, forever.
                 Spa.spa_unknown_route_fatal(parsed.path);
-                Spa.is_dispatching = false;
                 return;
             }
 
-            // If no route match and we're not on this URL, let server handle it
             if (!route_match) {
-                console_debug('Spa', 'No route matched, letting server handle: ' + url);
-                console.warn('[Spa.dispatch] Navigating away (no route match)', {
-                    url: url,
-                    reason: 'URL does not match any registered SPA routes'
-                });
-                Spa._navigate_away(url, options);
-                Spa.is_dispatching = false;
+                // Back/Forward (or the first load) onto a URL this SPA does not render - no
+                // route, or an action of another bootstrap. The server renders it: the ONE
+                // full-load function, replacing the entry the browser is already on.
+                console.warn('[Spa._dispatch] Loading the document (not a page of this SPA)', { url: url });
+                await Rsx_Navigation._full_load(url, opts.history === 'push' ? 'push' : 'replace', null);
                 return;
             }
 
@@ -1099,26 +978,6 @@ class Spa {
                 layouts: route_match?.layouts,
             });
 
-            // Check if action's @spa() attribute matches current SPA bootstrap
-            const action_spa_controller = route_match.action_class._spa_controller_method;
-            const current_spa_controller = window.rsxapp.current_controller + '::' + window.rsxapp.current_action;
-
-            if (action_spa_controller && action_spa_controller !== current_spa_controller) {
-                // Different SPA module - let server bootstrap it
-                console_debug('Spa', 'Different SPA module, letting server handle: ' + url);
-                console_debug('Spa', `  Action uses: ${action_spa_controller}`);
-                console_debug('Spa', `  Current SPA: ${current_spa_controller}`);
-                console.warn('[Spa.dispatch] Navigating away (different SPA module)', {
-                    url: url,
-                    reason: 'Action belongs to different SPA module/bundle',
-                    action_spa_controller: action_spa_controller,
-                    current_spa_controller: current_spa_controller
-                });
-                Spa._navigate_away(url, options);
-                Spa.is_dispatching = false;
-                return;
-            }
-
             // Update browser history. An entry's state says where it sits in the stack
             // (spa_run, spa_index) and where ITS OWN page is scrolled - so a push first
             // records the departing page's position on the entry being left, and the
@@ -1127,12 +986,12 @@ class Spa {
                 // Construct full URL with hash (hash is preserved in browser URL bar)
                 const new_url = parsed.path + parsed.search + (parsed.hash || '');
 
-                if (opts.history === 'push' || (opts.history === 'auto' && !is_same_url)) {
+                if (opts.history === 'push') {
                     console_debug('Spa', 'Pushing history state');
                     Spa._save_scroll_to_current_entry();
                     Spa._history_index = Spa._history_index + 1;
                     history.pushState(Spa._entry_state(null), '', new_url);
-                } else if (opts.history === 'replace' || (opts.history === 'auto' && is_same_url)) {
+                } else {
                     // The entry is overwritten in place: same position in the stack,
                     // and the page it described is gone, so there is nothing to save.
                     console_debug('Spa', 'Replacing history state');
@@ -1155,7 +1014,7 @@ class Spa {
             // named gates on every Ajax/ORM/API call the action would have made.
             const denied_checks = Spa._denied_auth_checks(route_match.action_class);
             if (denied_checks.length) {
-                console.warn('[Spa.dispatch] Auth gate denied', {
+                console.warn('[Spa._dispatch] Auth gate denied', {
                     url: url,
                     action: route_match.action_class.name,
                     missing_checks: denied_checks
@@ -1184,8 +1043,8 @@ class Spa {
             // Merge loader title hint into action args if provided
             // This allows the action to show a placeholder title while loading
             let action_args = route_match.args;
-            if (opts.loader_title_hint) {
-                action_args = { ...route_match.args, _loader_title_hint: opts.loader_title_hint };
+            if (opts.title_hint) {
+                action_args = { ...route_match.args, _loader_title_hint: opts.title_hint };
             }
 
             // @spinner_until_ready('always'): the page is hidden until ready on every visit,
@@ -1198,7 +1057,7 @@ class Spa {
             }
 
             // Log successful SPA navigation
-            console.warn('[Spa.dispatch] Executing SPA navigation', {
+            console.warn('[Spa._dispatch] Executing SPA navigation', {
                 url: url,
                 path: parsed.path,
                 params: action_args,
@@ -1223,12 +1082,24 @@ class Spa {
             // What the action about to be created needs to settle its breadcrumb origin: how
             // the _via arrived, and what it is judged against - the decision of the page being
             // left (a carried hop), or the decider this history entry recorded (Back/Forward).
-            Spa._via_navigation = {
-                arrival: via_arrival,
-                previous: via_arrival === 'carried'
-                    ? leaving_action._spa_via_settlement ?? null
-                    : (via_arrival === 'restored' ? (history.state?.via_decider ?? null) : null),
-            };
+            // A Back/Forward's arrival is always 'restored'; every other navigation says how
+            // its _via arrived (Rsx_Navigation.augment(), or the full-load hand-off, which also
+            // names the decider of the page left in another document).
+            const has_via = Spa_Via.raw(url) !== null;
+            let via_arrival = null;
+            let via_previous = null;
+            if (has_via && options._is_popstate) {
+                via_arrival = 'restored';
+                via_previous = history.state?.via_decider ?? null;
+            } else if (has_via) {
+                via_arrival = options.arrival || 'explicit';
+                if ('previous' in options) {
+                    via_previous = options.previous;
+                } else if (via_arrival === 'carried' && leaving_action) {
+                    via_previous = leaving_action._spa_via_settlement ?? null;
+                }
+            }
+            Spa._via_navigation = { arrival: via_arrival, previous: via_previous };
 
             // Resolve layout chain - find divergence point and reuse matching layouts
             await Spa._resolve_layout_chain(target_layouts, action_name, action_args, url);
@@ -1250,7 +1121,7 @@ class Spa {
             // - Initial page load (window.rsxapp is fresh from server)
             // - Back/forward navigation (force: true) - restoring cached state
             //
-            // On mismatch, triggers location.replace() for transparent refresh
+            // On mismatch, triggers location.reload() for a transparent refresh
             // that doesn't pollute browser history.
             if (Spa._initial_load_complete && !options.force) {
                 // Fire and forget - don't block navigation on validation
@@ -1295,21 +1166,8 @@ class Spa {
 
                 // Execute the queued redirect immediately
                 // This will destroy the action that triggered the redirect
-                await Spa.dispatch(redirect.url, redirect.options);
+                await Spa._dispatch(redirect.url, redirect.options);
             }
-        }
-    }
-
-    /**
-     * Navigate away from the SPA to a full page load.
-     * Uses location.replace() for redirect (history: 'replace') so the
-     * current history entry is overwritten, preserving correct Back behavior.
-     */
-    static _navigate_away(url, options = {}) {
-        if (options.history === 'replace') {
-            document.location.replace(url);
-        } else {
-            document.location.href = url;
         }
     }
 
@@ -2144,7 +2002,7 @@ class Spa {
         const action_class = route_match.action_class;
         const action_name = action_class.name;
 
-        // Same auth gate dispatch() applies: a denied action must never construct,
+        // Same auth gate _dispatch() applies: a denied action must never construct,
         // not even detached (its on_load() would call the endpoints the gate covers).
         // Unreachable resolves to null, exactly like an unmatched route.
         const denied_checks = Spa._denied_auth_checks(action_class);

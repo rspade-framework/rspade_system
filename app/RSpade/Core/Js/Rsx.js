@@ -541,6 +541,53 @@ class Rsx {
     }
 
     /**
+     * Go to a URL. THE way code moves the browser anywhere - a page of this SPA, a Blade
+     * page, another bootstrap, a download, another site. Never write location or history
+     * yourself: this door carries the breadcrumb origin (_via) and hands it across a full
+     * page load, which a raw location write loses.
+     *
+     *     Rsx.navigate(Rsx.Route('Contacts_View_Action', id));
+     *     Rsx.navigate(url, {via: 'continue'});           // a create page handing over
+     *     Rsx.navigate(url, {load: 'none', history: 'replace'});  // address bar only
+     *
+     * Options (an unknown key or value, or an impossible combination, THROWS):
+     *   history     'push' (default) | 'replace'
+     *   via         'carry' (default) | 'drop' | 'continue'  - rsx:man breadcrumb_origins
+     *   load        'auto' (default) | 'full' (always a document load) | 'none' (address
+     *               bar only; in a SPA the URL must belong to the action on screen)
+     *   title_hint  document title shown at once while an in-app page loads
+     *
+     * 'auto' picks the move: the same URL with another #fragment is a fragment move (no
+     * reload; the SPA fires spa_hash_change); exactly the URL on screen reloads; a page of
+     * this SPA is rendered in place; anything else is a full page load.
+     *
+     * Resolves once an in-app page is committed; any other move resolves as soon as the
+     * browser has been told to go - code after an awaited full-load navigate may run while
+     * the document unloads, and must not matter. Not guarded: a navigation that leaves the
+     * page turns the navigation guard off.
+     *
+     * @param {string} url
+     * @param {object} [options]
+     * @returns {Promise<void>}
+     */
+    static navigate(url, options = {}) {
+        return Rsx_Navigation.navigate(url, options);
+    }
+
+    /**
+     * Rsx.navigate() replacing the current history entry, so Back skips the page that
+     * redirected (an on_load() sending a record to its canonical URL, a form's landing
+     * page). Takes navigate()'s options except history - passing one throws.
+     *
+     * @param {string} url
+     * @param {object} [options]
+     * @returns {Promise<void>}
+     */
+    static redirect(url, options = {}) {
+        return Rsx_Navigation.redirect(url, options);
+    }
+
+    /**
      * Turn the navigation guard ON: this page has changes that would be lost by
      * leaving it. Rsx.clear_navigation_guard() turns it off.
      *
@@ -558,9 +605,10 @@ class Rsx {
      *    back to the entry the user was on, and the page is untouched.
      *  - A Back/Forward that changes only the #fragment is not a departure and is
      *    never asked about.
-     *  - Navigation from CODE - Spa.dispatch(), Spa.redirect() - is NOT guarded: it
+     *  - Navigation from CODE - Rsx.navigate(), Rsx.redirect() - is NOT guarded: it
      *    goes ahead with no prompt and clears the guard. Code that navigates has
-     *    already decided.
+     *    already decided. (A fragment-only move, and a {load: 'none'} rewrite, do
+     *    not leave the page and leave the guard as it is.)
      *
      * The browser raises its unload dialog only once the user has interacted with the
      * page (a click, a key press), in its own wording; neither can be changed.
@@ -1524,7 +1572,7 @@ class Rsx {
      * 3. Session changes - logged out, ACLs modified, session invalidated
      *
      * If any values differ from window.rsxapp, triggers a transparent page refresh
-     * using location.replace() to avoid polluting browser history.
+     * with location.reload(), which adds no history entry.
      *
      * @returns {Promise<boolean>} True if session is valid, false if refresh triggered
      */

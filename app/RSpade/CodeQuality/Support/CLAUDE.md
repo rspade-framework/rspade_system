@@ -213,6 +213,17 @@ and is still what `rsx:check` hands a JS rule as `$contents`. A rule whose subje
 literal - URL-HARDCODE-01 - reads the raw bytes and blanks comments itself with the helpers
 above.
 
+## Jqhtml_Code_Regions - the JavaScript inside a template
+
+`Jqhtml_Code_Regions::extract($template)` returns `{mask, regions}`: a copy of the template
+with every byte that is not JavaScript blanked (newlines kept, so offsets and line numbers
+are the template's own) and the `[start, end)` of each code region. Code is `<% %>`,
+`<%= %>`, `<%!= %>`, and the values of `@event=` and `$arg=` attributes (a quoted value
+only for `@event=`, since `$arg="text"` is a string). Template comments are blanked first,
+JavaScript comments after. It does not parse: a template's code is fragments that only
+become a program once compiled, so its readers (JS-NAVIGATE-01, JS-NEW-TAB-01) match
+patterns on the mask, and treat one region as "the same function".
+
 ## One service, two subsystems
 Both node-service clients in this directory are clients of the ONE node service. See
 `/app/RSpade/Core/JsParsers/README.md` for the lifecycle, the private-socket model and how
@@ -239,11 +250,27 @@ from what was OBSERVED.
 ### RPC Methods
 - `quality.lint` -> `{results: {file: {status, error}}}` - Check JavaScript syntax using Babel parser
 - `quality.analyze_this` -> `{results: {file: {status, violations}}}` - Analyze 'this' usage patterns using Acorn
+- `quality.analyze_raw_html` -> `{results: {file: {status, violations}}}` - Raw HTML writes (JS-RAW-HTML-01)
+- `quality.analyze_via` -> `{results: {file: {status, classes, args_reads, routes}}}` - Breadcrumb-origin facts (SPA-VIA-01)
+- `quality.analyze_navigation` -> `{results: {file: {status, findings, error}}}` - Raw location / history
+  writes, location aliases, and the removed `Spa.dispatch()` / `Spa.redirect()` (JS-NAVIGATE-01)
+- `quality.analyze_new_tab` -> `{results: {file: {status, findings, error}}}` - `window.open()`, a dispatched
+  synthetic click, a target-blank anchor or form activated from code (JS-NEW-TAB-01)
+
+A finding is `{line, kind, detail}`. The two newest analyzers parse with Babel `errorRecovery`
+and use no scope analysis: a name counts as the browser global only when the FILE binds
+nothing of that name, which can only remove a finding, never invent one.
+`Js_CodeQuality_Rpc::analyze_navigation()` / `analyze_new_tab()` throw on every failure to
+RUN - an RPC error, a missing result, a read error - because an analysis that could not run
+must never read as a clean file. A file Babel cannot parse answers no findings: the lint
+stage reports the syntax error, and these rules do not mask it with one of their own.
 
 ### PHP API
 ```php
 Js_CodeQuality_Rpc::lint($file_path);         // Returns error array or null
 Js_CodeQuality_Rpc::analyze_this($file_path); // Returns violations array
+Js_CodeQuality_Rpc::analyze_navigation($abs);  // JS-NAVIGATE-01 findings [{line, kind, detail}]
+Js_CodeQuality_Rpc::analyze_new_tab($abs);     // JS-NEW-TAB-01 findings [{line, kind, detail}]
 ```
 
 Both call `Rsx_Node_Service::ensure()` FIRST, outside their own marshaling try/catch, so a

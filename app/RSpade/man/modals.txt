@@ -718,11 +718,11 @@ The Modal system automatically integrates with SPA navigation:
         This behavior is automatic - no configuration required.
 
     Modal Flow and Navigation
-        If you need to navigate after a modal action, use Spa.dispatch():
+        If you need to navigate after a modal action, use Rsx.navigate():
 
             const result = await Modal.form({...});
             if (result) {
-                Spa.dispatch(Rsx.Route('Target_Action'));
+                Rsx.navigate(Rsx.Route('Target_Action'));
             }
 
         The modal closes first, then navigation proceeds.

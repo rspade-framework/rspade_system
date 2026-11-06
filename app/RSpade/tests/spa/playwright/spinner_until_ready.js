@@ -67,7 +67,7 @@ async function install(page) {
 
         window.__spin.visit = async (url) => {
             window.__spin.holds = [];
-            await Spa.dispatch(url);
+            await Rsx.navigate(url);
             await Spa.action().ready();
             const action = Spa.action();
             const $child = action.$.find('.Component').first();
@@ -181,7 +181,7 @@ async function run() {
         const abandoned = await page.evaluate(async (url) => {
             Spa.action().show_spinner();
             const held = window.__spin.count();
-            await Spa.dispatch(url);
+            await Rsx.navigate(url);
             await Spa.action().ready();
             return { held, left: window.__spin.count() };
         }, PLAIN);

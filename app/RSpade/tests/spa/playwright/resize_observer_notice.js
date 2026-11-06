@@ -11,7 +11,7 @@
  *
  *   1. Both spellings of the notice, dispatched as the browser dispatches them, fire no
  *      unhandled_exception and leave SPA navigation enabled.
- *   2. Spa.dispatch() afterwards still navigates CLIENT-SIDE: a marker on window survives,
+ *   2. Rsx.navigate() afterwards still navigates CLIENT-SIDE: a marker on window survives,
  *      which a full page load would erase.
  *   3. The match is exact: a different message, and the same text carried by a real Error,
  *      are both still reported as unhandled exceptions.
@@ -136,15 +136,15 @@ async function run() {
                         resolve();
                     }
                 });
-                Spa.dispatch(target);
+                Rsx.navigate(target);
             });
             return { path: window.location.pathname, marker: window.__no_reload_marker || null };
         }, OTHER_ROUTE);
 
         if (navigated.path !== OTHER_ROUTE || navigated.marker !== 'original') {
-            fail('Spa.dispatch() after the notice did not navigate client-side - ' + JSON.stringify(navigated));
+            fail('Rsx.navigate() after the notice did not navigate client-side - ' + JSON.stringify(navigated));
         } else {
-            console.log('PASS: Spa.dispatch() after the notice navigates client-side');
+            console.log('PASS: Rsx.navigate() after the notice navigates client-side');
         }
 
         // --- 3. the match is exact: anything else is still an error ---

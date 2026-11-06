@@ -37,6 +37,9 @@ Framework core:
   (`Portal_Site_Resolver_Test`); its declaration per request and the mismatch sign-out are
   `Portal_Session::_declare_resolved_site()` (`Portal_Site_Declaration_Test`,
   `http/portal_site_mismatch_sign_out.sh` - live server, development mode)
+- `Core/Dispatch/Dispatcher.php` `__handle_portal_dev_auth()` - the rsx:debug --portal identity:
+  the credential verified against the request URI inside the portal, query included
+  (`http/portal_dev_auth_query_string.sh` - live server, development mode)
 - `Core/Portal/Portal_Url_ManifestSupport.php` - the build-time FATALs: settings refusals and
   the prefix's collision with staff routes (`Portal_Url_Manifest_Support_Test`)
 - `Core/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which

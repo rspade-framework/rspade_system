@@ -1,10 +1,12 @@
 /**
  * QUALITY subsystem of the node service (prefix `quality`).
  *
- * JavaScript linting (Babel parser), this-usage analysis (Acorn) and raw-HTML-write
- * detection (Babel parser) for rsx:check.
+ * JavaScript linting (Babel parser), this-usage analysis (Acorn), raw-HTML-write detection,
+ * breadcrumb-origin facts, raw navigation and code-opened tabs (Babel parser) for rsx:check
+ * and the manifest-time rules.
  *
- * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html, quality.analyze_via
+ * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html, quality.analyze_via,
+ *          quality.analyze_navigation, quality.analyze_new_tab
  *
  * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
@@ -707,8 +709,601 @@ function analyzeVia(content) {
 }
 
 // =============================================================================
+// NAVIGATION AND NEW-TAB ANALYSIS (Babel Parser) - JS-NAVIGATE-01, JS-NEW-TAB-01
+// =============================================================================
+//
+// Both analyses work on one parse with no scope analysis. A name is treated as the
+// browser global only when the FILE declares nothing of that name (a variable, a
+// parameter, a function, a class, an import, a catch binding) - file-wide rather than
+// per scope, which can only make a finding go away, never invent one.
+
+const NAVIGATION_PARSE_PLUGINS = [
+    'decorators-legacy',
+    'classProperties',
+    'classPrivateProperties',
+    'classPrivateMethods',
+    'optionalChaining',
+    'nullishCoalescingOperator',
+    'asyncGenerators',
+    'bigInt',
+    'dynamicImport',
+    'exportDefaultFrom',
+    'exportNamespaceFrom',
+    'objectRestSpread',
+    'topLevelAwait'
+];
+
+// Objects whose `location` property IS the page's location.
+const GLOBAL_RECEIVERS = new Set(['window', 'document', 'self', 'top', 'parent', 'globalThis']);
+
+// Objects whose `open()` is window.open (document.open() is the document stream - not a tab).
+const WINDOW_RECEIVERS = new Set(['window', 'self', 'top', 'parent', 'globalThis']);
+
+// A location property whose assignment navigates.
+const LOCATION_PARTS = new Set(['href', 'search', 'pathname', 'host', 'hostname', 'port', 'protocol', 'hash']);
+
+// Function-like nodes: the unit of "the same function" for the target-blank heuristic.
+const FUNCTION_TYPES = new Set([
+    'FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression',
+    'ClassMethod', 'ClassPrivateMethod', 'ObjectMethod'
+]);
+
+const AST_META_KEYS = new Set(['loc', 'start', 'end', 'extra', 'leadingComments', 'trailingComments', 'innerComments']);
+
+/**
+ * Call fn(node) on $root and every node below it. When $stop_at_functions is set, a
+ * function node below the root is visited itself but not entered.
+ */
+function visitNodes(root, fn, stop_at_functions = false) {
+    const visit = (node, is_root) => {
+        if (!node || typeof node.type !== 'string') {
+            return;
+        }
+        fn(node);
+        if (stop_at_functions && !is_root && FUNCTION_TYPES.has(node.type)) {
+            return;
+        }
+        for (const key of Object.keys(node)) {
+            if (AST_META_KEYS.has(key)) {
+                continue;
+            }
+            const child = node[key];
+            if (Array.isArray(child)) {
+                for (const item of child) {
+                    visit(item, false);
+                }
+            } else if (child && typeof child === 'object') {
+                visit(child, false);
+            }
+        }
+    };
+    visit(root, true);
+}
+
+function parseRecovering(content) {
+    return babelParser.parse(content, {
+        sourceType: 'module',
+        errorRecovery: true,
+        plugins: NAVIGATION_PARSE_PLUGINS
+    });
+}
+
+/**
+ * Every name the file binds anywhere (file-wide, not per scope).
+ */
+function declaredNames(ast) {
+    const names = new Set();
+    const addPattern = (pattern) => {
+        if (!pattern) {
+            return;
+        }
+        switch (pattern.type) {
+            case 'Identifier':
+                names.add(pattern.name);
+                break;
+            case 'ObjectPattern':
+                for (const prop of pattern.properties) {
+                    addPattern(prop.type === 'RestElement' ? prop.argument : prop.value);
+                }
+                break;
+            case 'ArrayPattern':
+                for (const element of pattern.elements) {
+                    addPattern(element);
+                }
+                break;
+            case 'AssignmentPattern':
+                addPattern(pattern.left);
+                break;
+            case 'RestElement':
+                addPattern(pattern.argument);
+                break;
+        }
+    };
+
+    visitNodes(ast.program, (node) => {
+        if (node.type === 'VariableDeclarator') {
+            addPattern(node.id);
+        } else if (FUNCTION_TYPES.has(node.type)) {
+            if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression') {
+                addPattern(node.id);
+            }
+            for (const param of node.params || []) {
+                addPattern(param);
+            }
+        } else if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
+            addPattern(node.id);
+        } else if (node.type === 'ImportSpecifier' || node.type === 'ImportDefaultSpecifier'
+            || node.type === 'ImportNamespaceSpecifier') {
+            addPattern(node.local);
+        } else if (node.type === 'CatchClause') {
+            addPattern(node.param);
+        }
+    });
+
+    return names;
+}
+
+function isMember(node) {
+    return !!node && (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression');
+}
+
+function isCall(node) {
+    return !!node && (node.type === 'CallExpression' || node.type === 'OptionalCallExpression');
+}
+
+function isGlobalName(node, names, declared) {
+    return !!node && node.type === 'Identifier' && names.has(node.name) && !declared.has(node.name);
+}
+
+function stringValue(node) {
+    if (!node) {
+        return null;
+    }
+    if (node.type === 'StringLiteral') {
+        return node.value;
+    }
+    if (node.type === 'TemplateLiteral' && node.expressions.length === 0 && node.quasis.length === 1) {
+        return node.quasis[0].value.cooked;
+    }
+    return null;
+}
+
+/**
+ * The source text of a node on one line, shortened - what a finding names.
+ */
+function nodeText(content, node) {
+    const text = content.slice(node.start, node.end).replace(/\s+/g, ' ').trim();
+    return text.length > 90 ? text.slice(0, 87) + '...' : text;
+}
+
+/**
+ * window / document / self / top / parent / globalThis, and chains of them
+ * (window.top, window.parent.document).
+ */
+function isGlobalReceiver(node, declared) {
+    if (isGlobalName(node, GLOBAL_RECEIVERS, declared)) {
+        return true;
+    }
+    return isMember(node) && GLOBAL_RECEIVERS.has(memberPropertyName(node)) && isGlobalReceiver(node.object, declared);
+}
+
+function isWindowReceiver(node, declared) {
+    if (isGlobalName(node, WINDOW_RECEIVERS, declared)) {
+        return true;
+    }
+    return isMember(node) && WINDOW_RECEIVERS.has(memberPropertyName(node)) && isWindowReceiver(node.object, declared);
+}
+
+/**
+ * The page's location object itself: bare `location` (when the file binds no such name),
+ * `<global receiver>.location` / `['location']`, or a variable that was given one.
+ */
+function isLocationObject(node, declared, aliases) {
+    if (!node) {
+        return false;
+    }
+    if (node.type === 'Identifier') {
+        return (node.name === 'location' && !declared.has('location')) || aliases.has(node.name);
+    }
+    return isMember(node) && memberPropertyName(node) === 'location' && isGlobalReceiver(node.object, declared);
+}
+
+/**
+ * The page's history object: bare `history` or `<global receiver>.history`.
+ */
+function isHistoryObject(node, declared) {
+    if (node && node.type === 'Identifier') {
+        return node.name === 'history' && !declared.has('history');
+    }
+    return isMember(node) && memberPropertyName(node) === 'history' && isGlobalReceiver(node.object, declared);
+}
+
+/**
+ * Everything JS-NAVIGATE-01 judges in one JavaScript file.
+ *
+ * @param {string} content - File content
+ * @returns {object} {findings: [{line, kind, detail}], error}
+ *   kind: location_write | location_alias | location_call | jquery_location | history_write | spa_removed
+ */
+function analyzeNavigation(content) {
+    let ast;
+    try {
+        ast = parseRecovering(content);
+    } catch (e) {
+        // A file that does not parse is reported by quality.lint; nothing to analyze here.
+        return { findings: [], error: `Parse error: ${e.message}` };
+    }
+
+    const declared = declaredNames(ast);
+
+    // Pass 1: names that were given the location object (const l = window.location). Run
+    // to a fixed point, so `const m = l` is an alias too.
+    const aliases = new Set();
+    for (let changed = true; changed;) {
+        changed = false;
+        visitNodes(ast.program, (node) => {
+            let name = null;
+            if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && isLocationObject(node.init, declared, aliases)) {
+                name = node.id.name;
+            } else if (node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'Identifier'
+                && isLocationObject(node.right, declared, aliases)) {
+                name = node.left.name;
+            }
+            if (name !== null && name !== 'location' && !aliases.has(name)) {
+                aliases.add(name);
+                changed = true;
+            }
+        });
+    }
+
+    const findings = [];
+    const seen = new Set();
+    const report = (node, kind) => {
+        const key = node.loc.start.line + ':' + kind;
+        if (!seen.has(key)) {
+            seen.add(key);
+            findings.push({ line: node.loc.start.line, kind: kind, detail: nodeText(content, node) });
+        }
+    };
+
+    // The location object as an ASSIGNMENT TARGET - an alias variable being re-pointed is
+    // not a navigation, so aliases count only as the object a property is written on.
+    const isLocationTarget = (node) => {
+        if (node.type === 'Identifier') {
+            return node.name === 'location' && !declared.has('location');
+        }
+        return isMember(node) && memberPropertyName(node) === 'location' && isGlobalReceiver(node.object, declared);
+    };
+
+    visitNodes(ast.program, (node) => {
+        if (node.type === 'AssignmentExpression') {
+            const left = node.left;
+            if (isLocationTarget(left)
+                || (isMember(left) && LOCATION_PARTS.has(memberPropertyName(left)) && isLocationObject(left.object, declared, aliases))) {
+                report(node, 'location_write');
+                return;
+            }
+            // Destructuring out of location (`({hash} = location)`) is a READ, not an alias.
+            if (node.operator === '=' && left.type !== 'ObjectPattern' && left.type !== 'ArrayPattern'
+                && isLocationObject(node.right, declared, aliases)) {
+                report(node, 'location_alias');
+            }
+            return;
+        }
+
+        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init
+            && isLocationObject(node.init, declared, aliases)) {
+            report(node, 'location_alias');
+            return;
+        }
+
+        if (!isCall(node) || !isMember(node.callee)) {
+            return;
+        }
+
+        const method = memberPropertyName(node.callee);
+        const receiver = node.callee.object;
+
+        if ((method === 'assign' || method === 'replace') && isLocationObject(receiver, declared, aliases)) {
+            report(node, 'location_call');
+            return;
+        }
+
+        if ((method === 'attr' || method === 'prop') && node.arguments.length >= 2
+            && ['href', 'location'].includes(stringValue(node.arguments[0]))
+            && isCall(receiver) && receiver.callee.type === 'Identifier'
+            && (receiver.callee.name === '$' || receiver.callee.name === 'jQuery')
+            && receiver.arguments.length === 1
+            && (isLocationObject(receiver.arguments[0], declared, aliases) || isGlobalReceiver(receiver.arguments[0], declared))) {
+            report(node, 'jquery_location');
+            return;
+        }
+
+        if ((method === 'pushState' || method === 'replaceState') && isHistoryObject(receiver, declared)) {
+            report(node, 'history_write');
+            return;
+        }
+
+        if ((method === 'dispatch' || method === 'redirect') && isGlobalName(receiver, new Set(['Spa']), declared)) {
+            report(node, 'spa_removed');
+        }
+    });
+
+    findings.sort((a, b) => a.line - b.line);
+
+    return { findings };
+}
+
+/**
+ * Is this node a string that is exactly `_blank`?
+ */
+function isBlankTarget(node) {
+    return stringValue(node) === '_blank';
+}
+
+const TARGET_BLANK_MARKUP = /\btarget\s*=\s*["']?_blank/i;
+
+/**
+ * Is the call one that gives its receiver target="_blank"? `.attr('target', '_blank')`,
+ * `.prop(...)`, `.attr({target: '_blank'})`, `.setAttribute('target', '_blank')`.
+ */
+function isBlankTargetCall(node) {
+    if (!isCall(node) || !isMember(node.callee)) {
+        return false;
+    }
+    const method = memberPropertyName(node.callee);
+    const args = node.arguments;
+    if (method === 'attr' || method === 'prop' || method === 'setAttribute') {
+        if (args.length >= 2 && stringValue(args[0]) === 'target' && isBlankTarget(args[1])) {
+            return true;
+        }
+        if ((method === 'attr' || method === 'prop') && args.length === 1 && args[0].type === 'ObjectExpression') {
+            return args[0].properties.some(isBlankTargetProperty);
+        }
+    }
+    return false;
+}
+
+function isBlankTargetProperty(prop) {
+    if (prop.type !== 'ObjectProperty' || prop.computed) {
+        return false;
+    }
+    const key = prop.key.type === 'Identifier' ? prop.key.name : stringValue(prop.key);
+    return key === 'target' && isBlankTarget(prop.value);
+}
+
+/**
+ * Does this expression (not entering functions) create or configure something with
+ * target="_blank"? Markup with the attribute, an attrs object with it, or a call that sets it.
+ */
+function containsBlankTarget(node) {
+    let found = false;
+    visitNodes(node, (child) => {
+        if (found) {
+            return;
+        }
+        if (child.type === 'StringLiteral' && TARGET_BLANK_MARKUP.test(child.value)) {
+            found = true;
+        } else if (child.type === 'TemplateElement' && TARGET_BLANK_MARKUP.test(child.value.raw)) {
+            found = true;
+        } else if (child.type === 'ObjectProperty' && isBlankTargetProperty(child)) {
+            found = true;
+        } else if (isBlankTargetCall(child)) {
+            found = true;
+        }
+    }, true);
+    return found;
+}
+
+/**
+ * A stable key for the element an expression names: `a`, `this.$link`, with indexing,
+ * `.get(n)` / `.first()` / `.eq(n)` / `.last()` and a `$(x)` wrapper stepped through, so
+ * `$link[0]`, `$link.get(0)` and `$(link)` all name the element their base names.
+ */
+function elementKey(node) {
+    if (!node) {
+        return null;
+    }
+    if (node.type === 'Identifier') {
+        return node.name;
+    }
+    if (node.type === 'ThisExpression') {
+        return 'this';
+    }
+    if (isMember(node)) {
+        if (node.computed && node.property.type === 'NumericLiteral') {
+            return elementKey(node.object);
+        }
+        const prop = memberPropertyName(node);
+        const base = elementKey(node.object);
+        return prop !== null && base !== null ? base + '.' + prop : null;
+    }
+    if (isCall(node)) {
+        if (isMember(node.callee) && ['get', 'first', 'eq', 'last'].includes(memberPropertyName(node.callee))) {
+            return elementKey(node.callee.object);
+        }
+        if (node.callee.type === 'Identifier' && (node.callee.name === '$' || node.callee.name === 'jQuery')
+            && node.arguments.length === 1) {
+            return elementKey(node.arguments[0]);
+        }
+    }
+    return null;
+}
+
+/**
+ * A call that activates an element from code: `.click()`, `.trigger('click')`,
+ * `.triggerHandler('click')`, and for a form `.submit()`, `.requestSubmit()`,
+ * `.trigger('submit')`. With an argument, `.click(fn)` / `.submit(fn)` BIND a handler and
+ * are not activations.
+ */
+function isActivationCall(node) {
+    if (!isCall(node) || !isMember(node.callee)) {
+        return false;
+    }
+    const method = memberPropertyName(node.callee);
+    const args = node.arguments;
+    if (method === 'click' || method === 'submit' || method === 'requestSubmit') {
+        return args.length === 0;
+    }
+    if (method === 'trigger' || method === 'triggerHandler') {
+        return args.length >= 1 && ['click', 'submit'].includes(stringValue(args[0]));
+    }
+    return false;
+}
+
+function isSyntheticClickEvent(node) {
+    return !!node && node.type === 'NewExpression' && node.callee.type === 'Identifier'
+        && ['MouseEvent', 'Event', 'PointerEvent'].includes(node.callee.name)
+        && node.arguments.length >= 1 && stringValue(node.arguments[0]) === 'click';
+}
+
+/**
+ * Everything JS-NEW-TAB-01 judges in one JavaScript file.
+ *
+ * @param {string} content - File content
+ * @returns {object} {findings: [{line, kind, detail}], error}
+ *   kind: window_open | synthetic_click | blank_target_click
+ */
+function analyzeNewTab(content) {
+    let ast;
+    try {
+        ast = parseRecovering(content);
+    } catch (e) {
+        return { findings: [], error: `Parse error: ${e.message}` };
+    }
+
+    const declared = declaredNames(ast);
+
+    const findings = [];
+    const seen = new Set();
+    const report = (node, kind) => {
+        const key = node.loc.start.line + ':' + kind;
+        if (!seen.has(key)) {
+            seen.add(key);
+            findings.push({ line: node.loc.start.line, kind: kind, detail: nodeText(content, node) });
+        }
+    };
+
+    // Names bound to a synthetic click event (const e = new MouseEvent('click')).
+    const click_events = new Set();
+    visitNodes(ast.program, (node) => {
+        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && isSyntheticClickEvent(node.init)) {
+            click_events.add(node.id.name);
+        }
+    });
+
+    visitNodes(ast.program, (node) => {
+        if (!isCall(node)) {
+            return;
+        }
+        const callee = node.callee;
+
+        if (callee.type === 'Identifier' && callee.name === 'open' && !declared.has('open')) {
+            report(node, 'window_open');
+            return;
+        }
+        if (isMember(callee) && memberPropertyName(callee) === 'open' && isWindowReceiver(callee.object, declared)) {
+            report(node, 'window_open');
+            return;
+        }
+        if (isMember(callee) && memberPropertyName(callee) === 'dispatchEvent' && node.arguments.length >= 1) {
+            const event = node.arguments[0];
+            if (isSyntheticClickEvent(event) || (event.type === 'Identifier' && click_events.has(event.name))) {
+                report(node, 'synthetic_click');
+            }
+        }
+    });
+
+    // A code-activated anchor or form that, in the SAME function, was given target _blank.
+    // Each function is judged with its nested callbacks; top-level code on its own.
+    const judgeScope = (root, stop_at_functions) => {
+        const blank_keys = new Set();
+        const activations = [];
+
+        visitNodes(root, (node) => {
+            if (node.type === 'AssignmentExpression') {
+                if (isMember(node.left) && memberPropertyName(node.left) === 'target' && isBlankTarget(node.right)) {
+                    const key = elementKey(node.left.object);
+                    if (key !== null) {
+                        blank_keys.add(key);
+                    }
+                } else if (containsBlankTarget(node.right)) {
+                    const key = elementKey(node.left);
+                    if (key !== null) {
+                        blank_keys.add(key);
+                    }
+                }
+                return;
+            }
+            if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init && containsBlankTarget(node.init)) {
+                blank_keys.add(node.id.name);
+                return;
+            }
+            if (isBlankTargetCall(node)) {
+                const key = elementKey(node.callee.object);
+                if (key !== null) {
+                    blank_keys.add(key);
+                }
+                return;
+            }
+            if (isActivationCall(node)) {
+                activations.push(node);
+            }
+        }, stop_at_functions);
+
+        for (const call of activations) {
+            const receiver = call.callee.object;
+            const key = elementKey(receiver);
+            if ((key !== null && blank_keys.has(key)) || containsBlankTarget(receiver)) {
+                report(call, 'blank_target_click');
+            }
+        }
+    };
+
+    judgeScope(ast.program, true);
+    visitNodes(ast.program, (node) => {
+        if (FUNCTION_TYPES.has(node.type)) {
+            judgeScope(node, false);
+        }
+    });
+
+    findings.sort((a, b) => a.line - b.line);
+
+    return { findings };
+}
+
+// =============================================================================
 // HANDLERS
 // =============================================================================
+
+/**
+ * Run a findings analyzer ({findings, error}) over each requested file.
+ */
+function analyzeFindings(request, analyzer) {
+    const results = {};
+
+    for (const file of request.files) {
+        try {
+            const content = fs.readFileSync(file, 'utf8');
+            const result = analyzer(content);
+            results[file] = {
+                status: 'success',
+                findings: result.findings,
+                error: result.error || null
+            };
+        } catch (error) {
+            results[file] = {
+                status: 'error',
+                error: {
+                    type: 'FileReadError',
+                    message: error.message
+                }
+            };
+        }
+    }
+
+    return { results };
+}
 
 module.exports = {
     /**
@@ -797,6 +1392,20 @@ module.exports = {
         }
 
         return { results };
+    },
+
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, findings, error}}}
+     */
+    analyze_navigation(request) {
+        return analyzeFindings(request, analyzeNavigation);
+    },
+
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, findings, error}}}
+     */
+    analyze_new_tab(request) {
+        return analyzeFindings(request, analyzeNewTab);
     },
 
     /**

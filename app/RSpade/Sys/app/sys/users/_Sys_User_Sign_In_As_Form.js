@@ -32,7 +32,8 @@ class _Sys_User_Sign_In_As_Form extends Component {
             return false;
         }
 
-        window.location.href = result.destination;
+        // A fresh document: the browser is now signed in as another user.
+        Rsx.navigate(result.destination, { load: 'full' });
 
         return true;
     }

@@ -167,7 +167,7 @@ HANDLING SPECIFIC ERRORS DIFFERENTLY
             } catch (e) {
                 if (e.code === Ajax.ERROR_NOT_FOUND) {
                     // Custom handling: redirect to create page
-                    Spa.dispatch(Rsx.Route('Feature_Create_Action'));
+                    Rsx.redirect(Rsx.Route('Feature_Create_Action'));
                     return;
                 }
                 // All other errors: use universal handler

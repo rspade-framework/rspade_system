@@ -11,7 +11,7 @@
  *   1. A plain-object rejection is still REPORTED (unhandled_exception fires, so the server log
  *      gets it) but its message carries the value as JSON - never "[object Object]" - it is
  *      marked implicated:false, and SPA navigation stays enabled.
- *   2. Spa.dispatch() afterwards still navigates CLIENT-SIDE.
+ *   2. Rsx.navigate() afterwards still navigates CLIENT-SIDE.
  *   3. A rejection whose stack names an extension script, and Chrome's extension-messaging
  *      failure, are ignored outright: no unhandled_exception at all.
  *   4. A rejection whose Error stack names this page's compiled bundle IS implicated: reported,
@@ -142,15 +142,15 @@ async function run() {
                         resolve();
                     }
                 });
-                Spa.dispatch(target);
+                Rsx.navigate(target);
             });
             return { path: window.location.pathname, marker: window.__no_reload_marker || null };
         }, OTHER_ROUTE);
 
         if (navigated.path !== OTHER_ROUTE || navigated.marker !== 'original') {
-            fail('Spa.dispatch() afterwards did not navigate client-side - ' + JSON.stringify(navigated));
+            fail('Rsx.navigate() afterwards did not navigate client-side - ' + JSON.stringify(navigated));
         } else {
-            console.log('PASS: Spa.dispatch() afterwards navigates client-side');
+            console.log('PASS: Rsx.navigate() afterwards navigates client-side');
         }
 
         // --- 3. extension-origin rejections are ignored outright ---

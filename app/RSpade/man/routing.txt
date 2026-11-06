@@ -77,7 +77,7 @@ BASIC USAGE
         const url = Rsx.Route('Demo_Index_Controller::show', {id: 123}); // /demo/123
 
         // Use in navigation
-        window.location.href = Rsx.Route('Demo_Index_Controller');
+        Rsx.navigate(Rsx.Route('Demo_Index_Controller'));
 
 URL FRAGMENT STATE
     The third argument is the URL fragment: the #key=value state that
@@ -420,7 +420,7 @@ HARDCODED URLS ARE A LINT FAILURE (URL-HARDCODE-01)
     decided by PATH, not by class analysis - and its suggestion names
     Rsx_Portal.Route() resolved against the PORTAL route table; everything else
     gets Rsx.Route() against the staff table. This matters because the portal is
-    browsed under its prefix (/_portal/ by default - rsx:man portal): Spa.dispatch strips that prefix to MATCH
+    browsed under its prefix (/_portal/ by default - rsx:man portal): the SPA's router strips that prefix to MATCH
     a route but writes the URL to history verbatim, so only Rsx_Portal.Route()
     puts it back and a bare /messages/3 stays bare. That hole shipped a real
     navigation bug.

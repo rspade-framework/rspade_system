@@ -388,6 +388,27 @@ class Rsx_Framework_Provider extends ServiceProvider
             });
         }
 
+        // True when this request is a navigation the user started on this site, or typed
+        // or bookmarked (Sec-Fetch-Site same-origin / none) - never one another site sent.
+        // A browser that sends no Sec-Fetch-Site falls back to the Referer host; with
+        // neither, the answer is false. The guard for a GET route that DOES something and
+        // redirects, which is how a new tab that needs server work is built (new tabs open
+        // only from a user-clicked <a target="_blank">; rsx:man navigation, NEW TABS).
+        if (!Request::hasMacro('is_same_origin_navigation')) {
+            Request::macro('is_same_origin_navigation', function () {
+                $site = strtolower((string) $this->header('Sec-Fetch-Site', ''));
+                if ($site !== '') {
+                    return $site === 'same-origin' || $site === 'none';
+                }
+                $referer = (string) $this->header('Referer', '');
+                if ($referer === '') {
+                    return false;
+                }
+                $host = parse_url($referer, PHP_URL_HOST);
+                return is_string($host) && strcasecmp($host, $this->getHost()) === 0;
+            });
+        }
+
         // Ensure the IDE bridge local-file grant token + passive guards exist (dev only).
         $this->ensure_ide_bridge_token();
 

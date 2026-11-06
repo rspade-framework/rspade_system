@@ -122,7 +122,7 @@ SPA ARCHITECTURE
             7. on_app_ready fires -- Spa.action() is available
 
         Subsequent Navigation:
-            1. User clicks link or calls Spa.dispatch()
+            1. User clicks link or code calls Rsx.navigate()
             2. Router matches URL to action class
             3. Destroys old action, creates new action
             4. Layout persists - no re-render
@@ -137,7 +137,7 @@ BOOTSTRAP CONTROLLER
         feature (Action + gated Ajax controller) in its own directory. Add
         further screens with rsx:app:module:feature:create <module> <feature>.
         (--blade scaffolds the server-rendered module ladder instead; see
-        module_organization(3).)
+        rsx:man module_organization.)
 
     Creating SPA Entry Point:
         // /rsx/app/frontend/Frontend_Spa_Controller.php
@@ -158,7 +158,7 @@ BOOTSTRAP CONTROLLER
           fails the manifest build. The dispatcher evaluates it before any
           application code; an unidentified caller is redirected to login with
           the intended URL captured. pre_dispatch() performs NO authorization
-          (see auth_gates(7))
+          (see rsx:man auth_gates)
         - Must return rsx_view(SPA, ['bundle' => '<Module>_Bundle']) - the SPA
           constant selects the shell view; the bundle parameter names the module
           bundle it loads (required)
@@ -203,7 +203,7 @@ BOOTSTRAP CONTROLLER
 
             const internal_id = window.rsxapp.page_data.contact_internal_id;
 
-        See pagedata(3) for detailed usage.
+        See rsx:man pagedata for detailed usage.
 
     Multiple SPA Bootstraps:
         Different features can have separate SPA bootstraps:
@@ -303,7 +303,7 @@ JAVASCRIPT ACTIONS
         @auth(check, ...)
             MANDATORY on every @route action - the build FAILS without it.
             Variadic named checks with AND semantics, the JS twin of PHP's
-            #[Auth]. Spa.dispatch() resolves them against the client auth
+            #[Auth]. The SPA's dispatch resolves them against the client auth
             state BEFORE instantiating the action; a denial renders the
             unauthorized error screen in the layout content area (URL and
             history preserved, the action never constructs).
@@ -311,7 +311,7 @@ JAVASCRIPT ACTIONS
 
             The client gate is UX, not security: it makes the interface
             honest. Safety is the server running the same named gates on
-            every Ajax/ORM/API call the action makes. See auth_gates(7).
+            every Ajax/ORM/API call the action makes. See rsx:man auth_gates.
 
         @title(page_title)
             The action's title, stored on the class as _spa_title. For a page
@@ -603,7 +603,8 @@ NAVIGATION
           changed - does NOT re-dispatch: the action stays mounted and
           spa_hash_change fires (see SPA EVENTS). A change of path or query
           always re-dispatches, and actions are never reused.
-        - URL updates in address bar via pushState()
+        - The address bar is written by the navigation door (rsx:man
+          navigation); application code never writes history itself
         - Back/Forward and a refresh return a page to where it was scrolled
           (below)
         - Links to external or non-SPA routes perform full page load
@@ -645,50 +646,57 @@ NAVIGATION
         restoration, no scroll-to-top.
 
         history.state on an SPA entry is the framework's: {spa_run, spa_index,
-        scroll, form_data}. Code that calls history.replaceState() itself must
-        pass history.state back (or spread it), never null - a wiped state
-        loses the entry's position in both senses. Rsx.url_hash_set() does.
+        scroll, form_data}. Application code never writes history on an SPA
+        page (JS-NAVIGATE-01): Rsx.navigate(url, {load: 'none'}) and
+        Rsx.url_hash_set() rewrite the address bar and keep the entry's
+        state.
 
     Programmatic Navigation:
-        Spa.dispatch(url)
-            Navigate to URL programmatically
-            If URL is part of current SPA, uses client-side routing
-            If URL is external or different SPA, performs full page load
-            Pushes a new entry onto browser history (Back goes to previous page)
+        Code navigates with Rsx.navigate(url, options) and Rsx.redirect(url,
+        options) - the ONE door, for every target (rsx:man navigation). A
+        route of this SPA renders in place; a Blade page, another SPA
+        bootstrap, a download or another site is a full page load; the same
+        URL with another #fragment is a fragment move; exactly the URL on
+        screen reloads.
 
-        Spa.redirect(url)
-            Same as dispatch() but replaces the current history entry
-            Use for programmatic redirects where the user didn't intentionally
-            navigate to the current URL (e.g., on_load() determines the record
-            should display at a different route). Back button skips the
-            redirecting page and goes to wherever the user was before.
+            Rsx.navigate(url)
+                Pushes a new entry (Back returns to the page left).
+
+            Rsx.redirect(url)
+                Replaces the current entry - the one for a redirect in
+                on_load(). Back skips the redirecting page.
 
         Example:
-            // Navigate within SPA (adds history entry)
-            Spa.dispatch('/contacts/123');
+            Rsx.navigate(Rsx.Route('Contacts_View_Action', 123));
+            Rsx.redirect(Rsx.Route('Internal_Action'));
+            Rsx.navigate('https://example.com');
 
-            // Redirect within SPA (replaces history entry)
-            Spa.redirect('/internal');
-
-            // Navigate to external URL (full page load)
-            Spa.dispatch('https://example.com');
-
-        When to use redirect() vs dispatch():
-            - User clicks a link or button       -> dispatch() (user-initiated)
-            - on_load() sends user elsewhere      -> redirect() (programmatic)
+        When to use redirect() vs navigate():
+            - User clicks a button               -> navigate()
+            - on_load() sends user elsewhere      -> redirect()
             - Permission/role-based rerouting     -> redirect()
             - Record moved/merged to new URL      -> redirect()
             - Slug canonicalization               -> redirect()
 
-        Use Spa.dispatch()/redirect() instead of window.location for all navigation.
+        Options: {history: 'push'|'replace', via: 'carry'|'drop'|'continue',
+        load: 'auto'|'full'|'none', title_hint}; anything unknown throws.
+        {load: 'none'} rewrites the address bar for the action on screen
+        without dispatching.
+
+        Application code never writes location or history itself and never
+        opens a tab: JS-NAVIGATE-01 and JS-NEW-TAB-01 are manifest-build
+        FATALs (rsx:man navigation, RULES). Spa.dispatch(), Spa.redirect()
+        and Spa_Action.dispatch() were removed; the SPA's own render path is
+        internal.
 
         Breadcrumb origins: when the current URL carries the reserved _via
-        parameter, dispatch(), redirect() and intercepted link clicks CARRY it
-        onto a target route that names none. The {via} option says how:
-        'carry' (the default), 'drop' (do not carry), 'continue' (a create
-        page handing over to the record it created; carried as an explicit
-        claim). Any other value throws:
-            Spa.dispatch(url, {via: 'drop'});
+        parameter, Rsx.navigate(), Rsx.redirect() and intercepted link
+        clicks CARRY it onto a target route that names none - across a full
+        page load too, by a hand-off the next document reads. The {via}
+        option says how: 'carry' (the default), 'drop' (do not carry),
+        'continue' (a create page handing over to the record it created;
+        carried as an explicit claim):
+            Rsx.navigate(url, {via: 'drop'});
         _via never reaches this.args. See rsx:man breadcrumb_origins.
 
     Accessing Active Components:
@@ -712,6 +720,9 @@ NAVIGATION
                data-loader-title-hint="<%= contact.name %>">
               <%= contact.name %>
             </a>
+
+        From code, the same hint is the title_hint option:
+        Rsx.navigate(url, {title_hint: contact.name}).
 
         When the link is clicked:
         1. document.title is immediately set to the hint value
@@ -763,7 +774,7 @@ THE NAVIGATION GUARD
         A Back/Forward that changes only the #fragment
             Not a departure. It fires spa_hash_change and nobody is asked.
 
-        Navigation from CODE - Spa.dispatch(), Spa.redirect()
+        Navigation from CODE - Rsx.navigate(), Rsx.redirect()
             NOT GUARDED. A button handler, a row click, a redirect after a save:
             the dispatch goes ahead in the SPA with no prompt and turns the
             guard off. Code that navigates has already decided.
@@ -1066,20 +1077,23 @@ SPA EVENTS
 
         What fires it: a popstate whose path and query match the page showing.
         That covers Back/Forward across an entry the application pushed, an
-        in-page <a href="#section"> the user followed, and a location.hash
-        assignment. history.pushState()/replaceState() fire NOTHING - that is
-        the browser's rule - so the code that wrote a fragment already knows it
-        did. There is no "from" value for the same reason: a replaceState()
-        write is invisible, so the fragment the page last showed cannot be
-        known reliably. Keep your own record of what you opened.
+        in-page <a href="#section"> the user followed, and Rsx.navigate() to
+        the same path and query with another fragment (a native fragment
+        move). An address-bar rewrite - Rsx.navigate(url, {load: 'none'}),
+        Rsx.url_hash_set() - fires NOTHING (the browser's rule for a history
+        write), so the code that wrote a fragment already knows it did. There
+        is no "from" value for the same reason: a rewrite is invisible, so the
+        fragment the page last showed cannot be known reliably. Keep your own
+        record of what you opened.
 
         An `at` anchor in the new fragment is scrolled to before the event
         fires, so an in-page section link works without a dispatch
         (rsx:man anchors).
 
-        So "Back closes the dialog" is: pushState() the dialog's fragment on
-        open, and close it from spa_hash_change when the fragment no longer
-        names it. It costs a DOM removal, not a page rebuild.
+        So "Back closes the dialog" is: on open, push the dialog's fragment
+        with Rsx.navigate(url, {load: 'none'}) (url = the current path and
+        query plus that fragment), and close it from spa_hash_change when the
+        fragment no longer names it. It costs a DOM removal, not a page rebuild.
 
     Example: Custom navigation tracking
 
@@ -1098,8 +1112,9 @@ SPA EVENTS
 DISABLING SPA NAVIGATION
     Spa.disable() turns every subsequent navigation into a full page load. The
     SPA stays mounted and the current page keeps working; what changes is that
-    the next link click or Spa.dispatch() hands off to the browser instead of
-    swapping the action client-side.
+    the next link click or Rsx.navigate() becomes a full page load instead of
+    swapping the action client-side (the breadcrumb origin is still handed
+    across; rsx:man navigation).
 
         Spa.disable();   // next navigation is a real request
         Spa.enable();    // back to client-side dispatch
@@ -1395,7 +1410,7 @@ TROUBLESHOOTING
         - Verify using Rsx.Route() not hardcoded URLs
         - Check @spa() decorator references correct bootstrap controller
         - Ensure layout has $sid="content" element
-        - Test Spa.dispatch() directly
+        - Test Rsx.navigate(url) directly from the console
 
     Layout Not Persisting:
         - Verify all actions in module use same @layout()
@@ -1417,9 +1432,9 @@ COMMON PATTERNS
     Conditional Navigation:
         // Navigate based on condition
         if (user.is_admin) {
-            Spa.dispatch(Rsx.Route('Admin_Dashboard_Action'));
+            Rsx.navigate(Rsx.Route('Admin_Dashboard_Action'));
         } else {
-            Spa.dispatch(Rsx.Route('User_Dashboard_Action'));
+            Rsx.navigate(Rsx.Route('User_Dashboard_Action'));
         }
 
     Reloading Current Action:
@@ -1429,8 +1444,9 @@ COMMON PATTERNS
     Form Submission with Redirect:
         // The action declares the endpoint on the form and submits nothing
         // itself. A ['redirect' => ...] in the endpoint's success payload
-        // navigates; validation failures render in place. See
-        // form_conventions(3).
+        // navigates through Rsx.navigate() (its redirect_via is the {via}
+        // option); validation failures render in place. See
+        // rsx:man form_conventions and rsx:man navigation, FORMS.
         <Rsx_Form $controller="My_Controller" $method="save" $data=this.data.form_data>
             <Form_Errors />
             ...
@@ -1506,6 +1522,8 @@ SEE ALSO
     rsx:man controller - Controller patterns and Ajax endpoints
     rsx:man jqhtml - Component lifecycle and templates
     rsx:man routing - URL generation and route patterns
+    rsx:man navigation - Rsx.navigate() / Rsx.redirect(), the new-tab policy,
+                         JS-NAVIGATE-01 and JS-NEW-TAB-01
     rsx:man breadcrumb_origins - an alternate breadcrumb parent carried by _via
     rsx:man modals - Modal dialogs in SPA context
     rsx:man form_conventions - the form engine, dirty protection and the page

@@ -84,29 +84,11 @@ class Spa_Action extends Component {
     }
 
     /**
-     * Navigate to this action with given parameters
-     * Static method for programmatic navigation
-     */
-    static dispatch(params = {}) {
-        const that = this;
-        const url = that.url(params);
-        Spa.dispatch(url);
-    }
-
-    /**
      * Instance method: Generate URL with current args merged with new params
      */
     url(params = {}) {
         const merged_params = { ...this.args, ...params };
         return this.constructor.url(merged_params);
-    }
-
-    /**
-     * Instance method: Navigate with current args merged with new params
-     */
-    dispatch(params = {}) {
-        const url = this.url(params);
-        Spa.dispatch(url);
     }
 
     // =========================================================================

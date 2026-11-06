@@ -48,6 +48,7 @@ Notes:
 | PORTAL-SITE-14 | a non-positive resolved site is impossible | php | _declare_resolved_site(0) | RuntimeException | implemented | 2026-10-22 |
 | PORTAL-SITE-15 | a live portal sign-in of another site is signed out (SIGN_OUT_SITE_SWITCHED) and the request continues signed out | http | harness sign-in moved to site 0, GET /_portal/ | control 200; then 302 to /_portal/login, reason 9, pointer cleared | implemented (`http/portal_site_mismatch_sign_out.sh`) | 2026-10-22 |
 | PORTAL-SITE-16 | set_site_id() throws in a web request (the URL is the authority) | http | a web call to set_site_id() | RuntimeException naming rsx:man portal | deferred (no web caller remains to drive it; CLI cannot reach the web branch) | 2026-10-22 |
+| PORTAL-DEVAUTH-01 | the portal dev-auth verifier checks the request URI the minter signed - path AND query, the portal prefix removed - so rsx:debug --portal on a URL with a query string renders signed in | http | rsx:debug /_portal/ and '/_portal/?rsx_probe=1' --portal --portal-user | both signed in, the second at its own URL | implemented (`http/portal_dev_auth_query_string.sh`) | 2026-11-06 |
 
 Notes:
 - All `php` rows live in `php/Portal_Site_Declaration_Test.php`.

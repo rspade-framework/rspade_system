@@ -19,7 +19,7 @@ The template's screens are the worked examples, and are what a fork already has:
 |---|---|---|---|
 | Change password | - | an `<Rsx_Form>` to your own endpoint: current password checked throttle-first (`Login_Throttle::require_not_throttled($email)`), a miss recorded with `Login_History::record_failure()`, the new hash saved through `Login_User_Model` (which signs every OTHER browser out itself) | `rsx:man session` |
 | Two-factor | `Rsx_Two_Factor_Controller.credentials_list()` - factors, recovery codes left, whether codes are issued | `<Totp_Enrollment>` / `<Passkey_Register>` hosted in a dialog, listening for `'enrolled'` / `'registered'`; `credential_remove({id})`; `recovery_regenerate()` (show the codes once) | skill `rspade:two-factor`, `rsx:man two_factor` |
-| Connected accounts | `Rsx_Sso.is_enabled()` / `enabled_providers()` (no fetch), `Rsx_Sso_Controller.identities_list()` | `link_begin({provider})` then `window.location = result.url`; `identity_unlink({id})` | skill `rspade:sso` |
+| Connected accounts | `Rsx_Sso.is_enabled()` / `enabled_providers()` (no fetch), `Rsx_Sso_Controller.identities_list()` | `link_begin({provider})` then `Rsx.navigate(result.url)`; `identity_unlink({id})` | skill `rspade:sso` |
 | Where you're signed in | your own endpoint over `Session::get_sessions_for_user()` | `Session::terminate_session()` / `terminate_all_other_sessions()` | skill `rspade:session-auth` |
 | API keys | your own grid over the identity's keys | mint (shown once), scopes, read-only, revoke; every endpoint re-asks `Session::has_api_access()` | skill `rspade:external-api` |
 

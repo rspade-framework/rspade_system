@@ -21,7 +21,7 @@ class _Sys_Task_Detail extends Component {
             height: 'min(1075px, 80vh)',
             mobile_height: 'min(1075px, 90vh)',
             buttons: [
-                { label: 'Open as page', value: false, class: 'btn-secondary', callback: () => Spa.dispatch(Rsx.Route('_Sys_Task_View_Action', int(task_id))) },
+                { label: 'Open as page', value: false, class: 'btn-secondary', callback: () => Rsx.navigate(Rsx.Route('_Sys_Task_View_Action', int(task_id))) },
                 { label: 'Close', value: true, class: 'btn-primary', default: true },
             ],
         });

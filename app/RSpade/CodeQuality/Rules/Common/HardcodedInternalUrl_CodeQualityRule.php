@@ -33,7 +33,7 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  * flagged, just with the staff spelling in the suggestion.
  *
  * WHY IT IS HIGH: a hardcoded portal href shipped to production and broke navigation. In
- * the portal the browser is under the `/_portal/` prefix, `Spa.dispatch` strips that prefix
+ * the portal the browser is under the `/_portal/` prefix, the SPA's router strips that prefix
  * to MATCH a route but writes the URL to history verbatim, and only `Rsx_Portal.Route()`
  * puts the prefix back. A bare `/messages/3` therefore stays bare.
  */
@@ -367,7 +367,7 @@ class HardcodedInternalUrl_CodeQualityRule extends CodeQualityRule_Abstract
         $lines[] = 'An internal path written as a literal is a link that breaks silently: it survives a route';
         $lines[] = 'rename, a mount-prefix change and a portal prefix without any error to show for it. The';
         $lines[] = 'portal case has already shipped a real navigation bug - the browser is under /_portal/,';
-        $lines[] = 'Spa.dispatch strips that prefix to MATCH a route but writes the URL to history verbatim,';
+        $lines[] = 'the SPA router strips that prefix to MATCH a route but writes the URL to history verbatim,';
         $lines[] = 'and only Rsx_Portal.Route() puts it back, so a bare /messages/3 stays bare.';
         $lines[] = '';
         $lines[] = 'Write the WHOLE value as a Route() call:';

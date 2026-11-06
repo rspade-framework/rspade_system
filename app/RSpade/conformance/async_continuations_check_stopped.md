@@ -36,7 +36,7 @@ A continuation that, after a wait NOT made through `this.alive()` and with no `i
 
 - **uses a child component handle** - `this.sid(...)`, `this.$sid(...).component()`, `$(...).component()` inside `this.$` - and calls a method or reads a property on it;
 - **re-renders or refetches** - `this.reload()`, `this.refresh()`, `this.render()`, `this.load()`, or the same on a child;
-- **starts a page-level effect** - `Spa.dispatch()` / `Spa.redirect()` (it would move a user who has already gone elsewhere), `Modal.*`, `Flash_Alert.*`, `Rsx.set_navigation_guard()`, `window.location` changes;
+- **starts a page-level effect** - `Rsx.navigate()` / `Rsx.redirect()` (it would move a user who has already gone elsewhere), `Modal.*`, `Flash_Alert.*`, `Rsx.set_navigation_guard()`;
 - **subscribes, binds or triggers** - `this.subscribe()`, `.on(...)` on a child, `this.trigger(...)`.
 
 Fix: wrap the wait - `await this.alive(<the promise>)`. Where the code must keep going after a stop, keep the plain await and insert `if (this.is_stopped()) return;` before the component-specific part, with a short comment saying what must still happen.

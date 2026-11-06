@@ -199,7 +199,7 @@ async function run() {
 
         await page.evaluate(async (target) => {
             const ready = window.__ready_for(target);
-            Spa.dispatch(target);
+            Rsx.navigate(target);
             await ready;
             window.__hash_events = [];
         }, OTHER_ROUTE);

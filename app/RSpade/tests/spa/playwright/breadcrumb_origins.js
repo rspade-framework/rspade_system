@@ -100,7 +100,7 @@ async function install(page) {
 
             // Navigate, then wait for the keep/strip decision of the page that lands.
             async go(url, options = {}) {
-                await Spa.dispatch(url, options);
+                await Rsx.navigate(url, options);
                 const length_at_dispatch = history.length;
                 const arrival = Spa._via_navigation ? Spa._via_navigation.arrival : null;
                 const settled = await Spa.action()._spa_via_settlement;
@@ -219,7 +219,7 @@ async function run() {
         // --- 7. opt-out ---
         const opt_out = await page.evaluate(async () => {
             await window.__via.go('/_sys/users/1?_via=site.1');
-            await Spa.dispatch('/_sys/system-info', { via: 'drop' });
+            await Rsx.navigate('/_sys/system-info', { via: 'drop' });
             return { loc: window.__via.here(), arrival: Spa._via_navigation.arrival };
         });
         check(opt_out.loc === '/_sys/system-info' && opt_out.arrival === null,
@@ -259,7 +259,7 @@ async function run() {
             "{via: 'continue'} with a target naming its own _via keeps the target's", continued_own);
 
         const continued_none = await page.evaluate(async () => {
-            await Spa.dispatch('/_sys/tasks', { via: 'drop' });
+            await Rsx.navigate('/_sys/tasks', { via: 'drop' });
             return window.__via.go('/_sys/workers', { via: 'continue' });
         });
         check(continued_none.arrival === null && continued_none.loc === '/_sys/workers',
@@ -267,12 +267,12 @@ async function run() {
 
         const refused = await page.evaluate(async () => {
             const attempt = async (options) => {
-                try { await Spa.dispatch('/_sys/tasks', options); return null; } catch (e) { return e.message; }
+                try { await Rsx.navigate('/_sys/tasks', options); return null; } catch (e) { return e.message; }
             };
             return {
                 bogus: await attempt({ via: 'bogus' }),
                 bool: await attempt({ via: false }),
-                no_history: await attempt({ via: 'continue', history: 'none' }),
+                no_load: await attempt({ via: 'continue', load: 'none' }),
                 carry: await attempt({ via: 'carry' }),
             };
         });
@@ -280,7 +280,7 @@ async function run() {
             && refused.bogus.includes("'continue'"),
             'an unknown {via} value throws, naming the accepted values', refused.bogus);
         check(refused.bool !== null, '{via: false} throws (the value is \'drop\')', refused.bool);
-        check(refused.no_history !== null, "{via: 'continue'} with {history: 'none'} throws", refused.no_history);
+        check(refused.no_load !== null, "{via: 'continue'} with {load: 'none'} throws", refused.no_load);
         check(refused.carry === null, "{via: 'carry'} is accepted (the default, spelled out)", refused.carry);
 
         // --- 8. nesting ---
@@ -320,9 +320,9 @@ async function run() {
 
         // --- 10. loop guard and depth cap ---
         const guard = await page.evaluate(async () => {
-            await Spa.dispatch('/_sys/logs', { via: 'drop' });
+            await Rsx.navigate('/_sys/logs', { via: 'drop' });
             const loop = await Rsx_Breadcrumb_Resolver._walk_chain_structure(Spa.action(), '/_sys/logs', null, []);
-            await Spa.dispatch('/_sys/performance', { via: 'drop' });
+            await Rsx.navigate('/_sys/performance', { via: 'drop' });
             const deep = await Rsx_Breadcrumb_Resolver._walk_chain_structure(Spa.action(), '/_sys/performance', null, []);
             return { loop: loop.chain.map((c) => c.url), deep: deep.chain.length };
         });

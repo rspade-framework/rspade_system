@@ -1154,12 +1154,16 @@ IMPERSONATION (VIEW AS CLIENT)
     stays signed in behind it; the staff sign-in is untouched. Nothing rotates
     and nothing reaches the cookie but the opaque token.
 
-    Starting one. A staff Ajax endpoint (gated #[Auth('can_impersonate')]) calls
+    Starting one. A staff GET route (gated #[Auth('can_impersonate')], and
+    refusing a request another site started with
+    $request->is_same_origin_navigation()) calls
 
       Portal_Session::begin_impersonation_from_staff(
           $portal_user_id, $impersonator_user_id, $portal_site_id): string|false
 
-    and the staff page opens the URL it returns in a new tab. It throws
+    and answers a 302 to the URL it returns. The staff page reaches it with
+    an ordinary <a target="_blank" rel="noopener"> the user clicks - code
+    never opens the tab (rsx:man navigation, NEW TABS). It throws
     AjaxUnauthorizedException unless the staff-realm can_impersonate check
     passes, requires $impersonator_user_id to be the caller's own staff user,
     and never touches the target's last_login. It answers FALSE, applying
@@ -1303,8 +1307,8 @@ IMPERSONATION (VIEW AS CLIENT)
     Replacing the staff member's own portal identity in that browser is acceptable
     and expected (the new tab shares the browser's one session). Permission to
     impersonate is the app's call - the template redeclares can_impersonate as the
-    User_Model::ROLE_MANAGER floor and gates Frontend_Contacts_Controller::
-    begin_portal_impersonation on it.
+    User_Model::ROLE_MANAGER floor and gates its View as Client route,
+    Frontend_Contacts_Controller::view_as_client, on it.
 
 URL GENERATION
     Mandatory - never hardcode portal URLs. Same surface in PHP and JS:

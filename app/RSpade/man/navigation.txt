@@ -1,0 +1,329 @@
+NAME
+    navigation - Rsx.navigate() and Rsx.redirect(), the one door through
+    which code moves the browser, and the new-tab policy
+
+TAGS
+    spa, security
+
+SYNOPSIS
+    Go somewhere (a page of this SPA, a Blade page, another SPA, a download,
+    another site - the call is the same):
+
+        Rsx.navigate(Rsx.Route('Contacts_View_Action', id));
+
+    Replace the current history entry (a redirect in on_load()):
+
+        Rsx.redirect(Rsx.Route('Contacts_View_Action', canonical_id));
+
+    Options:
+
+        Rsx.navigate(url, {via: 'drop'});                   // no breadcrumb origin
+        Rsx.navigate(url, {via: 'continue'});               // create page hand-off
+        Rsx.navigate(url, {load: 'full'});                  // a fresh document
+        Rsx.navigate(url, {load: 'none', history: 'replace'}); // address bar only
+        Rsx.navigate(url, {title_hint: contact.name});      // title while loading
+
+    Open a new tab - only ever from a link the user clicks:
+
+        <a href="<%= Rsx.Route('Frontend_Contacts_Controller::view_as_client', id) %>"
+           target="_blank" rel="noopener">View as Client</a>
+
+DESCRIPTION
+    Every move of the browser that code makes goes through ONE function,
+    Rsx.navigate() (Core/Js/Rsx_Navigation.js; Rsx.redirect() is the same
+    function with history 'replace'). The SPA's own link interception calls
+    it too, so a click and a call behave identically. Nothing in application
+    code writes location or history itself; two manifest-build FATALs
+    enforce that (RULES).
+
+    Why one door:
+
+    Breadcrumb origins survive every kind of move. A page reached from
+    another record carries the reserved _via parameter (rsx:man
+    breadcrumb_origins). An in-app navigation carries it onto the target
+    and remembers how it arrived; a raw location write drops it, and a raw
+    full load loses how it arrived even when the URL keeps it. The door
+    carries it onto any route of this site and, before a full page load,
+    leaves a hand-off the next document reads, so a full load judges the
+    origin exactly as an in-app navigation would.
+
+    The SPA's history stays coherent. An SPA history entry holds the
+    framework's state ({spa_run, spa_index, scroll, form_data}, the
+    breadcrumb decider). A raw pushState()/replaceState() on an SPA page
+    writes entries the SPA did not number, and Back, scroll restoration and
+    the origin decision then read the wrong thing.
+
+    One readable flow. Whether a target renders in place, reloads, moves a
+    fragment or loads a document is decided in one place, from the target
+    and the page on screen - never by the caller guessing which API fits.
+
+OPTIONS
+    Every option is optional; an absent one takes its default. An unknown
+    key, an unknown value or an impossible combination THROWS synchronously,
+    at the call - nothing unknown is read as a default.
+
+        option      values                          default
+        ----------  ------------------------------  -------
+        history     'push' | 'replace'              'push'
+        via         'carry' | 'drop' | 'continue'   'carry'
+        load        'auto' | 'full' | 'none'        'auto'
+        title_hint  a non-empty string              none
+
+    history
+        'push' adds an entry (Back returns to the page left); 'replace'
+        overwrites the current one (Back skips it). Rsx.redirect() IS
+        history 'replace' and throws when given a history option.
+
+    via
+        How the current page's breadcrumb origin (_via) travels. 'carry'
+        copies it onto a target route that names none; 'drop' does not;
+        'continue' copies it as an EXPLICIT claim - a create page handing
+        over to the record it created. A target URL that names its own _via
+        always keeps it. 'continue' with load 'none' throws (nothing loads,
+        so no page would judge the claim). rsx:man breadcrumb_origins.
+
+    load
+        'auto' - the cheapest correct move (THE PIPELINE, transport).
+        'full' - always a real document load, even to a page of this SPA.
+        'none' - only the address bar changes (ADDRESS BAR ONLY).
+
+    title_hint
+        Set as document.title at once while an in-app page loads, and passed
+        to the action as this.args._loader_title_hint. A link gives the same
+        hint with data-loader-title-hint (rsx:man spa, Loader Title Hint).
+
+    The returned promise resolves, for an in-app navigation, once the new
+    page is committed (layouts rendered, action created - not necessarily
+    ready). Every other move resolves as soon as the browser has been told
+    to go: a full load resolves BEFORE the document unloads, and a download
+    never unloads it, so code after an awaited full-load navigate may or may
+    not run, and must not matter.
+
+THE PIPELINE
+    1. Validate
+        The options, as above.
+
+    2. Classify
+        The target, against the page on screen:
+
+            elsewhere   another host, or not http(s) (mailto:, a custom
+                        scheme)
+            same_site   this host, but not a page of the SPA running now:
+                        a Blade page, an action of another SPA bootstrap, a
+                        portal path outside this portal, a download route
+            in_app      a route of this SPA whose action runs under this
+                        page's bootstrap (@spa)
+
+        A same-host URL continues RELATIVE (path, query, fragment).
+
+    3. Augment
+        The one _via function. A target naming its own _via keeps it
+        (arrival explicit). {via: 'drop'} never carries. Otherwise, when the
+        current URL has a _via and the target is a route this bundle knows on
+        this host, the value is copied (arrival carried, or explicit under
+        'continue'). The SPA's link rewrite for new tabs (mousedown,
+        auxclick, contextmenu, Enter on a link) uses the same function.
+
+    4. Transport
+        The only code that writes location or history:
+
+            load 'none'                         rewrite the address bar only
+            'auto', fragment-only change        native fragment move
+            'auto', exactly the URL on screen   location.reload()
+            'auto', in_app, SPA enabled         render in place, no load
+            anything else                       a full document load
+
+        A navigation that LEAVES the page (everything but a fragment move
+        and a load 'none' rewrite) turns the navigation guard off first and
+        goes ahead without a prompt: code that navigates has decided
+        (skill rspade:navigation-guard).
+
+        A navigation made while an SPA dispatch is running - a redirect in
+        on_load() - is queued and runs when that dispatch ends; it is never
+        read as a reload or fragment move of the page not yet committed. Its
+        promise resolves at once, when it is queued (awaiting it from inside
+        the dispatch it waits behind could never finish); a later queued
+        navigation replaces an earlier one.
+
+    5. The full-load hand-off
+        Before a full load to this site whose target carries a _via, the
+        door writes one session-storage entry (rsx_navigation_handoff): the
+        target's path and query, how its _via arrived, and the decider of
+        the page being left. The next SPA document reads it once at boot
+        and deletes it whatever it says; it is used only when it names the
+        URL that booted. A document reached any other way (a reload, a
+        pasted URL, a new tab) judges its _via as explicit, as before.
+
+    With the SPA disabled (Spa.disable()), an intercepted link click still
+    goes through the door and becomes a full load with the hand-off - which
+    a native navigation would not give.
+
+FRAGMENTS AND RELOADS
+    Same path and query, a different #fragment: a native fragment move. The
+    page stays; on an SPA page the browser's popstate becomes spa_hash_change
+    (rsx:man spa, SPA EVENTS), on a Blade page the browser fires hashchange.
+    history 'replace' replaces the entry instead of adding one.
+
+    Exactly the URL on screen, fragment included: location.reload(). The
+    comparison is made AFTER augmentation, so on a page with an origin a
+    target naming no _via is the same URL once the origin is carried. To
+    show the page without its origin, pass {via: 'drop'}.
+
+    load 'full' to the path and query on screen also reloads (a different
+    fragment is written to the entry first), because assigning such a URL
+    would be a fragment move and load nothing.
+
+    Fragment STATE (a grid's page, a tab) is written with Rsx.url_hash_set()
+    / url_hash_set_single(), which replace the entry without navigating;
+    an anchor to scroll to is the at key (rsx:man anchors).
+
+ADDRESS BAR ONLY
+    {load: 'none'} changes the address bar and nothing else: no load, no
+    dispatch, no guard change.
+
+        Rsx.navigate(Rsx.Route('Reports_Action', {range: 'q3'}),
+                     {load: 'none', history: 'replace'});
+
+    On an SPA page the URL must match a route of the ACTION ON SCREEN, or it
+    throws - an address bar describing a page that is not there is the bug
+    this prevents. The entry's state is kept (a push is numbered as the
+    next entry). On a Blade page any same-origin URL is accepted.
+
+Rsx.redirect
+    Rsx.redirect(url) is Rsx.navigate(url, {history: 'replace'}) - the one
+    for a redirect in on_load().
+
+    Use it when the user did not choose the page being left: on_load()
+    finding the record lives at another URL, role-based rerouting, slug
+    canonicalisation, a form's landing page. Back then skips the redirecting
+    page. A move the user asked for (a button) is Rsx.navigate().
+
+FORMS
+    Rsx_Form follows an endpoint's result.redirect through the door:
+
+        Rsx.navigate(result.redirect, {via: result.redirect_via || 'carry'})
+
+    A create endpoint answers redirect_via: 'continue' so the record it
+    created keeps the breadcrumb origin the create page was reached with:
+
+        return [
+            'redirect' => Rsx::Route('Invoice_View_Action', $invoice->id),
+            'redirect_via' => 'continue',
+        ];
+
+    An unknown redirect_via throws in the browser. The record page must
+    still declare and verify the origin (rsx:man breadcrumb_origins).
+
+NEW TABS
+    Owner policy: the ONLY sanctioned way to open a new tab is an
+    <a target="_blank" rel="noopener"> that the user clicks. Code never
+    opens a tab:
+
+    - Browsers block a tab opened outside the user's own click, so
+      window.open() after an await (an Ajax answer) fails only sometimes.
+    - Reserving a blank tab first and filling it later hides that failure
+      and strands an empty tab when the answer is an error.
+    - A tab opened by code skips the navigation door and its origin.
+
+    When the tab's URL needs server work first (minting a token, starting
+    an impersonation, resolving a record), the link points at a same-site
+    GET route that does the work and answers 302 to the destination. A
+    refusal renders in that tab. Such a route DOES something on a GET, so it
+    answers only a navigation started on this site:
+
+        #[Route('/contacts/view/:id/view-as-client', methods: ['GET'])]
+        #[Auth('can_impersonate')]
+        public static function view_as_client(Request $request, array $params = [])
+        {
+            if (!$request->is_same_origin_navigation()) {
+                return response_unauthorized('Open View as Client from the contact page.');
+            }
+            ...
+            return new \Illuminate\Http\RedirectResponse($url);
+        }
+
+    $request->is_same_origin_navigation() is true when Sec-Fetch-Site is
+    same-origin or none (a click on this site, a typed URL or bookmark);
+    with no Sec-Fetch-Site, when the Referer's host is this host; otherwise
+    false. Another site linking a signed-in user to the route is refused.
+    Worked example: the reference app's View as Client
+    (app/frontend/contacts/contacts_controller.php, view_as_client, linked
+    from the contact page).
+
+    A download needs no tab: Rsx.navigate(download_url). A response with
+    Content-Disposition: attachment never unloads the page.
+
+    In-app links that open in a new tab carry the breadcrumb origin by
+    themselves (rsx:man breadcrumb_origins, NEW TABS).
+
+RULES
+    Both are FATAL at manifest build, in APPLICATION code (rsx/, minus test
+    trees, resource/, vendored and minified files), over .js by AST and over
+    .jqhtml code regions. rsx:check lists every finding.
+
+    JS-NAVIGATE-01 - navigation through Rsx.navigate()
+        Flags: an assignment to location or to its href, search, pathname,
+        host, hostname, port, protocol or hash (bare, window., document.,
+        self., top., parent., globalThis., bracket spellings, or a variable
+        holding the location object - and that aliasing itself);
+        location.assign() / location.replace(); jQuery .attr()/.prop() of
+        href or location on $(location), $(window), $(document);
+        history.pushState() / replaceState(); and the removed Spa.dispatch()
+        / Spa.redirect().
+
+        Escape hatch: // @JS-NAVIGATE-01-EXCEPTION <reason>, on the line or
+        the line above, excuses ONLY a pushState / replaceState, and only on a
+        page that is NOT an SPA page (a Blade page with its own router). On
+        an SPA page it is never legitimate: the SPA owns history state, and
+        a raw write corrupts its entry numbering, scroll restoration and
+        origin decisions - use {load: 'none'}. On any other finding, and
+        with no reason, the marker excuses nothing.
+
+    JS-NEW-TAB-01 - no tab opened from code
+        Flags: window.open() (and self./top./parent./globalThis., or a bare
+        open() the file does not bind); dispatchEvent() of a synthetic click
+        (MouseEvent, Event, PointerEvent 'click'); an anchor or form given
+        target="_blank" and activated from code in the same function
+        (.click(), .trigger('click'), .submit(), .requestSubmit(), ...).
+        Legal: an <a download> click with no target (a blob download),
+        .click() on a file input or button, .click(handler), and
+        target="_blank" on an element the USER clicks.
+
+        Escape hatch: // @JS-NEW-TAB-01-EXCEPTION <why no link can work
+        here>, on the line or the line above. Rare and reviewed: the answer
+        is almost always a link to a redirecting route.
+
+WHAT IS STILL LEGAL
+    - location.reload() - a reload is not a navigation to choose a door for.
+    - Any READ of location (location.href, pathname, hash, destructuring).
+    - history.back(), history.forward(), history.go(n).
+    - Reading history.state.
+    - A property merely NAMED location on another object.
+    - Rsx.url_hash_set() / url_hash_set_single() for fragment state.
+
+COMMON PITFALLS
+    - Spa.dispatch() / Spa.redirect() / Spa_Action.dispatch(). Removed;
+      Rsx.navigate() / Rsx.redirect() take their place, history 'push' by
+      default (there is no history 'auto'), title_hint for the old
+      loader_title_hint.
+    - window.location.href = url to "force a real load". Rsx.navigate(url,
+      {load: 'full'}) - same load, origin kept.
+    - history.replaceState() to tidy the URL on an SPA page. Rsx.navigate(url,
+      {load: 'none', history: 'replace'}); for fragment state,
+      Rsx.url_hash_set().
+    - window.open() after an Ajax call. Render a link to a redirecting route
+      instead (NEW TABS).
+    - Navigating to the page on screen expecting a re-render. With an
+      unchanged URL it is a reload; to refresh data, Spa.action().reload().
+    - Code after await Rsx.navigate() to another document. It may run while
+      the page unloads; never rely on it either way.
+    - A typo in an option ({via: 'none'}, {history: 'auto'}). It throws;
+      read the message.
+
+SEE ALSO
+    spa - actions, layouts, link interception, SPA events
+    breadcrumb_origins - the _via parameter, carrying and the hand-off
+    anchors - the at key and scroll-to-anchor
+    coding_standards - JS-NAVIGATE-01 and JS-NEW-TAB-01 among the rules
+    skill rspade:spa - building SPA modules and navigating between pages
+    skill rspade:breadcrumb-origins - alternate breadcrumb parents

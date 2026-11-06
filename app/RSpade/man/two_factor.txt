@@ -856,7 +856,7 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         Posts:  {code: '...'} from the typed answer, {assertion: {...}}
                 from a passkey, or {email_link: '<token>'} when the page was
                 opened from the email link. To the send endpoint: {}.
-        Expects: {redirect: '/somewhere'}, followed with window.location.
+        Expects: {redirect: '/somewhere'}, followed with a full page load.
                  A response with no redirect throws. The send endpoint may
                  answer anything, or reject with a user-safe message.
         Events: no_challenge - nothing is pending (expired window, direct
@@ -929,7 +929,7 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         Posts:  {assertion: {id, clientDataJSON, authenticatorData,
                 signature}} - the endpoint calls verify_passkey_login() on
                 the realm's facade with $params['assertion'].
-        Expects: {redirect: '/somewhere'}, followed with window.location.
+        Expects: {redirect: '/somewhere'}, followed with a full page load.
         Events: signed_in - fired just before the navigation.
         RENDERS NOTHING in a browser without WebAuthn: a login page already
         offers a password, and a button that cannot work is worse than none.

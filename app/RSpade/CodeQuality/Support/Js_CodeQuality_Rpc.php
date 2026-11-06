@@ -15,6 +15,10 @@ use App\RSpade\Core\JsParsers\Rsx_Node_Service;
  *   - quality.analyze_this: Analyze 'this' usage patterns using Acorn
  *   - quality.analyze_raw_html: Find raw HTML writes into the DOM (JS-RAW-HTML-01) using Babel
  *   - quality.analyze_via: Breadcrumb-origin declarations and _via reads (SPA-VIA-01) using Babel
+ *   - quality.analyze_navigation: Raw location / history writes and removed Spa navigation calls
+ *     (JS-NAVIGATE-01) using Babel
+ *   - quality.analyze_new_tab: Tabs opened from code - window.open(), synthetic clicks, and a
+ *     target="_blank" anchor or form activated from code (JS-NEW-TAB-01) using Babel
  */
 class Js_CodeQuality_Rpc
 {
@@ -124,6 +128,79 @@ class Js_CodeQuality_Rpc
             'args_reads' => $result['args_reads'] ?? [],
             'routes' => $result['routes'] ?? [],
         ];
+    }
+
+    /**
+     * The raw navigation in a JavaScript file (JS-NAVIGATE-01): location writes and aliases,
+     * location.assign()/replace(), jQuery href/location writes on the window, history
+     * pushState()/replaceState(), and the removed Spa.dispatch()/Spa.redirect().
+     *
+     * Every failure is LOUD: an analysis that could not run must never read as a clean file.
+     *
+     * @param string $file_path Absolute path to the JavaScript file
+     * @return array<int,array{line:int,kind:string,detail:string}> One entry per finding
+     */
+    public static function analyze_navigation(string $file_path): array
+    {
+        return static::__findings('quality.analyze_navigation', 'JS-NAVIGATE-01', $file_path);
+    }
+
+    /**
+     * The tabs a JavaScript file opens from code (JS-NEW-TAB-01): window.open() and its
+     * spellings, a dispatched synthetic click event, and an anchor or form given
+     * target="_blank" and activated from code in the same function.
+     *
+     * Every failure is LOUD: an analysis that could not run must never read as a clean file.
+     *
+     * @param string $file_path Absolute path to the JavaScript file
+     * @return array<int,array{line:int,kind:string,detail:string}> One entry per finding
+     */
+    public static function analyze_new_tab(string $file_path): array
+    {
+        return static::__findings('quality.analyze_new_tab', 'JS-NEW-TAB-01', $file_path);
+    }
+
+    /**
+     * One findings-shaped analysis ({status, findings, error}) of one file, failing loud.
+     *
+     * Every failure to RUN the analysis throws. A file Babel cannot parse (even with
+     * errorRecovery) answers no findings instead: a syntax error is the lint stage's to
+     * report (JS-LINT), and a rule must not turn an unparseable file into a failure of its
+     * own that hides the real one - the same posture as Source_Cache.
+     */
+    private static function __findings(string $method, string $rule_id, string $file_path): array
+    {
+        Rsx_Node_Service::ensure();
+
+        $data = Rsx_Node_Service::request($method, [
+            'files' => [$file_path],
+        ]);
+
+        if (isset($data['error'])) {
+            throw new \RuntimeException("{$rule_id} analysis RPC error for {$file_path}: " . $data['error']);
+        }
+
+        $result = $data['results'][$file_path] ?? null;
+
+        if ($result === null) {
+            throw new \RuntimeException("{$rule_id} analysis returned no result for {$file_path}");
+        }
+
+        if ($result['status'] !== 'success') {
+            throw new \RuntimeException(
+                "{$rule_id} analysis failed for {$file_path}: " . ($result['error']['message'] ?? 'unknown error')
+            );
+        }
+
+        if (!empty($result['error'])) {
+            return [];
+        }
+
+        if (!isset($result['findings']) || !is_array($result['findings'])) {
+            throw new \RuntimeException("{$rule_id} analysis returned no findings list for {$file_path}");
+        }
+
+        return $result['findings'];
     }
 
     /**

@@ -565,3 +565,39 @@ stay aligned.
 | VIA-TYPE | an entry outside `[a-z][a-z0-9_]*` is FATAL | php | four bad entries | throws, names the entry | implemented | 2026-11-05 |
 | VIA-CLEAN | the pair declared together, `constructor.breadcrumb_via` reads, a `'_via'` string and an ordinary route param pass | php | fixtures | no throw | implemented | 2026-11-05 |
 
+## JS-NAVIGATE-01 - navigation through Rsx.navigate() (`Navigation_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| NAV-LOC-WRITE | a write to location or any navigating part is reported under every receiver (bare, window, document, self, top, parent, globalThis, bracket forms, `+=`) | php | 15 JS fixtures | one violation each, on its line, naming `Rsx.navigate(url)` | implemented | 2026-11-06 |
+| NAV-ALIAS | holding the location object in a variable is reported, and a write through the alias is reported too | php | `const l = window.location` and three more; `l.href = url` | one violation per line | implemented | 2026-11-06 |
+| NAV-ASSIGN | `location.assign()` / `replace()` are reported | php | three receivers | one violation each | implemented | 2026-11-06 |
+| NAV-JQUERY | jQuery `.attr()` / `.prop()` of href/location on `$(location)` / `$(window)` / `$(document)` / `$(window.location)` | php | four fixtures (one with no `location` in the file - the prefilter) | one violation each | implemented | 2026-11-06 |
+| NAV-HISTORY | `history.pushState()` / `replaceState()`, also via `window.history` | php | four fixtures | one violation each, naming `{load: 'none', ...}` | implemented | 2026-11-06 |
+| NAV-SPA | the removed `Spa.dispatch()` / `Spa.redirect()` | php | two fixtures | one violation each, naming the replacement | implemented | 2026-11-06 |
+| NAV-LEGAL | reload, reads (incl. destructuring and `new URL(location.href)`), back/forward/go/state, the door, `url_hash_set`, a property merely named location | php | one method of 17 statements | no violation | implemented | 2026-11-06 |
+| NAV-LOCAL | a file that binds `location` itself has no bare global of that name | php | a `location` parameter | no violation | implemented | 2026-11-06 |
+| NAV-TEXT | a mention in a comment or a string | php | fixture | no violation | implemented | 2026-11-06 |
+| NAV-MARKER | the marker WITH a reason excuses a history write, same line or line above | php | two fixtures | no violation | implemented | 2026-11-06 |
+| NAV-MARKER-BARE | a bare marker excuses nothing | php | fixture | one violation, saying the marker has no reason | implemented | 2026-11-06 |
+| NAV-MARKER-SCOPE | the marker does not excuse a location write or a Spa call | php | fixture | two violations, each saying the marker does not apply | implemented | 2026-11-06 |
+| NAV-DRIVER | through the real driver in rsx:check mode, a granted marker does not skip the rest of the file | php | two history writes, one granted | one violation, on the ungranted line | implemented | 2026-11-06 |
+| NAV-SCOPE | framework code, test trees, resource/, vendored and minified files are ignored; application code is not | php | six paths | violations only for `rsx/lib/` | implemented | 2026-11-06 |
+| NAV-JQHTML | template code blocks and `@event=` values are checked; comments, prose, `$arg=` reads and `reload()` are not; the marker in a template comment works | php | two templates | lines 3, 4, 7, 8; none with the marker | implemented | 2026-11-06 |
+
+## JS-NEW-TAB-01 - no tab opened from code (`New_Tab_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TAB-OPEN | `window.open()` and its spellings, and a bare undeclared `open()`, are reported | php | six fixtures | one violation each, naming the link fix | implemented | 2026-11-06 |
+| TAB-SYNTH | `dispatchEvent()` of a synthetic click, directly or through a variable | php | MouseEvent, Event, PointerEvent | three violations | implemented | 2026-11-06 |
+| TAB-BLANK-A | an anchor given target _blank (property, attr, attrs object, `$()` options, setAttribute, markup) and clicked from code in the same function | php | seven fixtures | one violation each, on the click line | implemented | 2026-11-06 |
+| TAB-BLANK-FORM | a form given target _blank and submitted from code | php | `.submit()`, `.requestSubmit()`, `.trigger('submit')` | one violation each | implemented | 2026-11-06 |
+| TAB-LEGAL | a blob download click, file-input / button clicks, target _blank on an element the user clicks, `.click(fn)`, another object's `open()`, `document.open()`, a non-click event | php | one method | no violation | implemented | 2026-11-06 |
+| TAB-FUNC | target _blank set in one method and a click in another is not a finding | php | two methods | no violation | implemented | 2026-11-06 |
+| TAB-LOCAL-OPEN | a file's own `open()` function is not window.open | php | fixture | no violation | implemented | 2026-11-06 |
+| TAB-TEXT | a mention in a comment or a string | php | fixture | no violation | implemented | 2026-11-06 |
+| TAB-MARKER | the marker with a reason excuses the finding; a bare one does not | php | three fixtures | none; one with the no-reason note | implemented | 2026-11-06 |
+| TAB-DRIVER | through the real driver, a granted marker does not skip the rest of the file | php | two opens, one granted | one violation | implemented | 2026-11-06 |
+| TAB-SCOPE | framework code, test trees, resource/, vendored and minified files are ignored | php | six paths | violations only for `rsx/lib/` | implemented | 2026-11-06 |
+| TAB-JQHTML | template `@event=` values and code blocks are checked (one block = one function for the target-blank heuristic); a real `<a target="_blank">` is not | php | two templates | lines 3, 4, 7; none with the marker | implemented | 2026-11-06 |

@@ -14,13 +14,18 @@ use App\RSpade\Core\Session\Session;
  * Database implementation is hidden - API exposes only check().
  *
  * Use cases:
- * - Periodic maintenance tasks (notification expiry, cache refresh)
- * - Rate-limited background calculations
+ * - Refreshing a per-user cached value at most once per interval
+ * - Rate-limiting a per-user action (a reminder, a recalculation request)
  * - Any operation that should run at most once per interval per user
  *
+ * A throttle is not a lock and not a schedule. Work that writes a site's data still needs
+ * that site's write lock (a #[Writer] endpoint), and housekeeping every site owes - an
+ * expiry sweep, a purge - is a #[Schedule('maintenance')] task, never a throttled side
+ * effect of somebody's request.
+ *
  * @example
- * if (Rsx_Throttle::check('NOTIFICATION_EXPIRE_CHECK', $user_id, minutes: 30)) {
- *     Notification::expire_old();
+ * if (Rsx_Throttle::check('USAGE_SUMMARY_REFRESH', $user_id, minutes: 30)) {
+ *     Cache::put("usage_summary:{$user_id}", Usage_Summary::compute($user_id), now()->addHour());
  * }
  *
  * TENANT AND IDENTITY
@@ -33,8 +38,8 @@ use App\RSpade\Core\Session\Session;
  * The IDENTITY half is NOT realm-aware, and cannot be until a portal caller exists:
  * $user_id is documented as a LOGIN user id, and the portal realm has no login user - a
  * portal caller would pass a portal_users.id into the same key space, where it can collide
- * with a staff login user of the same numeric id. There is no portal caller today (the only
- * consumer in the repo is the staff notifications controller). Whoever writes the first one
+ * with a staff login user of the same numeric id. There is no portal caller today (nothing
+ * in the repo calls it outside its own tests). Whoever writes the first one
  * decides how the two id spaces are kept apart - a realm-qualified action_key is the
  * cheapest answer - and that is an owner call, not something to guess at here.
  */

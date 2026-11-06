@@ -219,7 +219,7 @@ class Rsx_Sso_Controller extends Rsx_Controller_Abstract
      *
      * It hands back a URL rather than performing the redirect, because the caller is an Ajax
      * request and a redirect answered to XMLHttpRequest is followed by the transport, not by
-     * the page. The browser navigates itself with window.location, which is what makes the
+     * the page. The browser navigates itself (Rsx.navigate(url), a full page load), which is what makes the
      * subsequent callback a top-level navigation carrying the SameSite=Lax cookie.
      *
      * @return array {url}

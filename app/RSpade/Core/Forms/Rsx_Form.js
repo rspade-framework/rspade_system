@@ -30,7 +30,8 @@
  * any failure (client validation, server validation, transport). The pipeline:
  * re-entrancy guard -> clear errors -> client _validate() pass -> serialize ->
  * before_submit hook -> spinner -> Ajax -> success (clear dirty/parked, fire
- * 'submitted', honor result.redirect, resolve result) or failure (render errors, fire
+ * 'submitted', honor result.redirect via Rsx.navigate() with result.redirect_via as its
+ * {via}, resolve result) or failure (render errors, fire
  * 'submit_error', resolve false). Buttons of type="submit" inside the form are
  * auto-wired, the form's own submit event is bound so Enter in a text input submits
  * rather than navigating, and a modal's primary button calls submit() directly.
@@ -738,7 +739,10 @@ class Rsx_Form extends Component {
 
             if (result && result.redirect) {
                 // Navigating away - the spinner deliberately stays until the page goes.
-                window.location.href = result.redirect;
+                // Through the one door, so a breadcrumb origin survives the move whether it
+                // renders in place or loads a document. result.redirect_via is the endpoint's
+                // {via} ('carry' | 'drop' | 'continue'), validated like any other.
+                Rsx.navigate(result.redirect, { via: result.redirect_via || 'carry' });
                 return result;
             }
 

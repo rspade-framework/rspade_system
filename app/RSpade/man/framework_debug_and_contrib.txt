@@ -1882,17 +1882,26 @@ SUBSYSTEM PRIMERS
     gates, evaluated by the server dispatcher, and the JS action's gates,
     evaluated only client-side.
 
-    DISPATCH, in order: the leave guard; the SPA-disabled check; a
+    NAVIGATION has ONE door, Rsx.navigate() / Rsx.redirect()
+    (Core/Js/Rsx_Navigation.js; rsx:man navigation), and the SPA's link
+    interception calls it too: validate the options (unknown ones throw);
+    CLASSIFY the target (elsewhere / same_site / in_app - a route of THIS
+    bootstrap); AUGMENT it with the current _via; TRANSPORT, the only code
+    that writes location or history - an address-bar rewrite, a native
+    fragment move, a reload for exactly the URL on screen, the SPA render
+    path for in_app, otherwise a full load preceded by a session-storage
+    hand-off that the next SPA document consumes once at boot, so a full load
+    keeps the breadcrumb origin. A navigation that leaves the page clears the
+    leave guard. Rsx.redirect() is navigate with a replacing history entry.
+
+    THE RENDER PATH (Spa._dispatch, internal - the door, popstate, the
+    initial load and the queued-redirect drain call it), in order: a
     re-entrancy guard that QUEUES a nested dispatch and runs it afterwards;
-    cache resets and the start event; absolute-URL handling; THE HASH IS
-    STRIPPED BEFORE ROUTE MATCHING, because a hash is page state; a same-URL
-    navigation deliberately falls back to a browser reload; an unmatched
-    route goes to the server, as does a route belonging to a DIFFERENT SPA
-    module so the other bundle can bootstrap; history is pushed or replaced
+    cache resets and the start event; THE HASH IS STRIPPED BEFORE ROUTE
+    MATCHING, because a hash is page state; a Back/Forward onto a URL this
+    SPA does not render goes to the server; history is pushed or replaced
     carrying scroll position and parked form data; THE AUTH GATE; scroll
-    handling; the layout chain; session validation. Spa.redirect() is exactly
-    dispatch with a replacing history entry, and it is the one for a
-    programmatic redirect.
+    handling; the layout chain; session validation.
 
     THE GATE'S PLACEMENT IS THE LOAD-BEARING DETAIL: it is evaluated after
     history has moved and BEFORE ANYTHING IS INSTANTIATED, so a denied action

@@ -8,9 +8,11 @@ This concern covers the **page-title ladder** - the seam where a dispatched acti
 title reaches a layout - and the **navigation guard**, the toggle that has the browser
 ask before a page with unsaved changes is left, and **breadcrumb origins** - the reserved
 `_via` parameter, carried across navigation and kept or stripped after each breadcrumb walk
-(`rsx:man breadcrumb_origins`; source `Core/SPA/Spa_Via.js`, `Spa.js` `_carry_via()` /
-`_rewrite_link_via()` / `via()` / `via_push()`, `Breadcrumbs/Rsx_Breadcrumb_Resolver.js`
-`settle_via()` / `_walk_chain_structure()`; test `playwright/breadcrumb_origins.js`). Everything else in the SPA is either covered elsewhere (decorator transform
+(`rsx:man breadcrumb_origins`; source `Core/SPA/Spa_Via.js`, `Core/Js/Rsx_Navigation.js` `augment()`,
+`Spa.js` `_rewrite_link_via()` / `via()` / `via_push()`, `Breadcrumbs/Rsx_Breadcrumb_Resolver.js`
+`settle_via()` / `_walk_chain_structure()`; test `playwright/breadcrumb_origins.js`) - and the **navigation door**, `Rsx.navigate()` /
+`Rsx.redirect()` (`Core/Js/Rsx_Navigation.js`: validate, classify, carry, one transport, the
+full-load hand-off read once by `Spa._on_spa_init()`; test `playwright/navigate.js`). Everything else in the SPA is either covered elsewhere (decorator transform
 in `js_transform`, auth gating in `auth_gates`, the dispatcher's auth-rejection surface
 in `dispatch`) or catalogued below as a coverage hole.
 
@@ -34,8 +36,8 @@ in `dispatch`) or catalogued below as a coverage hole.
   `NAVIGATION_GUARD_PROMPT`, and the lazily-installed `beforeunload` listener.
 - `app/RSpade/Core/SPA/Spa.js` - `setup_browser_integration()`: the click handler stands
   aside while the guard is on, and the popstate handler raises `window.confirm()` and
-  steps history back (`_undo_vetoed_move()`) on Cancel; `dispatch()` turns the guard off
-  when it leaves the page.
+  steps history back (`_undo_vetoed_move()`) on Cancel; `Rsx_Navigation._transport()` turns
+  the guard off when a navigation leaves the page.
 - Consumers in the template app: `rsx/app/frontend/Frontend_Spa_Layout.js`
   (`_update_page_title`, which adds a per-URL session cache as the `placeholder`) and
   `rsx/portal/Portal_Layout.js`.
@@ -62,8 +64,8 @@ in `dispatch`) or catalogued below as a coverage hole.
   two-step jump - the address and the stack are as they were, nothing is dispatched and
   the guard stays on. Accepted, the guard goes off and the move is dispatched in the SPA.
 - A fragment-only Back/Forward is never asked about.
-- `Spa.dispatch()` / `Spa.redirect()` are not guarded: no dialog, in-SPA, guard off
-  afterwards. A dispatch to the page already showing leaves the guard on.
+- `Rsx.navigate()` / `Rsx.redirect()` are not guarded: no dialog, in-SPA, guard off
+  afterwards. A fragment-only move on the page already showing leaves the guard on.
 - Leaving the page for real raises `beforeunload` while the guard is on, and nothing once
   it has been cleared. Chromium raises it only after a user gesture, so each script
   clicks before it expects one.
@@ -77,4 +79,10 @@ node app/RSpade/tests/spa/playwright/spa_action_title.js
 node app/RSpade/tests/spa/playwright/navigation_guard.js
 node app/RSpade/tests/spa/playwright/history_scroll_and_veto.js
 node app/RSpade/tests/spa/playwright/fragment_popstate.js
+node app/RSpade/tests/spa/playwright/navigate.js
+node app/RSpade/tests/spa/playwright/breadcrumb_origins.js
 ```
+
+Run one file at a time. `spa_action_title.js` drives the TEMPLATE app (`/contacts`,
+`/contacts/view/:id`, a `[data-sid=page_title]` header) and fails in an application that
+lacks them.

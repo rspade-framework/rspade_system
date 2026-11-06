@@ -1,9 +1,10 @@
 # Core/SPA - the SPA runtime's implementation
 
 **Building a SPA screen? Do not read this file.** The bootstrap controller, the
-`@route`/`@layout`/`@spa`/`@auth`/`@title` decorators, `Spa.dispatch`/`Spa.redirect`, the title
-ladder and the module layout are the fragment `31-spa-and-pages.md`, the skill `rspade:spa` and
-`rsx:man spa` (route table: `rsx:man routing`; the scroll contract: `rsx:man anchors`). This file
+`@route`/`@layout`/`@spa`/`@auth`/`@title` decorators, navigating (`Rsx.navigate`/`Rsx.redirect`),
+the title ladder and the module layout are the fragment `31-spa-and-pages.md`, the skill
+`rspade:spa`, `rsx:man spa` and `rsx:man navigation` (route table: `rsx:man routing`; the scroll
+contract: `rsx:man anchors`). This file
 only says what is in this DIRECTORY.
 
 ## What is here
@@ -31,16 +32,17 @@ bundle)**
   The whole bootstrap document: the bundle's head plus `<div id="spa-root">`. `$bundle::render()`
   has no default - every caller passes `rsx_view(SPA, ['bundle' => 'X_Bundle'])`.
 - `Spa.js` - the orchestrator and the bulk of the directory. Route registry, URL matching and
-  generation, browser integration, `dispatch()`, the layout chain, anchor scrolling, the detached
+  generation, browser integration, the internal render path `_dispatch()`, the layout chain, anchor scrolling, the detached
   loader. Statics are the live state: `routes`, `layout`, `_action` (read through `Spa.action()`,
   which falls back to `$('.Spa_Action')`), `route`, `params`.
-- `Spa_Action.js` - the page. `on_load()`, static/instance `url()` + `dispatch()`, the title ladder
+- `Spa_Action.js` - the page. `on_load()`, static/instance `url()`, the title ladder
   (`page_title()`, `get_static_title()`, `await_loaded()`), the breadcrumb trio, and the empty
   breadcrumb-origin pair (`static breadcrumb_via = []`, `breadcrumb_parent_via()` returning null).
 - `Spa_Via.js` - the grammar of the reserved `_via` parameter (breadcrumb origins,
   `rsx:man breadcrumb_origins`): parse/serialize a token list, and add/remove the parameter
-  without touching the rest of a URL. Pure; the behaviour lives in `Spa.js` (carrying, the
-  new-tab href rewrite, `Spa.via()` / `Spa.via_push()`) and in
+  without touching the rest of a URL. Pure; the behaviour lives in `Core/Js/Rsx_Navigation.js`
+  (carrying - `augment()` - and the full-load hand-off), `Spa.js` (the new-tab href rewrite,
+  `Spa.via()` / `Spa.via_push()`) and in
   `Breadcrumbs/Rsx_Breadcrumb_Resolver.js` (the walk, `settle_via()` - the keep/strip decision).
 - `Spa_Layout.js` - the persistent wrapper. `$content()` (i.e. `$sid('content')`),
   `resolve_page_title(paint, placeholder)` - the ONE way a layout obtains a title - the
@@ -84,45 +86,57 @@ bundle)**
 between `app_init` and `app_ready`: awaited dispatch to the initial URL). Both return immediately
 unless `window.rsxapp.is_spa`.
 
-`dispatch()` is the single choke point - link clicks, `popstate`, `redirect()` and programmatic
-calls all land here. In order: the navigation guard is turned OFF when the target is another
-page (`_is_fragment_only_move(location, url)` false - a dispatch is navigation from code, which
-the guard never asks about; the initial load and a confirmed popstate arrive with location
-already on the target, so they touch nothing); the disabled check (`Spa.disable()` degrades
-everything to full page loads, `force` exempts popstate); re-entrancy, which QUEUES a nested
-dispatch as `pending_redirect` and drains it in the `finally` (this is how an `on_load()` redirect
-works); ORM cache reset and the `spa_dispatch_start` trigger; the four hand-offs to the server via
-`_navigate_away()` (external host, same URL under `history: 'auto'`, no route match, and an action
-whose `@spa` names a different bootstrap than the loaded one); history push/replace; the `@auth`
-gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on every navigation after the first.
+**Navigation is not decided here.** Every navigation from code or a link click goes through
+`Core/Js/Rsx_Navigation.js` (`Rsx.navigate()` / `Rsx.redirect()`, `rsx:man navigation`): it
+validates the options, classifies the target (`elsewhere` / `same_site` / `in_app` -
+`Spa._route_of_this_spa()`, a route whose `@spa` is the loaded bootstrap), carries `_via`
+(`augment()`), and its transport is the only code writing location or history: a `{load:
+'none'}` rewrite (`Spa._rewrite_entry()`), a native fragment move, `location.reload()` for
+exactly the URL on screen, `Spa._dispatch()` for `in_app` while `_spa_enabled`, otherwise
+`_full_load()`, preceded by the session-storage hand-off (`rsx_navigation_handoff`) that
+`_on_spa_init` consumes once via `_take_handoff()`. The door turns the navigation guard off for
+any move that leaves the page. The public `Spa.dispatch` / `Spa.redirect` are gone (the
+`JS-NAVIGATE-01` FATAL names them).
 
-**Breadcrumb origins ride the dispatch.** `match_url_to_route()` deletes `_via` from the args, so
-no action (and no cache key) ever sees it. `_carry_via()` runs after the URL is made relative:
-it copies the current `_via` onto a target route of this SPA that names none (unless
-`{via: 'drop'}`) and labels the arrival `explicit` / `carried` / `restored` (popstate) / null;
-`{via: 'continue'}` copies it labelled `explicit`. `_validate_via_option()` runs first in
-`dispatch()` and throws on any `{via}` outside `Spa.VIA_OPTIONS`.
-`Spa._via_navigation = {arrival, previous}` is set before the layout chain is resolved -
-`previous` is the LEAVING action's `_spa_via_settlement` promise for a carried hop, or the
-entry's `history.state.via_decider` for Back/Forward - and `_resolve_layout_chain()` calls
+`_dispatch()` is the SPA's RENDER path, and internal: the door, `popstate`, the initial dispatch
+and the `pending_redirect` drain call it - each already a navigation, so none re-carries `_via`.
+In order: re-entrancy, which QUEUES a nested dispatch as `pending_redirect` and drains it in the
+`finally` (this is how an `on_load()` redirect works - the door classifies such a navigation as
+neither a reload nor a fragment move while `is_dispatching`); ORM cache reset and the
+`spa_dispatch_start` trigger; a URL this SPA does not render (only reachable from popstate or the
+first load) goes to `Rsx_Navigation._full_load()`; history push/replace (`'none'` for the initial
+load and popstate); the `@auth` gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on
+every navigation after the first (`force` - popstate - exempt).
+
+**Breadcrumb origins ride the navigation.** `match_url_to_route()` deletes `_via` from the args,
+so no action (and no cache key) ever sees it. `Rsx_Navigation.augment()` copies the current
+`_via` onto a target route this bundle knows on this host that names none (unless
+`{via: 'drop'}`) and labels the arrival `explicit` / `carried` / null; `{via: 'continue'}` copies
+it labelled `explicit`; `_validate_via()` throws on any value outside
+`Rsx_Navigation.VIA_OPTIONS` (also applied to a form's `redirect_via`). `_dispatch()` turns that
+into `Spa._via_navigation = {arrival, previous}` before the layout chain is resolved - `previous`
+is the full-load hand-off's decider when given, else the LEAVING action's
+`_spa_via_settlement` promise for a carried hop, or the entry's `history.state.via_decider` for
+Back/Forward (arrival `restored`) - and `_resolve_layout_chain()` calls
 `Rsx_Breadcrumb_Resolver.settle_via(action, url, Spa._via_navigation)` the moment the action
 exists, before any layout's `on_action()`. That decision rewrites the entry with
 `replaceState` (kept: canonical `_via` + `via_decider`; stripped: no `_via`), so
 `_last_committed_url` is read back from `window.location` at the end of a dispatch rather than
 from the parsed target. `setup_browser_integration()` also rewrites an in-app link's href on
-mousedown / auxclick / contextmenu / Enter (`_rewrite_link_via()`, marked
-`data-spa-via-carried`), and a click on a marked link dispatches its href WITHOUT `_via`, so the
+mousedown / auxclick / contextmenu / Enter (`_rewrite_link_via()`, the same `augment()`, marked
+`data-spa-via-carried`), and a click on a marked link navigates its href WITHOUT `_via`, so the
 hop is judged as carried.
 
 The one popstate that does NOT reach `dispatch()` is a fragment-only move: when the new location
 keeps the path and query of `_last_committed_url` (`_is_fragment_only_move()`), the handler
 records the URL, fires `spa_hash_change {url, hash}` and returns - no prompt, no dispatch,
-the action stays mounted. Fragments are not compared, because an application's own
-`replaceState()` write is invisible here and can leave the recorded fragment stale.
+the action stays mounted. Fragments are not compared, because an address-bar rewrite
+(`{load: 'none'}`, `Rsx.url_hash_set()`) is invisible here and can leave the recorded fragment
+stale.
 
 **The navigation guard (`Rsx.set_navigation_guard()`, a boolean) is enforced in
-`setup_browser_integration()`, not in `dispatch()`.** The click handler returns without
-`preventDefault()` while it is on, beside the `_spa_enabled` return, so the document unloads and
+`setup_browser_integration()` and the door, not in `_dispatch()`.** The click handler returns
+without `preventDefault()` while it is on, so the document unloads and
 `Rsx`'s `beforeunload` listener raises the native dialog. The popstate handler - after the
 `_undoing_vetoed_move` swallow and the fragment-only return - raises `window.confirm(
 Rsx.NAVIGATION_GUARD_PROMPT)`: Cancel calls `_undo_vetoed_move()` (`history.go()` across the
@@ -156,7 +170,7 @@ and the user's.
   bootstrap controller's `#[Auth]` (`auth.surfaces[<controller>::<method>]`); the action's own
   `@auth` is `auth.surfaces[<action class>]`. Client gates are UX - `_denied_auth_checks()` exists
   so the interface is honest, and the server re-runs the same named gates on every call the action
-  makes. A denied action must never CONSTRUCT: that holds in `dispatch()` and in
+  makes. A denied action must never CONSTRUCT: that holds in `_dispatch()` and in
   `load_detached_action()` alike.
 - **Every layout's template needs a `$sid="content"` element** and `#spa-root` must exist; both are
   hard throws, not fallbacks.
@@ -198,14 +212,16 @@ and the user's.
 
 ## Tests
 
-`app/RSpade/tests/spa/` (`rsx:test --framework --group=spa`) - Playwright files run with `node`
-(title ladder, guard, history, spinner, breadcrumb origins - `breadcrumb_origins.js`); its
-`test_catalog.md` lists the rows and the holes. `SPA-VIA-01` (the manifest FATALs) is
+`app/RSpade/tests/spa/playwright/` - Playwright scripts, NOT manifest-discovered, so `rsx:test`
+never runs them: each is run directly with `node` (title ladder, guard, history, spinner,
+breadcrumb origins - `breadcrumb_origins.js`, the navigation door - `navigate.js`); the concern's
+`test_catalog.md` lists the rows and the holes. `JS-NAVIGATE-01` / `JS-NEW-TAB-01` are
+`tests/code_quality/php/Navigation_Rule_Test.php` / `New_Tab_Rule_Test.php`. `SPA-VIA-01` (the manifest FATALs) is
 `tests/code_quality/php/Spa_Via_Rule_Test.php`. The
 decorator transform is covered in the `js_transform` concern, the gating in `auth_gates`, and the
 dispatcher's rejection surface in `dispatch`.
 
 ## See also
 
-`rsx:man spa` - `rsx:man routing` - `rsx:man anchors` - `rsx:man auth_gates` - `rsx:man portal` -
+`rsx:man spa` - `rsx:man navigation` - `rsx:man routing` - `rsx:man anchors` - `rsx:man auth_gates` - `rsx:man portal` -
 skills `rspade:spa`, `rspade:js-decorators`, `rspade:portal-core`

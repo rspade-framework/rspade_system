@@ -30,7 +30,7 @@ Rsx.set_navigation_guard() takes no argument: the navigation guard is a toggle, 
 | refreshes, closes the tab, types a URL, goes Back/Forward out of the document | The same native unload dialog. |
 | goes Back/Forward to another page of the SPA | Nothing unloads, so the SPA raises the browser's native **confirm** box. OK: the guard goes off and the move is an ordinary in-SPA navigation. Cancel: nothing is dispatched, the address is put back, the page is untouched and the guard stays on. |
 | goes Back/Forward over a `#fragment` only | Not a departure: `spa_hash_change` fires, nobody is asked. |
-| (your code) calls `Spa.dispatch()` / `Spa.redirect()` | **Not guarded.** The dispatch goes ahead in the SPA with no prompt and turns the guard off. |
+| (your code) calls `Rsx.navigate()` / `Rsx.redirect()` | **Not guarded.** A navigation that leaves the page turns the guard off and goes ahead with no prompt (in the SPA or as a full load). A fragment-only move and a `{load: 'none'}` rewrite leave the guard on. |
 
 With the guard off, links are intercepted again from the very next click and nothing asks.
 
@@ -81,12 +81,13 @@ on_stop() {
 
 ## Navigation from code is not guarded
 
-A Save handler that dispatches to the record, a row click, a button that calls
-`Spa.dispatch()`: none is asked about, and each turns the guard off. If a button should
-not lose the user's changes silently, do not navigate from it while
-`Rsx.has_navigation_guard()` is true - ask with your own `Modal.confirm()` first. A
-dispatch to the page already showing (same path and query) is not a departure and leaves
-the guard as it is.
+A Save handler that navigates to the record, a row click, a button that calls
+`Rsx.navigate()`: none is asked about, and each turns the guard off - `Rsx.navigate()` is
+the code path that clears it (`rsx:man navigation`). If a button should not lose the user's
+changes silently, do not navigate from it while `Rsx.has_navigation_guard()` is true - ask
+with your own `Modal.confirm()` first. A move to the same path and query with another
+`#fragment`, and an address-bar rewrite (`{load: 'none'}`), are not departures and leave the
+guard as it is; navigating to exactly the URL on screen is a reload, and clears it.
 
 ## Reference examples
 

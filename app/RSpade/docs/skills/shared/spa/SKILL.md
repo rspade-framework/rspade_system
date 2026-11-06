@@ -1,6 +1,6 @@
 ---
 name: spa
-description: "Building SPA modules - the #[SPA] bootstrap controller, @route / @layout / @spa / @auth / @title, Spa_Layout and on_action(), sublayouts, Spa.dispatch() vs Spa.redirect(), spa_hash_change, route and query params. Use when adding a screen to an authenticated area, creating a module or layout, making Back close a URL-addressed dialog, deciding SPA vs Blade, or debugging a 404 on an SPA route."
+description: "Building SPA modules - the #[SPA] bootstrap controller, @route / @layout / @spa / @auth / @title, Spa_Layout and on_action(), sublayouts, navigating with Rsx.navigate() / Rsx.redirect() (never location, history or window.open - JS-NAVIGATE-01 / JS-NEW-TAB-01), spa_hash_change, route and query params. Use when adding a screen to an authenticated area, creating a module or layout, making Back close a URL-addressed dialog, deciding SPA vs Blade, or debugging a 404 on an SPA route."
 ---
 
 # SPA Routing
@@ -81,17 +81,20 @@ Each layout in the chain needs its own `$sid="content"`. **Layouts persist when 
 ## Navigation
 
 ```javascript
-Spa.dispatch('/contacts/123');   // navigate - pushes a history entry
-Spa.redirect('/internal');       // same, but REPLACES the history entry
-Spa.layout                       // current (top) layout instance
-Spa.action()                     // current action instance
+Rsx.navigate(Rsx.Route('Contacts_View_Action', 123));  // navigate - pushes a history entry
+Rsx.redirect(Rsx.Route('Internal_Action'));            // same, but REPLACES the history entry
+Rsx.navigate(url, {load: 'none', history: 'replace'}); // rewrite the address bar only
+Spa.layout                                             // current (top) layout instance
+Spa.action()                                           // current action instance
 ```
 
-`Spa.dispatch()` routes client-side when the path belongs to the current SPA, and falls back to a full page load when it does not. **`Spa.redirect()` is the one to use for a programmatic redirect inside `on_load()`** - replacing the history entry means the browser Back button does not bounce the user straight back into the redirecting action.
+**`Rsx.navigate()` is the ONE door for every target** (`rsx:man navigation`): a route of this SPA renders in place, anything else (a Blade page, another SPA, a download, another site) is a full page load that still hands the breadcrumb origin across, the same URL with another `#fragment` is a fragment move, and exactly the URL on screen reloads. Options `{history: 'push'|'replace', via: 'carry'|'drop'|'continue', load: 'auto'|'full'|'none', title_hint}`; anything unknown throws. **`Rsx.redirect()` is the one for a programmatic redirect inside `on_load()`** - replacing the history entry means the browser Back button does not bounce the user straight back into the redirecting action. `Spa.dispatch()`, `Spa.redirect()` and `Spa_Action.dispatch()` are gone.
 
-**Scroll position is the framework's.** A new navigation opens at the top; Back/Forward AND a refresh return a page to where it was scrolled (from the history entry, which survives a reload - the browser's own restoration is off), applied instantly after the first render, again at ready and while the page settles, on whichever element the page scrolls in (the window or a layout's scrolling container) - and the user's own scroll during the load always wins. An action never calls `scrollTop()` for either. `history.state` on an SPA entry belongs to the framework - a hand-written `history.replaceState()` passes `history.state` back, never `null`.
+**Never write `location` or `history` yourself, and never open a tab from code.** Both are manifest-build FATALs in application code: `JS-NAVIGATE-01` (location writes, `location.assign/replace`, `pushState`/`replaceState`, the removed `Spa.*` calls; `location.reload()` and reads stay legal) and `JS-NEW-TAB-01` (`window.open()`, synthetic clicks, a `target="_blank"` link clicked from code). A new tab is an `<a target="_blank" rel="noopener">` the user clicks; when its URL needs server work, the link points at a same-site GET route that does it and 302s, guarded with `$request->is_same_origin_navigation()` if it changes anything (worked example: the reference app's View as Client). A download is `Rsx.navigate(download_url)`.
 
-**Back/Forward over a `#fragment` does not re-dispatch.** A history move that keeps the path and query leaves the action mounted and fires `Rsx.on('spa_hash_change', ({url, hash}) => ...)` instead - so fragment-addressed UI (a dialog, a tab) can `history.pushState()` its fragment on open and close itself there, at the cost of a DOM change rather than a page rebuild. A path or query change always re-dispatches; `pushState`/`replaceState` fire nothing (browser rule), and a fragment move is never asked about by the navigation guard. `rsx:man spa`, SPA EVENTS.
+**Scroll position is the framework's.** A new navigation opens at the top; Back/Forward AND a refresh return a page to where it was scrolled (from the history entry, which survives a reload - the browser's own restoration is off), applied instantly after the first render, again at ready and while the page settles, on whichever element the page scrolls in (the window or a layout's scrolling container) - and the user's own scroll during the load always wins. An action never calls `scrollTop()` for either. `history.state` on an SPA entry belongs to the framework; `Rsx.navigate(url, {load: 'none'})` and `Rsx.url_hash_set()` keep it.
+
+**Back/Forward over a `#fragment` does not re-dispatch.** A history move that keeps the path and query leaves the action mounted and fires `Rsx.on('spa_hash_change', ({url, hash}) => ...)` instead - so fragment-addressed UI (a dialog, a tab) can push its fragment on open with `Rsx.navigate(url, {load: 'none'})` and close itself there, at the cost of a DOM change rather than a page rebuild. A path or query change always re-dispatches; an address-bar rewrite fires nothing (browser rule), and a fragment move is never asked about by the navigation guard. `rsx:man spa`, SPA EVENTS.
 
 **Link interception**: the SPA only intercepts clicks on links whose href matches a known SPA route. Links to server-side controllers, unknown paths, or external URLs pass through as normal full-page navigations. **No special attributes are needed to bypass SPA routing** - do not invent a `data-no-spa`.
 
@@ -194,7 +197,7 @@ An action is STOPPED the moment the user navigates away, often while one of its 
 flight. Every wait outside `on_load()` - a save handler, a helper started from `on_ready()`, a wait
 on a child - goes through `this.alive()`: `const r = await this.alive(Controller.save(...))` never
 resumes on a stopped action, so nothing after it touches a child component, re-renders, or calls
-`Spa.dispatch()` / `Modal` / `Flash_Alert` on the page the user moved to (unguarded, that throws -
+`Rsx.navigate()` / `Modal` / `Flash_Alert` on the page the user moved to (unguarded, that throws -
 and the unhandled exception switches the SPA to full page loads - or yanks the user away).
 **The alternative is `is_stopped()`**, for code that must keep going after a stop (a download the
 user asked for, then `if (this.is_stopped()) return;` before the flash). Neither in `on_load()`,

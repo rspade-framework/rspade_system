@@ -100,7 +100,7 @@ async function navigate(page, action) {
     await page.waitForFunction((n) => window.__dispatches > n, before);
 }
 
-const dispatch = (page, url) => navigate(page, () => page.evaluate((target) => { Spa.dispatch(target); }, url));
+const dispatch = (page, url) => navigate(page, () => page.evaluate((target) => { Rsx.navigate(target); }, url));
 const back = (page) => navigate(page, () => page.evaluate(() => history.back()));
 const forward = (page) => navigate(page, () => page.evaluate(() => history.forward()));
 const scroll_to = (page, y) => page.evaluate((top) => Spa._page_scroller().scrollTo({ top: top, behavior: 'instant' }), y);

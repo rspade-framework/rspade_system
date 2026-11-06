@@ -589,7 +589,7 @@ LINKING (CONNECTED ACCOUNTS)
     or from a settings screen driving the Ajax surface:
 
         Rsx_Sso_Controller.link_begin({provider: 'google'})   -> {url}
-        window.location = url;                                // a NAVIGATION
+        Rsx.navigate(url);                                    // a NAVIGATION
 
     link_begin hands back a URL rather than redirecting, because a redirect
     answered to XMLHttpRequest is followed by the transport, not by the page -

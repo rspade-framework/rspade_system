@@ -15,7 +15,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * The PHP bootstrap method's gates are `auth.surfaces[<controller>::<method>]`, which is
  * what the row's 'surface' points at and what the server dispatcher evaluates before
  * rendering. The JS action's own `@auth(...)` names are
- * `auth.surfaces[<action class>]`, reached through the row's 'target'; `Spa.dispatch`
+ * `auth.surfaces[<action class>]`, reached through the row's 'target'; the SPA dispatch (`Spa._dispatch`)
  * resolves those against the render-time auth snapshot.
  *
  * The row therefore carries POINTERS, never copies: a gate list lives in exactly one

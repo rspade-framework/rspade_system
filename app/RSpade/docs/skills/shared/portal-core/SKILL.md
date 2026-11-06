@@ -271,17 +271,20 @@ Staff open the portal AS a contact to see exactly what that client sees, in a RE
 
 A View as Client is a **PORTAL USER SESSION on the staff member's own browser** - the target portal user, its site, and `impersonator_user_id` (the staff `users.id`) - that the browser's portal pointer names while it lasts; the browser's own portal sign-in, if any, stays signed in behind it, and the staff sign-in is untouched. Nothing rotates, and nothing but the opaque token reaches the cookie.
 
-**Starting one** - a staff Ajax endpoint gated `#[Auth('can_impersonate')]`:
+**Starting one** - a staff GET route gated `#[Auth('can_impersonate')]`, linked with `<a target="_blank" rel="noopener">`:
 
 ```php
+if (!$request->is_same_origin_navigation()) {   // a GET that DOES something: never for another site
+    return response_unauthorized('Open View as Client from the contact page.');
+}
 $url = Portal_Session::begin_impersonation_from_staff($portal_user_id, Session::get_user()->id, $site_id);
 if ($url === false) {     // that site has no portal - nothing was applied
     return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
 }
-return ['url' => $url];   // the staff page opens it in a new tab
+return new \Illuminate\Http\RedirectResponse($url);   // the new tab moves on to the portal
 ```
 
-It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` check passes, requires the impersonator id to be the caller's own staff user, and **never touches the contact's `last_login`**. `can_impersonate` is **framework-declared and DENIES by default** (`Permission_Abstract`, `#[Replaceable]`): an app offering View as Client redeclares it on its `Permission` class (`#[Auth_Check]`, its own rule, no `parent::` owed). Open the tab synchronously inside the click (`window.open('', '_blank')`) and point it at the URL when the call returns, or a popup blocker eats it - worked example: `system/app/RSpade/resource/reference_app/app/frontend/contacts/view/Contacts_View_Action.js`.
+It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` check passes, requires the impersonator id to be the caller's own staff user, and **never touches the contact's `last_login`**. `can_impersonate` is **framework-declared and DENIES by default** (`Permission_Abstract`, `#[Replaceable]`): an app offering View as Client redeclares it on its `Permission` class (`#[Auth_Check]`, its own rule, no `parent::` owed). Start it from a same-site GET route that calls it and answers a 302 to the URL (refusing another site's request with `$request->is_same_origin_navigation()`), reached by an `<a target="_blank" rel="noopener">` the user clicks - code never opens a tab (`JS-NEW-TAB-01`, `rsx:man navigation`) - worked example: `view_as_client` in `system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php`, linked from `contacts/view/Contacts_View_Action.jqhtml`.
 
 Whether it crosses hosts is decided by THAT site's portal address (`Rsx_Portal_Url::for_site($site_id)`).
 

@@ -150,7 +150,7 @@ async function run() {
         check(clamped.y === clamped.max && clamped.max > 0, 'a position the page cannot hold is scrolled as far as it goes', clamped);
 
         const before = await page.evaluate(() => window.__dispatches);
-        await page.evaluate((target) => { Spa.dispatch(target); }, ROUTE_B);
+        await page.evaluate((target) => { Rsx.navigate(target); }, ROUTE_B);
         await page.waitForFunction((n) => window.__dispatches > n, before);
         const next = await where(page);
         check(next.path === ROUTE_B && next.y === 0 && !next.restoring, 'and the next navigation opens at the top, nothing carried over', next);

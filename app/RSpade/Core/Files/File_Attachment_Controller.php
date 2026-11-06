@@ -651,7 +651,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * The file set is NOT posted by the browser: server-side app code first records it
      * with Zip_Download_Request_Model::create_request($files, $zip_name) - authorizing
      * nothing at that point - and hands the browser the resulting download URL. The
-     * browser simply navigates to it (window.location = url), so the response streams
+     * browser simply navigates to it (Rsx.navigate(url)), so the response streams
      * natively as a download. Members are archived ONE AT A TIME with constant memory
      * (see Zip_Stream); a multi-gigabyte set never lands in memory.
      *

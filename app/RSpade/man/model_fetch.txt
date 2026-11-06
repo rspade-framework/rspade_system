@@ -1046,7 +1046,7 @@ CLIENT-SIDE FETCH CACHE
         - fetch() and fetch_or_null() warm the cache on success
 
     Automatic Reset:
-        Cache clears at the start of every SPA navigation (Spa.dispatch).
+        Cache clears at the start of every in-app SPA navigation.
         This ensures each page starts with a fresh cache.
 
     Intended Use Cases:

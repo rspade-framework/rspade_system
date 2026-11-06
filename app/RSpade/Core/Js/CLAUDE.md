@@ -35,6 +35,9 @@ handler, the error-screen components - because the first SPA page draws before `
 - `Rsx.js` — the core: the boot above, `Rsx.Route()`, `url_hash_get()` and friends,
   `load_external()`, `set_default_spinner()`, `set_session_expired_handler()`, the
   navigation guard, unhandled-exception routing to `Exception_Handler.js`.
+- `Rsx_Navigation.js` — the one navigation door behind `Rsx.navigate()` / `Rsx.redirect()`:
+  option validation, target classification, `_via` carrying, the single transport that writes
+  `location` / `history`, and the full-load hand-off `Spa._on_spa_init()` reads once.
 - `Manifest.js` — the browser class registry (names, inheritance) the boot walks.
 - `Ajax.js` — the ONE transport: every `Controller.method()` call goes to `/_ajax/_batch`
   (batched per synchronous turn when `rsx.ajax.batching` is on; a `#[Priority]` call goes

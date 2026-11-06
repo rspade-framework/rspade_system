@@ -2569,7 +2569,7 @@ ASYNC CONTINUATIONS
 
     Without it, a child handle on the stopped component is null
     (this.sid(), this.$sid('x').component()) and the call throws; reload(),
-    refresh() and load() reject; a Spa.dispatch(), modal or flash lands on
+    refresh() and load() reject; an Rsx.navigate(), modal or flash lands on
     the page the user has moved to; and in RSpade an unhandled exception
     switches the SPA to full page loads for the rest of the visit.
 

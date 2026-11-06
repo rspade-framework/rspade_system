@@ -105,7 +105,7 @@ this.data.sso_providers = Rsx_Sso.enabled_providers();
 this.data.sso_identities = await Rsx_Sso_Controller.identities_list();
 
 const { url } = await Rsx_Sso_Controller.link_begin({ provider: 'google' });
-window.location = url;                 // a NAVIGATION, not a fetch
+Rsx.navigate(url);                     // a NAVIGATION, not a fetch
 
 this.data.sso_identities = await Rsx_Sso_Controller.identity_unlink({ id });  // returns the refreshed list
 ```

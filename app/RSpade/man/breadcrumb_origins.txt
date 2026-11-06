@@ -8,7 +8,7 @@ TAGS
 SYNOPSIS
     The link that starts the detour pushes an origin:
 
-        Spa.dispatch(Rsx.Route('Billing_Invoice_Builder_Action', {
+        Rsx.navigate(Rsx.Route('Billing_Invoice_Builder_Action', {
             engagement_id: 156,
             _via: Spa.via_push('engagement', 156),
         }));
@@ -32,9 +32,9 @@ SYNOPSIS
     Reading, opting out, and continuing a detour:
 
         Spa.via()                              // [{type: 'engagement', id: '156'}, ...]
-        Spa.dispatch(url, {via: 'drop'})       // never carry the current origin
-        Spa.redirect(url, {via: 'drop'})
-        Spa.dispatch(url, {via: 'continue'})   // a create page handing over to the
+        Rsx.navigate(url, {via: 'drop'})       // never carry the current origin
+        Rsx.redirect(url, {via: 'drop'})
+        Rsx.navigate(url, {via: 'continue'})   // a create page handing over to the
                                                // record it created keeps the origin
 
 DESCRIPTION
@@ -157,18 +157,28 @@ RESOLUTION
 CARRYING AND STRIPPING
     Carrying. When the current URL has a _via and an in-app navigation's
     target names none, the framework copies the current _via onto the target:
-    Spa.dispatch(), Spa.redirect() and intercepted link clicks. A target that
-    names its own _via keeps it (explicit wins). Only a target that is a route
-    of this SPA is carried onto.
+    Rsx.navigate(), Rsx.redirect() and intercepted link clicks, which all go
+    through the one navigation door (rsx:man navigation). A target that names
+    its own _via keeps it (explicit wins). Only a target that is a route this
+    bundle knows on this host is carried onto - a page of this SPA, or one
+    reached by a full page load (another SPA bootstrap, the SPA disabled, or
+    {load: 'full'}).
 
-    The {via} option of Spa.dispatch() / Spa.redirect() says how:
+    Across a full page load. Before the load the door writes a one-use
+    hand-off to session storage (the target URL, how its _via arrived, and
+    the decider of the page being left); the next SPA document reads it at
+    boot, so the origin is judged exactly as an in-app navigation would
+    judge it. Without the hand-off - a reload, a pasted URL, a new tab - the
+    first page of a document is judged as explicit.
+
+    The {via} option of Rsx.navigate() / Rsx.redirect() says how:
 
         'carry'      the default (the option absent): copied, arrival carried
         'drop'       not carried
         'continue'   copied, arrival EXPLICIT - this navigation continues the
                      same detour
         anything else throws, naming the three; 'continue' with
-        {history: 'none'} throws too (no entry to carry the origin onto)
+        {load: 'none'} throws too (nothing loads, so no page judges the claim)
 
     The create-page hand-off. A create page reached from another record has
     no record of its own, so it is its own decider: New Invoice
@@ -180,8 +190,17 @@ CARRYING AND STRIPPING
     this one. So the save hands over with 'continue':
 
         const result = await Invoice_Controller.create(values);
-        Spa.dispatch(Rsx.Route('Invoice_View_Action', result.invoice_id),
+        Rsx.navigate(Rsx.Route('Invoice_View_Action', result.invoice_id),
                      {via: 'continue'});
+
+    A create page built on Rsx_Form needs no code of its own: the endpoint
+    answers redirect_via beside its redirect, and the form follows it with
+    Rsx.navigate(result.redirect, {via: result.redirect_via || 'carry'}):
+
+        return [
+            'redirect' => Rsx::Route('Invoice_View_Action', $invoice->id),
+            'redirect_via' => 'continue',
+        ];
 
     and the invoice view ALSO declares the origin and verifies it against
     the record it shows:
@@ -201,12 +220,13 @@ CARRYING AND STRIPPING
     the same detour; a page that accepted carried origins from any decider
     would keep them across unrelated sibling hops too.
 
-    Dispatch does not know whether the origin applies to the target - it
+    Navigation does not know whether the origin applies to the target - it
     carries unconditionally, and the walk decides afterwards. Every navigation
     remembers how its _via arrived:
 
         explicit   the target URL named it; also the first page of a document
-                   (a reload, a pasted URL, a new tab)
+                   (a reload, a pasted URL, a new tab) not reached through
+                   the full-load hand-off
         carried    copied by the framework
         restored   Back/Forward onto an entry
 
@@ -309,8 +329,8 @@ API
                                                 in front of the current list,
                                                 capped at 4; throws on a type
                                                 or id outside the grammar
-    Spa.dispatch(url, {via: 'carry'|'drop'|'continue'})
-    Spa.redirect(url, {via: ...})               'carry' (default) copies the
+    Rsx.navigate(url, {via: 'carry'|'drop'|'continue'})
+    Rsx.redirect(url, {via: ...})               'carry' (default) copies the
                                                 current _via; 'drop' does
                                                 not; 'continue' copies it as
                                                 an explicit claim; anything
@@ -346,9 +366,9 @@ COMMON PITFALLS
       the repeat with a warning.
     - Expecting _via to survive into an unrelated page. It is stripped there,
       by design.
-    - Dispatching to the page already showing, minus its _via. From a page
-      with an origin, Spa.dispatch() to the same path carries the origin back
-      on, which makes it the same URL (a reload under history: 'auto'). Pass
+    - Navigating to the page already showing, minus its _via. From a page
+      with an origin, Rsx.navigate() to the same path carries the origin back
+      on, which makes it exactly the URL on screen - a reload. Pass
       {via: 'drop'} to show the page without its origin.
 
 MANIFEST-BUILD FATALS (SPA-VIA-01)
@@ -367,6 +387,7 @@ RSX VS LARAVEL
 
 SEE ALSO
     primary_secondary_nav_breadcrumbs - breadcrumb methods, the resolver, Sidebar_Nav
-    spa - actions, layouts, Spa.dispatch() and Spa.redirect()
+    spa - actions, layouts, link interception
+    navigation - Rsx.navigate() / Rsx.redirect() and the full-load hand-off
     dispatch - how a request reaches its handler
     skill rspade:breadcrumb-origins - the task-level guide

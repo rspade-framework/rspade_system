@@ -113,7 +113,10 @@ another manifest, another database. Such a test uses a framework-served page (`/
 framework classes, and registers whatever else it needs at runtime in the browser. The shared
 opening for such a script is `_lib/playwright/sys_page.js` (`open_sys_page()`: launch, dev-auth on
 the first document request, wait for the SPA; `open_sys_page({on_request: fn})` installs a request interceptor before
-navigating) - it sits under a `playwright` directory because
+navigating) and `poll_until(page, what, fn)`, the bounded poll that survives a document load
+(page.waitForFunction() and an evaluate spanning a full load die with "Execution context was
+destroyed"); its `errors` leave out Chromium's headless full-load noise ("Transition was
+aborted because of invalid state") - it sits under a `playwright` directory because
 that basename is what keeps a node script out of the manifest scan.
 
 ## Database isolation (PHP tests)

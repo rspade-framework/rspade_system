@@ -19,8 +19,8 @@
  * than as an undefined-is-not-a-function three frames deeper.
  *
  * ON SUCCESS THE PAGE NAVIGATES, and nothing is rendered afterwards: the user is signed in
- * and this screen is finished. window.location, not Spa.dispatch - the destination is a
- * fresh authenticated document, and the challenge page is not part of the SPA it leads into.
+ * and this screen is finished, through Rsx.navigate(url, {load: 'full'}) - the destination
+ * is a fresh authenticated document, whatever page the challenge was shown on.
  *
  * THE EMAIL LINK. The framework's /_email_link/:token route sends the browser that owns the
  * challenge back to this page with #rsx_email_link=<token>. The token is taken out of the
@@ -381,7 +381,7 @@ class Two_Factor_Challenge extends Component {
         const completed = this.state.completed;
 
         if (completed.redirect) {
-            window.location = completed.redirect;
+            Rsx.navigate(completed.redirect, { load: 'full' });
             return;
         }
 
@@ -439,7 +439,7 @@ class Two_Factor_Challenge extends Component {
      */
     async _cancel() {
         await this.alive(Rsx_Two_Factor.controller().challenge_abandon());
-        window.location = this.args.cancel_url;
+        Rsx.navigate(this.args.cancel_url);
     }
 
     /**
@@ -521,7 +521,7 @@ class Two_Factor_Challenge extends Component {
             });
         }
 
-        window.location = result.redirect;
+        Rsx.navigate(result.redirect, { load: 'full' });
     }
 
     /**

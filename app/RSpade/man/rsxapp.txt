@@ -258,13 +258,15 @@ COMMON USAGE PATTERNS
     CSRF is automatic - do NOT inject a token yourself:
         The framework adds the _csrf_token hidden field to every form on submit
         and the X-CSRF-Token header to every ajax/upload request, reading
-        window.rsxapp.csrf for you. There is nothing to wire. See csrf(7).
+        window.rsxapp.csrf for you. There is nothing to wire. See rsx:man csrf.
 
     Check if SPA mode:
         if (window.rsxapp.is_spa) {
-            // Use client-side navigation
-            Spa.dispatch('/new-route');
+            // this page is an SPA page
         }
+
+        Navigation needs no such check: Rsx.navigate(url) renders in place on
+        an SPA page and loads the document elsewhere (rsx:man navigation).
 
 ADDING CUSTOM DATA
     Use PageData::add() in PHP to add custom data to page_data:

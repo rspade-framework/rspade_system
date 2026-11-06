@@ -275,7 +275,7 @@ HOW THE CHECKS RUN - THE SEAMS
         before the method. The same staff-realm checks apply (the key's owner
         IS a staff identity); denial -> the API's standard 403 error shape.
 
-    @route actions  (Spa.dispatch - client)
+    @route actions  (SPA dispatch - client)
         Before action instantiation: the target's checks are resolved against
         the client auth state (below). Denial renders the unauthorized error
         screen in the layout content area - URL preserved, history intact,

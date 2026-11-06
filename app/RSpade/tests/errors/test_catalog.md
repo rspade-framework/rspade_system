@@ -25,7 +25,7 @@ routable and carries no leading underscore, and every framework route is `/_`-pr
 | ERR-15b | A remote caller never gets the debug page | php | handler, development + app.debug, remote caller | 500 themed screen, redacted | implemented | 2026-09-25 |
 | ERR-16 | The handler runs after the dispatch bootstrapper | php | priorities + config registration | 1100 > 1000, registered | implemented | 2026-08-07 |
 | ERR-17 | SPA gate denial renders at the denied URL, layout alive | playwright | dispatch to an action with an ungranted `@auth` | URL updated, Unauthorized component present, no action mounted | planned (proved by `rsx:debug --eval` probe during W4; no committed spec) | 2026-08-07 |
-| ERR-18 | Unknown SPA URL renders the not-found body in the layout | playwright | `Spa.dispatch()` to an unmatched current URL | Not_Found component present, layout alive | planned (same) | 2026-08-07 |
+| ERR-18 | Unknown SPA URL renders the not-found body in the layout | playwright | the initial dispatch of an unmatched current URL | Not_Found component present, layout alive | planned (same) | 2026-08-07 |
 | ERR-19 | `Error_Screens.fatal()` renders and stops the action | playwright | direct call | Generic component present, action null | planned (same) | 2026-08-07 |
 | ERR-20 | curl status matrix, staff and portal | http | anon gated / authed gated / unknown URL / portal gated | 302 / 200 / 404 / 302 portal login | planned (manual curl during W4) | 2026-08-07 |
 | ERR-21 | A missing theme error component fails loud | playwright | unregister the component, call a screen | throws naming the component | implemented as `sys_panel` RP-ERR-02/03 (`sys_panel/playwright/sys_panel_toolkit.js`) | 2026-09-26 |

@@ -186,7 +186,7 @@ class Dispatcher
         // harness asserts; AFTER CSRF, so a harness POST keeps its session-less CSRF
         // treatment.
         if ($realm['realm'] === Auth_Gates::REALM_PORTAL) {
-            static::__handle_portal_dev_auth($request, $path);
+            static::__handle_portal_dev_auth($request, Rsx_Portal::strip_base($request->getRequestUri(), $base));
         } else {
             static::__handle_dev_auth($request);
         }
@@ -913,17 +913,18 @@ class Dispatcher
      * Establish the PORTAL development identity from signed dev-auth headers.
      *
      * rsx:debug --portal sends X-Dev-Auth-Portal-User-Id + X-Dev-Auth-Exp +
-     * X-Dev-Auth-Token; the token signs the path INSIDE the portal (the prefix removed),
-     * which is the URL the minting side signed. Same verifier, same development-only rule.
+     * X-Dev-Auth-Token; the token signs the request URI INSIDE the portal - path plus
+     * query, the prefix removed - which is the URL the minting side signed (the staff realm
+     * signs the request URI the same way). Same verifier, same development-only rule.
      *
      * The harness does not declare a site of its own: it browses the portal the URL
      * resolved, so a portal user of another tenant is refused loudly.
      *
      * @param Request $request
-     * @param string $path The path inside the portal
+     * @param string $uri The request URI inside the portal (path + query, prefix removed)
      * @return void
      */
-    protected static function __handle_portal_dev_auth(Request $request, string $path): void
+    protected static function __handle_portal_dev_auth(Request $request, string $uri): void
     {
         if (!Rsx::is_development()) {
             return;
@@ -941,7 +942,7 @@ class Dispatcher
         }
 
         $rejection = Dev_Auth_Token::verify(
-            $path,
+            $uri,
             (int) $portal_user_id,
             true,
             $request->header('X-Dev-Auth-Exp'),

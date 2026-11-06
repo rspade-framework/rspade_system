@@ -122,7 +122,7 @@ function spinner_until_ready(mode) {
  * Declare the authorization gates this action requires
  *
  * ONE decorator, variadic check names, AND semantics: every named check must be
- * granted or Spa.dispatch refuses to construct the action. Names resolve to
+ * granted or the SPA dispatch refuses to construct the action. Names resolve to
  * #[Auth_Check]-marked methods on the realm's Permission class - identical
  * spelling to the PHP #[Auth(...)] attribute - and are answered client-side from
  * the render-time grant map (window.rsxapp.auth).

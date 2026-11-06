@@ -12,7 +12,7 @@ server dispatch seams that enforce them, and the CLIENT EXPORT BUILDERS behind
 `window.rsxapp.auth` / `auth_routes`. It does NOT cover the closed-by-default
 validation pass, which lands in a later stage and gets its own rows here.
 
-The client-side pieces themselves (the `@auth` decorator, the `Spa.dispatch` gate,
+The client-side pieces themselves (the `@auth` decorator, the SPA dispatch gate,
 the generated JS Permission mirrors, `Permission.can_access`) are browser behavior:
 their payload computation is proven here in php, and the browser half is verified by
 `rsx:debug --eval` probes pending playwright automation (see the AG-CLIENT rows).

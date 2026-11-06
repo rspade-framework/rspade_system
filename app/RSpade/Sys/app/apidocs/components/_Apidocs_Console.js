@@ -66,6 +66,7 @@ class _Apidocs_Console extends Component {
      * Navigate to an endpoint: update the address bar, then repaint.
      */
     __navigate(version, slug, href) {
+        // @JS-NAVIGATE-01-EXCEPTION non-SPA page with its own router; pushState is safe only off the SPA
         history.pushState({ version: version, slug: slug }, '', href);
         this.__show(version, slug);
     }

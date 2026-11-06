@@ -84,7 +84,7 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 
 ## Rule Categories
 
-152 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
+155 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
 Database, JavaScript, Jqhtml, Manifest, Meta, Models, PHP, Scss). The listings below are
 ILLUSTRATIVE SAMPLES of each category, not an inventory - the rule set is discovered from the
 filesystem, so `Rules/` itself is the authoritative list - read the directory for the full set.
@@ -172,6 +172,40 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      <rationale>` on the line or the line above covers that one write; a bare marker
      covers nothing. Contract: `rsx:man coding_standards`, WRITING INTO THE PAGE
    - Severity: High
+
+9. **Navigation_CodeQualityRule** (JS-NAVIGATE-01)
+   - Application navigation goes through ONE door, `Rsx.navigate()` / `Rsx.redirect()`
+     (`Core/Js/Rsx_Navigation.js`): FATAL on a write to `location` or its href / search /
+     pathname / host / hostname / port / protocol / hash (bare, `window.` `document.` `self.`
+     `top.` `parent.` `globalThis.`, bracket spellings, or through an alias - and the aliasing
+     itself), `location.assign()` / `replace()`, jQuery `.attr()` / `.prop()` of `href` /
+     `location` on `$(location)` / `$(window)` / `$(document)`, `history.pushState()` /
+     `replaceState()`, and the removed `Spa.dispatch()` / `Spa.redirect()`
+   - Legal: `location.reload()`, every READ of location, `history.back()/forward()/go()`,
+     `history.state`, a property merely named `location` on another object. A name is the
+     browser global only when the file binds nothing of that name
+   - Scope: APPLICATION code only (`Rsx_Paths::is_application()`, minus test trees,
+     `resource/`, vendored, `.min.js`) - the door itself writes location and history
+   - `.js` by AST (`quality.analyze_navigation`); `.jqhtml` by pattern over the template's
+     code regions (`Support/Jqhtml_Code_Regions`)
+   - Reads its own marker: `@JS-NAVIGATE-01-EXCEPTION <reason>` on the line or the line
+     above excuses ONLY a pushState / replaceState (a non-SPA page with its own router); on
+     any other finding it excuses nothing and the report says so
+   - Manifest-time; reports with `add_violation()` (never throws). Severity: Critical
+
+10. **NewTab_CodeQualityRule** (JS-NEW-TAB-01)
+   - Code never opens a tab; the only sanctioned way is an `<a target="_blank">` the user
+     clicks. FATAL on `window.open()` (and `self.` / `top.` / `parent.` / `globalThis.`, and a
+     bare `open()` the file does not declare), `dispatchEvent()` of a synthetic click
+     (`new MouseEvent|Event|PointerEvent('click')`), and an anchor or form given
+     `target="_blank"` and then `.click()` / `.trigger('click')` / `.submit()` /
+     `.requestSubmit()`-ed from code in the SAME function
+   - The target-blank heuristic is conservative by design (false negatives over false
+     positives): the element must be named the same way in both places; a blob-download
+     click with no target, a file-input or button click and `.click(handler)` are legal
+   - Same scope, detection split (`quality.analyze_new_tab`) and per-line marker as
+     JS-NAVIGATE-01: `@JS-NEW-TAB-01-EXCEPTION <reason>`, reason required
+   - Manifest-time; reports with `add_violation()`. Severity: Critical
 
 ### Database Rules (`Rules/Database/`)
 
@@ -529,9 +563,9 @@ also buys it LINE granularity).
 
 What an individual rule can add on top is PRECISION. A rule that also looks for the marker
 itself can suppress a SINGLE line (same-line or previous-line) rather than the whole file -
-which is what you want for a rule that fires many times in one file. 49 of the 133 rules do
-this today (grep -rl EXCEPTION Rules/, minus the abstract); the other 84 are file-granular
-via the checker.
+which is what you want for a rule that fires many times in one file. 69 of the 155 rules do
+this today (grep -rl EXCEPTION Rules/ --include=*.php, minus the abstract; counted 2026-11-06);
+the other 86 are file-granular via the checker.
 
 **Consequence for placement:** a file-level comment always works. Line-level placement narrows
 the suppression ONLY when the rule implements line checking; otherwise the marker still
@@ -826,8 +860,8 @@ retires the verdicts recorded against the old one.
 
 ### Current Manifest-Time Rules
 
-**47 of the 146 rules** return `true` from `is_called_during_manifest_scan()` (verified
-2026-09-07). This list drifts; regenerate it from the source of truth:
+**53 of the 155 rules** return `true` from `is_called_during_manifest_scan()` (verified
+2026-11-06). This list drifts; regenerate it from the source of truth:
 
 ```bash
 cd system/app/RSpade/CodeQuality
@@ -842,11 +876,14 @@ Approved for manifest-time execution, by rule directory:
 - `JavaScript/` - JQHTML-EVENT-01, JQHTML-IMPL-01, JS-CATCH-FALLBACK-01, JS-DECORATOR-01,
   JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01, SPA-VIA-01
   (also judges `#[Route]`/`#[Portal_Route]` patterns in PHP; its JS half is an AST pass in the
-  node service, `quality.analyze_via`, run only for a file whose bytes mention `_via`)
+  node service, `quality.analyze_via`, run only for a file whose bytes mention `_via`),
+  JS-NAVIGATE-01 and JS-NEW-TAB-01 (application code only; `.js` by AST in the node service,
+  `quality.analyze_navigation` / `quality.analyze_new_tab`, behind a raw-bytes prefilter;
+  `.jqhtml` by pattern over `Jqhtml_Code_Regions`; each reads its own per-line marker)
 - `Jqhtml/` - JQHTML-CLASS-01, JQHTML-COMMENT-01, JQHTML-INLINE-01
 - `Manifest/` - ABSTRACT-ATTR-01, ACTOR-01, MANIFEST-CTRL-01, MANIFEST-INST-01,
   MANIFEST-MONO-01, PHP-PARENT-CHAIN-01, PHP-SPA-01, POLY-01, RELATIONSHIP-OVERRIDE-01,
-  REVISION-01, SCSS-SCOPE-01, SEALED-01, TEST-AUTH-01
+  REVISION-01, ROUTE-ATTR-01, SCSS-SCOPE-01, SEALED-01, TEST-AUTH-01
 - `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01, TEXT-TYPE-01
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,

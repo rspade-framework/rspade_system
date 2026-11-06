@@ -94,7 +94,8 @@ class Passkey_Sign_In extends Component {
 
         this.trigger('signed_in');
 
-        window.location = result.redirect;
+        // A fresh document: the browser is now signed in as somebody this page never was.
+        Rsx.navigate(result.redirect, { load: 'full' });
     }
 
     /**

@@ -300,6 +300,45 @@ WRITING INTO THE PAGE (JS-RAW-HTML-01)
     before. The marker covers that one write, and a marker with no rationale
     covers nothing.
 
+NAVIGATING (JS-NAVIGATE-01)
+    Code moves the browser through ONE door: Rsx.navigate(url, options), or
+    Rsx.redirect(url) to replace the history entry. It classifies the target,
+    carries the breadcrumb origin (_via) - across a full page load too - and
+    renders in place, moves a fragment, reloads or loads a document. A raw
+    write skips all of it:
+
+        window.location = url              Rsx.navigate(url)
+        location.href = url                Rsx.navigate(url, {load: 'full'})
+        location.replace(url)              Rsx.redirect(url)
+        history.replaceState(s, '', url)   Rsx.navigate(url, {load: 'none',
+                                               history: 'replace'})
+        Spa.dispatch(url) (removed)        Rsx.navigate(url)
+        Spa.redirect(url) (removed)        Rsx.redirect(url)
+
+    Legal: location.reload(), any read of location, history.back() /
+    forward() / go(), reading history.state.
+
+    JS-NAVIGATE-01 is FATAL at manifest build over application JavaScript and
+    jqhtml code (test trees, resource/, vendored and minified files excepted).
+    '@JS-NAVIGATE-01-EXCEPTION <reason>' on the line or the line before
+    excuses ONLY history.pushState() / replaceState() on a page that is not an
+    SPA page (a Blade page with its own router); on an SPA page the SPA owns
+    history state and a raw write corrupts it. rsx:man navigation.
+
+OPENING A NEW TAB (JS-NEW-TAB-01)
+    The only sanctioned way to open a new tab is an <a target="_blank"
+    rel="noopener"> the USER clicks. window.open(), a synthetic click event,
+    and an anchor or form given target="_blank" and activated from code are
+    FATAL at manifest build (JS-NEW-TAB-01): a tab opened outside the user's
+    click is blocked some of the time, and a pre-opened blank tab hides it.
+
+    When the tab's URL needs server work, the link points at a same-site GET
+    route that does the work and redirects; a route that DOES something
+    refuses a request from another site with
+    $request->is_same_origin_navigation(). A download needs no tab:
+    Rsx.navigate(download_url). '@JS-NEW-TAB-01-EXCEPTION <reason>' excuses
+    one finding - rare, and reviewed. rsx:man navigation, NEW TABS.
+
 FUNCTION ORGANIZATION PHILOSOPHY
     Prefer Inline Code with Comments:
         - Comment above a few lines better than separate methods
@@ -683,5 +722,6 @@ APPLICATION RULES (rsx:check)
 
 SEE ALSO
     error_handling - Error handling patterns and shouldnt_happen()
+    navigation - Rsx.navigate(), the new-tab policy, JS-NAVIGATE-01, JS-NEW-TAB-01
     js_functions - escape_html(), nl2brhtml(), html_to_text()
     config_rsx - Framework configuration standards

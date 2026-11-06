@@ -18,7 +18,7 @@ SYNOPSIS
         return redirect(Login_Redirect::consume(Rsx::Route('Dashboard_Index_Action')));
 
     Identical-API JavaScript mirror (client-side / expired-session entry):
-        window.location = Rsx.Route('Login_Controller', Login_Redirect.capture());
+        Rsx.navigate(Rsx.Route('Login_Controller', Login_Redirect.capture()));
 
 DESCRIPTION
     A user who requests a protected deep URL (e.g. /settings/onedrive) while

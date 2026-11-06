@@ -1,6 +1,6 @@
 ---
 name: breadcrumb-origins
-description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip, {via: 'drop'|'continue'}, new tabs, nesting, the meta {grafted, root_url} a sidebar follows. Use when a page crumbs to the wrong parent after a detour or loses its origin after a create page's Save, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
+description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip (across full page loads too), Rsx.navigate()'s {via: 'drop'|'continue'} and a form's redirect_via, new tabs, nesting, the meta {grafted, root_url} a sidebar follows. Use when a page crumbs to the wrong parent after a detour or loses its origin after a create page's Save, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
 ---
 
 # Breadcrumb Origins
@@ -14,7 +14,7 @@ that starts that detour say so, and lets the page where the trail splits decide.
 
 1. **The link that starts the detour pushes an origin.**
    ```js
-   Spa.dispatch(Rsx.Route('Billing_Invoice_Builder_Action',
+   Rsx.navigate(Rsx.Route('Billing_Invoice_Builder_Action',
        {engagement_id: 156, _via: Spa.via_push('engagement', 156)}));
    ```
    `Spa.via_push(type, id = null)` returns a `_via` VALUE: this origin in front of the current
@@ -35,9 +35,11 @@ that starts that detour say so, and lets the page where the trail splits decide.
 3. **Everything else is automatic.**
    - Pages BELOW the deciding page (the builder, the invoice page's subpages) need no code.
      Their normal parent leads to the decider, and the walk passes the origin up to it.
-   - Every in-app navigation from a page with `_via` carries it (`Spa.dispatch()`,
-     `Spa.redirect()`, link clicks), and a link's href is rewritten on mousedown /
-     middle-click / context menu, so new tabs and "Copy link" keep it.
+   - Every navigation from a page with `_via` carries it onto a route of this site
+     (`Rsx.navigate()`, `Rsx.redirect()`, link clicks - one door, `rsx:man navigation`) - a
+     full page load included, by a one-use session-storage hand-off the next document reads at
+     boot - and a link's href is rewritten on mousedown / middle-click / context menu, so new
+     tabs and "Copy link" keep it.
    - After the new page's trail is walked, `_via` is KEPT when the same page decided it as
      before (or the URL named it explicitly - a link, a reload, a pasted URL, a new tab), and
      otherwise removed from the address bar with `replaceState` (no history entry); the page
@@ -60,14 +62,16 @@ that starts that detour say so, and lets the page where the trail splits decide.
   own argument. `_via` only steers the trail; a link that starts a detour often carries both.
 - **A parent must not point back into the subtree.** The walk stops at the repeat with a
   warning (and at 20 pages deep).
-- **A create page that hands over to the record it created dispatches with
-  `{via: 'continue'}`; nothing else does.** The record page must also declare the origin type
+- **A create page that hands over to the record it created navigates with
+  `Rsx.navigate(url, {via: 'continue'})`; nothing else does.** On an `Rsx_Form`, the create
+  endpoint answers `'redirect_via' => 'continue'` beside its `redirect` and the form passes it
+  as the `{via}` option. The record page must also declare the origin type
   (`static breadcrumb_via`) and verify it in `breadcrumb_parent_via()` against the record, or the
   origin is stripped. The `{via}` values are `'carry'` (default), `'drop'`, `'continue'`;
   anything else throws.
-- **Leaving the subtree on purpose from code** is `Spa.dispatch(url, {via: 'drop'})` (or
-  `Spa.redirect`). Without it, a dispatch to the page already showing carries the origin back
-  on and reloads.
+- **Leaving the subtree on purpose from code** is `Rsx.navigate(url, {via: 'drop'})` (or
+  `Rsx.redirect`). Without it, a navigation to the page already showing carries the origin
+  back on, which is exactly the URL on screen - a reload.
 
 ## Nesting
 

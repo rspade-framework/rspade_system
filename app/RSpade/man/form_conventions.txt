@@ -136,7 +136,8 @@ THE SUBMISSION PIPELINE
         8.  Ajax POST to /_ajax/{controller}/{method}.
         9a. Success: touched and parked values cleared, the inputs re-baselined
             ('dirty' flips to false), 'submitted' fired
-            with the result, result.redirect honoured (the affordance
+            with the result, result.redirect followed through Rsx.navigate()
+            with {via: result.redirect_via || 'carry'} (the affordance
             deliberately stays until the page goes), result resolved.
         9b. Failure: errors rendered, 'submit_error' fired, false resolved. The
             form stays on screen with the user's values intact.
@@ -254,8 +255,13 @@ THE ENDPOINT CONTRACT
     SUCCESS
 
         Return whatever the caller needs; ['redirect' => Rsx::Route(...)] makes
-        the form navigate. Flash_Alert::success(...) before returning is the
-        normal companion to a redirect.
+        the form navigate, through Rsx.navigate() (rsx:man navigation).
+        Flash_Alert::success(...) before returning is the normal companion to
+        a redirect. A create endpoint whose page was reached from another
+        record adds 'redirect_via' => 'continue', so the record it created
+        keeps that breadcrumb origin (rsx:man breadcrumb_origins); 'carry' is
+        the default and 'drop' the third value, anything else throws in the
+        browser.
 
 QUESTIONS (SERVER-DRIVEN CONFIRMATION)
 

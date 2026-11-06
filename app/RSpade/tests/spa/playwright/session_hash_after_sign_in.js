@@ -36,15 +36,15 @@ function fail(msg) {
 
 /** Wait for the SPA action's full lifecycle on the page. */
 async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
+    // A first visit can replace its document once (the timezone-cookie bootstrap), so this is
+    // a poll that survives a navigation, never an evaluate inside the first document.
+    await page.waitForFunction(() => {
+        try {
+            return typeof Spa !== 'undefined' && !!Spa.action() && Spa._initial_load_complete;
+        } catch (e) {
+            return false;
         }
-    }));
-
+    }, null, { timeout: 0 });
 }
 
 async function run() {
@@ -113,7 +113,7 @@ async function run() {
             fail('(b) page ' + first.page_hash + ' vs server ' + first.server_hash);
         }
 
-        await page.evaluate(() => Spa.dispatch('/_sys/tasks'));
+        await page.evaluate(() => Rsx.navigate('/_sys/tasks'));
         await page.waitForTimeout(3000);
 
         let after;

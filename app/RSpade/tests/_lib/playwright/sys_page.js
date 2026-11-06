@@ -13,7 +13,10 @@
  *
  * errors      every pageerror and console.error seen so far (jqhtml reports a failed lifecycle
  *             hook through console.error, not as an uncaught exception). A script that provokes
- *             failures on purpose filters the messages it expects.
+ *             failures on purpose filters the messages it expects. Chromium's own report of a
+ *             full document load in headless mode ("Transition was aborted because of invalid
+ *             state", the view-transition opt-in being off) is not collected: every full load
+ *             logs it, a raw location write included, so it says nothing about the page.
  * on_request  (fn) registers ONE interceptor consulted for every same-origin request before it
  *             continues: fn(route, request) returns true when it has answered the route itself
  *             (abort, fulfill, or a continue it performs later), false to let it through.
@@ -21,7 +24,17 @@
  *             open_sys_page({ on_request: fn }) instead, which installs it before navigating.
  *             fn(route, request, headers) then also receives the headers to continue with.
  *
- * Nothing here has a deadline: the SPA wait ends when the SPA is up.
+ * Opening the page has no deadline: the SPA wait ends when the SPA is up.
+ *
+ *   const { poll_until } = require('../../_lib/playwright/sys_page.js');
+ *   await poll_until(page, 'the tasks page is dispatched', () => Spa.action() instanceof _Sys_Tasks_Action);
+ *
+ * poll_until  polls a condition across document loads - each probe is its own evaluate, and a
+ *             probe whose document was replaced under it ("Execution context was destroyed")
+ *             or whose globals are not up yet counts as "not yet". Use it after anything that
+ *             can load a document: page.waitForFunction() dies with the document it runs in.
+ *             Bounded at the house 120 s (tests/CLAUDE.md, the contention principle); reaching
+ *             the bound throws naming the condition, never the elapsed time.
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
@@ -43,7 +56,11 @@ async function open_sys_page(options = {}) {
 
     const errors = [];
     page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
+    page.on('console', (msg) => {
+        if (msg.type() === 'error' && !is_chromium_load_noise(msg.text())) {
+            errors.push(msg.text());
+        }
+    });
 
     let interceptor = options.on_request || null;
     const on_request = (fn) => { interceptor = fn; };
@@ -84,4 +101,44 @@ async function open_sys_page(options = {}) {
     return { browser, page, errors, on_request };
 }
 
-module.exports = { open_sys_page, BASE_URL };
+/** Chromium's console error on every full document load in headless mode; see `errors` above. */
+function is_chromium_load_noise(text) {
+    return text.includes('Transition was aborted because of invalid state');
+}
+
+/**
+ * The house bound for a wait on a browser condition (tests/CLAUDE.md, the contention
+ * principle). A bounded wait on a party the test does not control is the sanctioned test
+ * exception to the no-timeout mandate: only a genuinely stuck condition reaches 120 s.
+ */
+const POLL_BOUND_MS = 120000;
+
+/** Interval between probes: how often the condition is asked, never how long anything takes. */
+const POLL_INTERVAL_MS = 100;
+
+/**
+ * Poll `fn` (evaluated in the page with `arg`) until it returns a truthy value, and return
+ * that value. See the header for when to use it.
+ */
+async function poll_until(page, what, fn, arg) {
+    const deadline = Date.now() + POLL_BOUND_MS;
+    let last_error = null;
+    for (;;) {
+        try {
+            const value = await page.evaluate(fn, arg);
+            if (value) {
+                return value;
+            }
+            last_error = null;
+        } catch (e) {
+            // The document was replaced mid-probe, or the page's globals are not up yet.
+            last_error = e;
+        }
+        if (Date.now() >= deadline) {
+            throw new Error('never reached: ' + what + (last_error ? ' (last probe: ' + last_error.message.split('\n')[0] + ')' : ''));
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+}
+
+module.exports = { open_sys_page, poll_until, is_chromium_load_noise, BASE_URL };

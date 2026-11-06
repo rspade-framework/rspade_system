@@ -367,12 +367,16 @@ keep in agreement.
 
 A plain `<a href="${Rsx.Route(...)}">` is all you need: **link interception is
 automatic**, and only known SPA routes are intercepted, so an external link needs
-no opt-out attribute. To navigate from code:
+no opt-out attribute. To navigate from code - to any page, SPA or not:
 
 ```javascript
-Spa.dispatch('/clients');    // pushes history — a normal navigation
-Spa.redirect('/clients');    // REPLACES history — for a redirect in on_load()
+Rsx.navigate(Rsx.Route('Clients_Index_Action'));   // pushes history — a normal navigation
+Rsx.redirect(Rsx.Route('Clients_Index_Action'));   // REPLACES history — for a redirect in on_load()
 ```
+
+Never write `window.location` / `history` yourself, and never open a tab from code
+(`window.open()`): both are build failures (`JS-NAVIGATE-01`, `JS-NEW-TAB-01`). A new tab
+is an `<a target="_blank" rel="noopener">` the user clicks. `rsx:man navigation`.
 
 ---
 

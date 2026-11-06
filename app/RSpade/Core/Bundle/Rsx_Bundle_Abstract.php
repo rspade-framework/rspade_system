@@ -497,7 +497,7 @@ abstract class Rsx_Bundle_Abstract
         // check a dispatch seam already consulted during this request does not run
         // twice. 'public' always passes, so an anonymous render still ships
         // {"public": 1}. Consumed by the generated Permission/Portal_Permission
-        // mirrors and by Spa.dispatch's client gate.
+        // mirrors and by the SPA dispatch's client gate (Spa._dispatch).
         $auth_realm = Auth_Gates::active_realm();
         $rsxapp_data['auth'] = Auth_Gates::export_grants($auth_realm);
 

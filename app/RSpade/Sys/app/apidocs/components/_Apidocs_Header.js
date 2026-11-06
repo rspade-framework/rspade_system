@@ -14,10 +14,9 @@ class _Apidocs_Header extends Component {
                 // one version need not exist in another, and a "not found, showing home"
                 // bounce is worse than going there directly.
                 //
-                // An ordinary link, not Spa.dispatch: the console is mounted by the
-                // application's own #[Route] and there is no SPA router on this page. The
-                // console's delegated click handler intercepts it and redraws in place.
-                window.location.href = _Apidocs_Catalog.home_url(int($element.val()));
+                // A full page load: the console is mounted by the application's own
+                // #[Route] and there is no SPA router on this page.
+                Rsx.navigate(_Apidocs_Catalog.home_url(int($element.val())));
             });
         }
     }

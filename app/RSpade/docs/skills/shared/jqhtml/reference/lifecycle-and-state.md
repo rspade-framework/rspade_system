@@ -606,7 +606,7 @@ try/catch works as usual; a rejection after the stop is swallowed. Wrap EVERY wa
 
 Unguarded, a child handle on a stopped component is `null` (`this.sid()`,
 `this.$sid('x').component()`) and the call throws; `reload()` / `refresh()` / `load()` reject;
-a `Spa.dispatch()`, modal or flash lands on whatever page the user is now on; and an unhandled
+an `Rsx.navigate()`, modal or flash lands on whatever page the user is now on; and an unhandled
 exception switches the SPA to full page loads for the rest of the visit.
 
 **The alternative: `is_stopped()`, when the code must keep going after a stop.** A `finally` after
