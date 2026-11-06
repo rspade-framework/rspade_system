@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Breadcrumb origins - the reserved _via parameter (SPA-VIA-01..13, rsx:man breadcrumb_origins).
+ * Breadcrumb origins - the reserved _via parameter (SPA-VIA-01..14, rsx:man breadcrumb_origins).
  *
  * A page reached from somewhere other than its home may show THAT trail: the URL carries
  * origin tokens in _via, a page that accepts the token's type verifies it in
@@ -189,7 +189,7 @@ async function run() {
 
         const back_forged = await page.evaluate(async () => {
             history.replaceState({ ...history.state, via_decider: 'Other_Action@/elsewhere' }, '');
-            await window.__via.go('/_sys/tasks', { via: false });
+            await window.__via.go('/_sys/tasks', { via: 'drop' });
             const settled = await window.__via.back();
             return { loc: window.__via.here(), kept: settled.kept };
         });
@@ -219,11 +219,69 @@ async function run() {
         // --- 7. opt-out ---
         const opt_out = await page.evaluate(async () => {
             await window.__via.go('/_sys/users/1?_via=site.1');
-            await Spa.dispatch('/_sys/system-info', { via: false });
+            await Spa.dispatch('/_sys/system-info', { via: 'drop' });
             return { loc: window.__via.here(), arrival: Spa._via_navigation.arrival };
         });
         check(opt_out.loc === '/_sys/system-info' && opt_out.arrival === null,
-            '{via: false} does not carry', opt_out);
+            "{via: 'drop'} does not carry", opt_out);
+
+        // --- 14. {via: 'continue'}: a create page handing over to the record it created ---
+        // /_sys/users/1 (decider A) stands in for the create page, /_sys/workers (decider B,
+        // accepts 'site') for the created record's view, /_sys/tasks for a page accepting nothing.
+        const plain_hop = await page.evaluate(async () => {
+            await window.__via.go('/_sys/users/1?_via=site.1');
+            return window.__via.go('/_sys/workers');
+        });
+        check(plain_hop.arrival === 'carried' && !plain_hop.kept && plain_hop.loc === '/_sys/workers',
+            'without the option, a hop to a different decider still strips the carried origin', plain_hop);
+
+        const continued = await page.evaluate(async () => {
+            await window.__via.go('/_sys/users/1?_via=site.1');
+            return window.__via.go('/_sys/workers', { via: 'continue' });
+        });
+        check(continued.arrival === 'explicit' && continued.kept && continued.loc === '/_sys/workers?_via=site.1'
+            && continued.decider === '_Sys_Task_Workers_Action@/_sys/workers',
+            "{via: 'continue'} carries the origin as an explicit claim, kept by a different decider that accepts it", continued);
+
+        const continued_unaccepted = await page.evaluate(async () => {
+            await window.__via.go('/_sys/users/1?_via=site.1');
+            return window.__via.go('/_sys/tasks', { via: 'continue' });
+        });
+        check(continued_unaccepted.arrival === 'explicit' && !continued_unaccepted.kept
+            && continued_unaccepted.loc === '/_sys/tasks' && !continued_unaccepted.length_changed,
+            "{via: 'continue'} to a page that accepts nothing strips it with replaceState", continued_unaccepted);
+
+        const continued_own = await page.evaluate(async () => {
+            await window.__via.go('/_sys/users/1?_via=site.1');
+            return window.__via.go('/_sys/system-info?_via=site.1,users_home', { via: 'continue' });
+        });
+        check(continued_own.arrival === 'explicit' && continued_own.loc === '/_sys/system-info?_via=site.1,users_home',
+            "{via: 'continue'} with a target naming its own _via keeps the target's", continued_own);
+
+        const continued_none = await page.evaluate(async () => {
+            await Spa.dispatch('/_sys/tasks', { via: 'drop' });
+            return window.__via.go('/_sys/workers', { via: 'continue' });
+        });
+        check(continued_none.arrival === null && continued_none.loc === '/_sys/workers',
+            "{via: 'continue'} with no current _via is a plain navigation", continued_none);
+
+        const refused = await page.evaluate(async () => {
+            const attempt = async (options) => {
+                try { await Spa.dispatch('/_sys/tasks', options); return null; } catch (e) { return e.message; }
+            };
+            return {
+                bogus: await attempt({ via: 'bogus' }),
+                bool: await attempt({ via: false }),
+                no_history: await attempt({ via: 'continue', history: 'none' }),
+                carry: await attempt({ via: 'carry' }),
+            };
+        });
+        check(refused.bogus !== null && refused.bogus.includes("'carry'") && refused.bogus.includes("'drop'")
+            && refused.bogus.includes("'continue'"),
+            'an unknown {via} value throws, naming the accepted values', refused.bogus);
+        check(refused.bool !== null, '{via: false} throws (the value is \'drop\')', refused.bool);
+        check(refused.no_history !== null, "{via: 'continue'} with {history: 'none'} throws", refused.no_history);
+        check(refused.carry === null, "{via: 'carry'} is accepted (the default, spelled out)", refused.carry);
 
         // --- 8. nesting ---
         const nested = await page.evaluate(async () => {
@@ -262,9 +320,9 @@ async function run() {
 
         // --- 10. loop guard and depth cap ---
         const guard = await page.evaluate(async () => {
-            await Spa.dispatch('/_sys/logs', { via: false });
+            await Spa.dispatch('/_sys/logs', { via: 'drop' });
             const loop = await Rsx_Breadcrumb_Resolver._walk_chain_structure(Spa.action(), '/_sys/logs', null, []);
-            await Spa.dispatch('/_sys/performance', { via: false });
+            await Spa.dispatch('/_sys/performance', { via: 'drop' });
             const deep = await Rsx_Breadcrumb_Resolver._walk_chain_structure(Spa.action(), '/_sys/performance', null, []);
             return { loop: loop.chain.map((c) => c.url), deep: deep.chain.length };
         });

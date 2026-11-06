@@ -799,14 +799,51 @@ class Spa {
     }
 
     /**
+     * The values a navigation's {via} option accepts. Absent means 'carry'.
+     *
+     * - 'carry'    the current _via rides along; kept only while the same page decides it.
+     * - 'drop'     the current _via is not carried.
+     * - 'continue' this navigation continues the same detour (a create page handing over to
+     *              the record it created): the current _via is carried as an explicit claim,
+     *              kept when any page in the new trail accepts and verifies it.
+     */
+    static VIA_OPTIONS = ['carry', 'drop', 'continue'];
+
+    /**
+     * Throw unless a navigation's {via} option is absent or one of Spa.VIA_OPTIONS - a
+     * typo is never read as the default. 'continue' also needs a history entry to carry
+     * the origin onto, so it refuses {history: 'none'}.
+     */
+    static _validate_via_option(options) {
+        if (!('via' in options) || options._is_popstate) {
+            return;
+        }
+
+        if (!Spa.VIA_OPTIONS.includes(options.via)) {
+            throw new Error(
+                `Spa navigation option {via: ${JSON.stringify(options.via)}} is not understood. ` +
+                `Accepted: 'carry' (the default), 'drop', 'continue'. See rsx:man breadcrumb_origins.`
+            );
+        }
+
+        if (options.via === 'continue' && options.history === 'none') {
+            throw new Error(
+                `Spa navigation option {via: 'continue'} cannot be combined with {history: 'none'}: ` +
+                `a navigation that writes no history entry carries no breadcrumb origin.`
+            );
+        }
+    }
+
+    /**
      * Carry the current page's _via onto a navigation's target, and say how the target's
      * _via got there.
      *
      * - A target naming its own _via keeps it: 'explicit'.
-     * - {via: false} never carries.
+     * - {via: 'drop'} never carries.
      * - Otherwise, when the current URL has a _via and the target is a route of this SPA,
-     *   the current value is copied: 'carried'. Dispatch does not ask whether the origin
-     *   applies there - the resolver decides that after the walk, and strips it if not.
+     *   the current value is copied: 'carried' - or, under {via: 'continue'}, 'explicit'.
+     *   Dispatch does not ask whether the origin applies there - the resolver decides that
+     *   after the walk, and strips it if not.
      * - The initial load (and a reload, a pasted URL, a new tab) is 'explicit'; a
      *   Back/Forward is 'restored', judged against the decider its own entry recorded.
      *
@@ -823,7 +860,7 @@ class Spa {
             return { url: url, arrival: 'explicit' };
         }
 
-        if (options.via === false || options.history === 'none') {
+        if (options.via === 'drop' || options.history === 'none') {
             return { url: url, arrival: null };
         }
 
@@ -837,7 +874,10 @@ class Spa {
             return { url: url, arrival: null };
         }
 
-        return { url: Spa_Via.with_value(url, current), arrival: 'carried' };
+        return {
+            url: Spa_Via.with_value(url, current),
+            arrival: options.via === 'continue' ? 'explicit' : 'carried',
+        };
     }
 
     /**
@@ -864,7 +904,7 @@ class Spa {
      * Navigate to a URL, replacing the current history entry instead of pushing.
      * Use for programmatic redirects (e.g., in on_load() when a record should
      * display at a different URL) so Back button skips the redirecting page.
-     * Takes dispatch()'s options, {via: false} included.
+     * Takes dispatch()'s options, {via} included.
      */
     static async redirect(url, options = {}) {
         return Spa.dispatch(url, { ...options, history: 'replace' });
@@ -886,9 +926,14 @@ class Spa {
      * @param {object|null} options.scroll - Scroll position {x, y} to restore (default: null = scroll to top)
      * @param {boolean} options.triggers - Fire before/after dispatch events (default: true)
      * @param {boolean} options.force - Force SPA dispatch even if disabled (used by popstate) (default: false)
-     * @param {boolean} options.via - false: do not carry the current page's breadcrumb origin
-     *   (_via) onto the target. By default it is carried whenever the target names none; see
-     *   rsx:man breadcrumb_origins.
+     * @param {string} options.via - 'carry'|'drop'|'continue' (default: 'carry'): what
+     *   happens to the current page's breadcrumb origin (_via) when the target names none.
+     *   - 'carry': it rides along, kept only while the same page decides the trail
+     *   - 'drop': it is not carried
+     *   - 'continue': this navigation continues the same detour - a create page handing
+     *     over to the record it created - so it is carried as an explicit claim, kept when
+     *     any page in the new trail accepts and verifies it
+     *   Any other value throws. See rsx:man breadcrumb_origins.
      *
      * THE NAVIGATION GUARD DOES NOT GUARD THIS. Navigation from code - a button
      * handler, a row click, a redirect after a save - goes ahead with no prompt, and a
@@ -899,6 +944,8 @@ class Spa {
      * the guard as it is.
      */
     static async dispatch(url, options = {}) {
+        Spa._validate_via_option(options);
+
         if (Rsx.has_navigation_guard() && !Spa._is_fragment_only_move(window.location.href, url)) {
             Rsx.clear_navigation_guard();
         }
@@ -990,7 +1037,7 @@ class Spa {
             }
 
             // Breadcrumb origins: carry the current _via onto the target unless it names its
-            // own or the caller opted out ({via: false}). See _carry_via().
+            // own or the caller opted out ({via: 'drop'}). See _carry_via().
             const carried = Spa._carry_via(url, options);
             url = carried.url;
             const via_arrival = carried.arrival;

@@ -82,13 +82,14 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-VIA-04 | Carry, different decider: stripped, plain trail | playwright | -> `/_sys/workers` (accepts `site` itself) | stripped, no new entry, trail `[/_sys, /_sys/workers]` | implemented | 2026-11-05 |
 | SPA-VIA-05 | Carry, no decider: stripped | playwright | -> `/_sys/tasks` | stripped | implemented | 2026-11-05 |
 | SPA-VIA-06 | Explicit wins over carrying | playwright | from `site.1`, dispatch `?_via=site.1,users_home` | the target's own value kept | implemented | 2026-11-05 |
-| SPA-VIA-07 | `{via: false}` does not carry | playwright | `Spa.dispatch(url, {via: false})` | no `_via`, arrival null | implemented | 2026-11-05 |
+| SPA-VIA-07 | `{via: 'drop'}` does not carry | playwright | `Spa.dispatch(url, {via: 'drop'})` | no `_via`, arrival null | implemented | 2026-11-05 |
 | SPA-VIA-08 | Nesting: each consumer pops its head; a hook-supplied `_via` goes in front of the remainder; an unconsumed token rides to the root | playwright | walk of `site.1,users_home,extra` | chain URLs carry `users_home,extra` then `dash_home,extra` then `extra` | implemented | 2026-11-05 |
 | SPA-VIA-09 | A malformed `_via` is stripped; more than 4 tokens truncated at the end; `Spa.via()` parses, `Spa.via_push()` prepends, caps and throws on a bad token | playwright | `?_via=Site.1`, `?_via=site.1,a,b,c,d` | stripped; `site.1,a,b,c`; `contact.42,site.1,a,b` | implemented | 2026-11-05 |
 | SPA-VIA-10 | Loop guard and depth cap | playwright | logs <-> companions; performance?n=N -> N+1 | walk stops at the repeat; 20 pages | implemented | 2026-11-05 |
 | SPA-VIA-11 | New-tab rewrite: mousedown writes the carried `_via` into an in-app link only; a click on it is a carried hop | playwright | planted links: in-app, own `_via`, external, non-SPA | only the in-app href rewritten; arrival `carried` | implemented | 2026-11-05 |
 | SPA-VIA-12 | Back/Forward: an entry's recorded decider decides; a different recorded decider strips | playwright | Back onto a kept entry; Back onto one whose `via_decider` was rewritten | kept; stripped | implemented | 2026-11-05 |
 | SPA-VIA-13 | `meta {grafted, root_url, decider}` reaches `on_chain`, `on_complete` and every layout's `on_breadcrumb_complete()` | playwright | stream on the grafted page | meta present on all three | implemented | 2026-11-05 |
+| SPA-VIA-14 | `{via}` modes: `'continue'` carries the origin as an explicit claim (kept by a different decider that accepts it, stripped by `replaceState` where none does, the target's own `_via` wins, nothing without a current `_via`); a plain hop still strips; an unknown value, `false`, and `'continue'` + `history: 'none'` throw; `'carry'` is accepted | playwright | `/_sys/users/1?_via=site.1` -> `/_sys/workers` / `/_sys/tasks` / `/_sys/system-info?_via=...` | as stated | implemented | 2026-11-06 |
 
 ## Notes
 

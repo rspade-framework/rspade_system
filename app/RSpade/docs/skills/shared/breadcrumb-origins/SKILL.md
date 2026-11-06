@@ -1,6 +1,6 @@
 ---
 name: breadcrumb-origins
-description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip, new tabs, nesting, the meta {grafted, root_url} a sidebar follows. Use when a page crumbs to the wrong parent after a detour, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
+description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip, {via: 'drop'|'continue'}, new tabs, nesting, the meta {grafted, root_url} a sidebar follows. Use when a page crumbs to the wrong parent after a detour or loses its origin after a create page's Save, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
 ---
 
 # Breadcrumb Origins
@@ -60,7 +60,12 @@ that starts that detour say so, and lets the page where the trail splits decide.
   own argument. `_via` only steers the trail; a link that starts a detour often carries both.
 - **A parent must not point back into the subtree.** The walk stops at the repeat with a
   warning (and at 20 pages deep).
-- **Leaving the subtree on purpose from code** is `Spa.dispatch(url, {via: false})` (or
+- **A create page that hands over to the record it created dispatches with
+  `{via: 'continue'}`; nothing else does.** The record page must also declare the origin type
+  (`static breadcrumb_via`) and verify it in `breadcrumb_parent_via()` against the record, or the
+  origin is stripped. The `{via}` values are `'carry'` (default), `'drop'`, `'continue'`;
+  anything else throws.
+- **Leaving the subtree on purpose from code** is `Spa.dispatch(url, {via: 'drop'})` (or
   `Spa.redirect`). Without it, a dispatch to the page already showing carries the origin back
   on and reloads.
 

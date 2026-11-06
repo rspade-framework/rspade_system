@@ -29,11 +29,13 @@ SYNOPSIS
             }
         }
 
-    Reading and opting out:
+    Reading, opting out, and continuing a detour:
 
-        Spa.via()                          // [{type: 'engagement', id: '156'}, ...]
-        Spa.dispatch(url, {via: false})    // never carry the current origin
-        Spa.redirect(url, {via: false})
+        Spa.via()                              // [{type: 'engagement', id: '156'}, ...]
+        Spa.dispatch(url, {via: 'drop'})       // never carry the current origin
+        Spa.redirect(url, {via: 'drop'})
+        Spa.dispatch(url, {via: 'continue'})   // a create page handing over to the
+                                               // record it created keeps the origin
 
 DESCRIPTION
     Breadcrumbs are location-based: every action names ONE parent in
@@ -156,8 +158,48 @@ CARRYING AND STRIPPING
     Carrying. When the current URL has a _via and an in-app navigation's
     target names none, the framework copies the current _via onto the target:
     Spa.dispatch(), Spa.redirect() and intercepted link clicks. A target that
-    names its own _via keeps it (explicit wins). {via: false} never carries.
-    Only a target that is a route of this SPA is carried onto.
+    names its own _via keeps it (explicit wins). Only a target that is a route
+    of this SPA is carried onto.
+
+    The {via} option of Spa.dispatch() / Spa.redirect() says how:
+
+        'carry'      the default (the option absent): copied, arrival carried
+        'drop'       not carried
+        'continue'   copied, arrival EXPLICIT - this navigation continues the
+                     same detour
+        anything else throws, naming the three; 'continue' with
+        {history: 'none'} throws too (no entry to carry the origin onto)
+
+    The create-page hand-off. A create page reached from another record has
+    no record of its own, so it is its own decider: New Invoice
+    (/billing/invoices/new?engagement_id=156&_via=engagement.156) declares
+    breadcrumb_via = ['engagement'] and checks the claim against its
+    engagement_id. After Save it moves to the invoice it created. A plain
+    carried hop would strip the origin there, because the invoice view is a
+    different decider - right for a move between sibling records, wrong for
+    this one. So the save hands over with 'continue':
+
+        const result = await Invoice_Controller.create(values);
+        Spa.dispatch(Rsx.Route('Invoice_View_Action', result.invoice_id),
+                     {via: 'continue'});
+
+    and the invoice view ALSO declares the origin and verifies it against
+    the record it shows:
+
+        static breadcrumb_via = ['engagement'];
+
+        async breadcrumb_parent_via(via) {
+            await this.await_loaded();
+            if (str(this.data.invoice.engagement_id) !== via.id) return null;
+            return Rsx.Route('Engagement_View_Action', via.id, {tab: 'billing'});
+        }
+
+    Without that declaration the origin is stripped, exactly as before:
+    'continue' only changes how the claim is judged, never whether a page
+    must verify it. It is an option on the navigation, not a page
+    declaration, because only the code that just saved knows the next page is
+    the same detour; a page that accepted carried origins from any decider
+    would keep them across unrelated sibling hops too.
 
     Dispatch does not know whether the origin applies to the target - it
     carries unconditionally, and the walk decides afterwards. Every navigation
@@ -267,8 +309,12 @@ API
                                                 in front of the current list,
                                                 capped at 4; throws on a type
                                                 or id outside the grammar
-    Spa.dispatch(url, {via: false})             navigate without carrying
-    Spa.redirect(url, {via: false})
+    Spa.dispatch(url, {via: 'carry'|'drop'|'continue'})
+    Spa.redirect(url, {via: ...})               'carry' (default) copies the
+                                                current _via; 'drop' does
+                                                not; 'continue' copies it as
+                                                an explicit claim; anything
+                                                else throws
     Spa_Layout.on_breadcrumb_complete(chain, meta)
     Rsx_Breadcrumb_Resolver.settle_via(action, url, navigation)
 
@@ -290,7 +336,10 @@ COMMON PITFALLS
       does not hold.
     - Setting _via on a link that does not ESTABLISH an origin. Carrying is
       automatic; a hand-copied _via is an explicit claim, which defeats the
-      different-decider strip.
+      different-decider strip. The same goes for {via: 'continue'} on a
+      navigation that is not a create page's hand-off.
+    - {via: 'continue'} on the save call alone. The record page must also
+      declare the origin type and verify it, or the origin is stripped.
     - Reading this.args._via. It is never there (FATAL SPA-VIA-01). The hook
       receives its token; a layout reads Spa.via().
     - Returning a parent that points back into the subtree. The walk stops at
@@ -300,7 +349,7 @@ COMMON PITFALLS
     - Dispatching to the page already showing, minus its _via. From a page
       with an origin, Spa.dispatch() to the same path carries the origin back
       on, which makes it the same URL (a reload under history: 'auto'). Pass
-      {via: false} to show the page without its origin.
+      {via: 'drop'} to show the page without its origin.
 
 MANIFEST-BUILD FATALS (SPA-VIA-01)
     - A route declaring a :_via parameter (#[Route], #[Portal_Route], @route).

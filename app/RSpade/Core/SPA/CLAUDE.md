@@ -99,7 +99,9 @@ gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on every navigation af
 **Breadcrumb origins ride the dispatch.** `match_url_to_route()` deletes `_via` from the args, so
 no action (and no cache key) ever sees it. `_carry_via()` runs after the URL is made relative:
 it copies the current `_via` onto a target route of this SPA that names none (unless
-`{via: false}`) and labels the arrival `explicit` / `carried` / `restored` (popstate) / null.
+`{via: 'drop'}`) and labels the arrival `explicit` / `carried` / `restored` (popstate) / null;
+`{via: 'continue'}` copies it labelled `explicit`. `_validate_via_option()` runs first in
+`dispatch()` and throws on any `{via}` outside `Spa.VIA_OPTIONS`.
 `Spa._via_navigation = {arrival, previous}` is set before the layout chain is resolved -
 `previous` is the LEAVING action's `_spa_via_settlement` promise for a carried hop, or the
 entry's `history.state.via_decider` for Back/Forward - and `_resolve_layout_chain()` calls

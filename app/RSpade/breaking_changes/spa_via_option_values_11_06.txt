@@ -1,0 +1,63 @@
+SPA NAVIGATION {via} OPTION: false BECOMES 'drop'; NEW 'continue'; UNKNOWN VALUES THROW
+Date: 2026-11-06
+
+IF YOU DO NOTHING: every Spa.dispatch() or Spa.redirect() call of yours that passes {via: false} now throws "Spa navigation option {via: false} is not understood", so that navigation never happens. Calls without a via option are unchanged.
+
+SUMMARY
+    Category 1 (a /rsx/ code change) plus a call-shape change.
+
+    The {via} option of Spa.dispatch() and Spa.redirect() - what happens to
+    the current page's breadcrumb origin (_via) when the target names none -
+    now takes one of three named values, like {history}:
+
+        'carry'      the default (the option absent): the origin rides along,
+                     kept only while the same page decides the trail
+        'drop'       the origin is not carried (formerly {via: false})
+        'continue'   this navigation continues the same detour: the origin
+                     is carried as an explicit claim, kept when any page in
+                     the new trail accepts and verifies it
+
+    Any other value throws, naming the three, so a typo is never read as the
+    default. {via: 'continue'} with {history: 'none'} also throws.
+
+    'continue' is for one move: a create page reached from another record
+    handing over to the record it just created. Without it the new record's
+    page - a different decider - strips the origin, and the user loses the
+    trail they came in on. The record's page must ALSO declare the origin
+    type (static breadcrumb_via) and verify it in breadcrumb_parent_via(),
+    or the origin is stripped as before.
+
+AFFECTED FILES
+    Any /rsx/**/*.js that passes {via: false} to Spa.dispatch() or
+    Spa.redirect(). The reference app has none.
+
+CHANGES REQUIRED
+
+    1. Find the calls:
+           grep -rnE 'via: ?false' rsx --include='*.js'
+       and replace each {via: false} with {via: 'drop'}.
+
+    2. Optional - a create page that hands over to the record it created
+       and should keep its breadcrumb origin:
+
+           Spa.dispatch(Rsx.Route('Invoice_View_Action', result.invoice_id),
+                        {via: 'continue'});
+
+       and on the record's page:
+
+           static breadcrumb_via = ['engagement'];
+           async breadcrumb_parent_via(via) {
+               await this.await_loaded();
+               if (str(this.data.invoice.engagement_id) !== via.id) return null;
+               return Rsx.Route('Engagement_View_Action', via.id, {tab: 'billing'});
+           }
+
+       If you previously copied the current _via onto the target by hand to
+       get this effect, replace the copy with {via: 'continue'}.
+
+VERIFICATION
+    grep -rnE 'via: ?false' rsx finds nothing. Navigate from a page
+    carrying _via with {via: 'drop'}: the target has no _via. For a create
+    hand-off with {via: 'continue'}: the new record's page keeps _via and
+    shows the origin's trail. rsx:man breadcrumb_origins, CARRYING AND
+    STRIPPING.
