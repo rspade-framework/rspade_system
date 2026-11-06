@@ -33,6 +33,7 @@ use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Revisions\Request_History;
 use App\RSpade\Core\Revisions\Request_History_Answer;
@@ -362,7 +363,14 @@ class Ajax
                     return $result;
                 });
 
-                $result = $history !== null ? $history->run($boundary) : $boundary();
+                try {
+                    $result = $history !== null ? $history->run($boundary) : $boundary();
+                } catch (Rollback_Response $rollback) {
+                    // The boundary saw a throw and rolled the writer back; the call answers
+                    // the carried value exactly as if the endpoint had returned it.
+                    $result = $rollback->response;
+                    static::__refuse_http_response($controller_name, $action_name, $result);
+                }
             } else {
                 // A pre_dispatch that halts answers for the endpoint: no lock, no action.
                 static::__refuse_http_response($controller_name, $action_name, $result);

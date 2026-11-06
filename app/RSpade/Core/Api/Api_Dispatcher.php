@@ -23,6 +23,7 @@ use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
+use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Revisions\Request_History;
 use App\RSpade\Core\Revisions\Request_History_Answer;
 use App\RSpade\Core\Revisions\Request_History_Call;
@@ -486,6 +487,17 @@ class Api_Dispatcher
                 }, $site_id);
 
                 $response = $history !== null ? $history->run($boundary) : $boundary();
+            }
+        } catch (Rollback_Response $rollback) {
+            // An error answer that rolled the request back: the boundary saw a throw (the
+            // writer is rolled back, nothing recorded); the carried response is answered
+            // exactly as a returned one would have been.
+            try {
+                $response = self::__api_response($rollback->response, $handler);
+            } catch (Throwable $e) {
+                self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, null);
+
+                throw $e;
             }
         } catch (Request_History_Answer $answer) {
             // Answered from the request history: never a fault.

@@ -14,6 +14,7 @@ use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
@@ -29,6 +30,13 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * AUTHORIZATION: the class gate is 'public'; per-file authorization runs through the
  * file.thumbnail.authorize / file.download.authorize event gates documented below. Those
  * hooks are the record layer (may this caller touch THIS attachment) and stay inline.
+ *
+ * READ, RELEASE, TRANSMIT: the rendition routes and the two content endpoints
+ * (get_extracted_text, get_markdown_html) are #[Manual_Lock]. Each looks the attachment up
+ * and asks its gates inside a Site_Lock::read() section, ends it, and only then materializes
+ * bytes, reads or renders, and answers. get_preview_info stays an ordinary reader: it reads
+ * metadata and answers at once. A gate handler that records the access does it under
+ * Site_Lock::write_exception() (rsx:man site_locks, HOLDING A LOCK WELL).
  *
  * ================================================================================================
  * ENDPOINTS
@@ -115,35 +123,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     #[Route('/_preview/pdf/:key', methods: ['GET'])]
     #[Portal_Route('/_preview/pdf/:key', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function pdf_rendition(Request $request, array $params = [])
     {
-        $key = $params['key'] ?? null;
-        if (!$key) {
-            abort(404, 'File not found');
-        }
-
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        // Dual authorization gate cascade - identical to inline()/download_file().
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => File_Attachment_Controller::_gate_user(),
-            'request' => $request,
-        ]);
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
-        }
-
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => File_Attachment_Controller::_gate_user(),
-            'request' => $request,
-        ]);
-        if ($download_auth !== true) {
-            return $download_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and the dual gate cascade (identical to
+        // inline() / download_file()) under the site's read lock; the rendition is resolved
+        // and served with no lock held.
+        $attachment = File_Attachment_Controller::_authorize_under_read_lock($request, $params['key'] ?? null, [Rsx_File_Gates::THUMBNAIL, Rsx_File_Gates::DOWNLOAD]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // App resolve chain (override/extend the rendition). Runs AFTER auth.
@@ -208,34 +196,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     #[Route('/_preview/sheet/:key', methods: ['GET'])]
     #[Portal_Route('/_preview/sheet/:key', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function sheet_rendition(Request $request, array $params = [])
     {
-        $key = $params['key'] ?? null;
-        if (!$key) {
-            abort(404, 'File not found');
-        }
-
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => File_Attachment_Controller::_gate_user(),
-            'request' => $request,
-        ]);
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
-        }
-
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => File_Attachment_Controller::_gate_user(),
-            'request' => $request,
-        ]);
-        if ($download_auth !== true) {
-            return $download_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and the dual gate cascade (identical to
+        // inline() / download_file()) under the site's read lock; the rendition is resolved
+        // and served with no lock held.
+        $attachment = File_Attachment_Controller::_authorize_under_read_lock($request, $params['key'] ?? null, [Rsx_File_Gates::THUMBNAIL, Rsx_File_Gates::DOWNLOAD]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         if (Document_Render_Service::rendition_format_for_mime($attachment->pipeline_mime()) !== 'html') {
@@ -664,55 +633,37 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Portal_Impersonation_Readable]
+    #[Manual_Lock]
     public static function get_extracted_text(Request $request, array $params = [])
     {
-        $attachment_id = $params['attachment_id'] ?? null;
-        if (!$attachment_id) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'attachment_id is required');
+        // READ, RELEASE, TRANSMIT: the lookup, the content gate cascade and the extraction state
+        // under the site's read lock (#[Manual_Lock]: no automatic lock); the text itself -
+        // which may materialize external bytes - is read after the section ends.
+        $read = Site_Lock::read(Site_Lock::_request_site_id(), function () use ($request, $params) {
+            $attachment = static::__authorize_content_by_id($request, $params);
+            if (!($attachment instanceof File_Attachment_Model)) {
+                return $attachment;
+            }
+
+            // A degraded upload has no readable content at all - answer error without consulting the
+            // index, which for unparseable bytes would report a text-free extraction as 'available'.
+            if ($attachment->preview_unavailable) {
+                return ['status' => 'error', 'text' => null, 'should_show_text_preview' => false];
+            }
+
+            // should_show is carried on this payload as well as get_preview_info's so a caller
+            // that has ALREADY fetched the text does not need a second round trip to learn
+            // whether to display it. It is advice about presentation, never authorization: the
+            // text itself is returned whatever this says, because a caller may legitimately want
+            // it for something other than a text pane (a copy button, a search excerpt).
+            return [$attachment, $attachment->get_extraction_status(), $attachment->should_show_text_preview()];
+        });
+
+        if (!is_array($read) || !array_is_list($read)) {
+            return $read;
         }
 
-        $attachment = File_Attachment_Model::find($attachment_id);
-        if (!$attachment) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, 'Attachment not found');
-        }
-
-        // 'user' is realm-honest for the same reason get_preview_info's is: this endpoint is
-        // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
-        // gate must not be handed a staff-facade read.
-        $user = File_Attachment_Controller::_gate_user();
-
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => $user,
-            'request' => $request,
-        ]);
-        if ($thumbnail_auth !== true) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
-        }
-
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => $user,
-            'request' => $request,
-        ]);
-        if ($download_auth !== true) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
-        }
-
-        // A degraded upload has no readable content at all - answer error without consulting the
-        // index, which for unparseable bytes would report a text-free extraction as 'available'.
-        if ($attachment->preview_unavailable) {
-            return ['status' => 'error', 'text' => null, 'should_show_text_preview' => false];
-        }
-
-        $status_id = $attachment->get_extraction_status();
-
-        // Carried on this payload as well as get_preview_info's so a caller that has ALREADY
-        // fetched the text does not need a second round trip to learn whether to display it.
-        // It is advice about presentation, never authorization: the text itself is returned
-        // whatever this says, because a caller may legitimately want it for something other
-        // than a text pane (a copy button, a search excerpt).
-        $should_show = $attachment->should_show_text_preview();
+        [$attachment, $status_id, $should_show] = $read;
 
         // get_extracted_text() is called ONLY on the EXTRACTED branch: it routes through
         // resolve_storage(), which materializes external bytes, and there is nothing to read in
@@ -763,39 +714,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     #[Ajax_Endpoint]
     #[Portal_Impersonation_Readable]
+    #[Manual_Lock]
     public static function get_markdown_html(Request $request, array $params = [])
     {
-        $attachment_id = $params['attachment_id'] ?? null;
-        if (!$attachment_id) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'attachment_id is required');
-        }
-
-        $attachment = File_Attachment_Model::find($attachment_id);
-        if (!$attachment) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, 'Attachment not found');
-        }
-
-        // 'user' is realm-honest for the same reason the two siblings' is: this endpoint is
-        // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
-        // gate must not be handed a staff-facade read.
-        $user = File_Attachment_Controller::_gate_user();
-
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => $user,
-            'request' => $request,
-        ]);
-        if ($thumbnail_auth !== true) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
-        }
-
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => $user,
-            'request' => $request,
-        ]);
-        if ($download_auth !== true) {
-            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+        // READ, RELEASE, TRANSMIT: the lookup and the content gate cascade under the site's
+        // read lock (#[Manual_Lock]: no automatic lock); the source is read and rendered after
+        // the section ends.
+        $attachment = Site_Lock::read(Site_Lock::_request_site_id(), fn () => static::__authorize_content_by_id($request, $params));
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // Routed on the PIPELINE mime (extension-first for documents), the same answer
@@ -840,6 +767,48 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             'html' => Markdown_Rendition::render($markdown),
             'truncated' => $truncated,
         ];
+    }
+
+    /**
+     * The attachment $params['attachment_id'] names, cleared by the CONTENT gate cascade
+     * (file.thumbnail.authorize, then file.download.authorize) - or the coded refusal to
+     * answer instead. Runs inside the caller's read section.
+     *
+     * 'user' is realm-honest for the same reason get_preview_info's is: the Ajax endpoints are
+     * #[Auth_Realm('any')], so a portal page reaches them as a genuine PORTAL request and the
+     * gate must not be handed a staff-facade read.
+     *
+     * @param Request $request
+     * @param array $params
+     * @return mixed File_Attachment_Model, or an Error_Response
+     */
+    private static function __authorize_content_by_id(Request $request, array $params)
+    {
+        $attachment_id = $params['attachment_id'] ?? null;
+        if (!$attachment_id) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'attachment_id is required');
+        }
+
+        $attachment = File_Attachment_Model::find($attachment_id);
+        if (!$attachment) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, 'Attachment not found');
+        }
+
+        $user = File_Attachment_Controller::_gate_user();
+
+        foreach ([Rsx_File_Gates::THUMBNAIL, Rsx_File_Gates::DOWNLOAD] as $gate) {
+            $auth = Rsx_File_Gates::authorize($gate, [
+                'attachment' => $attachment,
+                'user' => $user,
+                'request' => $request,
+            ]);
+
+            if ($auth !== true) {
+                return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+            }
+        }
+
+        return $attachment;
     }
 
     /**

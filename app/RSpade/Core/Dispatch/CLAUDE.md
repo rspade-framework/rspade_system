@@ -41,7 +41,9 @@ again.**
   as are `Portal_Main::init()` and `Main::unhandled_route()`), then at the site lock
   boundary (`Site_Lock::_run_request()`: no automatic lock unless the route declares
   `#[Reader]` / `#[Writer]`) the action (ALWAYS in the enforcement window,
-  `Site_Lock::_enforce()`), `rsx.post_dispatch` and response shaping; then FPC marker, CSP.
+  `Site_Lock::_enforce()`), `rsx.post_dispatch` and response shaping (a thrown
+  `Rollback_Response` rolls the boundary back, then its value is shaped as a returned one);
+  then FPC marker, CSP.
   A coded
   failure (an `abort()`, the `Ajax*Exception` family) answers through
   `page_failure_response()`. The Ajax channel is one core, `Core/Ajax/Ajax::execute()`.

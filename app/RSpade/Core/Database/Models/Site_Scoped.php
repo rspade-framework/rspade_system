@@ -44,13 +44,15 @@ use App\RSpade\Core\Session\Session;
  *
  * THE SITE WRITE LOCK IS ENFORCED HERE. Inside an enforcement window (a task body, an
  * endpoint handler - Site_Lock), save() and delete() of a site-scoped record for site X fatal
- * unless the process holds X's write lock (#[Writer], a Site_Lock::write() section) or is
- * inside a Site_Lock bypass covering X. RestrictedEloquentBuilder applies the same check to a
+ * unless the process holds X's write lock (#[Writer], a Site_Lock::write() section), is
+ * inside a Site_Lock bypass covering X, or has a Site_Lock write exception open (a view,
+ * audit or telemetry record). RestrictedEloquentBuilder applies the same check to a
  * raw bulk update/delete. Nothing is ever acquired here: the lock is taken at the boundary,
  * never because a write happened.
  *
- * EXEMPTION. A site-scoped model that is BOOKKEEPING - a record of what happened, never
- * tenant data a user edits - declares #[Site_Lock_Exempt('<what it records>')] on its class
+ * EXEMPTION. A site-scoped model whose table is ONLY an append-only view, audit or telemetry
+ * record - what happened, never tenant data a user edits, never a row read to decide a
+ * business write - declares #[Site_Lock_Exempt('<what it records>')] on its class
  * (attribute-only metadata, read by Site_Lock::_is_exempt(); inherited by subclasses; the
  * reason is required). Its writes are never checked. No framework model declares it today:
  * the framework's bookkeeping (sessions, sign-in history, _transactions / _revisions, audit

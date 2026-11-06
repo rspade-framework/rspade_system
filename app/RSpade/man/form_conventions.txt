@@ -542,7 +542,9 @@ EDITING A RECORD
     savepoint, and the writer commits once at the end. The same holds inside a
     Site_Lock::write() section. A coded result the endpoint RETURNS
     (response_form_error(), response_form_question()) commits what it wrote before
-    answering; a thrown one rolls the request back.
+    answering; a thrown one rolls the request back -
+    throw new Rollback_Response(response_form_error(...)) answers the same
+    envelope and undoes the write (rsx:man site_locks, HOLDING A LOCK WELL).
 
     WHEN IT ASKS. Only when another save changed a field this submission also changed,
     to a value other than the one this submission writes. A save that touched other

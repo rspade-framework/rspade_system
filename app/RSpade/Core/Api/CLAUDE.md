@@ -47,7 +47,9 @@ the controller's `pre_dispatch` run with NO site lock, each in an enforcement wi
 boundary (`Site_Lock::_run_request()`, the key's site): reader by default, `#[Writer]` =
 write lock + one transaction, `#[Manual_Lock]` = none; the enforcement window is the method
 alone; a transaction the method leaves open is rolled back and fails the request; the log row
-is written after the lock is released.
+is written after the lock is released. A thrown `Rollback_Response` is caught outside the boundary (already
+rolled back) and its carried response goes through the same `__api_response()` as a returned
+one.
 
 **The request history** (`Core/Revisions/Request_History`). `_request_ref` is a system
 parameter on every endpoint: `Api_Param_Validator` accepts it undeclared (checked as a string

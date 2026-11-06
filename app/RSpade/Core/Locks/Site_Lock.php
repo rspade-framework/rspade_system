@@ -68,21 +68,45 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *       The same, for a framework or maintenance pass that walks EVERY site's rows outside
  *       the site scope (a queue drain, a retention sweep) and so cannot name one site.
  *
+ *   Site_Lock::write_exception(string $reason, callable $work): mixed
+ *   Site_Lock::acquire_write_exception(string $reason): string   (the token form)
+ *   Site_Lock::release_write_exception(string $token): void
+ *       A WRITE EXCEPTION: a STATE, not a lock. It takes nothing in rsx-lockd, blocks nobody
+ *       and waits for nothing; while one is open, site-scoped writes are permitted whether or
+ *       not a write lock is held. For a view, audit or telemetry record - a row nothing reads
+ *       to decide a value it writes - so a read endpoint that records stays a reader. It opens
+ *       NO transaction: inside a writer or a write section its writes ride the open
+ *       transaction (a later throw rolls them back with the rest); anywhere else each write
+ *       commits at once (autocommit). Counted (nested acquisitions; writes stay permitted
+ *       until the last release), valid anywhere, the reason mandatory (logged at DEBUG only:
+ *       it runs on ordinary page views), and the site never changes while one is open. An
+ *       enforcement window that closes with one still open (an endpoint, a hook, a task, a
+ *       command) releases it and fails naming it - unless the window is already failing.
+ *
+ *   Site_Lock::held_mode(?int $site_id = null): ?string   'read' | 'write' | null
+ *   Site_Lock::in_write_exception(): bool
+ *   Site_Lock::in_bypass(?int $site_id = null): bool
+ *       What this process holds right now - for a library that must refuse to run under a
+ *       write lock (a client for a remote service). held_mode() with no site answers for the
+ *       one site whose lock this process holds (rule 5: never more than one).
+ *
  * ENFORCEMENT. A process is either inside an ENFORCEMENT WINDOW or not. Inside one (a task
  * body, an artisan command or a system/script.php script (Site_Lock_Cli), an application
  * hook, and - wired by the dispatchers - an Ajax / API / companion / page-route handler), a
  * save() / delete() / per-record bulk write / raw bulk update or delete of a Site_Scoped model
  * for site X FATALS unless this process has WRITE AUTHORITY for X: it holds X's write lock
- * (a write section, a #[Writer] endpoint, or a raw RsxLocks::site_write_lock()), or it is
- * inside a bypass covering X. Outside every window (a the SITE_LOCK_EXEMPT constant provisioning
+ * (a write section, a #[Writer] endpoint, or a raw RsxLocks::site_write_lock()), it is
+ * inside a bypass covering X, or it has a write exception open. Outside every window (a the SITE_LOCK_EXEMPT constant provisioning
  * command - migrations, seeders, the test runner and its fixture code, the database reset)
  * nothing is checked. A raw DB::table() / SQL write is never seen - that is the documented
  * limit, not a hole to close.
  *
- * EXEMPT MODELS. A Site_Scoped model that is framework or application BOOKKEEPING - a record
- * of what happened rather than tenant data a user edits - declares the class attribute
- * #[Site_Lock_Exempt('<reason>')] (attribute-only metadata; the reason is required). Its
- * writes are never checked. See Site_Scoped.
+ * EXEMPT MODELS. A Site_Scoped model whose table is ONLY ever an append-only view, audit or
+ * telemetry record - what happened, never tenant data a user edits and never a row read to
+ * decide a business write - declares the class attribute #[Site_Lock_Exempt('<reason>')]
+ * (attribute-only metadata; the reason is required). Its writes are never checked. A table
+ * that also holds business data takes a write exception at the recording call site instead.
+ * See Site_Scoped.
  *
  * THE HARD RULES (each a RuntimeException naming its remedy)
  *
@@ -165,7 +189,7 @@ class Site_Lock
     public const MODE_READ = 'read';
     public const MODE_WRITE = 'write';
 
-    /** The attribute a bookkeeping Site_Scoped model declares to be exempt from enforcement. */
+    /** The attribute a view / audit / telemetry Site_Scoped model declares to be exempt from enforcement. */
     public const EXEMPT_ATTRIBUTE = 'Site_Lock_Exempt';
 
     /**
@@ -200,6 +224,13 @@ class Site_Lock
 
     /** Open bypasses, innermost last: [site_id (null = every site), reason]. */
     private static array $bypasses = [];
+
+    /**
+     * Open write exceptions, in acquisition order: [token, reason, window]. window is the
+     * number of enforcement windows open when it was acquired - the window that closes below
+     * that depth is the one it leaked from.
+     */
+    private static array $write_exceptions = [];
 
     /** The transaction level the test harness opened per test (suite process only). */
     private static ?int $test_transaction_baseline = null;
@@ -314,8 +345,141 @@ class Site_Lock
     }
 
     /**
-     * Does this process have WRITE AUTHORITY for $site_id right now: its write lock held, or
-     * a bypass covering it open?
+     * Run $work inside a WRITE EXCEPTION: site-scoped writes are permitted for its duration,
+     * with no lock taken and no transaction opened. See the class docblock.
+     *
+     * For a view, audit or telemetry record - an append-only row nothing reads to decide a
+     * value it writes. NEVER for business data, nor for a row read to decide a later write
+     * (two requests under exceptions both see "not yet" and both act): that is a writer, or
+     * a task. Whatever the record triggers that writes business data goes to Task::dispatch().
+     *
+     * @param string $reason What is being recorded (mandatory; logged at DEBUG)
+     * @param callable $work
+     * @return mixed Whatever $work returns
+     */
+    public static function write_exception(string $reason, callable $work): mixed
+    {
+        $token = static::acquire_write_exception($reason);
+
+        try {
+            return $work();
+        } finally {
+            static::release_write_exception($token);
+        }
+    }
+
+    /**
+     * Open a write exception and return its token - the form for code whose acquire and
+     * release are in different places. Release it in a finally:
+     *
+     *     $token = Site_Lock::acquire_write_exception('record the download');
+     *     try { ... } finally { Site_Lock::release_write_exception($token); }
+     *
+     * An enforcement window (an endpoint, a hook, a task, a command) that closes with it
+     * still open releases it and fails naming the reason.
+     *
+     * @param string $reason What is being recorded (mandatory; logged at DEBUG)
+     * @return string The token for release_write_exception()
+     */
+    public static function acquire_write_exception(string $reason): string
+    {
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            throw new RuntimeException(
+                'Site_Lock::write_exception() requires a reason: say what is being recorded '
+                . "('record the document view'). A write exception is for view, audit and telemetry records only."
+            );
+        }
+
+        $token = 'write_exception_' . bin2hex(random_bytes(8));
+
+        self::$write_exceptions[] = ['token' => $token, 'reason' => $reason, 'window' => count(self::$enforcement)];
+
+        Log::debug("Site lock write exception: '{$reason}' in " . static::__current_label());
+
+        return $token;
+    }
+
+    /**
+     * Release the write exception $token names. Releases may come in any order; writes stay
+     * permitted while any exception is open.
+     *
+     * @param string $token What acquire_write_exception() returned
+     */
+    public static function release_write_exception(string $token): void
+    {
+        foreach (self::$write_exceptions as $index => $exception) {
+            if ($exception['token'] === $token) {
+                array_splice(self::$write_exceptions, $index, 1);
+
+                return;
+            }
+        }
+
+        throw new RuntimeException(
+            'Site_Lock::release_write_exception(): no write exception with this token is open. It was released '
+            . 'already, or the enforcement window it was acquired in closed with it open and released it.'
+        );
+    }
+
+    /** Is a write exception open in this process? */
+    public static function in_write_exception(): bool
+    {
+        return self::$write_exceptions !== [];
+    }
+
+    /**
+     * Is a bypass open covering $site_id (an all-sites bypass covers every site)? With no
+     * site: is any bypass open?
+     */
+    public static function in_bypass(?int $site_id = null): bool
+    {
+        foreach (self::$bypasses as $bypass) {
+            if ($site_id === null || $bypass['site_id'] === null || $bypass['site_id'] === $site_id) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The site lock this process holds on $site_id: 'write' (Site_Lock::MODE_WRITE), 'read'
+     * (MODE_READ) or null. Counts every hold - an automatic request lock, a write or read
+     * section, a raw RsxLocks::site_write_lock() / site_read_lock(). A write exception or a
+     * bypass is not a lock: ask in_write_exception() / in_bypass().
+     *
+     * $site_id null asks about THE site whose lock this process holds, whichever it is: a
+     * process holds one site's lock at a time (rule 5), so the answer is that lock's mode,
+     * or null when it holds none. This is the question a library asks before a slow call
+     * ("am I under a write lock?") without knowing which site its caller locked.
+     *
+     * @param int|null $site_id
+     * @return string|null
+     */
+    public static function held_mode(?int $site_id = null): ?string
+    {
+        $held = RsxLocks::held_site_locks();
+
+        if ($site_id === null) {
+            if ($held === []) {
+                return null;
+            }
+
+            $site_id = array_key_first($held);
+        }
+
+        return match ($held[$site_id] ?? null) {
+            RsxLocks::WRITE_LOCK => self::MODE_WRITE,
+            RsxLocks::READ_LOCK => self::MODE_READ,
+            default => null,
+        };
+    }
+
+    /**
+     * Does this process have WRITE AUTHORITY for $site_id right now: its write lock held, a
+     * bypass covering it open, or a write exception open?
      */
     public static function has_write_authority(int $site_id): bool
     {
@@ -323,13 +487,7 @@ class Site_Lock
             return true;
         }
 
-        foreach (self::$bypasses as $bypass) {
-            if ($bypass['site_id'] === null || $bypass['site_id'] === $site_id) {
-                return true;
-            }
-        }
-
-        return false;
+        return self::$write_exceptions !== [] || static::in_bypass($site_id);
     }
 
     // =============================================================================================
@@ -520,17 +678,21 @@ class Site_Lock
         }
     }
 
-    /** Close the innermost enforcement window. */
-    public static function _leave_enforcement(): void
+    /**
+     * Close the innermost enforcement window. A write exception acquired inside it and still
+     * open is released, and - when $fail_on_leak (the window's code completed: it returned
+     * rather than threw) - this throws naming it: the endpoint, hook, task or command fails,
+     * as one that leaked a lock does. A window whose code threw keeps its own exception; the
+     * leak is cleaned up all the same.
+     *
+     * @param bool $fail_on_leak False when the window's code threw
+     */
+    public static function _leave_enforcement(bool $fail_on_leak = true): void
     {
-        if (self::$enforcement === []) {
-            shouldnt_happen('Site_Lock::_leave_enforcement() with no enforcement window open');
-        }
+        $closed = static::__close_window();
 
-        $window = array_pop(self::$enforcement);
-
-        if ($window['request']) {
-            self::$request_windows--;
+        if ($fail_on_leak && $closed['leaked'] !== []) {
+            throw new RuntimeException(static::__leaked_exceptions_message($closed['label'], $closed['leaked']));
         }
     }
 
@@ -538,8 +700,11 @@ class Site_Lock
      * Close the innermost enforcement window, which must be the one opened as $label - for a
      * window opened and closed by two separate events rather than one try / finally (a
      * console command's, Site_Lock_Cli). A mismatch is a broken pairing, never tolerated.
+     *
+     * @param string $label
+     * @param bool $fail_on_leak False when the window's code failed (_leave_enforcement())
      */
-    public static function _leave_enforcement_labelled(string $label): void
+    public static function _leave_enforcement_labelled(string $label, bool $fail_on_leak = true): void
     {
         $innermost = self::$enforcement === [] ? null : self::$enforcement[array_key_last(self::$enforcement)]['label'];
 
@@ -550,7 +715,7 @@ class Site_Lock
             );
         }
 
-        static::_leave_enforcement();
+        static::_leave_enforcement($fail_on_leak);
     }
 
     /**
@@ -568,10 +733,18 @@ class Site_Lock
         static::_enter_enforcement($label, true);
 
         try {
-            return $handler();
-        } finally {
-            static::_leave_enforcement();
+            $result = $handler();
+        } catch (Throwable $e) {
+            static::_leave_enforcement(false);
+
+            throw $e;
         }
+
+        // A write exception the handler left open fails it here - inside the boundary, so a
+        // writer rolls back what the exception's writes rode in on.
+        static::_leave_enforcement();
+
+        return $result;
     }
 
     /**
@@ -619,15 +792,16 @@ class Site_Lock
      * A hook is not a reader or a writer surface (SITE-LOCK-01 refuses #[Writer] / #[Reader]
      * on one): it runs before the request's automatic lock is taken, exactly as a task body
      * runs with none. A site-scoped write in it therefore needs a lock the hook takes itself -
-     * Site_Lock::write($site_id, fn () => ...) - or a Site_Lock::bypass() for bookkeeping that
-     * tolerates concurrent writers, or a #[Site_Lock_Exempt] model.
+     * Site_Lock::write($site_id, fn () => ...) - or a Site_Lock::write_exception() for a view,
+     * audit or telemetry record, a Site_Lock::bypass() for bookkeeping that tolerates concurrent
+     * writers, or a #[Site_Lock_Exempt] model.
      *
      * THE HAND-OVER. A hook ends holding exactly what it began with: the dispatcher acquires
      * the request's lock right after it, and a hold the hook leaked would be carried into -
      * and collide with - that acquisition. A site lock hold acquired here and not released is
      * released (every level it added), a database transaction opened here and not closed is
-     * rolled back (before the release: rule 3), and the hook FAILS naming what it leaked. A
-     * hook that throws keeps its own exception; the leak is cleaned up all the same.
+     * rolled back (before the release: rule 3), and the hook FAILS naming what it leaked - a
+     * write exception it acquired and left open included (released). A hook that throws keeps its own exception; the leak is cleaned up all the same.
      *
      * The window is not a request window: the site may change in it (Main::init() declares a
      * command's site), under the ordinary rule that it never changes while a site lock or
@@ -651,7 +825,7 @@ class Site_Lock
         } catch (Throwable $e) {
             $thrown = $e;
         } finally {
-            static::_leave_enforcement();
+            $leaked_exceptions = static::__close_window()['leaked'];
         }
 
         $leaked_transactions = 0;
@@ -681,7 +855,7 @@ class Site_Lock
             throw $thrown;
         }
 
-        if ($leaked_transactions > 0 || $leaked_locks !== []) {
+        if ($leaked_transactions > 0 || $leaked_locks !== [] || $leaked_exceptions !== []) {
             $leaks = [];
 
             if ($leaked_locks !== []) {
@@ -692,10 +866,16 @@ class Site_Lock
                 $leaks[] = "with {$leaked_transactions} database transaction(s) still open (rolled back - what it wrote inside them is gone)";
             }
 
+            if ($leaked_exceptions !== []) {
+                $leaks[] = 'with ' . count($leaked_exceptions) . ' Site_Lock write exception(s) still open ('
+                    . static::__quote_reasons($leaked_exceptions) . '; released)';
+            }
+
             throw new RuntimeException(
                 "{$label} returned " . implode(' and ', $leaks) . '. A hook runs with no automatic lock and must '
-                . 'hand over clean: the request\'s own lock is taken right after it. Release every lock you take '
-                . 'and close every transaction you open - Site_Lock::write($site_id, fn () => ...) does both.'
+                . 'hand over clean: the request\'s own lock is taken right after it. Release every lock and write '
+                . 'exception you take and close every transaction you open - Site_Lock::write($site_id, fn () => ...) '
+                . 'and Site_Lock::write_exception($reason, fn () => ...) do it for you.'
             );
         }
 
@@ -762,6 +942,8 @@ class Site_Lock
      * pre_dispatch hooks are NOT in $body: they ran before it, unlocked, through _run_hook().
      * A coded RESULT (response_form_error(), ...) is a return, not a throw: what the writer
      * wrote commits - which is what keeps a failed attempt that records itself recorded.
+     * A thrown Rollback_Response is a throw here (rolled back); the dispatcher catches it
+     * outside this boundary and renders its value as the returned result.
      *
      * NESTING. A process that already holds the site's lock - an endpoint called in-process
      * (Ajax::internal()) from inside another - runs $body under that hold: a reader under any
@@ -957,6 +1139,14 @@ class Site_Lock
             );
         }
 
+        if (self::$write_exceptions !== []) {
+            throw new RuntimeException(
+                "RsxAuth::enter_site({$site_id}) refused inside a Site_Lock write exception ("
+                . static::__quote_reasons(self::$write_exceptions) . ', ' . static::__current_label()
+                . '). Enter the site before the write exception opens or after it is released.'
+            );
+        }
+
         static::write($site_id, function () use ($set_site) {
             self::$entering_site = true;
 
@@ -1017,6 +1207,10 @@ class Site_Lock
         $class = get_class($model);
 
         if (!static::_uses_site_scope($class) || static::_is_exempt($class)) {
+            return;
+        }
+
+        if (self::$write_exceptions !== []) {
             return;
         }
 
@@ -1131,6 +1325,14 @@ class Site_Lock
                 . 'The site never changes inside a bypass; change it before entering one or after it closes.'
             );
         }
+
+        if (self::$write_exceptions !== []) {
+            throw new RuntimeException(
+                "{$what} refused inside a Site_Lock write exception (" . static::__quote_reasons(self::$write_exceptions)
+                . ', ' . static::__current_label() . '). The site never changes while a write exception is open; '
+                . 'change it before acquiring one or after releasing it.'
+            );
+        }
     }
 
     // =============================================================================================
@@ -1165,6 +1367,7 @@ class Site_Lock
         self::$enforcement = [];
         self::$request_windows = 0;
         self::$bypasses = [];
+        self::$write_exceptions = [];
         self::$entering_site = false;
         self::$acquiring = false;
 
@@ -1218,8 +1421,8 @@ class Site_Lock
 
             if ($declarations[$lineage_class] === '') {
                 throw new RuntimeException(
-                    "#[Site_Lock_Exempt] on {$lineage_class} gives no reason. Exemption is for bookkeeping "
-                    . "a user never edits; say what it records: #[Site_Lock_Exempt('sign-in history')]."
+                    "#[Site_Lock_Exempt] on {$lineage_class} gives no reason. Exemption is for append-only view, "
+                    . "audit and telemetry records; say what it records: #[Site_Lock_Exempt('document view history')]."
                 );
             }
 
@@ -1285,6 +1488,52 @@ class Site_Lock
         } finally {
             array_pop(self::$bypasses);
         }
+    }
+
+    /**
+     * Pop the innermost enforcement window and release every write exception acquired inside
+     * it that is still open.
+     *
+     * @return array{label: string, leaked: array} The window's label and the exceptions released
+     */
+    private static function __close_window(): array
+    {
+        if (self::$enforcement === []) {
+            shouldnt_happen('Site_Lock::_leave_enforcement() with no enforcement window open');
+        }
+
+        $window = array_pop(self::$enforcement);
+
+        if ($window['request']) {
+            self::$request_windows--;
+        }
+
+        $depth = count(self::$enforcement);
+        $leaked = [];
+
+        foreach (self::$write_exceptions as $index => $exception) {
+            if ($exception['window'] > $depth) {
+                $leaked[] = $exception;
+                unset(self::$write_exceptions[$index]);
+            }
+        }
+
+        self::$write_exceptions = array_values(self::$write_exceptions);
+
+        return ['label' => $window['label'], 'leaked' => $leaked];
+    }
+
+    /** 'record the view', 'record the download' - the reasons of $exceptions, for a message. */
+    private static function __quote_reasons(array $exceptions): string
+    {
+        return implode(', ', array_map(fn (array $exception) => "'{$exception['reason']}'", $exceptions));
+    }
+
+    private static function __leaked_exceptions_message(string $label, array $leaked): string
+    {
+        return "{$label} ended with " . count($leaked) . ' Site_Lock write exception(s) still open ('
+            . static::__quote_reasons($leaked) . '). They have been released. Release every write exception you '
+            . 'acquire, in a finally - Site_Lock::write_exception($reason, fn () => ...) does it for you.';
     }
 
     private static function __require_held(string $token, string $method): array
@@ -1525,7 +1774,8 @@ class Site_Lock
             . 'reads and then writes based on what it read, the READ part of the algorithm must be inside the write '
             . 'lock: take the write lock FIRST - declare #[Writer] on the endpoint, or wrap the whole read-then-write '
             . "in Site_Lock::write({$site_id}, fn () => ...) - and do the read inside it. A read inside a write section "
-            . 'needs no separate lock.';
+            . 'needs no separate lock. If the write only RECORDS something (a view, an audit entry, telemetry), it '
+            . "needs no write lock at all: Site_Lock::write_exception('<what it records>', fn () => ...).";
     }
 
     private static function __throw_other_site(int $site_id, int $held_site_id): never
@@ -1544,7 +1794,8 @@ class Site_Lock
             . static::__innermost_window_label() . " without site {$site_id}'s write lock. A write to a site-scoped model needs "
             . 'the site\'s write lock: declare #[Writer] on the endpoint, wrap the write in '
             . "Site_Lock::write({$site_id}, fn () => ...) (in a task or a command: one section per item, re-reading the record "
-            . "inside), or - for a pass that tolerates concurrent writers - Site_Lock::bypass({$site_id}, '<reason>', "
+            . "inside), for a view, audit or telemetry record Site_Lock::write_exception('<what it records>', fn () => ...), "
+            . "or - for a pass that tolerates concurrent writers - Site_Lock::bypass({$site_id}, '<reason>', "
             . 'fn () => ...). See: php artisan rsx:man site_locks'
         );
     }

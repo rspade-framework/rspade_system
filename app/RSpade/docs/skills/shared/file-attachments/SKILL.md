@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data), the claim flow (find_by_key, can_user_assign_this_file, attach_to), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads. Use when building an upload UI or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
+description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data), the claim flow (find_by_key, can_user_assign_this_file, attach_to), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
 ---
 
 # File attachments
@@ -430,6 +430,22 @@ public static function only_own_site($data)
 ```
 
 Do not compare `created_by` to a user id — authorship is a polymorphic PAIR and answers "who wrote the row", not "who may read the file". Scope by owner record, site, or membership instead.
+
+**A gate handler runs under the site's READ lock.** The file routes (`/_download`, `/_inline`, `/_download_zip`, `/_thumbnail/*`, `/_preview/pdf`, `/_preview/sheet`) and `get_extracted_text` / `get_markdown_html` are `#[Manual_Lock]`: lookup and gates in a `Site_Lock::read()` section, then the bytes with no lock held (read, release, transmit). So a handler that **records the access** writes under a write exception - never `Site_Lock::write()` (an upgrade, refused):
+
+```php
+#[OnEvent('file.download.authorize', priority: 10)]
+public static function require_login_and_record($data)
+{
+    if (!Session::is_logged_in()) {
+        return response()->json(['error' => 'Login required'], 403);
+    }
+    Site_Lock::write_exception('record the download', fn () => Download_History_Model::record($data['attachment'], $data['user']));
+    return true;
+}
+```
+
+The row commits at once. Anything the record triggers that writes business data goes to `Task::dispatch()` (skill `rspade:site-locks`, section 9).
 
 ---
 

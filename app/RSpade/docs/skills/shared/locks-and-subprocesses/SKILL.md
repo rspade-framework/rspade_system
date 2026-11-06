@@ -7,7 +7,7 @@ description: "Serializing work with RsxLocks and spawning artisan with Rsx_Artis
 
 Two subjects, one topic: a lock belongs to a **connection**, and a subprocess opens its own - which is why the artisan-spawn mandate lives here.
 
-**Writing a site's data is not this skill.** Every request already holds its site's lock, a `#[Writer]` endpoint the write lock, and a site-scoped `save()` without the write lock fatals - that contract (`#[Writer]`, `Site_Lock::write()`, `bypass()`, `RsxAuth::enter_site()`) is skill `rspade:site-locks` / `rsx:man site_locks`. This skill is the primitive underneath it, plus named locks for shared state that is not one site's data.
+**Writing a site's data is not this skill.** Every request already holds its site's lock, a `#[Writer]` endpoint the write lock, and a site-scoped `save()` without the write lock fatals - that contract (`#[Writer]`, `Site_Lock::write()`, `bypass()`, `write_exception()`, `held_mode()`, `RsxAuth::enter_site()`) is skill `rspade:site-locks` / `rsx:man site_locks`. This skill is the primitive underneath it, plus named locks for shared state that is not one site's data.
 
 ```php
 use App\RSpade\Core\Locks\RsxLocks;

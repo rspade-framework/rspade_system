@@ -72,8 +72,10 @@ WHAT IS RECORDED
     403, a fault) rolled back and recorded nothing. A request that RETURNED a
     coded failure (response_form_error(), response_form_question(), an API error
     with a non-2xx status) commits what it wrote and records its row -
-    fingerprint, payload, timing - but never its reference. Either way the
-    corrected request may reuse the same reference.
+    fingerprint, payload, timing - but never its reference. A thrown
+    Rollback_Response answers like a returned failure but is a throw: rolled
+    back, nothing recorded. Either way the corrected request may reuse the
+    same reference.
 
 THE REFERENCE
     _request_ref is a SYSTEM PARAMETER on every Ajax and external API endpoint;

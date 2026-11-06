@@ -36,6 +36,7 @@ use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Rsx_Csrf;
@@ -559,13 +560,18 @@ class Dispatcher
 
         $surface = class_basename($handler_class) . '::' . $handler_method;
 
-        return Site_Lock::_run_request(Site_Lock::_surface_mode($surface), 'Route ' . $surface, function () use ($realm, $handler_class, $handler_method, $params, $request) {
-            $result = static::__call_action($handler_class, $handler_method, $params, $request);
+        try {
+            return Site_Lock::_run_request(Site_Lock::_surface_mode($surface), 'Route ' . $surface, function () use ($realm, $handler_class, $handler_method, $params, $request) {
+                $result = static::__call_action($handler_class, $handler_method, $params, $request);
 
-            static::__post_dispatch($request, $params, $result);
+                static::__post_dispatch($request, $params, $result);
 
-            return static::__build_response($realm, $result);
-        });
+                return static::__build_response($realm, $result);
+            });
+        } catch (Rollback_Response $rollback) {
+            // An error answer that rolled the route back: built exactly as a returned one.
+            return static::__build_response($realm, $rollback->response);
+        }
     }
 
     /**

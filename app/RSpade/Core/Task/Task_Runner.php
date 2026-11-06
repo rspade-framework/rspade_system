@@ -284,12 +284,14 @@ class Task_Runner
         $level = DB::transactionLevel();
 
         Site_Lock::_enter_enforcement($label);
+        $returned = false;
 
         try {
-            return $body();
-        } finally {
-            Site_Lock::_leave_enforcement();
+            $result = $body();
+            $returned = true;
 
+            return $result;
+        } finally {
             $leaked = DB::transactionLevel() - $level;
             if ($leaked > 0) {
                 DB::rollBack($level);
@@ -299,6 +301,10 @@ class Task_Runner
                 $instance->stderr($message);
                 Log::warning("[TASK #{$instance->get_id()}] {$label}: {$message}");
             }
+
+            // A write exception the body left open is released; a body that returned fails
+            // naming it (one that threw keeps its own exception).
+            Site_Lock::_leave_enforcement($returned);
         }
     }
 

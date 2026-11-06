@@ -1,31 +1,46 @@
-TEMPLATE NOTIFICATIONS: READERS NEVER WRITE; EXPIRY MOVES TO A MAINTENANCE TASK
+TEMPLATE NOTIFICATIONS: READERS NEVER WRITE; DELETION MOVES TO A MAINTENANCE TASK
 Date: 2026-11-06
 
-IF YOU DO NOTHING: an application built from the template still calls Notification::expire_old() from Frontend_Notifications_Controller::get_count behind a 30-minute throttle, so under the site locks the notification badge's count call fails about once every 30 minutes per user with "Site lock enforcement: Notification_Model bulk delete ... without site N's write lock", and expired notifications are never deleted.
+IF YOU DO NOTHING: an application built from the template still calls Notification::expire_old() from Frontend_Notifications_Controller::get_count behind a 30-minute throttle, so under the site locks the notification badge's count call fails about once every 30 minutes per user with "Site lock enforcement: Notification_Model bulk delete ... without site N's write lock", and no notification is ever deleted.
 
 SUMMARY
     Category 1 (a /rsx/ template change).
 
     get_count and get_dropdown are readers and must not write. Invalid
     notifications (expired, or whose entity is gone) are filtered out of the
-    dropdown and the unread count; the template's new maintenance task
-    Notification_Service::purge deletes them nightly, site by site, inside
-    Site_Lock::write() sections. Notification::expire_old() is removed.
+    dropdown and the unread count, and kept. Notification::expire_old() is
+    removed.
+
+    Expiry decides what is SHOWN; a separate retention setting decides what
+    is DELETED. rsx.notifications.default_expiry_days is now display-only.
+    The template's new maintenance task Notification_Service::purge deletes,
+    nightly, site by site inside Site_Lock::write() sections, a notification
+    the recipient has SEEN (read_at set) once it is older than
+    rsx.notifications.purge_seen_after_days days (default 90), measured from
+    created_at. An UNSEEN notification is never deleted - expired, orphaned
+    or old. Setting purge_seen_after_days to 0 disables the purge and keeps
+    every notification.
 
 AFFECTED FILES
     rsx/app/frontend/notifications/notifications_controller.php
     rsx/lib/notification/notification.php
     rsx/services/notification_service.php (new)
+    rsx/resource/config/rsx.php
 
 CHANGES REQUIRED
     1. Remove the Rsx_Throttle check and the Notification::expire_old() call
        from get_count, and every delete from get_for_dropdown() (filter the
        invalid rows out of the response instead).
     2. Port rsx/services/notification_service.php from the reference app.
-    3. Port get_unread_count()'s validity filter from the reference app, so
+    3. Add 'purge_seen_after_days' => 90 to the 'notifications' block of
+       rsx/resource/config/rsx.php (a shorter window to delete sooner, 0 to
+       keep everything). The task refuses to run without it.
+    4. Port get_unread_count()'s validity filter from the reference app, so
        the badge and the dropdown agree.
 
 VERIFICATION
     rsx:debug a signed-in page several times: no "Site lock enforcement"
     console error. php artisan rsx:task:run Notification_Service purge
-    exits 0. rsx:man site_locks.
+    exits 0 and its summary reports how many seen notifications it deleted
+    (or that the purge is disabled). rsx:man notification, rsx:man
+    site_locks.

@@ -19,6 +19,8 @@ use App\RSpade\Core\Session\Session;
  *
  *   bare     - the write with no lock (refused inside the command's window)
  *   section  - the write inside Site_Lock::write(1)
+ *   exception - the write under Site_Lock::write_exception()
+ *   leak_exception - the write under a write exception it never releases
  *   probe    - no write; records what the command saw (window open, site change allowed)
  */
 #[Instantiatable]
@@ -42,6 +44,15 @@ class Site_Lock_Cli_Fixture_Command extends Command
 
             case 'section':
                 Site_Lock::write(1, fn () => static::__block($email));
+                break;
+
+            case 'exception':
+                Site_Lock::write_exception('site lock cli test: record from a command', fn () => static::__block($email));
+                break;
+
+            case 'leak_exception':
+                Site_Lock::acquire_write_exception('site lock cli test: left open by a command');
+                static::__block($email);
                 break;
 
             case 'probe':

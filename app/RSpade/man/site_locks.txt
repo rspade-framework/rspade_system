@@ -27,6 +27,14 @@ SYNOPSIS
         $invoice->save();
     }, 'Send invoice');
 
+    // A reader that RECORDS something (a view, an audit entry) stays a reader.
+    Site_Lock::write_exception('record the document view', function () use ($doc) {
+        Document_View_Model::record($doc);
+    });
+
+    // Answer an error AND undo what the writer wrote.
+    throw new Rollback_Response(response_form_error('Row 14 is invalid'));
+
     // Inventory every surface and the mode it runs under.
     php artisan rsx:site_lock:endpoints --app --mode=reader
 
@@ -51,7 +59,9 @@ DESCRIPTION
     bulk write, or raw bulk update/delete of a Site_Scoped model for site X
     FATALS unless the process has WRITE AUTHORITY for X: it holds X's write lock
     (a #[Writer] endpoint, a Site_Lock::write() section, a raw
-    RsxLocks::site_write_lock()) or is inside a Site_Lock::bypass() covering X.
+    RsxLocks::site_write_lock()), is inside a Site_Lock::bypass() covering X, or
+    has a write exception open (Site_Lock::write_exception(), for a view, audit
+    or telemetry record).
     Nothing is ever acquired because a write happened: a lock is taken at the
     request boundary, or by code that asks for it.
 
@@ -130,9 +140,10 @@ THE REQUEST BOUNDARY
     Main::init(), Portal_Main::init(), the pre_dispatch hooks and
     Main::unhandled_route() run with NO automatic lock - they are not reader or
     writer surfaces - but inside an enforcement window: a site-scoped write there
-    needs its own Site_Lock::write() section, a bypass, or an exempt model. A
-    hook hands over CLEAN: a site lock or transaction it acquired and did not
-    release is let go or rolled back and the request fails naming the hook.
+    needs its own Site_Lock::write() section, a write exception (a view, audit or
+    telemetry record), a bypass, or an exempt model. A hook hands over CLEAN: a
+    site lock, transaction or write exception it acquired and did not release is
+    let go or rolled back and the request fails naming the hook.
 
     The site is the experience's current one: the session's site for the staff
     and portal realms, the API key's site, the companion request's signed site.
@@ -145,7 +156,9 @@ THE REQUEST BOUNDARY
     (response_form_error(), response_form_question(), an API error response) is
     a return, so what the call wrote before answering commits; that is what keeps
     a failed attempt that records itself recorded. A THROW anywhere from the
-    handler through post_dispatch rolls the whole request back. A database
+    handler through post_dispatch rolls the whole request back. To answer with an
+    ordinary error AND undo the request, throw Rollback_Response (HOLDING A LOCK
+    WELL). A database
     transaction the handler opened and left open is rolled back and fails the
     request naming it.
 
@@ -215,8 +228,37 @@ THE PROGRAMMER API
         rows outside the site scope (a queue drain, a retention sweep) and so
         cannot name one site.
 
+    Site_Lock::write_exception(string $reason, callable $work): mixed
+    Site_Lock::acquire_write_exception(string $reason): string
+    Site_Lock::release_write_exception(string $token): void
+        A WRITE EXCEPTION: site-scoped writes are permitted while one is open,
+        with no lock taken and no transaction opened (HOLDING A LOCK WELL, rule
+        3). The scoped form cannot leak; the token form is for code whose acquire
+        and release are in different places (release in a finally). Counted:
+        writes stay permitted until the last release, in any order. The reason
+        is mandatory (logged at DEBUG only - it runs on ordinary page views).
+
+    Site_Lock::held_mode(?int $site_id = null): ?string
+        'read', 'write' or null: the site lock this process holds on $site_id -
+        an automatic request lock, a section or a raw RsxLocks hold alike (a read
+        inside a write answers 'write'). With no site it answers for THE site
+        whose lock the process holds, whichever that is (one site at a time), or
+        null when it holds none - the question a library asks before a slow call
+        without knowing which site its caller locked.
+
+    Site_Lock::in_write_exception(): bool
+    Site_Lock::in_bypass(?int $site_id = null): bool
+        Is a write exception open? Is a bypass open covering $site_id (an
+        all-sites bypass covers every site; no site = any bypass)? Neither is a
+        lock: held_mode() ignores both.
+
     Site_Lock::has_write_authority(int $site_id): bool
-        Does this process hold the site's write lock, or a bypass covering it?
+        May a site-scoped write to $site_id happen right now: the site's write
+        lock held, a bypass covering it, or a write exception open?
+
+    throw new Rollback_Response($answer)
+        App\RSpade\Core\Response\Rollback_Response. Answer with an ordinary
+        error and roll the request back (HOLDING A LOCK WELL, rule 7).
 
     The raw RsxLocks::site_write_lock() / site_read_lock() are held to the same
     rules and nest on the same counts (rsx:man locks).
@@ -228,7 +270,14 @@ THE RULES
     held: two readers that both upgraded would each wait for the other forever.
     Code decides at its start whether it reads or writes. READ-THEN-WRITE wraps
     the READ inside the write lock - declare #[Writer], or put the whole
-    algorithm in one Site_Lock::write() and do the read inside it.
+    algorithm in one Site_Lock::write() and do the read inside it. Even with no
+    second upgrader, an upgrade would wait behind every other reader on the
+    site. The refusal holds on every path: Site_Lock::write() inside
+    Site_Lock::read(), a raw RsxLocks::site_write_lock() under a read hold, a
+    #[Writer] reached through Ajax::internal() from a reader, a gate or event
+    handler running inside a reader's lock - and inside a write exception,
+    which is not a lock. A reader that only RECORDS something needs no write
+    lock: it takes a write exception.
 
     NESTING IS COUNTED. A nested read or write of a hold this process already
     has never reaches the daemon; it bumps a count, and the real lock is let go
@@ -301,10 +350,14 @@ EXEMPT MODELS
     enforcement off for that model: its writes are never checked. Attribute-
     only, inherited by subclasses, the reason required.
 
-    IT IS FOR ANALYTICS AND SESSION BOOKKEEPING ONLY - a record of what
-    happened, which no user edits: a "last viewed" column written from every
-    pre_dispatch(), a page-view counter. That is the case it exists for: a write
-    from every request, which would otherwise make every page a writer.
+    IT IS FOR APPEND-ONLY VIEW, AUDIT AND TELEMETRY RECORDS ONLY - a record of
+    what happened, which no user edits: a document-view log, an audit trail, a
+    download history, a page-view counter. That is the case it exists for: a
+    write from every request, which would otherwise make every page a writer.
+    The model attribute is for a table that is ONLY ever such a record; a
+    telemetry write into a table that also holds business data (or one whose
+    classification depends on the caller) takes a write exception at the call
+    site instead (HOLDING A LOCK WELL).
 
     NEVER put it on real business data. NEVER put it on a table whose values
     are READ TO DECIDE a value written into business data - an exempt table is
@@ -342,6 +395,106 @@ TASKS, REALTIME AND COMMIT
     which RE-READS the record inside - it may have changed or gone since the
     list was read. A long maintenance pass that tolerates concurrent writers
     uses Site_Lock::bypass() / bypass_all_sites() with a reason (rsx:man tasks).
+
+HOLDING A LOCK WELL
+    The site's write lock stops every other writer on the site, and every
+    reader queued behind it. Seven rules keep that cheap; the conformance audit
+    site_lock_hold_discipline reviews an application against them
+    (rsx:conformance:show site_lock_hold_discipline).
+
+    1. A WRITE LOCK IS HELD FOR A MOMENT. A writer that holds its lock longer
+       than a moment, or covers an action that is mostly reading, is written
+       wrong: it needs finer-grained lock management inside its algorithm -
+       #[Manual_Lock], a Site_Lock::read() section for the reading, a short
+       Site_Lock::write() section for the writing, a task for the bulk.
+
+    2. NEVER HOLD A WRITE LOCK ACROSS A CALL TO ANOTHER SYSTEM - an HTTP API, a
+       mail relay, a subprocess that waits. Make the call with no write lock,
+       then write what it returned in a short Site_Lock::write() section; the
+       endpoint declares #[Manual_Lock]. A value the remote call made
+       authoritative (a rotated OAuth refresh token) is written in its OWN
+       section immediately, so no later failure can roll it back - the provider
+       has already invalidated the old one. A client library that must never run
+       under a write lock asks Site_Lock::held_mode() and refuses.
+
+    3. A VIEW, AUDIT OR TELEMETRY RECORD USES A WRITE EXCEPTION (or an exempt
+       model), never a writer. A read endpoint that records stays a reader:
+
+           Site_Lock::write_exception('record the document view',
+               fn () => Document_View_Model::record($doc));
+
+       A write exception is a STATE, not a lock: it takes nothing in rsx-lockd,
+       blocks nobody and waits for nothing. It is valid anywhere - a reader, a
+       writer, a write section, a #[Manual_Lock] handler holding nothing, a
+       hook, a task, a command, a file gate handler. Inside a writer or a write
+       section its writes ride the open transaction, so a writer that throws
+       afterwards rolls the record back with everything else (a view recorded
+       by a request that failed did not happen). Anywhere else it opens NO
+       transaction: each write commits at once, and survives a later throw.
+       The site never changes while one is open. An endpoint, hook, task or
+       command that ends with one still open has it released and FAILS naming
+       it (one that already threw keeps its own exception).
+
+       It is NOT for business data, and NOT for a row READ to decide a later
+       write: a once-only notice ledger ("tell the staff the first time a client
+       opens this") is a decision - two concurrent opens under exceptions both
+       see "not yet sent" and both send. Give the decision to a task (which
+       takes a real write section), or a unique key that makes the second insert
+       a no-op. Whatever the record TRIGGERS that writes business data (a
+       notification, an automation) goes to Task::dispatch().
+
+    4. RELEASE BEFORE YOU TRANSMIT. A surface that reads and then streams - an
+       export, a file download, a ZIP, a PDF - reads inside a Site_Lock::read()
+       section (the surface declares #[Manual_Lock]), ends the section, and only
+       then streams. The framework's file routes work this way: /_download,
+       /_inline, /_download_zip, /_thumbnail/*, /_preview/pdf and
+       /_preview/sheet, and the get_extracted_text / get_markdown_html Ajax
+       endpoints, resolve the attachment and ask the file gates under a read
+       section, then materialize bytes, render and answer with no lock held - so
+       a file.*.authorize handler that records the access does it under a write
+       exception (rsx:man file_upload).
+
+       Every response is TRANSMITTED after the request's lock is released: the
+       lock is let go when the dispatcher returns, and the response is sent
+       after that. An Ajax envelope is also SERIALIZED after the release (the
+       endpoint's value is JSON-encoded outside the lock); an external API or
+       companion response is built - its JSON encoded - inside the boundary, so
+       a value that cannot be serialized rolls a writer back, and sent after. A
+       StreamedResponse's callback and a file response's bytes run at send(),
+       after the release, outside every enforcement window: a stream callback
+       holds no lock and may not write site-scoped data.
+
+    5. EXPORT- AND DATA-PROCESSING-SHAPED WORK IS A TASK (THE ARCHITECTURE
+       PRINCIPLE). The endpoint validates, dispatches and returns the handle;
+       the task reads in read sections, writes in one short section per item,
+       and its result is transmitted by the feature's own endpoint - read,
+       release, transmit again.
+
+    6. READ-THEN-WRITE IS A WRITER FROM ITS START (no upgrade: THE RULES),
+       unless the write is telemetry (rule 3).
+
+    7. RETURNING AN ERROR COMMITS. A writer that RETURNS response_error() after
+       writing commits what it wrote - a batch that fails part-way keeps half
+       its work. To answer with an error AND undo the request, throw
+       Rollback_Response carrying the value you would have returned:
+
+           throw new Rollback_Response(response_form_error('Row 14 is invalid', $fields));
+           throw new Rollback_Response(Rsx_Api::validation_error($fields, 'Row 14 is invalid'));
+
+       The boundary rolls the writer back (its _transactions row too) and
+       releases; rsx.post_dispatch does not fire; the dispatcher renders the
+       carried value EXACTLY as it renders a returned one - the same envelope or
+       body, the same _duration_ms / _completed_at. Nothing is recorded in the
+       request history, so a _request_ref sent with it stays reusable, as for any
+       request that threw. Each channel's own rule applies to the value: an Ajax
+       call carries a coded result (response_*()), the external API and a
+       companion endpoint an HTTP response (Rsx_Api::*), a page route either.
+       In a reader there is nothing to roll back; in a #[Manual_Lock] handler
+       it rolls back the request transaction a raw write lock began, while
+       Site_Lock::write() sections that already ended stay committed. An
+       Ajax::internal() call nested in another endpoint answers it to its
+       caller as the coded exception internal() raises for that result: the
+       outermost boundary owns the transaction.
 
 HOLD-TIME WARNINGS
     Releasing a lock held longer than its threshold logs a WARNING naming the
@@ -395,8 +548,19 @@ TROUBLESHOOTING
         No upgrade. The read part of the algorithm belongs inside the write
         lock: declare #[Writer], or wrap the whole read-then-write in one
         Site_Lock::write(). Also raised by a #[Writer] endpoint called through
-        Ajax::internal() from inside a reader, and by RsxLocks::upgrade_lock()
-        on a site lock.
+        Ajax::internal() from inside a reader, by a gate handler opening a write
+        section inside a reader or a file route's read section, and by
+        RsxLocks::upgrade_lock() on a site lock. When the write only records a
+        view, an audit entry or telemetry, use Site_Lock::write_exception().
+
+    "<endpoint, hook, task or command> ended with 1 Site_Lock write exception(s)
+     still open ('record the download'). They have been released."
+        A token-form write exception was never released. Release it in a
+        finally, or use the scoped Site_Lock::write_exception($reason, fn).
+
+    "Session::set_temporary_site_id() refused inside a Site_Lock write
+     exception"
+        The site never changes while a write exception is open.
 
     "Site lock rule 1: refused to acquire the WRITE lock on site 3 inside 1
      open database transaction(s) the lock layer did not open."
@@ -449,10 +613,20 @@ TROUBLESHOOTING
     "#[Site_Lock_Exempt] on <Class> gives no reason."
     "<Class> declares SITE_LOCK_EXEMPT with no reason."
     "Site_Lock::bypass(3) requires a reason"
+    "Site_Lock::write_exception() requires a reason"
         Say what it records or why the pass may write unlocked; it is logged.
 
     "Site lock held too long: ..." in the log
-        A request or section that should hand its slow work to a task.
+        A request or section that should hand its slow work to a task, or take
+        finer-grained locks (HOLDING A LOCK WELL).
+
+    "Rollback_Response (...) - an error answer that rolls the request back. Only
+     an Ajax, external API, companion or page-route dispatcher renders it."
+        Thrown outside an endpoint (a task, a command): nothing renders it there.
+
+    "... returned Illuminate\Http\JsonResponse, an HTTP response, to an Ajax call"
+        from a Rollback_Response: an Ajax call answers a coded result -
+        throw new Rollback_Response(response_error(...)), not an Rsx_Api one.
 
     Everything waits and nothing errors
         A slow writer holds the site; every request queues behind it. The
@@ -468,6 +642,9 @@ SEE ALSO
     rsx:man revisions - the writer's _transactions row
     rsx:man dispatch - MAIN HOOKS and the request pipelines
     rsx:man task_commands - commands are enforced too
+    rsx:man file_upload - file gate handlers and the read-release-transmit routes
+    rsx:man external_api - #[Writer] on a POST, Rollback_Response in the API
+    rsx:conformance:show site_lock_hold_discipline - the hold-discipline audit
     skill rspade:site-locks - writing writer endpoints, sections and conversions
     skill rspade:locks-and-subprocesses - RsxLocks and Rsx_Artisan
 

@@ -389,9 +389,9 @@ MAIN HOOKS
     channel - the request's own lock is taken after them, around the handler
     only - but inside an enforcement window: a write to a Site_Scoped model
     there fatals unless the hook wraps it in Site_Lock::write($site_id, fn ()
-    => ...), opens a Site_Lock::bypass(), or the model is #[Site_Lock_Exempt]
-    (a "last seen" column written on every request is the case that attribute
-    exists for). A hook must hand over clean: a site lock it still holds or a
+    => ...), records it under Site_Lock::write_exception() (a view, audit or
+    telemetry record - a "last seen" stamp written on every request is the
+    case), opens a Site_Lock::bypass(), or the model is #[Site_Lock_Exempt]. A hook must hand over clean: a site lock it still holds or a
     transaction it left open is released / rolled back and the request fails
     naming the hook. The site may be set in a hook (init() declaring the
     tenant), never under a lock. #[Writer] / #[Reader] / #[Manual_Lock] on a

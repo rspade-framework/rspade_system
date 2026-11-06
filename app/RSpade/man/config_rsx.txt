@@ -1157,7 +1157,8 @@ USER CONFIG KEYS (rsx/resource/config/rsx.php)
     log_browser_errors       Send browser JS errors to the Laravel log (bounded per
                              address and sanitized - rsx:man console_debug).
     response                 default_view, error_views, cors.
-    notifications            default_expiry_days.
+    notifications            default_expiry_days (display only),
+                             purge_seen_after_days (0 = never delete).
     auth                     require_two_factor, invite_expiration_days
                              (template-app).
 

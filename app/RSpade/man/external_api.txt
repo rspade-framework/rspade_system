@@ -347,10 +347,18 @@ RESPONSE CONTRACT
     (POST only: a #[Writer] GET is refused by API-GET-PURE-01). A writer runs
     under the site's write lock inside one transaction - nothing else changes
     the site while it runs, and a throw rolls everything back; a returned error
-    response commits what it wrote. A reader that saves a site-scoped model
-    fails with "Site lock enforcement: ...". An endpoint executes and returns
-    right away; export- or batch-shaped work is dispatched to a task, with the
-    feature's own status and result endpoints (rsx:man site_locks).
+    response commits what it wrote. To answer an error AND undo the write,
+    throw new Rollback_Response(Rsx_Api::validation_error($fields, $message)):
+    the writer rolls back and the client receives exactly the body (and
+    status) the returned response would have produced. A reader that saves a
+    site-scoped model fails with "Site lock enforcement: ..."; a reader that
+    only records a view or audit entry does it under
+    Site_Lock::write_exception() and stays a reader. A writer never holds its
+    lock across a call to another system: such an endpoint declares
+    #[Manual_Lock] and writes what the call returned in a short section. An
+    endpoint executes and returns right away; export- or batch-shaped work is
+    dispatched to a task, with the feature's own status and result endpoints
+    (rsx:man site_locks, HOLDING A LOCK WELL).
 
 SERIALIZATION
     A returned model is serialized with the SAME redacting toArray() the

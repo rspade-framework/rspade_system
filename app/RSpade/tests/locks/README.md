@@ -55,6 +55,12 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   command (wired in `app/Console/Kernel.php`) and every `system/script.php` script, and
   `the SITE_LOCK_EXEMPT constant` (`Site_Lock_Cli_Test`, with `Site_Lock_Cli_Fixture_Command` /
   `Site_Lock_Cli_Exempt_Fixture_Command` registered into Artisan by the test)
+- Holding a lock well: `Site_Lock::write_exception()` / `acquire_write_exception()` /
+  `release_write_exception()`, `held_mode()` / `in_write_exception()` / `in_bypass()`,
+  `Core/Response/Rollback_Response.php` (rendered by the Ajax, API, companion and page-route
+  dispatchers), the upgrade refusal on every path, and the framework file routes' read
+  sections (`Site_Lock_Hold_Discipline_Test`, with `Site_Lock_Exception_Fixture_Controller`,
+  `Site_Lock_Rollback_Fixture_Api_Controller` and the shared task / command fixtures)
 - `system/app/RSpade/Core/Locks/Lockd_Client.php` - socket transport, hello handshake, the
   `#[Health_Check('Lock Server')]` probe
 - `system/bin/rsx-lockd/lib/protocol.js` - frames, the newline splitter, hello HMAC, THE

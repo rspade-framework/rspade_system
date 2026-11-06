@@ -106,7 +106,7 @@ class Site_Lock_Cli
         }, 1024);
 
         $dispatcher->addListener(ConsoleEvents::TERMINATE, function (ConsoleTerminateEvent $event): void {
-            static::_command_finished($event->getCommand());
+            static::_command_finished($event->getCommand(), $event->getExitCode());
         }, -1024);
     }
 
@@ -130,8 +130,13 @@ class Site_Lock_Cli
 
     /**
      * A command has ended (returned or threw): close the window _command_starting() opened.
+     * A write exception the command left open is released; a command that succeeded
+     * (exit code 0) then fails naming it, one that already failed keeps its own outcome.
+     *
+     * @param Symfony_Command|null $command
+     * @param int $exit_code The command's exit code (non-zero: it failed or threw)
      */
-    public static function _command_finished(?Symfony_Command $command): void
+    public static function _command_finished(?Symfony_Command $command, int $exit_code = 0): void
     {
         if ($command === null || self::$invocations === []) {
             return;
@@ -147,7 +152,7 @@ class Site_Lock_Cli
         array_pop(self::$invocations);
 
         if ($top['label'] !== null) {
-            Site_Lock::_leave_enforcement_labelled($top['label']);
+            Site_Lock::_leave_enforcement_labelled($top['label'], $exit_code === 0);
         }
     }
 

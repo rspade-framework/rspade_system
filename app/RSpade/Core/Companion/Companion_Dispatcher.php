@@ -24,6 +24,7 @@ use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Site_Model;
+use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -271,6 +272,9 @@ class Companion_Dispatcher
 
                 return Api_Dispatcher::build_response($result);
             }, $site);
+        } catch (Rollback_Response $rollback) {
+            // Rolled back by the boundary; answered as the returned response would have been.
+            return Api_Dispatcher::build_response($rollback->response);
         } catch (Throwable $e) {
             $coded = Api_Dispatcher::coded_error_response($e);
 

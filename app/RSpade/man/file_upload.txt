@@ -1610,6 +1610,29 @@ SECURITY HOOKS
     an attachment's id is not, and every read surface asks them.
     See rsx:man event_hooks.
 
+    RECORDING AN ACCESS. A gate handler runs inside a READ lock on the site:
+    every framework file route (/_download, /_inline, /_download_zip,
+    /_thumbnail/*, /_preview/pdf, /_preview/sheet) and the content endpoints
+    (get_extracted_text, get_markdown_html) are #[Manual_Lock] and ask the gates
+    inside a Site_Lock::read() section, release it, and only then materialize,
+    render and transmit the bytes (rsx:man site_locks, HOLDING A LOCK WELL, rule
+    4); get_preview_info and the external API's file endpoints are readers. A
+    handler that records the access (a download history row, an audit entry)
+    writes it under a write exception - never Site_Lock::write(), which would
+    upgrade the read lock and is refused:
+
+        #[OnEvent('file.download.authorize', priority: 10)]
+        public static function require_login_and_record($data) {
+            if (!Session::is_logged_in()) {
+                return response()->json(['error' => 'Login required'], 403);
+            }
+            Site_Lock::write_exception('record the download',
+                fn () => Download_History_Model::record($data['attachment'], $data['user']));
+            return true;
+        }
+
+    The record commits at once (no transaction is open on a read surface).
+
 EXTERNAL BYTE RESIDENCY (HANDLERS)
 
     An attachment's bytes may originate from an EXTERNAL system (S3, OneDrive, a
@@ -1978,6 +2001,7 @@ SEE ALSO
     rsx:man event_hooks        #[OnEvent] and the Rsx::trigger_* families
     rsx:man polymorphic        Integer type-ref columns (fileable_type)
     rsx:man locks              Cluster/system locks and counting semaphores
+    rsx:man site_locks         Read-release-transmit file routes; recording under a write exception
     rsx:man model              Model system, enums, fetch()
     rsx:man external_api       /api/v1/files, Bearer access to the byte routes
     rsx:man portal             Portal_Authorizable, the portal twin of Staff_Authorizable

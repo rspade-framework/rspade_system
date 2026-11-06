@@ -26,7 +26,10 @@ endpoint, and every caller goes through it:
    surface's resolved mode (reader by default, `#[Writer]` = write lock + one database
    transaction committed after `rsx.post_dispatch`, `#[Manual_Lock]` = no lock) is taken;
    the enforcement window is the action alone (`Site_Lock::_enforce()`). A call made from
-   inside another (`internal()` in an endpoint) runs under the outer call's hold.
+   inside another (`internal()` in an endpoint) runs under the outer call's hold. A thrown
+   `Rollback_Response` (`Core/Response`) is caught OUTSIDE the boundary - which has already
+   rolled the writer back - and its carried value becomes the call's result, exactly as if
+   the endpoint had returned it (an HTTP response is refused as in step 5).
 5. A result that is an HTTP response (Symfony `Response`, a `View`, `Responsable`,
    `Renderable` - a redirect, a page, a download) from the action or the controller's
    `pre_dispatch` THROWS: an Ajax call answers a value or a coded result, never a page.

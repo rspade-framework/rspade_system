@@ -19,6 +19,7 @@ use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
@@ -80,6 +81,13 @@ use App\RSpade\Core\Session\Session;
  * requests - on the portal's own host, where the staff table is never consulted, and under
  * its prefix on the application host, where the bare path would be a staff request. The
  * file.*.authorize gates receive the realm's own user (_gate_user()).
+ *
+ * READ, RELEASE, TRANSMIT: every file-serving route above is #[Manual_Lock]. It looks the
+ * attachment up and asks its gates inside a Site_Lock::read() section
+ * (_authorize_under_read_lock(); the ZIP route's whole validation phase), ends the section,
+ * and only then materializes external bytes, renders and transmits - the bytes leave at
+ * send(), after the route has returned. A gate handler that records the access does it
+ * under Site_Lock::write_exception() (rsx:man site_locks, HOLDING A LOCK WELL).
  *
  * FILE RESPONSE PATTERN:
  *   Use Response facade methods for file responses from static route methods:
@@ -487,6 +495,51 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * READ, RELEASE, TRANSMIT - the first step of every framework file route: resolve the
+     * attachment by key and ask the file gates, in order, under the site's READ lock, and let
+     * it go before anything slow happens (materializing external bytes, rendering a thumbnail,
+     * transmitting the file). The routes declare #[Manual_Lock]: they take no automatic lock,
+     * only this section.
+     *
+     * A gate handler runs inside the read section, so a handler that RECORDS the access (a
+     * download history row) does it under Site_Lock::write_exception() - never a write
+     * section, which would be an upgrade of the read lock and is refused.
+     *
+     * @param Request $request
+     * @param string|null $key The attachment key from the URL
+     * @param string[] $gates Rsx_File_Gates::THUMBNAIL / DOWNLOAD, asked in this order
+     * @return mixed The authorized File_Attachment_Model, or the first refusal a gate answered
+     *               (return it as the route's response)
+     */
+    public static function _authorize_under_read_lock(Request $request, ?string $key, array $gates)
+    {
+        if (!$key) {
+            abort(404, 'File not found');
+        }
+
+        return Site_Lock::read(Site_Lock::_request_site_id(), function () use ($request, $key, $gates) {
+            $attachment = File_Attachment_Model::where('key', $key)->first();
+            if (!$attachment) {
+                abort(404, 'File not found');
+            }
+
+            foreach ($gates as $gate) {
+                $auth = Rsx_File_Gates::authorize($gate, [
+                    'attachment' => $attachment,
+                    'user' => static::_gate_user(),
+                    'request' => $request,
+                ]);
+
+                if ($auth !== true) {
+                    return $auth;
+                }
+            }
+
+            return $attachment;
+        });
+    }
+
+    /**
      * Download file as attachment (forces download dialog)
      *
      * Route: /_download/:key
@@ -496,38 +549,15 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_download/:key', methods: ['GET'])]
     #[Portal_Route('/_download/:key', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function download_file(Request $request, array $params = [])
     {
-        $key = $params['key'] ?? null;
-        if (!$key) {
-            abort(404, 'File not found');
-        }
-
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
-        }
-
-        // Event: file.download.authorize (gate) - Then check download-specific access
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($download_auth !== true) {
-            return $download_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and both gates (file.thumbnail.authorize, then
+        // file.download.authorize) under the site's read lock; everything after - external
+        // bytes, the transfer itself - with no lock held.
+        $attachment = static::_authorize_under_read_lock($request, $params['key'] ?? null, [Rsx_File_Gates::THUMBNAIL, Rsx_File_Gates::DOWNLOAD]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // Handler freshness: if the handler opts in and reports stale, evict so resolve_storage()
@@ -574,38 +604,15 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_inline/:key', methods: ['GET'])]
     #[Portal_Route('/_inline/:key', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function inline(Request $request, array $params = [])
     {
-        $key = $params['key'] ?? null;
-        if (!$key) {
-            abort(404, 'File not found');
-        }
-
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
-        }
-
-        // Event: file.download.authorize (gate) - Then check download-specific access
-        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($download_auth !== true) {
-            return $download_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and both gates (file.thumbnail.authorize, then
+        // file.download.authorize) under the site's read lock; everything after - external
+        // bytes, the transfer itself - with no lock held.
+        $attachment = static::_authorize_under_read_lock($request, $params['key'] ?? null, [Rsx_File_Gates::THUMBNAIL, Rsx_File_Gates::DOWNLOAD]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // Handler freshness: if the handler opts in and reports stale, evict so resolve_storage()
@@ -687,85 +694,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_download_zip/:key', methods: ['GET'])]
     #[Portal_Route('/_download_zip/:key', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function download_multiple_zip(Request $request, array $params = [])
     {
-        // -----------------------------------------------------------------------------
-        // PHASE 1 - resolve the request, then validate and authorize everything up front
-        // (no bytes streamed yet).
-        // -----------------------------------------------------------------------------
-        $key = $params['key'] ?? null;
-
-        $download_request = is_string($key) ? Zip_Download_Request_Model::find_by_download_key($key) : null;
-        if ($download_request === null || $download_request->is_expired()) {
-            // OWNER NOTE: this exception is a PLACEHOLDER - a future internal user-feedback
-            // error mechanism will replace it. It is user feedback (the link is no longer
-            // usable), NOT a server fault, and stays opaque about whether the key was
-            // unknown or merely expired.
-            throw new \RuntimeException('This download link is invalid or has expired.');
-        }
-
-        $entries = $download_request->get_files();
-
-        // The opaque denial message. OWNER NOTE: this exception is a PLACEHOLDER - a
-        // future internal user-feedback error mechanism will replace it. It is user
-        // feedback (a request was refused), NOT a server fault. It deliberately does not
-        // reveal which file failed, or whether the file even exists.
-        $denied_message = 'Access to one or more of the requested files was denied. Please log in.';
-
-        $prepared = [];
-        $sizes = [];
-        $names = [];
-
-        foreach ($entries as $entry) {
-            if (!is_array($entry) || !isset($entry['key']) || !is_string($entry['key'])) {
-                throw new \RuntimeException($denied_message);
-            }
-
-            $attachment = File_Attachment_Model::find_by_key($entry['key']);
-            if (!$attachment) {
-                throw new \RuntimeException($denied_message);
-            }
-
-            // Cascading auth gates - identical order to download_file().
-            $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-                'attachment' => $attachment,
-                'user' => static::_gate_user(),
-                'request' => $request,
-            ]);
-            if ($thumbnail_auth !== true) {
-                throw new \RuntimeException($denied_message);
-            }
-
-            $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
-                'attachment' => $attachment,
-                'user' => static::_gate_user(),
-                'request' => $request,
-            ]);
-            if ($download_auth !== true) {
-                throw new \RuntimeException($denied_message);
-            }
-
-            $provided = (isset($entry['name']) && is_string($entry['name'])) ? $entry['name'] : null;
-            $name = static::_sanitize_zip_entry_name($provided, (string) $attachment->file_name);
-
-            $prepared[] = ['attachment' => $attachment, 'name' => $name];
-            $sizes[] = $attachment->get_size();
-            $names[] = $name;
-        }
-
-        // ZIP64 envelope guard (the writer supports neither >4GB offsets nor >65k entries).
-        $zip64_error = static::_zip64_limit_error($sizes);
-        if ($zip64_error !== null) {
-            throw new \RuntimeException($zip64_error);
-        }
-
-        // De-duplicate colliding archive names across the whole set (report.pdf -> report (2).pdf).
-        $deduped = static::_dedupe_zip_names($names);
-        foreach ($prepared as $i => $unused) {
-            $prepared[$i]['name'] = $deduped[$i];
-        }
-
-        $zip_name = static::_sanitize_zip_filename($download_request->zip_name);
+        // READ, RELEASE, TRANSMIT: phase 1 runs under the site's read lock, which is released
+        // before phase 2 - the archive streams (at send(), after this returns) with no lock held.
+        $prepared = Site_Lock::read(Site_Lock::_request_site_id(), fn () => static::__prepare_zip($request, $params));
+        $zip_name = $prepared['zip_name'];
+        $prepared = $prepared['members'];
 
         // -----------------------------------------------------------------------------
         // PHASE 2 - stream the archive one member at a time.
@@ -842,6 +778,93 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         $response->headers->set('Accept-Ranges', 'none');
 
         return $response;
+    }
+
+    /**
+     * PHASE 1 of download_multiple_zip(), run under the site's read lock: resolve the request,
+     * then validate and authorize every member up front (no bytes streamed yet).
+     *
+     * @param Request $request
+     * @param array $params
+     * @return array{members: array, zip_name: string}
+     */
+    private static function __prepare_zip(Request $request, array $params): array
+    {
+        $key = $params['key'] ?? null;
+
+        $download_request = is_string($key) ? Zip_Download_Request_Model::find_by_download_key($key) : null;
+        if ($download_request === null || $download_request->is_expired()) {
+            // OWNER NOTE: this exception is a PLACEHOLDER - a future internal user-feedback
+            // error mechanism will replace it. It is user feedback (the link is no longer
+            // usable), NOT a server fault, and stays opaque about whether the key was
+            // unknown or merely expired.
+            throw new \RuntimeException('This download link is invalid or has expired.');
+        }
+
+        $entries = $download_request->get_files();
+
+        // The opaque denial message. OWNER NOTE: this exception is a PLACEHOLDER - a
+        // future internal user-feedback error mechanism will replace it. It is user
+        // feedback (a request was refused), NOT a server fault. It deliberately does not
+        // reveal which file failed, or whether the file even exists.
+        $denied_message = 'Access to one or more of the requested files was denied. Please log in.';
+
+        $prepared = [];
+        $sizes = [];
+        $names = [];
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || !isset($entry['key']) || !is_string($entry['key'])) {
+                throw new \RuntimeException($denied_message);
+            }
+
+            $attachment = File_Attachment_Model::find_by_key($entry['key']);
+            if (!$attachment) {
+                throw new \RuntimeException($denied_message);
+            }
+
+            // Cascading auth gates - identical order to download_file().
+            $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
+                'attachment' => $attachment,
+                'user' => static::_gate_user(),
+                'request' => $request,
+            ]);
+            if ($thumbnail_auth !== true) {
+                throw new \RuntimeException($denied_message);
+            }
+
+            $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
+                'attachment' => $attachment,
+                'user' => static::_gate_user(),
+                'request' => $request,
+            ]);
+            if ($download_auth !== true) {
+                throw new \RuntimeException($denied_message);
+            }
+
+            $provided = (isset($entry['name']) && is_string($entry['name'])) ? $entry['name'] : null;
+            $name = static::_sanitize_zip_entry_name($provided, (string) $attachment->file_name);
+
+            $prepared[] = ['attachment' => $attachment, 'name' => $name];
+            $sizes[] = $attachment->get_size();
+            $names[] = $name;
+        }
+
+        // ZIP64 envelope guard (the writer supports neither >4GB offsets nor >65k entries).
+        $zip64_error = static::_zip64_limit_error($sizes);
+        if ($zip64_error !== null) {
+            throw new \RuntimeException($zip64_error);
+        }
+
+        // De-duplicate colliding archive names across the whole set (report.pdf -> report (2).pdf).
+        $deduped = static::_dedupe_zip_names($names);
+        foreach ($prepared as $i => $unused) {
+            $prepared[$i]['name'] = $deduped[$i];
+        }
+
+        $zip_name = static::_sanitize_zip_filename($download_request->zip_name);
+
+        return ['members' => $prepared, 'zip_name' => $zip_name];
     }
 
     // ============================================================================================
@@ -1221,6 +1244,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     #[Portal_Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function thumbnail_preset(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -1242,21 +1266,11 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         $width = $preset['width'];
         $height = $preset['height'] ?? null;
 
-        // Find attachment
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        // Event: file.thumbnail.authorize (gate) - Check thumbnail access
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and file.thumbnail.authorize under the site's
+        // read lock; rendering and serving the thumbnail with no lock held.
+        $attachment = static::_authorize_under_read_lock($request, $key, [Rsx_File_Gates::THUMBNAIL]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // Generate cache filename (materialize external bytes to obtain the content hash).
@@ -1293,6 +1307,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     #[Portal_Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     #[Media]
+    #[Manual_Lock]
     public static function thumbnail(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -1323,21 +1338,11 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             abort(400, "Height must be between 10 and {$max_size}");
         }
 
-        // Find attachment
-        $attachment = File_Attachment_Model::where('key', $key)->first();
-        if (!$attachment) {
-            abort(404, 'File not found');
-        }
-
-        // Event: file.thumbnail.authorize (gate) - Check thumbnail access
-        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
-            'attachment' => $attachment,
-            'user' => static::_gate_user(),
-            'request' => $request,
-        ]);
-
-        if ($thumbnail_auth !== true) {
-            return $thumbnail_auth;
+        // READ, RELEASE, TRANSMIT: the lookup and file.thumbnail.authorize under the site's
+        // read lock; rendering and serving the thumbnail with no lock held.
+        $attachment = static::_authorize_under_read_lock($request, $key, [Rsx_File_Gates::THUMBNAIL]);
+        if (!($attachment instanceof File_Attachment_Model)) {
+            return $attachment;
         }
 
         // Generate cache filename (materialize external bytes to obtain the content hash).

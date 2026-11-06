@@ -192,7 +192,9 @@ ERROR TYPES
     An endpoint is a READER of its site unless it declares #[Writer]. A writer
     runs under the site's write lock in one transaction: a coded result the
     endpoint RETURNS commits what it wrote; a THROWN one (or any exception)
-    rolls the whole call back. A reader that saves a site-scoped model fails
+    rolls the whole call back. To answer an ordinary error envelope AND roll
+    back, throw new Rollback_Response(response_form_error(...)) - the client
+    receives exactly the envelope the returned value would have produced. A reader that saves a site-scoped model fails
     with a fatal "Site lock enforcement: ..." naming the endpoint (rsx:man
     site_locks).
 

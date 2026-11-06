@@ -75,6 +75,11 @@ DESCRIPTION
       * A maintenance pass that tolerates concurrent writers (a queue drain, a retention
         sweep) writes inside Site_Lock::bypass($site_id, '<reason>', fn () => ...), or
         Site_Lock::bypass_all_sites('<reason>', fn () => ...) when it walks every tenant.
+      * A view, audit or telemetry record needs no section: Site_Lock::write_exception(
+        '<what it records>', fn () => ...). Never a call to another system (an HTTP API,
+        mail, a subprocess that waits) inside a write section: make the call first, then
+        write what it returned in a short section of its own (rsx:man site_locks,
+        HOLDING A LOCK WELL).
       * A #[Task] method MUST NOT assume it is the only kind of task running. A critical
         section that is not one site's data takes a named lock (RsxLocks, see LOCKS).
       * #[Exclusive] / #[Debounce] guarantee single-instance for ONE identity - they do
@@ -1908,7 +1913,7 @@ TROUBLESHOOTING
 SEE ALSO
     rsx:man task_commands - #[Command] and the console output contract
     rsx:man sys_panel - the Tasks and Task Workers screens of the developer console
-    rsx:man site_locks - per-item write sections, bypass, enforcement in a task body
+    rsx:man site_locks - per-item write sections, bypass, write exceptions, HOLDING A LOCK WELL
     rsx:man locks - cluster/system locks, wait-forever timeouts, the pool daemon
     rsx:man realtime - topics, subscriptions, refresh() vs reload()
     rsx:man file_disposal - declared blob references; task attachments are one
