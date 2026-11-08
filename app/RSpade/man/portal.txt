@@ -996,6 +996,12 @@ ACTIVITY & NOTIFICATIONS
     Portal_Notification_Model::mark_read($portal_user_id, $id)      bool (ownership-
                                                                    guarded, idempotent)
     Portal_Notification_Model::mark_all_read($portal_user_id)       int (rows updated)
+        A mass edit (rsx:man site_locks, HOLDING A LOCK WELL, rule 8): one
+        Site_Lock::write() section on the scoped site per
+        MARK_ALL_READ_CHUNK (500) rows, each followed by Realtime::bulk_changed().
+        Call it from an endpoint that holds no site lock (#[Manual_Lock]), so
+        each chunk commits on its own; inside a writer the sections nest into
+        its one lock.
     All read/mutate calls take the recipient id and scope to it; a user can only
     ever see or change their own notifications.
 

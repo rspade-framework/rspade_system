@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher], per-item Site_Lock::write() sections, request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, moving slow endpoint work to a task, or a run 'returned an array', is stuck Pending, was killed with 'no report for Ns', or failed with 'Site lock enforcement: ... by task'."
+description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher] incl. mass edits on a selection with progress, per-item Site_Lock::write() sections, request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, moving slow endpoint work to a task, or a run 'returned an array', is stuck Pending, was killed with 'no report for Ns', or failed with 'Site lock enforcement: ... by task'."
 ---
 
 # Background Tasks
@@ -171,6 +171,37 @@ $run_id = Task::dispatch('Records_Service', 'bulk_set_status', ['ids' => $ids, '
 - **By hand, as a named person**: `php artisan rsx:task:run Records_Service bulk_set_status --user=<id|email> --site=<id>` - rsx:ajax's flags, resolved identically (`--site` required when the identity is on several sites); without `--user` it exits 1 naming them. Any task accepts the pair; a `#[Command]` alias does not (its options are the task's). Queueing such a run for a worker as a named user is not supported.
 - **In a test**: `static::__acting_as_user($user_id); static::__run_task_method(Records_Service::class, 'bulk_set_status', $params);` (or `Task::internal()`) runs it as that user.
 - **Never on a timer, never an alias**: `#[Schedule]` or `#[Command]` beside it is a build FATAL (`TASK-RUN-AS-01`). A rerun runs bound to whoever asked for it.
+
+**The MASS EDIT is the main case.** An action a user applies to a selection ("delete the ticked rows", "select all" then approve) never loops inside one `#[Writer]` - it releases the write lock per item (`rsx:man site_locks`, HOLDING A LOCK WELL, rule 8). The shape:
+
+```php
+// Endpoint: validate the selection, dispatch, answer the handle.
+return ['task_id' => Task::dispatch('Mass_Edit_Service', 'delete_clients', $selection)];
+
+#[Task('Delete the selected clients')]
+#[Run_As_Dispatcher]
+#[Task_Access('dispatcher')]                       // the person who clicked can watch and stop it
+public static function delete_clients(Task_Instance $task, array $params = [])
+{
+    $site_id = (int) Session::get_site_id();       // the dispatcher's site
+    $ids = ...;                                    // the selection, read ONCE, no lock held
+    $task->progress_count(0, count($ids));
+    foreach ($ids as $index => $id) {
+        $task->heartbeat();
+        if ($task->is_stop_requested()) { break; } // what is done stays done
+        $outcome = Site_Lock::write($site_id, fn () => ...);   // re-read, re-decide, write through the model
+        if ($outcome === 'skipped') { $task->stdout("Client {$id}: skipped - changed since the selection was made."); }
+        $task->progress_count($index + 1, count($ids));
+    }
+    $task->state(['selected' => ..., 'deleted' => ..., 'skipped' => ..., 'refused' => ...]);
+    $task->summary('Deleted 38 of 40 client(s). 2 skipped (deleted or changed since the selection was made).');
+}
+```
+
+- **Not all-or-nothing**: every item commits in its own section; report each item's outcome (applied / skipped / refused + reason as a `stdout()` line) and a `summary()`, never roll the whole selection back on one failure.
+- **Re-decide inside the section**: the record may have changed, vanished or fallen out of the filter since the selection was read, and the person may have lost the permission - skip (or refuse the rest) and say so.
+- **The browser follows the run**: the reference app's `Mass_Edit_Progress_Modal.show(task_id, title)` (`rsx/theme/components/datagrid/`) shows `<Task_Report $kind="status_text">` and a `progress_text` bar, closes itself when `Rsx_Task.get()` says the run is no longer live, and the grid flashes the run's `summary` report. Worked example: `rsx/services/mass_edit_service.php`.
+- **In a test**: drive the task with `__acting_as_user()` + `__run_task_method()` and assert on its `state()`; the endpoint's dispatch needs a browser sign-in a test does not have, so test the endpoint for its validation.
 
 `rsx:man tasks`, RUNNING AS THE DISPATCHER.
 

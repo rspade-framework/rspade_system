@@ -152,6 +152,13 @@ class Realtime_Emissions
     private static ?array $control_capture = null;
 
     /**
+     * Test capture seam for the emitter kick: how many flushes carried a dirty flag (each
+     * would ask the gated emitter dispatch). Null in production; counted only while a test
+     * has called _testing_start_capture().
+     */
+    private static ?int $emitter_kick_capture = null;
+
+    /**
      * Queue a model-change emission for a model that has opted in ($realtime = true),
      * plus its realtime_touch() parent cascade. Registers the flush.
      */
@@ -223,10 +230,13 @@ class Realtime_Emissions
     }
 
     /**
-     * Mark that a non-silent model wrote this generation, so the flush dispatches the
-     * emitter task (subject to the enabled/registered/subscribed gates). Registers the flush.
+     * Mark that rows changed this generation, so the flush dispatches the emitter task
+     * (subject to the enabled/registered/subscribed gates). Registers the flush. Called by
+     * the save()/delete() hook for a non-silent model, and by Realtime::bulk_changed() -
+     * the published call - after a write that ran outside the model layer.
+     * Framework-internal.
      */
-    public static function mark_emitters_dirty(): void
+    public static function _mark_emitters_dirty(): void
     {
         self::$emitters_dirty = true;
         self::_ensure_flush_registered();
@@ -553,6 +563,10 @@ class Realtime_Emissions
             }
         }
 
+        if (self::$emitter_kick_capture !== null && $dispatch_emitters) {
+            self::$emitter_kick_capture++;
+        }
+
         if (self::_is_web_context()) {
             self::_stage_outbox($emissions, $dispatch_emitters);
             self::_stage_control_outbox($control);
@@ -784,6 +798,7 @@ class Realtime_Emissions
         self::$emitters_dirty = false;
         self::$capture = null;
         self::$control_capture = null;
+        self::$emitter_kick_capture = null;
         self::$outbox = [];
         self::$outbox_control = [];
         self::$outbox_dispatch_emitters = false;
@@ -855,6 +870,16 @@ class Realtime_Emissions
     public static function _testing_start_capture(): void
     {
         self::$capture = [];
+        self::$emitter_kick_capture = 0;
+    }
+
+    /**
+     * How many flushes since capture began carried the emitter kick (each asks the gated
+     * emitter dispatch once).
+     */
+    public static function _testing_captured_emitter_kicks(): int
+    {
+        return self::$emitter_kick_capture ?? 0;
     }
 
     /**

@@ -2840,7 +2840,7 @@ EXAMPLE;
 
         // Emitter dirty-kick: any non-silent write schedules a (gated) emitter recompute.
         if (!static::$realtime_silent) {
-            Realtime_Emissions::mark_emitters_dirty();
+            Realtime_Emissions::_mark_emitters_dirty();
         }
     }
 

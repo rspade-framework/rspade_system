@@ -220,3 +220,17 @@ run. Run with `node realtime/playwright/subscription_released_on_stop.js`.
 | RT-DOC-05 | a component that leaves the document before `ready` is closed at `ready` | playwright | subscribe in the document, remove the element before ready | open at create, closed after ready | implemented | 2026-10-08 |
 | RT-EMIT-SITE-01 | both emitter engines DECLARE the site around each emitter call (ambient site = the $site_id argument, has_session() true) and leave no declaration behind | php | `php/Realtime_Seed_Subscriptions_Test.php`, seed engine site 7, run loop site 5 | the fixture saw 7/7 and 5/5; site and declaration as before afterwards | implemented | 2026-10-27 |
 | RT-EMIT-SITE-02 | an outer temporary-site declaration is restored after the engine, not cleared | php | declare 3, seed an entry for site 9 | emitter saw 9; site 3 still declared afterwards | implemented | 2026-10-27 |
+
+## Realtime::bulk_changed() (emitter kick after a raw write)
+
+Realtime_Bulk_Changed_Test. A write that ran as one raw statement marks no emitter; the
+published call does, riding the transaction. The emitter-kick capture
+(`_testing_captured_emitter_kicks()`) counts flushes that would ask the gated dispatch; the
+gates are EMITTER dispatch-gate tests' subject.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| BULKCHG-01 | A raw DB::table() bulk UPDATE alone kicks no emitter | php | update in a committed transaction | dirty false, 0 kicks | implemented | 2026-11-08 |
+| BULKCHG-02 | Two bulk_changed() calls in one transaction kick once, at commit, with no model-change frame | php | update + call x2, commit | 0 before commit, 1 after, 0 frames | implemented | 2026-11-08 |
+| BULKCHG-03 | A rolled-back transaction drops the kick and leaves nothing for a later commit | php | update + call, rollBack, then a plain commit | 0 kicks, dirty false | implemented | 2026-11-08 |
+| BULKCHG-04 | Outside a transaction the kick flushes at once | php | update + call | 1 kick | implemented | 2026-11-08 |

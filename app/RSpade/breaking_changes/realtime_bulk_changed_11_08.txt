@@ -1,0 +1,60 @@
+REALTIME: Realtime::bulk_changed() RE-RUNS THE EMITTERS AFTER A RAW WRITE; Realtime_Emissions::mark_emitters_dirty() IS INTERNAL
+Date: 2026-11-08
+
+IF YOU DO NOTHING: any code of yours that calls Realtime_Emissions::mark_emitters_dirty() fails with "Call to undefined method App\RSpade\Core\Realtime\Realtime_Emissions::mark_emitters_dirty()" the first time it runs - typically right after a bulk update, so the request or task that made the update fails.
+
+SUMMARY
+    Category 2 (a framework API an application calls). Affects an
+    application that calls Realtime_Emissions::mark_emitters_dirty() -
+    usually right after a bulk or raw UPDATE, to make an #[Emitter] catch up.
+
+THE CHANGE
+    A save() or delete() of a non-silent model re-runs the realtime
+    #[Emitter]s after commit by itself. A write that runs as one raw
+    statement does not: ->raw_bulk(), DB::table(), raw SQL, and a builder
+    bulk ->update() / ->delete() on a model with no realtime or lifecycle
+    surface. The only call that made the emitters catch up was the engine's
+    public but undocumented Realtime_Emissions::mark_emitters_dirty().
+
+THE FIX
+    The published call is now:
+
+        Realtime::bulk_changed();
+
+    "Rows changed outside the model layer: re-run the emitters after
+    commit." No arguments. It flushes after COMMIT (at once when no
+    transaction is open), is dropped when the transaction rolls back,
+    dispatches the emitter task once per transaction however often it is
+    called, and passes the usual gates (realtime enabled, an #[Emitter]
+    registered, a live subscription to a topic an emitter serves) - so it is
+    safe to leave in code unconditionally. It publishes no Model_Changed_Topic
+    frame: a subscriber watching a record still needs
+    $record->realtime_emit(). rsx:man realtime, MANUAL EMISSION.
+
+    The engine method is now framework-internal:
+    Realtime_Emissions::mark_emitters_dirty() is renamed
+    _mark_emitters_dirty(). There is no alias.
+
+ACTION REQUIRED
+    1. Find every call:
+
+           grep -rn mark_emitters_dirty rsx
+
+    2. Replace each
+
+           Realtime_Emissions::mark_emitters_dirty();
+
+       with
+
+           Realtime::bulk_changed();
+
+       and import App\RSpade\Core\Realtime\Realtime in that file (drop the
+       Realtime_Emissions import unless the file still uses it otherwise).
+    3. Keep the call in the same transaction or Site_Lock::write() section as
+       the raw statement it follows, so a section that rolls back kicks
+       nothing.
+
+VERIFICATION
+    grep -rn mark_emitters_dirty rsx prints nothing. Run the action that
+    makes the bulk update: it completes, and a page watching the emitter's
+    topic updates after it.

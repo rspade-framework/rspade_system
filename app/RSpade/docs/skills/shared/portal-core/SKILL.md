@@ -355,7 +355,7 @@ Portal_Notification_Model::emit($portal_user_ids, string $type, array $opts = []
 Portal_Notification_Model::feed($portal_user_id, ['limit' => 50, 'unread_only' => true, 'since' => $iso]);
 Portal_Notification_Model::unread_count($portal_user_id);
 Portal_Notification_Model::mark_read($portal_user_id, $id);      // ownership-guarded, idempotent
-Portal_Notification_Model::mark_all_read($portal_user_id);
+Portal_Notification_Model::mark_all_read($portal_user_id);   // a mass edit: one Site_Lock::write() per 500-row chunk - call it from a #[Manual_Lock] endpoint
 ```
 
 `emit()` works from a staff request (an announcement broadcast) or a portal request alike, because the row's own `site_id` scopes both the write and the realtime publish. Every read/mutate call takes the recipient id and scopes to it - a user can only ever see or change their own. The shipped `Portal_Notifications_Controller` **derives the recipient from the session and never accepts a `portal_user_id` from the client**; do the same in anything you add.

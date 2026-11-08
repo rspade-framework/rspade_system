@@ -587,7 +587,9 @@ MODEL CHANGE EMISSION
     What is NOT covered. DB::table(...)->update()/->delete(), an explicit
     ->getQuery()/->toBase() drop, and raw SQL never pass through the model builder
     - they fire nothing, permanently, by design. After such a write call
-    $record->realtime_emit() (MANUAL EMISSION) for the affected records.
+    $record->realtime_emit() (MANUAL EMISSION) for the affected records, and
+    Realtime::bulk_changed() when an emitter reads the rows (EMITTERS AFTER A
+    RAW WRITE).
 
     REALTIME-BULK-01 (rsx:check) watches these paths (medium severity - advisory,
     because model-builder writes are auto-covered). It flags a bulk
@@ -667,6 +669,43 @@ MANUAL EMISSION
 
     Both paths run the same flush, dedup, touch cascade, and rollback-discard; only
     WHEN the publish leaves the process differs.
+
+    EMITTERS AFTER A RAW WRITE - Realtime::bulk_changed(). realtime_emit() tells
+    the subscribers of ONE RECORD. An #[Emitter] (a count, a badge, a total read
+    across many rows - EMITTERS below) is re-run by a different signal: every
+    non-silent save()/delete() marks the emitters dirty. A write that ran as one
+    raw statement marks nothing - ->raw_bulk(), DB::table(), raw SQL, and a
+    builder bulk ->update()/->delete() on a model with no realtime or lifecycle
+    surface (BULK WRITES) - so every emitter reading those rows stays stale until
+    some unrelated write happens to kick it. After such a write:
+
+        Site_Lock::write($site_id, function () use ($user_id, $ids) {
+            Notification_Model::whereIn('id', $ids)
+                ->where('user_id', $user_id)
+                ->raw_bulk()
+                ->update(['is_read' => 1]);
+            Realtime::bulk_changed();             // re-run the emitters after commit
+        });
+
+    Contract:
+
+    - Flushes after COMMIT, immediately when no transaction is open, and is
+      DROPPED when the outermost transaction rolls back - call it in the same
+      transaction or write section as the statement, so a section that rolls
+      back kicks nothing. (A savepoint rollback keeps the mark: a harmless
+      over-kick, as for every emission.)
+    - Idempotent within a transaction: any number of calls, and any number of
+      model writes beside them, dispatch the emitter task ONCE at its commit. A
+      web request dispatches at most once per request, after the response. A
+      task outside a transaction kicks at each call, coalesced by the emitter
+      task's #[Debounce(2)].
+    - Subject to the emitter gates (EMITTERS, NO TIMER): realtime enabled, an
+      #[Emitter] registered, a live subscription to a topic an emitter serves.
+      Otherwise nothing is dispatched, so it is safe to leave in code
+      unconditionally.
+    - Publishes no Model_Changed_Topic frame and takes no argument: every
+      emitter is re-run and hash-diffed, and only a changed value publishes.
+      A subscriber watching a record still needs realtime_emit().
 
 DERIVED VALUES
     A "derived value" is anything the page shows that is not one record's own
@@ -768,7 +807,9 @@ EMITTERS
     inside an emitter - there is none; take who the value is for from $filter.
 
     NO TIMER - write-kicked. Nothing polls. A destructive model-layer write (any
-    non-$realtime_silent save/delete) marks emitters dirty; the commit flush then
+    non-$realtime_silent save/delete), or a Realtime::bulk_changed() call after a
+    raw write (MANUAL EMISSION, EMITTERS AFTER A RAW WRITE), marks emitters
+    dirty; the commit flush then
     dispatches the emitter task IFF all three gates hold:
 
         1. realtime is enabled, AND
@@ -998,7 +1039,8 @@ RESIDUAL GAPS
 
     2. ONLY MODEL-LAYER WRITES EMIT. Raw SQL, DB::table() and any external
        process touching the database emit nothing. The remedy is explicit:
-       $record->realtime_emit() (see MANUAL EMISSION). rsx:check's
+       $record->realtime_emit() for a record's subscribers, and
+       Realtime::bulk_changed() for the emitters (see MANUAL EMISSION). rsx:check's
        REALTIME-BULK-01 flags uncovered bulk writes; it cannot see another
        program's writes at all.
 
@@ -1528,6 +1570,12 @@ API REFERENCE
                                                               (model,id) per request;
                                                               same touch cascade; no-op
                                                               when disabled
+        Realtime::bulk_changed(): void                       Rows changed outside the
+                                                              model layer: re-run the
+                                                              emitters after commit.
+                                                              Dropped on rollback; once
+                                                              per transaction; gated;
+                                                              no frame of its own
         Realtime_Emissions::queue_model_change($model)       Internal - called by the
                                                               save()/delete() hook; not
                                                               app-facing

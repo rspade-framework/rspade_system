@@ -327,6 +327,32 @@ class Realtime
         $redis->publish($channel, $message);
     }
 
+    /**
+     * Rows changed outside the model layer: re-run the emitters after commit.
+     *
+     * A save()/delete() of a non-silent model marks the #[Emitter] engine dirty by itself.
+     * A write that ran as one raw statement does not - ->raw_bulk(), DB::table(), raw SQL,
+     * or a builder bulk update()/delete() on a model with no realtime or lifecycle surface -
+     * so every emitter reading those rows stays stale until an unrelated write kicks it.
+     * Call this after such a write (in the same transaction or write section):
+     *
+     *   - flushes after COMMIT (immediately when no transaction is open), and is dropped
+     *     when the outermost transaction rolls back;
+     *   - idempotent within a transaction: any number of calls, and any number of model
+     *     writes beside them, dispatch the emitter task once at its commit. A web request
+     *     dispatches at most once per request, after the response;
+     *   - dispatches only through the emitter gates: realtime enabled, an #[Emitter]
+     *     registered, and a live subscription to a topic an emitter serves. Otherwise a
+     *     no-op, so it is safe to leave in code unconditionally.
+     *
+     * It publishes no Model_Changed_Topic frame: a subscriber watching a RECORD is told with
+     * $record->realtime_emit(). rsx:man realtime, MANUAL EMISSION.
+     */
+    public static function bulk_changed(): void
+    {
+        Realtime_Emissions::_mark_emitters_dirty();
+    }
+
     // -------------------------------------------------------------------------
     // Targeted refresh pushes (control plane)
     //

@@ -463,6 +463,12 @@ STARTING A RUN
        for the run and fetches the result through the feature's own endpoint. Every
        request holds its site's lock for its whole handler (rsx:man site_locks), so a slow
        endpoint holds back every writer on the site.
+       A MASS EDIT is the common user-facing case: an action applied to a selection
+       ("Delete", "Approve", "Set status" on a datagrid's ticked rows or "select all") is a
+       #[Run_As_Dispatcher] task that takes one Site_Lock::write() section per record,
+       re-reading and re-deciding each, reporting progress_count() and a per-item outcome,
+       never a #[Writer] endpoint looping over the selection (rsx:man site_locks, HOLDING A
+       LOCK WELL, rule 8).
        A process that called Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
        SPAWNING OFF and TESTING).
 

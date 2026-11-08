@@ -1,6 +1,6 @@
 ---
 name: site-locks
-description: "Writing code under the per-site reader/writer locks - #[Writer] / #[Reader] / #[Manual_Lock] on Ajax, API, companion and route surfaces, Site_Lock::write() / read() / bypass() / bypass_all_sites() sections in tasks, commands, scripts and hooks, Site_Lock::write_exception() for a view / audit / telemetry record, Site_Lock::held_mode() / in_write_exception() / in_bypass(), Rollback_Response, read-then-write, holding a lock well (no network call under a write lock, read-release-transmit), RsxAuth::enter_site(), #[Site_Lock_Exempt], the SITE_LOCK_EXEMPT constant, rsx:site_lock:endpoints. Use when an endpoint, task or command saves a site-scoped model, a reader needs to record something, a writer calls an external API or streams, an error answer must undo the write, converting code to the locks, signing in or switching site, or on 'Site lock enforcement: ... without site N's write lock', 'Refused to take the WRITE lock on site N while holding its READ lock', 'Site lock rule 1', 'Site lock rule 5', 'refused inside Ajax', 'Site lock held too long', 'Site_Lock write exception(s) still open' or SITE-LOCK-01."
+description: "Writing code under the per-site reader/writer locks - #[Writer] / #[Reader] / #[Manual_Lock] on Ajax, API, companion and route surfaces, Site_Lock::write() / read() / bypass() / bypass_all_sites() sections in tasks, commands, scripts and hooks, Site_Lock::write_exception() for a view / audit / telemetry record, Site_Lock::held_mode() / in_write_exception() / in_bypass(), Rollback_Response, read-then-write, holding a lock well (no network call under a write lock, read-release-transmit, a mass edit releasing the lock per item or per chunked statement), RsxAuth::enter_site(), #[Site_Lock_Exempt], the SITE_LOCK_EXEMPT constant, rsx:site_lock:endpoints. Use when an endpoint, task or command saves a site-scoped model, a bulk / selection action (delete selected, select all, mark all read) loops over records, a reader needs to record something, a writer calls an external API or streams, an error answer must undo the write, converting code to the locks, signing in or switching site, or on 'Site lock enforcement: ... without site N's write lock', 'Refused to take the WRITE lock on site N while holding its READ lock', 'Site lock rule 1', 'Site lock rule 5', 'refused inside Ajax', 'Site lock held too long', 'Site_Lock write exception(s) still open' or SITE-LOCK-01."
 ---
 
 # Site Locks
@@ -115,6 +115,7 @@ public static function send_due(Task_Instance $task, array $params = [])
 }
 ```
 
+- **The main user-facing case is the MASS EDIT** - an action a user applies to a selection (delete the ticked rows, "select all" then approve, mark all read). It is this shape as a `#[Run_As_Dispatcher]` task, never a `#[Writer]` looping over the selection: section 8, rule 8.
 - **One section per item, never one around the run** - a section holds the site against every web writer until it commits.
 - Each section commits its own transaction and is its own revision unit.
 - **Change site only between sections.** One site's lock at a time per process.
@@ -173,7 +174,7 @@ No framework model declares it; the framework's bookkeeping (sessions, sign-in h
 
 ## 8. Holding a lock well
 
-The seven rules (`rsx:man site_locks`, HOLDING A LOCK WELL; audit `rsx:conformance:show site_lock_hold_discipline`):
+The eight rules (`rsx:man site_locks`, HOLDING A LOCK WELL; audit `rsx:conformance:show site_lock_hold_discipline`):
 
 1. **A write lock is held for a moment.** Mostly reading, or slow? It needs finer-grained locks inside the algorithm.
 2. **Never across a call to another system** (HTTP API, mail relay, a subprocess that waits). `#[Manual_Lock]`, make the call with no lock, then a short `Site_Lock::write()` with what it returned. A value the call made authoritative (a rotated OAuth refresh token) gets its OWN section immediately, so no later failure rolls it back.
@@ -182,6 +183,7 @@ The seven rules (`rsx:man site_locks`, HOLDING A LOCK WELL; audit `rsx:conforman
 5. **Export- and data-processing-shaped work is a task.**
 6. **Read-then-write is a writer from its start** (section 2), unless the write is telemetry.
 7. **Returning an error commits; throw `Rollback_Response` to undo.**
+8. **A mass edit releases the write lock per item** (one `Site_Lock::write()` per record, re-reading it inside) **or per chunked statement** - never one lock across the selection. So: (a) it is NOT all-or-nothing - each item commits and the action reports applied / skipped / refused per item; something that must be atomic across records is a single business operation, small enough for a moment's lock; (b) more than a handful of items is a `#[Run_As_Dispatcher]` + `#[Task_Access('dispatcher')]` task - the endpoint validates, dispatches, returns the handle, the UI follows the run; (c) each item goes through the record's own writer (model, hooks, action log); (d) each section re-reads and re-decides - changed, vanished or no-longer-permitted items are skipped and reported; (e) a set-based statement is chunked, a section per chunk, followed by `Realtime::bulk_changed()` in that section (a raw write re-runs no `#[Emitter]`).
 
 ```php
 // A writer that calls a provider: no lock across the call, the rotated token committed at once.
@@ -201,6 +203,25 @@ public static function sync_drive(Request $request, array $params = [])
     return ['folders' => count($result->folders)];
 }
 ```
+
+```php
+// Rule 8, set-based: one section per chunk, re-reading what still qualifies. A handful of
+// chunks (one user's unread notifications) may stay a #[Manual_Lock] endpoint; a set that
+// grows with the tenant is a task.
+do {
+    $found = Site_Lock::write($site_id, function () use ($user_id) {
+        $ids = Notification_Model::where('user_id', $user_id)->whereNull('read_at')
+            ->orderBy('id')->limit(500)->pluck('id')->all();
+        if ($ids) {
+            Notification_Model::whereIn('id', $ids)->whereNull('read_at')->raw_bulk()->update(['read_at' => now()]);
+            Realtime::bulk_changed();
+        }
+        return count($ids);
+    }, 'Mark notifications read');
+} while ($found === 500);
+```
+
+The per-item shape is section 3 run as a `#[Run_As_Dispatcher]` task; the reference app's worked example is `rsx/services/mass_edit_service.php` (the datagrid mass deletes: endpoint validates and dispatches, task reads the selection once, one section per record re-checking it is still selected and the person may still edit, per-item stdout, `{selected, deleted, skipped, refused}` state, a summary) with `Mass_Edit_Progress_Modal` following the run in the browser. Skill `rspade:background-tasks` has the reporting side.
 
 A client library that must never run under a write lock asks `Site_Lock::held_mode() === 'write'` and refuses. `held_mode(?int $site_id = null)` is `'read'` / `'write'` / `null` (no site = THE site this process holds a lock on); `in_write_exception()`, `in_bypass(?int $site_id = null)`.
 

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Portal\Portal_Authorizable;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Realtime\Realtime;
@@ -278,16 +279,58 @@ abstract class Portal_Notification_Model_Abstract extends Rsx_Site_Model_Abstrac
     }
 
     /**
+     * Rows marked read per write section by mark_all_read().
+     */
+    const MARK_ALL_READ_CHUNK = 500;
+
+    /**
      * Mark all of a recipient's unread notifications read.
+     *
+     * A mass edit in set-based statements (rsx:man site_locks, HOLDING A LOCK WELL, rule 8):
+     * one Site_Lock::write() section on the site the rows are scoped to per chunk of
+     * MARK_ALL_READ_CHUNK rows, each re-reading which rows are still unread and marking exactly
+     * those in one raw UPDATE, then Realtime::bulk_changed() so an #[Emitter] reading them
+     * re-runs. Called from an endpoint that holds no site lock (#[Manual_Lock]), each chunk
+     * commits on its own; inside a writer the sections nest into its one lock.
      *
      * @param int $portal_user_id
      * @return int Number of rows updated.
      */
     public static function mark_all_read(int $portal_user_id): int
     {
-        return static::where('portal_user_id', $portal_user_id)
-            ->whereNull('read_at')
-            ->update(['read_at' => now()]);
+        // The site the scope reads these rows from (the portal request's, else the declared one).
+        $site_id = static::get_current_site_id();
+        $marked = 0;
+
+        do {
+            $chunk = Site_Lock::write($site_id, function () use ($portal_user_id) {
+                // LIMIT is the chunking mechanism: the loop repeats until a section finds
+                // fewer than a whole chunk still unread.
+                $ids = static::where('portal_user_id', $portal_user_id)
+                    ->whereNull('read_at')
+                    ->orderBy('id')
+                    ->limit(self::MARK_ALL_READ_CHUNK)
+                    ->pluck('id')
+                    ->all();
+
+                if (empty($ids)) {
+                    return ['found' => 0, 'updated' => 0];
+                }
+
+                $updated = static::whereIn('id', $ids)
+                    ->whereNull('read_at')
+                    ->raw_bulk()
+                    ->update(['read_at' => now()]);
+
+                Realtime::bulk_changed();
+
+                return ['found' => count($ids), 'updated' => (int) $updated];
+            }, 'Mark portal notifications read');
+
+            $marked += $chunk['updated'];
+        } while ($chunk['found'] === self::MARK_ALL_READ_CHUNK);
+
+        return $marked;
     }
 
     // =========================================================================

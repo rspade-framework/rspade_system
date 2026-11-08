@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "Making pages live over WebSocket - $realtime models and Model_Changed_Topic, #[Realtime_Touch], this.subscribe() in on_create(), refresh() vs reload(), topic classes with can_subscribe(), #[Emitter], realtime_emit(). Use when a screen must update when data changes elsewhere, adding a topic or emitter, a page that does not update or updates too much, or a REALTIME-AUTH-01 / REALTIME-BULK-01 finding."
+description: "Making pages live over WebSocket - $realtime models and Model_Changed_Topic, #[Realtime_Touch], this.subscribe() in on_create(), refresh() vs reload(), topic classes with can_subscribe(), #[Emitter], realtime_emit(), Realtime::bulk_changed() after a raw_bulk() / DB::table() write. Use when a screen must update when data changes elsewhere, adding a topic or emitter, a page that does not update or updates too much, an emitter value stale after a bulk update, or a REALTIME-AUTH-01 / REALTIME-BULK-01 finding."
 ---
 
 # Realtime
@@ -149,9 +149,19 @@ class Weather_Updated_Topic extends Realtime_Topic_Abstract {
 ```php
 Realtime::publish('Contact_Updated_Topic', ['id' => $contact->id]);   // no-op when disabled
 $record->realtime_emit();                                             // model-change frame + cascade
+Realtime::bulk_changed();                                             // re-run the #[Emitter]s after commit
 ```
 
 `realtime_emit()` is the remedy for a write that bypassed the model layer (`DB::table()`, raw SQL, an import, a derived value): it publishes the same `{model, id}` change including the touch cascade, **ignores `$realtime`**, needs a persisted id, fires once per (model, id) per request, and is a no-op when realtime is disabled.
+
+`Realtime::bulk_changed()` is the remedy for the EMITTERS after a write that ran as one raw statement (`->raw_bulk()`, `DB::table()`, raw SQL, or a builder bulk write on a model with no realtime/lifecycle surface): such a write marks nothing, so every `#[Emitter]` reading those rows stays stale until an unrelated write kicks it. Call it in the same transaction or write section as the statement: it flushes after COMMIT (at once with no transaction open), is **dropped on rollback**, dispatches the emitter task **once per transaction** however often it is called (once per request in a web request), passes the usual gates (enabled, an emitter registered, a live subscription to an emitter topic - otherwise a no-op) and publishes no model frame of its own. A record's subscribers still need `realtime_emit()`.
+
+```php
+Site_Lock::write($site_id, function () use ($ids) {             // one chunk of a mass edit
+    Notification_Model::whereIn('id', $ids)->whereNull('read_at')->raw_bulk()->update(['read_at' => now()]);
+    Realtime::bulk_changed();
+});
+```
 
 **Batching**: in a web request every emission goes to an outbox and transmits once after the response, coalesced per site+model into `{model, ids:[...]}` frames (an `{id}` watcher matches a frame whose `ids` contains it). CLI transmits at commit.
 
@@ -161,7 +171,7 @@ $record->realtime_emit();                                             // model-c
 
 `Model::where(...)->update()` / `->delete()` on a model with a side-effect surface goes **fetch-then-iterate** (the mechanism belongs to the ORM docs), so realtime frames and the `after_*` hooks fire **PER RECORD**, with no row cap.
 
-- **`->raw_bulk()` fires NOTHING** - one raw statement, no frames, no hooks. Same for `DB::table()` and raw SQL; use `realtime_emit()` there.
+- **`->raw_bulk()` fires NOTHING** - one raw statement, no frames, no hooks, no emitter kick. Same for `DB::table()`, raw SQL, and a builder bulk write on a model with no side-effect surface; use `realtime_emit()` (a record's subscribers) and `Realtime::bulk_changed()` (the emitters) there.
 - A `DB::raw()` value in the update set also forces the raw path.
 - **`REALTIME-BULK-01`** (`rsx:check`) flags uncovered bulk writes. It cannot see another program's writes at all.
 
@@ -180,7 +190,7 @@ public static function unpaid_total(int $site_id, array $filter): array {
 }
 ```
 
-The value is recomputed and **hash-diffed - it publishes only when it actually changed**. **There is NO timer**: non-silent model writes kick a `#[Debounce(2)]` recompute task, and that task is gated to run only while a live subscriber watches an emitter topic. The optional second argument is a model constraint, REQUIRED to compose a derived value onto the shared `Model_Changed_Topic` - which is what keeps a page on the single `subscribe(Model, id)` idiom without losing the no-churn gate. `#[Emitter]` is reflection metadata; never define the attribute class. **An emitter runs headless but with its site DECLARED**: the engine sets `$site_id` as the ambient site around the call, so site-scoped models read that site (`find()` works) and the emitter never writes its own `where('site_id', ...)`; who the value is for comes from `$filter`, never from `Session::`.
+The value is recomputed and **hash-diffed - it publishes only when it actually changed**. **There is NO timer**: non-silent model writes (and `Realtime::bulk_changed()` after a raw write) kick a `#[Debounce(2)]` recompute task, and that task is gated to run only while a live subscriber watches an emitter topic. The optional second argument is a model constraint, REQUIRED to compose a derived value onto the shared `Model_Changed_Topic` - which is what keeps a page on the single `subscribe(Model, id)` idiom without losing the no-churn gate. `#[Emitter]` is reflection metadata; never define the attribute class. **An emitter runs headless but with its site DECLARED**: the engine sets `$site_id` as the ambient site around the call, so site-scoped models read that site (`find()` works) and the emitter never writes its own `where('site_id', ...)`; who the value is for comes from `$filter`, never from `Session::`.
 
 **Aggregate ladder, in order of preference**: touch cascade (the inputs are model writes) -> `realtime_emit()` (the writer knows an aggregate moved) -> `#[Emitter]` (computed, cross-record, or non-model inputs).
 
@@ -211,7 +221,7 @@ Separate from topics: a session mutation (login/logout/identity/tenant change) o
 ## Residual gaps (named honestly)
 
 1. **Unsubscribed surfaces are stale by design.** Edit forms and modals deliberately do not subscribe - fields must not shift under the user's hands. This is a per-surface application choice.
-2. **Only model-layer writes emit.** Raw SQL, `DB::table()` and external processes emit nothing; `realtime_emit()` is the remedy.
+2. **Only model-layer writes emit.** Raw SQL, `DB::table()` and external processes emit nothing; `realtime_emit()` (records) and `Realtime::bulk_changed()` (emitters) are the remedy.
 3. **Time-derived values never emit** - the sneakiest hole. "Overdue" arriving by the passage of time involves no write, so nothing publishes. **The sanctioned remedy is client-side recomputation**: carry the deciding timestamp in the payload the component already fetches and derive the state in the browser. There is deliberately no server-side scheduler for this - that would be a poll, which the NO-TIMER rule exists to prevent.
 4. **Relay redis-subscriber blip**: if the relay's redis SUBSCRIBER drops and reconnects while browser sockets stay up, frames in that gap are lost and nothing resyncs. Small window; the relay PROCESS dying is NOT this case (every socket closes, so everyone resyncs).
 
@@ -221,7 +231,7 @@ Separate from topics: a session mutation (login/logout/identity/tenant change) o
 
 `rsx:debug /path --user=1 --console` renders the page headlessly with realtime live (the harness page uses `ws://`), so a subscription that throws or a callback that loops shows up in the console output. Drive a change from a second process (`rsx:ajax`, `rsx:task:run`) and re-render.
 
-- **Page never updates.** The model is not `$realtime`; or the write went through `raw_bulk()`/`DB::table()`; or the value is time-derived (gap 3).
+- **Page never updates.** The model is not `$realtime`; or the write went through `raw_bulk()`/`DB::table()` (a record watcher needs `realtime_emit()`, an emitter value `Realtime::bulk_changed()`); or the value is time-derived (gap 3).
 - **Subscribing throws.** The target model is not `$realtime` - that is the fail-loud contract, not a bug.
 - **The page strobes / flashes on every change.** A callback calling `reload()` instead of `refresh()`.
 - **Two fetches on load.** The subscription was registered in `on_ready()` rather than `on_create()`, so the load was not gated.

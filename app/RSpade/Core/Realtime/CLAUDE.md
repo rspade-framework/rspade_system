@@ -26,6 +26,8 @@ fully anonymous callers alike (see Security Model point 5).
 ## Key Files
 
 - `Realtime.php` — Static API: `connection_token()`, `subscribe_token()`, `publish()`,
+  `bulk_changed()` (the published emitter kick after a raw write - delegates to
+  `Realtime_Emissions::_mark_emitters_dirty()`, the framework-internal engine call),
   `subscribed_registry_entries()`, `emitter_hash_get/put()`. Emitter dispatch is gated on
   `Realtime_Emitter_Service::has_watched_emitter_topic()` (see EMITTERS), not on a bare
   "any subscriber" registry check.
@@ -182,6 +184,13 @@ argument alone would read site 0).
 - **No template consumer.** The reference app (`rsx/`) declares no `#[Emitter]`; emitters are
   exercised only by framework tests, so a change here is verified by those tests, never by a page.
 
+- **`Realtime::bulk_changed()`** — the published kick for a write that ran as one raw statement
+  (`raw_bulk()`, `DB::table()`, raw SQL, a no-surface builder bulk write), which marks nothing.
+  Rides the same flag + afterCommit flush: dropped on outermost rollback (listener), once per
+  generation (the flag is a bool; extra callbacks drain to no-ops), once per request in web
+  (outbox flag), CLI kicks per flush (coalesced by `#[Debounce(2)]`). Test seam:
+  `_testing_captured_emitter_kicks()` counts flushes carrying the kick while capture is on
+  (`Realtime_Bulk_Changed_Test`).
 - **NO timer, write-kicked** — any non-silent model write marks emitters dirty; the commit
   flush dispatches `Realtime_Emitter_Service::run_emitters` (`#[Task]` `#[Debounce(2)]`) IFF
   enabled AND an emitter is registered AND the subscriber registry holds a subscription to a

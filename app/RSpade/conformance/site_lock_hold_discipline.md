@@ -3,15 +3,15 @@ id: site_lock_hold_discipline
 title: Every site lock is held for a moment, and only as strong as the work needs
 severity: high
 when: launch, change
-scope: rsx/**/*_controller.php, rsx/**/*_Controller.php, rsx/services/**, rsx/handlers/**, rsx/companions/**, rsx/lib/**, rsx/main.php, rsx/portal_main.php
-related: rsx:man site_locks, rsx:man tasks, rsx:man external_api, rsx:man file_upload, skill rspade:site-locks, skill rspade:background-tasks
+scope: rsx/**/*_controller.php, rsx/**/*_Controller.php, rsx/services/**, rsx/models/**, rsx/handlers/**, rsx/companions/**, rsx/lib/**, rsx/main.php, rsx/portal_main.php
+related: rsx:man site_locks, rsx:man tasks, rsx:man realtime, rsx:man external_api, rsx:man file_upload, skill rspade:site-locks, skill rspade:background-tasks
 ---
 
 ## The contract
 
 A site's write lock stops every other writer on that site, and every reader queued behind it. So a write lock is held for a MOMENT and only around writing; a read lock is let go before anything is transmitted; a view, audit or telemetry record takes no lock at all; and an error answer that is meant to undo the request undoes it. Nothing reports a violation: a writer that holds the site across an HTTP call works perfectly in development and serializes the whole tenant in production, and a writer that returns an error after writing half a batch silently keeps the half.
 
-Read `php artisan rsx:man site_locks` first - HOLDING A LOCK WELL is this audit's rulebook (its seven rules), with THE ARCHITECTURE PRINCIPLE and THE REQUEST BOUNDARY.
+Read `php artisan rsx:man site_locks` first - HOLDING A LOCK WELL is this audit's rulebook (its eight rules), with THE ARCHITECTURE PRINCIPLE and THE REQUEST BOUNDARY.
 
 Already enforced, not re-checked here: a site-scoped write without write authority fatals; the read-to-write upgrade is refused; a hook, endpoint, task or command that leaks a lock, a transaction or a write exception fails; `SITE-LOCK-01` keeps the mode attributes on surfaces. A hold past `rsx.locks.warn_write_hold_seconds` is logged after the fact - this audit finds the ones that WILL be, from the algorithm. Do not run anything; estimate from the code and from how much data a real tenant has.
 
@@ -22,6 +22,8 @@ Already enforced, not re-checked here: a site-scoped write without write authori
     grep -rn "Site_Lock::write(\|Site_Lock::read(\|RsxLocks::site_write_lock\|Site_Lock::bypass" rsx
     grep -rln "#\[Task" rsx/services
     grep -rn "response_error\|response_form_error\|Rsx_Api::" rsx --include=*.php
+    grep -rn "whereIn(\|whereNotIn(\|apply_selection\|iterate_selection\|lazyById\|->each(\|foreach (" rsx --include=*.php
+    grep -rn "raw_bulk()\|DB::table(" rsx --include=*.php
 
 For each `#[Writer]` endpoint, each write section and each `#[Manual_Lock]` handler, read the body to the end, following every helper, model method and service it calls while the lock is held.
 
@@ -33,6 +35,7 @@ For each `#[Writer]` endpoint, each write section and each `#[Manual_Lock]` hand
 - **A bypass doing a write exception's job**: `Site_Lock::bypass()` around a view, audit or telemetry record (a bypass is for a pass that tolerates concurrent writers; it logs every call).
 - **A read that is then transmitted under the lock**: an export, a download, a ZIP, a PDF, a CSV built and returned from a writer or a reader that holds its lock while the bytes are produced. The surface declares `#[Manual_Lock]`, reads inside `Site_Lock::read()`, ends it, then produces and returns the response (a `StreamedResponse` callback already runs after the release - flag one that builds the whole payload before returning instead).
 - **An error answered after writing, where the intent was to undo**: a `#[Writer]` (or a write section) that writes, then `return response_error(...)` / `response_form_error(...)` / `Rsx_Api::...` on a later failure - typically inside a loop or after a `catch`. Unless keeping the partial work is the stated intent (a failed attempt that records itself), it should `throw new Rollback_Response(<that answer>)`.
+- **A mass edit holding one write lock across its selection.** Check EVERY endpoint or task that applies an action to a SELECTION - a `whereIn` / `whereNotIn` over submitted ids, a "select all" or rebuilt-filter query (`apply_selection()`), a loop over records (`foreach`, `->each()`, `lazyById()`, `->result_set()`), a set-based `->update()` / `->delete()` over many rows - including the grid footer actions, "mark all", bulk approve / assign / move, and the JS that calls them. It conforms only if no write lock covers more than ONE item or ONE chunked statement: one `Site_Lock::write()` section per record (re-reading and re-deciding it inside - changed, gone, no longer permitted -> skipped and reported), or one section per chunked statement; more than a handful of items runs as a `#[Run_As_Dispatcher]` task (with `#[Task_Access]` so the person can follow it) whose endpoint only validates and dispatches; every item goes through the record's own writer; the action reports per-item outcomes rather than rolling back the selection; and each raw set-based chunk is followed by `Realtime::bulk_changed()` in its section. A `#[Writer]` endpoint looping over the selection, a single unchunked set-based statement over a set that grows with the tenant, a task with one section around the loop, or a raw bulk write with no `Realtime::bulk_changed()` after it is a finding - report the per-item (or per-chunk) shape it should have and whether it must become a task. Distinguish a SINGLE BUSINESS OPERATION on one record (replacing a project's member list, removing a document and its shares): that is atomic by design and stays one section - say so.
 - **A write section around a whole task run** instead of one per item that re-reads its record inside; a section around a `Task::internal()` call or a nested loop.
 - **A hold that would plausibly trip `rsx.locks.warn_write_hold_seconds`** (default 2 s) with real data, for any reason above or another - name the dominant cost.
 

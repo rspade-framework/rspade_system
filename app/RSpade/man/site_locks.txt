@@ -398,7 +398,7 @@ TASKS, REALTIME AND COMMIT
 
 HOLDING A LOCK WELL
     The site's write lock stops every other writer on the site, and every
-    reader queued behind it. Seven rules keep that cheap; the conformance audit
+    reader queued behind it. Eight rules keep that cheap; the conformance audit
     site_lock_hold_discipline reviews an application against them
     (rsx:conformance:show site_lock_hold_discipline).
 
@@ -496,6 +496,134 @@ HOLDING A LOCK WELL
        caller as the coded exception internal() raises for that result: the
        outermost boundary owns the transaction.
 
+    8. A MASS EDIT RELEASES THE WRITE LOCK PER ITEM. A mass edit is an action a
+       user applies to a SELECTION - "Delete", "Approve", "Set status", "Mark
+       read", a drag of several cards, "select all". It takes and releases the
+       site's write lock between every item it changes - one Site_Lock::write()
+       section per record, which re-reads the record inside - or between every
+       statement when it updates in set-based statements (one section per
+       chunked UPDATE / DELETE). It never holds one write lock across the
+       selection: one #[Writer] looping over a "select all" holds the whole
+       site for seconds to minutes, with every save's hooks, revisions and
+       history in one transaction. Five consequences:
+
+       a. A MASS EDIT IS NOT ALL-OR-NOTHING. Each item commits on its own. The
+          action reports what happened per item - applied, skipped, refused,
+          with the reason - instead of rolling everything back on the first
+          failure. An action that genuinely must be atomic across several
+          records is not a mass edit: it is a single business operation, and
+          must be small enough to hold a lock for a moment.
+
+       b. MORE THAN A HANDFUL OF ITEMS RUNS AS A TASK, declared
+          #[Run_As_Dispatcher] so it acts as the person who started it (rsx:man
+          tasks, RUNNING AS THE DISPATCHER) and #[Task_Access('dispatcher')] so
+          that person can watch it. The endpoint validates, dispatches and
+          returns the run's handle (THE ARCHITECTURE PRINCIPLE); the UI follows
+          the run's progress.
+
+       c. EACH ITEM GOES THROUGH THE RECORD'S OWN WRITER - its model, its
+          sanctioned save path - so a mass edit fires exactly the hooks,
+          guards, history and notifications a single edit does.
+
+       d. EACH SECTION RE-READS AND RE-DECIDES. The selection was read before
+          the loop. An item that changed or vanished since, or that the person
+          may no longer edit, is skipped (or refused) and reported - never
+          written from the stale read.
+
+       e. A SET-BASED STATEMENT IS CHUNKED, each chunk in its own section that
+          re-states the rule (or re-reads which rows still qualify), and is
+          followed by Realtime::bulk_changed() in that section: a raw bulk
+          write re-runs no #[Emitter] by itself (rsx:man realtime, MANUAL
+          EMISSION). An endpoint whose whole set is a handful of chunks (one
+          user's unread notifications) may run them itself as a
+          #[Manual_Lock] endpoint; a set that grows with the tenant is a task.
+
+       The endpoint - validate the selection, dispatch, answer the handle:
+
+           #[Ajax_Endpoint]
+           #[Auth('can_edit_data')]
+           #[Writer]
+           public static function bulk_delete(Request $request, array $params = [])
+           {
+               $query = Clients_DataGrid::apply_selection(
+                   Clients_DataGrid::build_query_public($params['filter_params'] ?? []),
+                   'clients.id', $params);
+               if ($query instanceof Error_Response) {
+                   return $query;                        // malformed: nothing dispatched
+               }
+
+               return ['task_id' => Task::dispatch('Mass_Edit_Service', 'delete_clients', [
+                   'mode' => $params['mode'],
+                   'ids' => $params['ids'] ?? [],
+                   'filter_params' => $params['filter_params'] ?? [],
+               ])];
+           }
+
+       The task - read the selection, one section per item, re-decide, report:
+
+           #[Task('Delete the selected clients')]
+           #[Run_As_Dispatcher]
+           #[Task_Access('dispatcher')]
+           public static function delete_clients(Task_Instance $task, array $params = [])
+           {
+               $site_id = (int) Session::get_site_id();     // the dispatcher's site
+               $ids = static::__selected_ids($params);      // the service's own helper:
+                                                            // the grid query read once,
+                                                            // no lock held
+               $total = count($ids);
+               $deleted = $skipped = 0;
+
+               foreach ($ids as $index => $id) {
+                   $task->heartbeat();
+                   if ($task->is_stop_requested()) {
+                       break;                               // what is done stays done
+                   }
+
+                   $outcome = Site_Lock::write($site_id, function () use ($params, $id) {
+                       if (!static::__still_selected($params, $id)) {   // same query + this id
+                           return 'skipped';                // changed or gone since the read
+                       }
+                       $client = Client_Model::find($id);
+                       Action_Log::record(Action_Log_Model::TYPE_CLIENT_DELETED, $client);
+                       $client->delete();                   // the record's own writer
+
+                       return 'deleted';
+                   }, "Delete client {$id}");
+
+                   $outcome === 'deleted' ? $deleted++ : $skipped++;
+                   if ($outcome === 'skipped') {
+                       $task->stdout("Client {$id}: skipped - changed since the selection was made.");
+                   }
+                   $task->progress_count($index + 1, $total);
+               }
+
+               $task->state(['selected' => $total, 'deleted' => $deleted, 'skipped' => $skipped]);
+               $task->summary("Deleted {$deleted} of {$total} client(s).");
+
+               return null;
+           }
+
+       The set-based variant - one section per chunk, then the emitter kick:
+
+           do {
+               $found = Site_Lock::write($site_id, function () use ($user_id) {
+                   $ids = Notification_Model::where('user_id', $user_id)
+                       ->whereNull('read_at')->orderBy('id')->limit(500)
+                       ->pluck('id')->all();            // re-read: still unread NOW
+                   if ($ids) {
+                       Notification_Model::whereIn('id', $ids)->whereNull('read_at')
+                           ->raw_bulk()->update(['read_at' => now()]);
+                       Realtime::bulk_changed();         // re-run the emitters after commit
+                   }
+
+                   return count($ids);
+               }, 'Mark notifications read');
+           } while ($found === 500);
+
+       The reference application ships both shapes: Mass_Edit_Service (the
+       datagrid mass deletes, followed in the browser by
+       Mass_Edit_Progress_Modal) and Notification::mark_all_read().
+
 HOLD-TIME WARNINGS
     Releasing a lock held longer than its threshold logs a WARNING naming the
     site, the holder, the time held and the time waited for the grant (a slow
@@ -516,6 +644,9 @@ LIMITS
     never seen by the enforcement - the documented limit, not a hole to close.
     They are still serialized when the code that issues them holds the lock;
     write them inside the same section as the model writes they belong with.
+    Such a write also re-runs no realtime #[Emitter]: follow it with
+    Realtime::bulk_changed() in the same section (HOLDING A LOCK WELL, rule 8e;
+    rsx:man realtime).
 
     The locks are ADVISORY: they serialize RSpade code. A process writing the
     database directly (a SQL client, another application) is not part of it.
@@ -618,7 +749,9 @@ TROUBLESHOOTING
 
     "Site lock held too long: ..." in the log
         A request or section that should hand its slow work to a task, or take
-        finer-grained locks (HOLDING A LOCK WELL).
+        finer-grained locks (HOLDING A LOCK WELL). A writer endpoint looping
+        over a selection is a mass edit: one section per item, as a task
+        (rule 8).
 
     "Rollback_Response (...) - an error answer that rolls the request back. Only
      an Ajax, external API, companion or page-route dispatcher renders it."
@@ -637,6 +770,7 @@ SEE ALSO
     rsx:man locks - RsxLocks, rsx-lockd, lock groups, reentrancy
     rsx:man request_history - _request_ref replay on writer requests
     rsx:man tasks - per-item write sections in a task body
+    rsx:man realtime - Realtime::bulk_changed() after a set-based write
     rsx:man session - Session::set_site_id(), RsxAuth::enter_site()
     rsx:man form_conventions - Form_Edit::run() inside a writer
     rsx:man revisions - the writer's _transactions row
