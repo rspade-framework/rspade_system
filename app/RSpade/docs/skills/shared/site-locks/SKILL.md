@@ -1,6 +1,6 @@
 ---
 name: site-locks
-description: "Writing code under the per-site reader/writer locks - #[Writer] / #[Reader] / #[Manual_Lock] on Ajax, API, companion and route surfaces, Site_Lock::write() / read() / bypass() / bypass_all_sites() sections in tasks, commands, scripts and hooks, Site_Lock::write_exception() for a view / audit / telemetry record, Site_Lock::held_mode() / in_write_exception() / in_bypass(), Rollback_Response, read-then-write, holding a lock well (no network call under a write lock, read-release-transmit, a mass edit releasing the lock per item or per chunked statement), RsxAuth::enter_site(), #[Site_Lock_Exempt], the SITE_LOCK_EXEMPT constant, rsx:site_lock:endpoints. Use when an endpoint, task or command saves a site-scoped model, a bulk / selection action (delete selected, select all, mark all read) loops over records, a reader needs to record something, a writer calls an external API or streams, an error answer must undo the write, converting code to the locks, signing in or switching site, or on 'Site lock enforcement: ... without site N's write lock', 'Refused to take the WRITE lock on site N while holding its READ lock', 'Site lock rule 1', 'Site lock rule 5', 'refused inside Ajax', 'Site lock held too long', 'Site_Lock write exception(s) still open' or SITE-LOCK-01."
+description: "Writing code under the per-site reader/writer locks - #[Writer] / #[Reader] / #[Manual_Lock] on Ajax, API, companion and route surfaces, Site_Lock::write() / read() / bypass() / bypass_all_sites() sections in tasks, commands, scripts and hooks, Site_Lock::write_exception() for a view / audit / telemetry record, Site_Lock::held_mode() / in_write_exception() / in_bypass(), Rollback_Response, read-then-write, holding a lock well (one discrete operation per write section with a status marker between them, no network call under a write lock, read-release-transmit, an export paged one read section per keyset page, a mass edit / import / reassignment releasing the lock per item, block or chunked statement and reporting errors at the end, a dry run before an important bulk operation, reversible steps when atomicity is critical), RsxAuth::enter_site(), #[Site_Lock_Exempt], the SITE_LOCK_EXEMPT constant, rsx:site_lock:endpoints. Use when an endpoint, task or command saves a site-scoped model, a writer does more than one update, a bulk / selection action (delete selected, select all, mark all read), an import, a reassignment or an export loops over records, a reader needs to record something, a writer calls an external API or streams, an error answer must undo the write, converting code to the locks, signing in or switching site, or on 'Site lock enforcement: ... without site N's write lock', 'Refused to take the WRITE lock on site N while holding its READ lock', 'Site lock rule 1', 'Site lock rule 5', 'refused inside Ajax', 'Site lock held too long', 'Site_Lock write exception(s) still open' or SITE-LOCK-01."
 ---
 
 # Site Locks
@@ -44,7 +44,8 @@ public static function save(Request $request, array $params = [])
 - **What commits**: a writer that RETURNS commits - including a returned `response_form_error()` / `response_form_question()` / API error response, so **validate before the first write**. A THROW rolls the whole request back. **To answer an error AND undo** (a batch that fails part-way): `throw new Rollback_Response(response_form_error(...))` (API: `Rollback_Response(Rsx_Api::validation_error(...))`) - rolled back, then rendered exactly as the returned value (section 9).
 - **A `#[Writer]` GET `#[Api_Endpoint]`** is refused by `API-GET-PURE-01`.
 - `Task::dispatch()` from a writer: the run starts after the commit, or never (rollback).
-- **Return right away.** Every request holds its site's lock for its whole handler; a slow reader holds back every writer and every reader queued behind it. A pass over thousands of records, an export, a big aggregation: validate, `Task::dispatch()`, return the run's handle; the feature exposes its own status and result endpoints.
+- **`#[Writer]` is for ONE discrete operation** - a save, a status change, one business operation on one record. A write lock stops every other user on the site, so code that does more is engineered to be as little invasive as it can be: each discrete operation in its own short `Site_Lock::write()` section under `#[Manual_Lock]`, designed for the gaps between them (section 8, rule 1).
+- **Return right away.** Every request holds its site's lock for its whole handler; a slow reader holds back every writer and every reader queued behind it. Anything whose cost grows with the tenant's data - an export or report over tens of thousands of records, an import, a reassignment, a mass edit: validate, `Task::dispatch()`, return the run's handle; the browser follows it with `Rsx_Task.watch()` (realtime) and fetches the result from the feature's own endpoint, so the UI never freezes.
 
 Inventory: `php artisan rsx:site_lock:endpoints --app --mode=reader` - walk the readers that save, delete or dispatch, and mark them `#[Writer]`. `*` marks a declared mode.
 
@@ -115,7 +116,7 @@ public static function send_due(Task_Instance $task, array $params = [])
 }
 ```
 
-- **The main user-facing case is the MASS EDIT** - an action a user applies to a selection (delete the ticked rows, "select all" then approve, mark all read). It is this shape as a `#[Run_As_Dispatcher]` task, never a `#[Writer]` looping over the selection: section 8, rule 8.
+- **The main user-facing case is the BULK WRITE** - a mass edit (an action a user applies to a selection: delete the ticked rows, "select all" then approve, mark all read), a mass import, a mass reassignment. It is this shape as a `#[Run_As_Dispatcher]` task, never a `#[Writer]` looping over the selection: section 8, rules 8-9.
 - **One section per item, never one around the run** - a section holds the site against every web writer until it commits.
 - Each section commits its own transaction and is its own revision unit.
 - **Change site only between sections.** One site's lock at a time per process.
@@ -174,16 +175,69 @@ No framework model declares it; the framework's bookkeeping (sessions, sign-in h
 
 ## 8. Holding a lock well
 
-The eight rules (`rsx:man site_locks`, HOLDING A LOCK WELL; audit `rsx:conformance:show site_lock_hold_discipline`):
+A write lock stops every other user on the site, so code that writes is **engineered to be as little invasive as it can be**. The ten rules (`rsx:man site_locks`, HOLDING A LOCK WELL; audit `rsx:conformance:show site_lock_hold_discipline`):
 
-1. **A write lock is held for a moment.** Mostly reading, or slow? It needs finer-grained locks inside the algorithm.
+1. **A write lock is held for ONE discrete operation, for a moment.** More than a simple update -> split into discrete operations, each its own short `Site_Lock::write()` section (`#[Manual_Lock]`), reading in read sections or none. Splitting gives up atomicity and the no-re-check guarantee BETWEEN sections, so: (a) steps a business rule requires together share ONE section; (b) each section re-reads and re-decides; (c) the data is valid between sections - a status / step marker on the record says how far it got, so a failure leaves something a person can see and a re-run can finish.
 2. **Never across a call to another system** (HTTP API, mail relay, a subprocess that waits). `#[Manual_Lock]`, make the call with no lock, then a short `Site_Lock::write()` with what it returned. A value the call made authoritative (a rotated OAuth refresh token) gets its OWN section immediately, so no later failure rolls it back.
 3. **A view / audit / telemetry record uses a write exception** (section 9) or an exempt model - never a writer.
 4. **Release before you transmit.** Read inside `Site_Lock::read()` (`#[Manual_Lock]` surface), end it, then stream. Every response is SENT after the request lock is released; an Ajax value is also serialized after it, an API body is built inside it. A `StreamedResponse` callback runs at `send()` - no lock, no enforcement window.
-5. **Export- and data-processing-shaped work is a task.**
+5. **Export- and data-processing-shaped work is a task**, and **a long read is paged, one `Site_Lock::read()` section per page** - an export need not be one consistent read across the run. Page by KEYSET (`where('id', '>', $last)->orderBy('id')->limit(n)`), never OFFSET (rows written between pages shift it: skipped or repeated rows). Each page is consistent; the whole is not a snapshot - one that must reconcile is rule 10.
 6. **Read-then-write is a writer from its start** (section 2), unless the write is telemetry.
 7. **Returning an error commits; throw `Rollback_Response` to undo.**
-8. **A mass edit releases the write lock per item** (one `Site_Lock::write()` per record, re-reading it inside) **or per chunked statement** - never one lock across the selection. So: (a) it is NOT all-or-nothing - each item commits and the action reports applied / skipped / refused per item; something that must be atomic across records is a single business operation, small enough for a moment's lock; (b) more than a handful of items is a `#[Run_As_Dispatcher]` + `#[Task_Access('dispatcher')]` task - the endpoint validates, dispatches, returns the handle, the UI follows the run; (c) each item goes through the record's own writer (model, hooks, action log); (d) each section re-reads and re-decides - changed, vanished or no-longer-permitted items are skipped and reported; (e) a set-based statement is chunked, a section per chunk, followed by `Realtime::bulk_changed()` in that section (a raw write re-runs no `#[Emitter]`).
+8. **A bulk write - mass edit, mass import, mass reassignment - releases the write lock per item** (one `Site_Lock::write()` per record, re-reading it inside), **per small block** where per-item overhead dominates and a block is still a moment, **or per chunked statement** - never one lock across the selection. So: (a) it is NOT all-or-nothing - each item commits, a failing item does not stop the run, its error is COLLECTED and the run reports at its END applied / skipped / refused / failed per item with the reason; something that must be atomic across records is a single business operation, small enough for a moment's lock, or rule 10; (b) more than a handful of items is a `#[Run_As_Dispatcher]` + `#[Task_Access('dispatcher')]` task - the endpoint validates, dispatches, returns the handle, the UI follows the run; (c) each item goes through the record's own writer (model, hooks, action log); (d) each section re-reads and re-decides - changed, vanished or no-longer-permitted items are skipped and reported; (e) a set-based statement is chunked, a section per chunk, followed by `Realtime::bulk_changed()` in that section (a raw write re-runs no `#[Emitter]`).
+9. **An important bulk operation shows a dry run first** (hard to undo or consequential: an import that creates or overwrites, a reassignment of ownership, a mass delete, money). The same task with a dry-run flag decides every item exactly as the real run would, writes nothing (read sections only), and reports will apply / skip / refuse and why; the person confirms; the real run is a NEW dispatch that RE-DECIDES every item - the dry run is a forecast, never a plan to replay.
+10. **One long write lock only when atomicity is critical** (a posting that must balance, a renumbering never seen half-done). Then either (a) **make it fast** - read, validate, compute and render BEFORE the lock; inside, only the writes, set-based where possible; or (b) **split it into reversible steps**, each its own section, undoing the completed steps (newest first, each in its own section) when a later one fails - each undo re-reads current state (others may have acted on the intermediate state), reverses only what is still the operation's own, and reports what it could not. Never a long lock because splitting was inconvenient.
+
+```php
+// Rule 1: a multi-step writer, split into discrete operations with a status marker between them.
+#[Ajax_Endpoint]
+#[Auth('can_approve_orders')]
+#[Manual_Lock]
+public static function approve(Request $request, array $params = [])
+{
+    $site_id = Session::get_site_id();
+    $answer = Site_Lock::write($site_id, function () use ($params) {
+        $order = Order_Model::find($params['id']);
+        if ($order->status_id !== Order_Model::STATUS_PENDING) {
+            return response_error(Ajax::ERROR_VALIDATION, 'Already decided');
+        }
+        $order->status_id = Order_Model::STATUS_APPROVED;      // the marker: how far it got
+        $order->save();
+    }, 'Approve order');
+    if ($answer !== null) {
+        return $answer;
+    }
+
+    $pdf = Invoice_Pdf::render($params['id']);                 // slow, reads only: no lock
+
+    Site_Lock::write($site_id, function () use ($params, $pdf) {
+        $order = Order_Model::find($params['id']);             // re-read, re-decide
+        if ($order->status_id !== Order_Model::STATUS_APPROVED) {
+            return;
+        }
+        $order->attach_invoice($pdf);
+        $order->status_id = Order_Model::STATUS_INVOICED;
+        $order->save();
+        (new Order_Invoice_Email($order))->to($order->contact)->send();   // queued: a write
+    }, 'Attach invoice');
+
+    return ['ok' => true];
+}
+```
+
+```php
+// Rule 5: an export task reads one keyset page per read section; the lock is released between pages.
+$last_id = 0;
+do {
+    $rows = Site_Lock::read($site_id, fn () => Invoice_Model::where('id', '>', $last_id)
+        ->orderBy('id')->limit(1000)->get());
+    foreach ($rows as $row) {
+        $writer->insertOne($row->export_row());                 // no lock held
+    }
+    $last_id = $rows->last()?->id ?? $last_id;
+    $task->heartbeat();
+} while ($rows->count() === 1000 && !$task->is_stop_requested());
+```
 
 ```php
 // A writer that calls a provider: no lock across the call, the rotated token committed at once.

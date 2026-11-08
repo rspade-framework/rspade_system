@@ -462,13 +462,19 @@ STARTING A RUN
        The endpoint validates, dispatches and returns the run's handle; the caller waits
        for the run and fetches the result through the feature's own endpoint. Every
        request holds its site's lock for its whole handler (rsx:man site_locks), so a slow
-       endpoint holds back every writer on the site.
-       A MASS EDIT is the common user-facing case: an action applied to a selection
-       ("Delete", "Approve", "Set status" on a datagrid's ticked rows or "select all") is a
-       #[Run_As_Dispatcher] task that takes one Site_Lock::write() section per record,
-       re-reading and re-deciding each, reporting progress_count() and a per-item outcome,
-       never a #[Writer] endpoint looping over the selection (rsx:man site_locks, HOLDING A
-       LOCK WELL, rule 8).
+       endpoint holds back every writer on the site. Anything whose cost grows with the
+       tenant's data is a task whatever its size today - the browser follows the run with
+       Rsx_Task.watch() and fetches the result when it ends, so the UI never freezes on a
+       request.
+       BULK WRITES are the common user-facing case: a mass edit (an action applied to a
+       selection - "Delete", "Approve", "Set status" on a datagrid's ticked rows or "select
+       all"), a mass import, a mass reassignment. Each is a #[Run_As_Dispatcher] task that
+       takes one Site_Lock::write() section per record (or per small block), re-reading and
+       re-deciding each, collecting failures instead of stopping on them, and reporting
+       progress_count() and a per-item outcome at the end - never a #[Writer] endpoint
+       looping over the selection (rsx:man site_locks, HOLDING A LOCK WELL, rule 8). An
+       important one offers a dry run first (rule 9); an export reads in one read section
+       per keyset page (rule 5).
        A process that called Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
        SPAWNING OFF and TESTING).
 

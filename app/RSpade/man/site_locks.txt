@@ -86,6 +86,15 @@ THE ARCHITECTURE PRINCIPLE
     site, and every reader queued behind that writer. Endpoints that return right
     away are what make site-wide reader/writer locking cheap.
 
+    VARIABLE VOLUME IS A TASK. An operation whose cost grows with the tenant's
+    data - an export or report aggregating tens of thousands of records over
+    many queries, an import, a reassignment, a mass edit - is an on-demand task
+    whatever its size today, and takes its locks in pieces (HOLDING A LOCK WELL,
+    rules 5, 8 and 9). The browser follows the run with Rsx_Task.watch()
+    (realtime, no polling) and fetches the result when it ends (rsx:man tasks,
+    TASK ACCESS AND THE BROWSER API). So the UI never freezes on a request, and
+    no request runs long enough for a proxy or the browser to give up on it.
+
 MODES AND DEFAULTS
     A surface's mode is resolved at manifest build and baked onto the auth
     surface index; the dispatchers read it per request.
@@ -398,15 +407,67 @@ TASKS, REALTIME AND COMMIT
 
 HOLDING A LOCK WELL
     The site's write lock stops every other writer on the site, and every
-    reader queued behind it. Eight rules keep that cheap; the conformance audit
-    site_lock_hold_discipline reviews an application against them
-    (rsx:conformance:show site_lock_hold_discipline).
+    reader queued behind it. So code that writes is ENGINEERED to be as little
+    invasive to the site's other users as it can be. Ten rules keep that
+    cheap; the conformance audit site_lock_hold_discipline reviews an
+    application against them (rsx:conformance:show site_lock_hold_discipline).
 
-    1. A WRITE LOCK IS HELD FOR A MOMENT. A writer that holds its lock longer
-       than a moment, or covers an action that is mostly reading, is written
-       wrong: it needs finer-grained lock management inside its algorithm -
-       #[Manual_Lock], a Site_Lock::read() section for the reading, a short
-       Site_Lock::write() section for the writing, a task for the bulk.
+    1. A WRITE LOCK IS HELD FOR ONE DISCRETE OPERATION, FOR A MOMENT.
+       #[Writer] fits an endpoint that IS one discrete operation - a save, a
+       status change, a single business operation on one record. Anything more
+       is split into its discrete operations, each in its own short
+       Site_Lock::write() section (the endpoint declares #[Manual_Lock]), its
+       reading in Site_Lock::read() sections or none, its bulk in a task. A
+       writer that holds its lock longer than a moment, or covers an action
+       that is mostly reading, is written wrong.
+
+       Splitting gives up atomicity and the no-re-check guarantee BETWEEN
+       sections (each section still has both), so a split algorithm is
+       designed for it:
+       a. Steps a business rule requires to happen together share ONE section;
+          everything else gets its own.
+       b. Each section RE-READS and RE-DECIDES what it touches: anything may
+          have changed since the previous section released.
+       c. The data is VALID BETWEEN SECTIONS. A status or step marker on the
+          record says how far the operation got, so a failure part-way leaves
+          a state a person can see and a re-run can finish - never a half-made
+          record that looks complete.
+
+       Approving an order that generates its invoice, then emails it:
+
+           #[Ajax_Endpoint]
+           #[Auth('can_approve_orders')]
+           #[Manual_Lock]
+           public static function approve(Request $request, array $params = [])
+           {
+               $site_id = Session::get_site_id();
+               $answer = Site_Lock::write($site_id, function () use ($params) {
+                   $order = Order_Model::find($params['id']);
+                   if ($order->status_id !== Order_Model::STATUS_PENDING) {
+                       return response_error(Ajax::ERROR_VALIDATION, 'Already decided');
+                   }
+                   $order->status_id = Order_Model::STATUS_APPROVED;   // the marker
+                   $order->save();
+               }, 'Approve order');
+               if ($answer !== null) {
+                   return $answer;
+               }
+
+               $pdf = Invoice_Pdf::render($params['id']);    // slow; reads only, no lock
+
+               Site_Lock::write($site_id, function () use ($params, $pdf) {
+                   $order = Order_Model::find($params['id']);
+                   if ($order->status_id !== Order_Model::STATUS_APPROVED) {
+                       return;                               // changed meanwhile
+                   }
+                   $order->attach_invoice($pdf);
+                   $order->status_id = Order_Model::STATUS_INVOICED;
+                   $order->save();
+                   (new Order_Invoice_Email($order))->to($order->contact)->send();   // queued
+               }, 'Attach invoice');
+
+               return ['ok' => true];
+           }
 
     2. NEVER HOLD A WRITE LOCK ACROSS A CALL TO ANOTHER SYSTEM - an HTTP API, a
        mail relay, a subprocess that waits. Make the call with no write lock,
@@ -470,6 +531,29 @@ HOLDING A LOCK WELL
        and its result is transmitted by the feature's own endpoint - read,
        release, transmit again.
 
+       A LONG READ IS PAGED, ONE READ SECTION PER PAGE. An export or report
+       made of many expensive reads need not be one consistent read across
+       the whole run - one read lock for minutes holds back every writer. Each
+       page is read in its own Site_Lock::read() section and the lock released
+       between pages. Page by KEYSET (WHERE id > :last ORDER BY id LIMIT n),
+       never OFFSET: rows written between pages shift an offset, and the
+       export skips or repeats them. Each page is consistent; the whole is not
+       a snapshot, and a row changed mid-run appears as it was when its page
+       was read. An export that must reconcile as one snapshot (a ledger that
+       must balance) is rule 10's case.
+
+           $last_id = 0;
+           do {
+               $rows = Site_Lock::read($site_id, fn () => Invoice_Model::where('id', '>', $last_id)
+                   ->orderBy('id')->limit(1000)->get());
+               foreach ($rows as $row) {
+                   $writer->insertOne($row->export_row());     // no lock held
+               }
+               $last_id = $rows->last()?->id ?? $last_id;
+               $task->heartbeat();
+               $task->progress_count($done += $rows->count(), $total);
+           } while ($rows->count() === 1000 && !$task->is_stop_requested());
+
     6. READ-THEN-WRITE IS A WRITER FROM ITS START (no upgrade: THE RULES),
        unless the write is telemetry (rule 3).
 
@@ -496,23 +580,29 @@ HOLDING A LOCK WELL
        caller as the coded exception internal() raises for that result: the
        outermost boundary owns the transaction.
 
-    8. A MASS EDIT RELEASES THE WRITE LOCK PER ITEM. A mass edit is an action a
-       user applies to a SELECTION - "Delete", "Approve", "Set status", "Mark
-       read", a drag of several cards, "select all". It takes and releases the
-       site's write lock between every item it changes - one Site_Lock::write()
-       section per record, which re-reads the record inside - or between every
+    8. A BULK WRITE RELEASES THE WRITE LOCK PER ITEM. A bulk write is a mass
+       edit - an action a user applies to a SELECTION: "Delete", "Approve",
+       "Set status", "Mark read", a drag of several cards, "select all" - and
+       equally a mass IMPORT (a file of rows) and a mass REASSIGNMENT (move
+       one owner's records to another). It takes and releases the site's
+       write lock between every item it changes - one Site_Lock::write()
+       section per record, which re-reads the record inside - or between
+       every BLOCK of items where the per-item overhead dominates and a block
+       still takes a moment (a few dozen rows of an import), or between every
        statement when it updates in set-based statements (one section per
        chunked UPDATE / DELETE). It never holds one write lock across the
        selection: one #[Writer] looping over a "select all" holds the whole
        site for seconds to minutes, with every save's hooks, revisions and
        history in one transaction. Five consequences:
 
-       a. A MASS EDIT IS NOT ALL-OR-NOTHING. Each item commits on its own. The
-          action reports what happened per item - applied, skipped, refused,
-          with the reason - instead of rolling everything back on the first
-          failure. An action that genuinely must be atomic across several
-          records is not a mass edit: it is a single business operation, and
-          must be small enough to hold a lock for a moment.
+       a. A BULK WRITE IS NOT ALL-OR-NOTHING. Each item (or block) commits on
+          its own. A failing item does not stop the run: its error is
+          COLLECTED, and the run reports at its END what happened per item -
+          applied, skipped, refused, failed, with the reason (a stdout() line
+          each, the counts in state(), a summary()). An action that genuinely
+          must be atomic across several records is not a bulk write: it is a
+          single business operation, small enough to hold a lock for a
+          moment, or rule 10's case.
 
        b. MORE THAN A HANDFUL OF ITEMS RUNS AS A TASK, declared
           #[Run_As_Dispatcher] so it acts as the person who started it (rsx:man
@@ -623,6 +713,34 @@ HOLDING A LOCK WELL
        The reference application ships both shapes: Mass_Edit_Service (the
        datagrid mass deletes, followed in the browser by
        Mass_Edit_Progress_Modal) and Notification::mark_all_read().
+
+    9. AN IMPORTANT BULK OPERATION SHOWS A DRY RUN FIRST. When a bulk write
+       is hard to undo or consequential - an import that creates or overwrites
+       records, a reassignment of ownership, a mass delete or a change to
+       money - the person sees what it WOULD do before it does it. The dry run
+       is the same task run with a flag that decides every item exactly as
+       the real run would and writes nothing (read sections only), reporting
+       the per-item outcome and the counts: will apply, will skip, will
+       refuse, and why. The person confirms; the real run is a NEW dispatch
+       that RE-DECIDES every item, because the data may have changed in
+       between - the dry run is a forecast, never a plan the real run
+       replays.
+
+    10. ONE LONG WRITE LOCK ONLY WHEN ATOMICITY IS CRITICAL. Only an operation
+       that is critically required to happen as one unit (a ledger posting
+       that must balance, a renumbering that must never be seen half-done)
+       may hold a write lock longer than a moment, and then:
+       a. MAKE IT FAST. Everything that can happen before the lock does:
+          read, validate, compute, render. Inside, only the writes - set-based
+          where the rows allow it, nothing slow, no call to another system.
+       b. OR SPLIT IT INTO REVERSIBLE STEPS, each in its own section, the
+          algorithm undoing the completed steps (newest first, each in its
+          own section) when a later step fails. Between steps other people
+          see the intermediate state and may act on it: each undo RE-READS the
+          current state, reverses only what is still the operation's own,
+          and the run reports anything it could not reverse.
+       Never a long write lock because splitting was inconvenient: that
+       stops the whole site for the duration.
 
 HOLD-TIME WARNINGS
     Releasing a lock held longer than its threshold logs a WARNING naming the
