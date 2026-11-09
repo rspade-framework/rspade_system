@@ -417,6 +417,9 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
                 field     the column, named as the input is
                 kind      value | enum | reference | formatted_text | structured |
                           secret - what the values below can be
+                record    {type, id}: the record the field is stored on - the
+                          record being saved, or a coupled record (EDITING A
+                          RECORD, COUPLED RECORDS)
                 loaded    the value the form was opened with
                 current   the value saved now, which saving overwrites
                 yours     the value this submission writes
@@ -511,7 +514,7 @@ EDITING A RECORD
             return ['id' => $client->id, 'redirect' => Rsx::Route('Clients_View_Action', $client->id)];
         }, $client->exists ? Rsx::Route('Clients_View_Action', $client->id) : null);
 
-    Form_Edit::run($record, $params, $write, $view_url = null)
+    Form_Edit::run($record, $params, $write, $view_url = null, $coupled = [])
         Opens a transaction, takes a row lock, refreshes $record, settles any conflict,
         then calls $write. A throw rolls everything back. It adds updated_at to an array
         result. A new record has no conflict to settle and writes every set().
@@ -559,12 +562,73 @@ EDITING A RECORD
     writes nothing. So a column that moves on its own (a last-seen stamp) belongs in a
     write that does not touch updated_at, or the people editing that record are asked.
 
-    COVERS the record's own columns. A pivot or detail-table field is written only when
-    changed, but is not checked for a conflict.
+    COVERS the record's own columns, and the columns of every COUPLED record. A pivot or
+    detail-table field is written only when changed, but is not checked for a conflict.
+
+    COUPLED RECORDS. Some edits write two records as one: the form belongs to one, but
+    some of its fields are stored on another (an entry edited together with its
+    activity). A save of the other record through its own screen moves neither the
+    record's updated_at nor its revisions, so without this it would be overwritten with
+    no question. Name the other record, with a map from its columns to the form's
+    field names:
+
+        return Form_Edit::run($entry, $params, function (Form_Edit $edit) use ($entry, $activity, $params) {
+            $edit->set('qty', $params['qty']);
+            $entry->save();
+
+            if ($edit->changed('activity_type')) {
+                $activity->type_id = $params['activity_type'];
+            }
+            if ($edit->changed('activity_time')) {
+                $activity->time_start = $params['activity_time'];
+            }
+            $activity->save();
+
+            return ['id' => $entry->id];
+        }, $view_url, coupled: [
+            [$activity, ['type_id' => 'activity_type', 'time_start' => 'activity_time']],
+        ]);
+
+    With coupled records:
+
+    - THE VERSION IS THE COMPOSITE: the newest updated_at among the record and its
+      coupled records. Every read that a later edit is compared against - the form's
+      $data seed (updated_at), an API payload, a delete's precondition - publishes
+      Form_Edit::version_of($entry, $activity), so the version a caller sends back
+      covers what it saw of BOTH. (Seeded with the record's own updated_at, a save of
+      the activity before the read would be reported as a conflict.) The result's
+      updated_at is the composite too.
+
+    - A coupled record's revisions are read through its map: a change to a mapped
+      column is a change to its form field, and conflicts like any other field. A
+      column outside the map is never a conflict, nor is a mapped field this
+      submission does not send. Several columns may map to one field (the two halves
+      of a polymorphic pair): a change to either is a change to the field, always
+      asked about, with kind structured - there is no one value to show. A form field
+      the map gives to a coupled record is that record's alone; a column of the same
+      name on the record itself is not compared with it.
+
+    - Each question row names the record its field is stored on (fields[].record).
+
+    - The record is row-locked first, then each coupled record in the order given,
+      each refreshed under its lock; a coupled record deleted meanwhile answers
+      ERROR_NOT_FOUND. A coupled record that moved with no revision recorded asks the
+      plain 'confirm', as the record does.
+
+    - set() writes the record only. The callback writes a coupled record's columns
+      itself, guarded by $edit->changed('<form field>') - so "keep theirs" keeps them
+      too - and saves the coupled record instance it passed.
+
+    Every coupled record's model declares $revisions = true, and each is a saved record;
+    run() throws naming it otherwise.
+
+    Form_Edit::version_of($record, ...$coupled): string
+        The newest updated_at among the records, in database format. One record is its
+        own updated_at.
 
     See system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
     (one record), projects/projects_controller.php (pivots) and party/party_controller.php
-    (detail tables). Tests: rsx:test --framework Form_Edit_Test.
+    (detail tables). Tests: rsx:test --framework Form_Edit_Test Form_Edit_Coupled_Test.
 
 HIDDEN FIELDS OUTSIDE THE FORM
 

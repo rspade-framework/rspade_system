@@ -194,6 +194,13 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | FE-16 | a field set to the value already saved is not asked about | the same value as the other save | no question; written | implemented |
 | FE-17 | a revision names the actor the record's stamp names | a signed-in save | the revision's created_by pair equals the record's updated_by pair | implemented |
 | FE-18 | the view URL the endpoint passes rides the question | `run(..., $view_url)` | `question.view_url` | implemented |
+| FE-19 | the composite version is the newest updated_at of the records given | `version_of($record, $coupled)` in both orders, and of one record | the coupled record's updated_at; one record's own (`Form_Edit_Coupled_Test`) | implemented |
+| FE-20 | a coupled save of a mapped field the submission sends is a conflict on the FORM field, naming the record it was saved on | coupled `kind_id` saved; submission sends `activity_kind` | `field_conflict` on `activity_kind`, `fields[].record` the coupled record, nothing written; answer false keeps theirs and writes the rest | implemented |
+| FE-21 | a coupled save of an unmapped column, or of a mapped field not sent, asks nothing | coupled `note` and `start_hour` saved; submission sends `name`, `activity_kind` | no question; both changes stand; result `updated_at` is the composite | implemented |
+| FE-22 | a coupled save before the read is not a conflict | save, then `version_of()` as the loaded version | no question | implemented |
+| FE-23 | two columns mapped to one field conflict on that field | `start_date` or `start_hour` saved; submission sends `starts` | `field_conflict` on `starts`, kind structured, current null | implemented |
+| FE-24 | a coupled record that moved with no revision asks the plain confirm | raw update of the coupled row's updated_at | `confirm` | implemented |
+| FE-25 | every record is row-locked, record first; a coupled model without revision history is refused | query log; a plain fixture as the coupled record | two FOR UPDATE reads in order; RuntimeException naming the model | implemented |
 
 ## form_edit_state.js (playwright) - what a form tells an endpoint about an edit
 

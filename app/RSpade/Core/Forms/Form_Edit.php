@@ -59,6 +59,14 @@ use App\RSpade\Core\Time\Rsx_Time;
  * COVERS the record's own columns. A pivot or a detail-table field is guarded by
  * changed() - it is written only when it changed - but is not checked for a conflict.
  *
+ * COUPLED RECORDS. An edit that stores some of its form's fields on ANOTHER record (an entry
+ * married to its activity) names that record with its column-to-field map
+ * (run(..., coupled: [[$activity, ['time_start' => 'activity_time']]])). The record and its
+ * coupled records are then ONE version - the newest updated_at among them, which the read
+ * publishes with version_of() - and are row-locked together, record first. A coupled
+ * record's revisions are read through its map, so a change saved on it through its own
+ * screen is a conflict with a submission that sends the mapped field.
+ *
  * NEVER call run() inside a DB::transaction() of your own: a snapshot taken before the
  * lock is granted would hide the save the lock was waiting for.
  *
@@ -81,6 +89,14 @@ class Form_Edit
     /** Where the record's current version can be viewed, for the question's link; null for none. */
     private ?string $view_url = null;
 
+    /**
+     * The records this edit also writes, each with the map from its columns to the form's
+     * field names.
+     *
+     * @var array<int, array{record: Rsx_Model_Abstract, map: array<string, string>}>
+     */
+    private array $coupled = [];
+
     /** The kinds of field a question row can be: how its values may be shown. */
     public const FIELD_VALUE = 'value';
     public const FIELD_ENUM = 'enum';
@@ -102,10 +118,15 @@ class Form_Edit
      * @param array $params The endpoint's $params
      * @param callable $write fn(Form_Edit $edit) - set() the fields, save the record, do the
      *     rest of the work, return the endpoint's result. A throw rolls everything back.
-     * @return mixed The callback's result, with `updated_at` added when it is an array, or
-     *     the response asking the question or reporting the record gone
+     * @param array<int, array{0: Rsx_Model_Abstract, 1: array<string, string>}> $coupled
+     *     Records this edit also writes, each as [$record, [column => form field]]: the
+     *     columns of it the form edits, named as the form names them. Several columns may
+     *     map to one field (a polymorphic pair). Row-locked after $record, in this order.
+     * @return mixed The callback's result, with `updated_at` added when it is an array (the
+     *     composite version_of() when there are coupled records), or the response asking the
+     *     question or reporting a record gone
      */
-    public static function run(Rsx_Model_Abstract $record, array $params, callable $write, ?string $view_url = null)
+    public static function run(Rsx_Model_Abstract $record, array $params, callable $write, ?string $view_url = null, array $coupled = [])
     {
         $class = get_class($record);
 
@@ -116,9 +137,14 @@ class Form_Edit
             );
         }
 
-        return DB::transaction(function () use ($class, $record, $params, $write, $view_url) {
+        $coupled = static::__coupled($coupled);
+
+        return DB::transaction(function () use ($class, $record, $params, $write, $view_url, $coupled) {
             if (!$record->exists) {
-                return static::__finish($record, $write(new static($record, null)));
+                $edit = new static($record, null);
+                $edit->coupled = $coupled;
+
+                return static::__finish($edit, $write($edit));
             }
 
             $changed = $params['_changed'] ?? null;
@@ -139,12 +165,123 @@ class Form_Edit
 
             $record->refresh();
 
+            // The coupled records after it, in the order given: every edit of this pair takes
+            // the locks in the same order, so two of them queue instead of deadlocking.
+            foreach ($coupled as $entry) {
+                $other = $entry['record'];
+
+                if (!get_class($other)::query()->whereKey($other->getKey())->lockForUpdate()->first()) {
+                    return response_error(Ajax::ERROR_NOT_FOUND, 'A record this edit also changes no longer exists.');
+                }
+
+                $other->refresh();
+            }
+
             $edit = new static($record, array_values(array_filter($changed, 'is_string')));
             $edit->view_url = $view_url;
+            $edit->coupled = $coupled;
             $question = $edit->__resolve_conflicts(Rsx_Time::to_database($loaded), $params);
 
-            return $question ?? static::__finish($record, $write($edit));
+            return $question ?? static::__finish($edit, $write($edit));
         });
+    }
+
+    /**
+     * The version an edit of these records is made from: the newest updated_at among them.
+     * The read that seeds a form, an API payload and a delete's precondition publish THIS for
+     * a record edited with coupled records, so the version a caller sends back covers every
+     * record as of its read - a coupled save before the read is not reported as a conflict.
+     *
+     * @param Rsx_Model_Abstract $record
+     * @param Rsx_Model_Abstract ...$coupled
+     * @return string Database format (Y-m-d H:i:s.v)
+     */
+    public static function version_of(Rsx_Model_Abstract $record, Rsx_Model_Abstract ...$coupled): string
+    {
+        $newest = null;
+
+        foreach ([$record, ...$coupled] as $each) {
+            $version = Rsx_Time::to_database($each->updated_at);
+
+            if ($version === null) {
+                throw new RuntimeException('Form_Edit::version_of(): ' . class_basename($each) . ' has no updated_at - a saved record has one.');
+            }
+
+            if ($newest === null || $version > $newest) {
+                $newest = $version;
+            }
+        }
+
+        return $newest;
+    }
+
+    /**
+     * Check and normalize run()'s $coupled: each entry a saved record of a model with revision
+     * history, and a non-empty map of its column names to form field names.
+     *
+     * @return array<int, array{record: Rsx_Model_Abstract, map: array<string, string>}>
+     */
+    private static function __coupled(array $coupled): array
+    {
+        $normalized = [];
+
+        foreach ($coupled as $index => $entry) {
+            $other = $entry[0] ?? null;
+            $map = $entry[1] ?? null;
+
+            if (!$other instanceof Rsx_Model_Abstract || !is_array($map) || $map === []) {
+                throw new RuntimeException(
+                    "Form_Edit: coupled entry {$index} must be [\$record, [column => form field, ...]] with at least one column."
+                );
+            }
+
+            foreach ($map as $column => $field) {
+                if (!is_string($column) || !is_string($field) || $column === '' || $field === '') {
+                    throw new RuntimeException("Form_Edit: coupled entry {$index} maps column names to form field names, both strings.");
+                }
+            }
+
+            if (!get_class($other)::$revisions) {
+                throw new RuntimeException(
+                    'Form_Edit needs revision history on a coupled record too, to tell what another editor changed on it. '
+                    . 'Declare public static $revisions = true; on ' . class_basename($other) . '.'
+                );
+            }
+
+            if (!$other->exists) {
+                throw new RuntimeException('Form_Edit: coupled entry ' . $index . ' (' . class_basename($other) . ') is not a saved record.');
+            }
+
+            $normalized[] = ['record' => $other, 'map' => $map];
+        }
+
+        return $normalized;
+    }
+
+    /** The records this edit writes, each with its map: null for the record itself (column = field). */
+    private function __sources(): array
+    {
+        $sources = [['record' => $this->record, 'map' => null]];
+
+        foreach ($this->coupled as $entry) {
+            $sources[] = $entry;
+        }
+
+        return $sources;
+    }
+
+    /** Every form field a coupled record stores. */
+    private function __coupled_fields(): array
+    {
+        $fields = [];
+
+        foreach ($this->coupled as $entry) {
+            foreach ($entry['map'] as $field) {
+                $fields[$field] = true;
+            }
+        }
+
+        return array_keys($fields);
     }
 
     /**
@@ -177,12 +314,15 @@ class Form_Edit
 
     /**
      * Put the version the record is now at on the result, so a form that stays open after
-     * saving is not in conflict with its own save.
+     * saving is not in conflict with its own save. With coupled records that is the
+     * composite version.
      */
-    private static function __finish(Rsx_Model_Abstract $record, $result)
+    private static function __finish(Form_Edit $edit, $result)
     {
         if (is_array($result) && !array_key_exists('updated_at', $result)) {
-            $result['updated_at'] = $record->updated_at;
+            $result['updated_at'] = $edit->coupled === []
+                ? $edit->record->updated_at
+                : static::version_of($edit->record, ...array_column($edit->coupled, 'record'));
         }
 
         return $result;
@@ -196,42 +336,75 @@ class Form_Edit
      */
     private function __resolve_conflicts(string $loaded, array $params)
     {
-        $current = Rsx_Time::to_database($this->record->updated_at);
+        $current = static::version_of($this->record, ...array_column($this->coupled, 'record'));
 
         if ($current === $loaded) {
             return null;
         }
 
-        $revisions = Revision_Model::where('record_type', class_basename($this->record))
-            ->where('record_id', (int) $this->record->getKey())
-            ->where('record_updated_at', '>', $loaded)
-            ->result_set();
-
-        $any_revision = false;
+        $coupled_fields = $this->__coupled_fields();
+        $unattributed = false;
         $changes = [];
+        $columns = [];
         $newest = 0;
 
-        // Oldest first, so each field's changes read in the order they were saved.
-        foreach ($revisions as $revision) {
-            $any_revision = true;
-            $newest = max($newest, (int) $revision->id);
+        foreach ($this->__sources() as $source) {
+            $model = $source['record'];
+            $map = $source['map'];
 
-            foreach ($revision->diff() as $field => $values) {
-                if (in_array($field, $this->changed, true)) {
+            // A record that has not moved since the version has nothing to say.
+            if (Rsx_Time::to_database($model->updated_at) <= $loaded) {
+                continue;
+            }
+
+            $revisions = Revision_Model::where('record_type', class_basename($model))
+                ->where('record_id', (int) $model->getKey())
+                ->where('record_updated_at', '>', $loaded)
+                ->result_set();
+
+            $any_revision = false;
+
+            // Oldest first, so each field's changes read in the order they were saved.
+            foreach ($revisions as $revision) {
+                $any_revision = true;
+                $newest = max($newest, (int) $revision->id);
+
+                foreach ($revision->diff() as $column => $values) {
+                    // The record's own columns are its fields - except a field a coupled
+                    // record stores, which is that record's to answer for.
+                    $field = $map === null
+                        ? (in_array($column, $coupled_fields, true) ? null : $column)
+                        : ($map[$column] ?? null);
+
+                    if ($field === null || !in_array($field, $this->changed, true)) {
+                        continue;
+                    }
+
                     $changes[$field][] = ['revision' => $revision, 'from' => $values[0] ?? null, 'to' => $values[1] ?? null];
                 }
             }
+
+            // It moved and no revision says how.
+            if (!$any_revision) {
+                $unattributed = true;
+            }
         }
 
-        if (!$any_revision) {
+        if ($unattributed) {
             return $this->__resolve_unattributed($current, $params);
         }
 
         // A field this submission sets to the value the other editor already saved overwrites
-        // nothing, so it is not asked about.
+        // nothing, so it is not asked about. A field stored in several columns cannot be
+        // compared with one submitted value, so a change to it is always asked about.
         $conflicts = array_filter(
             $changes,
-            fn ($field) => !$this->__same_value($field, $this->record->{$field}, $params[$field] ?? null),
+            function ($field) use ($params) {
+                [$model, $column] = $this->__home($field);
+
+                return $column === null
+                    || !$this->__same_value($model, $column, $model->{$column}, $params[$field] ?? null);
+            },
             ARRAY_FILTER_USE_KEY
         );
 
@@ -299,7 +472,10 @@ class Form_Edit
         $fields = [];
 
         foreach ($conflicts as $field => $field_changes) {
-            $kind = $this->__kind($field);
+            [$model, $column] = $this->__home($field);
+
+            // A field stored in several columns has no one value to show.
+            $kind = $column === null ? self::FIELD_STRUCTURED : $this->__kind($model, $column);
             $rows = [];
 
             foreach ($field_changes as $change) {
@@ -309,17 +485,18 @@ class Form_Edit
                 $rows[] = [
                     'by' => $by,
                     'at' => Rsx_Time::to_iso($change['revision']->created_at),
-                    'from' => $this->__shown($kind, $field, $change['from']),
-                    'to' => $this->__shown($kind, $field, $change['to']),
+                    'from' => $this->__shown($kind, $model, $column, $change['from']),
+                    'to' => $this->__shown($kind, $model, $column, $change['to']),
                 ];
             }
 
             $fields[] = [
                 'field' => $field,
                 'kind' => $kind,
+                'record' => ['type' => class_basename($model), 'id' => (int) $model->getKey()],
                 'loaded' => $rows[0]['from'],
-                'current' => $this->__shown($kind, $field, $this->record->{$field}),
-                'yours' => $this->__shown($kind, $field, $params[$field] ?? null),
+                'current' => $column === null ? null : $this->__shown($kind, $model, $column, $model->{$column}),
+                'yours' => $this->__shown($kind, $model, $column, $params[$field] ?? null),
                 'changes' => $rows,
             ];
         }
@@ -352,31 +529,50 @@ class Form_Edit
     }
 
     /**
-     * What a field holds, for a renderer: a secret, a structured value (an array or JSON
+     * Where a form field is stored: [record, column]. The column is null for a field a
+     * coupled record stores in several columns.
+     *
+     * @return array{0: Rsx_Model_Abstract, 1: ?string}
+     */
+    private function __home(string $field): array
+    {
+        foreach ($this->coupled as $entry) {
+            $columns = array_keys($entry['map'], $field, true);
+
+            if ($columns !== []) {
+                return [$entry['record'], count($columns) === 1 ? $columns[0] : null];
+            }
+        }
+
+        return [$this->record, $field];
+    }
+
+    /**
+     * What a column holds, for a renderer: a secret, a structured value (an array or JSON
      * document), a declared text type, an enum, a reference to another record (a foreign key,
      * or either half of a polymorphic pair), or a plain value.
      */
-    private function __kind(string $field): string
+    private function __kind(Rsx_Model_Abstract $model, string $column): string
     {
-        $class = get_class($this->record);
+        $class = get_class($model);
 
-        if (in_array($field, $class::never_exported_columns(), true)) {
+        if (in_array($column, $class::never_exported_columns(), true)) {
             return self::FIELD_SECRET;
         }
 
-        if (isset($class::$text_types[$field])) {
+        if (isset($class::$text_types[$column])) {
             return self::FIELD_FORMATTED_TEXT;
         }
 
-        if (isset($class::$enums[$field])) {
+        if (isset($class::$enums[$column])) {
             return self::FIELD_ENUM;
         }
 
-        if (preg_match('/^(.+)_(id|type)$/', $field, $match) && method_exists($this->record, $match[1])) {
+        if (preg_match('/^(.+)_(id|type)$/', $column, $match) && method_exists($model, $match[1])) {
             return self::FIELD_REFERENCE;
         }
 
-        $value = $this->record->{$field};
+        $value = $model->{$column};
         if (is_array($value) || is_object($value) && !$value instanceof Rsx_Text_Abstract
             || is_string($value) && $value !== '' && in_array($value[0], ['[', '{'], true) && json_decode($value) !== null) {
             return self::FIELD_STRUCTURED;
@@ -385,18 +581,21 @@ class Form_Edit
         return self::FIELD_VALUE;
     }
 
-    /** A value as the row carries it: text for a kind that has some, null for a secret or a structure. */
-    private function __shown(string $kind, string $field, $value): ?string
+    /**
+     * A value as the row carries it: text for a kind that has some, null for a secret, a
+     * structure, or a field stored in several columns ($column null).
+     */
+    private function __shown(string $kind, Rsx_Model_Abstract $model, ?string $column, $value): ?string
     {
-        if ($kind === self::FIELD_SECRET || $kind === self::FIELD_STRUCTURED || Revision_Model::is_redacted($value)) {
+        if ($column === null || $kind === self::FIELD_SECRET || $kind === self::FIELD_STRUCTURED || Revision_Model::is_redacted($value)) {
             return null;
         }
 
-        return $this->__display($field, $value);
+        return $this->__display($model, $column, $value);
     }
 
-    /** Does the submission set $field to what is stored now? Compared stored-form and as shown. */
-    private function __same_value(string $field, $stored, $submitted): bool
+    /** Does the submission set the column to what is stored now? Compared stored-form and as shown. */
+    private function __same_value(Rsx_Model_Abstract $model, string $column, $stored, $submitted): bool
     {
         $plain = fn ($value) => $value instanceof Rsx_Text_Abstract ? $value->to_plain_text() : $value;
 
@@ -406,12 +605,12 @@ class Form_Edit
             }
         }
 
-        return $this->__kind($field) !== self::FIELD_SECRET
-            && $this->__display($field, $stored) === $this->__display($field, $submitted);
+        return $this->__kind($model, $column) !== self::FIELD_SECRET
+            && $this->__display($model, $column, $stored) === $this->__display($model, $column, $submitted);
     }
 
     /** One value as a person reads it: an enum's label, a referenced record's name, plain text. */
-    private function __display(string $field, $value): string
+    private function __display(Rsx_Model_Abstract $model, string $column, $value): string
     {
         if ($value instanceof Rsx_Text_Abstract) {
             return $value->to_plain_text();
@@ -421,17 +620,17 @@ class Form_Edit
             return '';
         }
 
-        $class = get_class($this->record);
-        $enum = $class::$enums[$field] ?? null;
+        $class = get_class($model);
+        $enum = $class::$enums[$column] ?? null;
 
         if ($enum !== null) {
             return (string) ($enum[$value]['label'] ?? $value);
         }
 
-        $relation = substr($field, -3) === '_id' ? substr($field, 0, -3) : null;
+        $relation = substr($column, -3) === '_id' ? substr($column, 0, -3) : null;
 
-        if ($relation !== null && method_exists($this->record, $relation)) {
-            $related = $this->record->{$relation}()->getRelated()->find($value);
+        if ($relation !== null && method_exists($model, $relation)) {
+            $related = $model->{$relation}()->getRelated()->find($value);
 
             if ($related) {
                 return (string) (method_exists($related, 'get_printed_name') ? $related->get_printed_name() : ($related->name ?? $value));
