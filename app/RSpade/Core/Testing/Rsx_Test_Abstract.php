@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Testing;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -740,6 +741,155 @@ abstract class Rsx_Test_Abstract
         Session::$_browser_session_id_for_tests = $session_id;
 
         return $session_id;
+    }
+
+    /**
+     * Act as a SIGNED-IN BROWSER for the rest of this test: a browser row with a staff sign-in
+     * for this site member on it, as RsxAuth::login() leaves one, and every Session getter
+     * answering that browser and that sign-in as a signed-in request's do - the identity, the
+     * site, get_session_id(), get_user_session_id() and get_audit_session_id() (an audit session
+     * is minted for the browser's address and user agent). So an endpoint the test calls can
+     * Task::dispatch() a #[Run_As_Dispatcher] task: the run is bound to this sign-in, stays
+     * PENDING under the suite, and __run_pending_task() executes it as its dispatcher.
+     *
+     * Cleared by the runner between tests, like __as_browser().
+     *
+     * @param int $user_id users.id (the site membership)
+     * @param array $options impersonator_login_user_id (the sign-in is an impersonation of this
+     *        member by that identity), plus __insert_session_fixture()'s row keys (type_id,
+     *        active, last_active, created_at, token)
+     * @return int The browser row's id
+     */
+    protected static function __as_signed_in_browser(int $user_id, array $options = []): int
+    {
+        $user = User_Model::without_site_scope(fn () => User_Model::find($user_id));
+
+        if (!$user) {
+            shouldnt_happen("__as_signed_in_browser: no User_Model with id {$user_id} in the test database");
+        }
+
+        $impersonator = $options['impersonator_login_user_id'] ?? null;
+        unset($options['impersonator_login_user_id']);
+
+        $fixture = static::__insert_session_fixture($options + ['staff' => [
+            'login_user_id' => (int) $user->login_user_id,
+            'site_id' => (int) $user->site_id,
+            'impersonator_login_user_id' => $impersonator,
+        ]]);
+
+        return static::__sign_in_browser_fixture($fixture, $fixture['staff_user_session_id'], [
+            'realm' => 'staff',
+            'site_id' => (int) $user->site_id,
+            'login_user_id' => (int) $user->login_user_id,
+            'user_id' => (int) $user->id,
+            'impersonator_login_user_id' => $impersonator,
+        ]);
+    }
+
+    /**
+     * The portal twin of __as_signed_in_browser(): a browser row with a portal sign-in for this
+     * portal user, and the test acting as that portal request (portal realm, the portal user's
+     * site). A #[Run_As_Dispatcher] task dispatched from here runs as the portal user.
+     *
+     * @param int $portal_user_id portal_users.id
+     * @param array $options impersonator_user_id (a View as Client sign-in by that staff
+     *        member), plus __insert_session_fixture()'s row keys
+     * @return int The browser row's id
+     */
+    protected static function __as_signed_in_portal_browser(int $portal_user_id, array $options = []): int
+    {
+        $portal_user = Portal_User_Model::without_site_scope(
+            fn () => Portal_User_Model::find($portal_user_id)
+        );
+
+        if (!$portal_user) {
+            shouldnt_happen("__as_signed_in_portal_browser: no Portal_User_Model with id {$portal_user_id} in the test database");
+        }
+
+        $impersonator = $options['impersonator_user_id'] ?? null;
+        unset($options['impersonator_user_id']);
+
+        $fixture = static::__insert_session_fixture($options + ['portal' => [
+            'portal_user_id' => (int) $portal_user->id,
+            'portal_site_id' => (int) $portal_user->site_id,
+            'impersonator_user_id' => $impersonator,
+        ]]);
+
+        return static::__sign_in_browser_fixture($fixture, $fixture['portal_user_session_id'], [
+            'realm' => 'portal',
+            'portal_user_id' => (int) $portal_user->id,
+            'portal_site_id' => (int) $portal_user->site_id,
+            'impersonator_user_id' => $impersonator,
+        ]);
+    }
+
+    /**
+     * Make the test act as the signed-in browser a fixture inserted: the virtual session bound
+     * to the browser and its sign-in, with the audit session a request from it would record.
+     */
+    private static function __sign_in_browser_fixture(array $fixture, int $user_session_id, array $identity): int
+    {
+        Session::_begin_virtual($identity + [
+            'session_id' => $fixture['id'],
+            'user_session_id' => $user_session_id,
+        ]);
+
+        $audit_session_id = \App\RSpade\Core\Session\Audit_Session::_id_for_context([
+            'site_id' => $identity['site_id'] ?? null,
+            'login_user_id' => $identity['login_user_id'] ?? null,
+            'portal_user_id' => $identity['portal_user_id'] ?? null,
+            'portal_site_id' => $identity['portal_site_id'] ?? null,
+            'impersonator_login_user_id' => $identity['impersonator_login_user_id'] ?? null,
+            'impersonator_user_id' => $identity['impersonator_user_id'] ?? null,
+            'ip_address' => '10.0.0.9',
+            'session_id' => $fixture['id'],
+            'user_session_id' => $user_session_id,
+            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'),
+            'session_type_id' => Session::TYPE_WEB,
+            'timezone' => null,
+            'timezone_source' => null,
+        ]);
+        \App\RSpade\Core\Session\Audit_Session::_declare($audit_session_id);
+
+        Session::$_browser_session_id_for_tests = $fixture['id'];
+
+        return $fixture['id'];
+    }
+
+    /**
+     * Execute a PENDING run exactly as a worker would and return its settled row: claimed
+     * RUNNING by this process, in a context of its own - a #[Run_As_Dispatcher] run bound to
+     * the sign-in it was dispatched from (Task_Dispatcher_Context), refused when that
+     * dispatcher may no longer act - then settled by its outcome. The test's own context is
+     * put back afterwards. A run that fails is returned, not thrown: assert on status_id,
+     * error and state().
+     *
+     * @param int $task_id A PENDING _tasks row (Task::dispatch() under the suite leaves one)
+     * @return \App\RSpade\Core\Task\Task_Run_Model The settled run
+     */
+    protected static function __run_pending_task(int $task_id): \App\RSpade\Core\Task\Task_Run_Model
+    {
+        $claimed = DB::table('_tasks')
+            ->where('id', $task_id)
+            ->where('status_id', \App\RSpade\Core\Task\Task_Run_Model::STATUS_PENDING)
+            ->update(\App\RSpade\Core\Task\Task_Runner::running_fields());
+
+        if (!$claimed) {
+            shouldnt_happen("__run_pending_task: run #{$task_id} is not a PENDING run");
+        }
+
+        $instance = \App\RSpade\Core\Task\Task_Instance::find($task_id);
+        $context = Session::_snapshot_context();
+
+        try {
+            $outcome = \App\RSpade\Core\Task\Task_Runner::execute($instance, false, true);
+        } finally {
+            Session::_restore_context($context);
+        }
+
+        \App\RSpade\Core\Task\Task_Runner::settle($instance, $outcome);
+
+        return \App\RSpade\Core\Task\Task_Run_Model::find($task_id);
     }
 
     /**

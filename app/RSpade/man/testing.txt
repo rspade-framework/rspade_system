@@ -253,6 +253,21 @@ API REFERENCE
             it with __acting_as_user(). Returns the row id; call again for a
             second browser.
 
+        __as_signed_in_browser(int $user_id, array $options = []): int
+            A browser row with a STAFF SIGN-IN for that site member on it, as
+            RsxAuth::login() leaves one, and every Session getter answering it
+            as a signed-in request's do: identity, site, get_session_id(),
+            get_user_session_id() and get_audit_session_id() (an audit session
+            is minted for the browser). Option impersonator_login_user_id makes
+            it an impersonation; the row keys of __insert_session_fixture()
+            pass through. What an endpoint that dispatches a
+            #[Run_As_Dispatcher] task needs. Returns the row id; the runner's
+            reset clears it.
+
+        __as_signed_in_portal_browser(int $portal_user_id, array $options = []): int
+            The same with a PORTAL sign-in (portal realm, the portal user's
+            site; option impersonator_user_id for View as Client).
+
         protected static $acts_as_browser = true;
             Does __as_browser() before every test method of the class.
 
@@ -664,9 +679,32 @@ CLASS BOUNDARIES AND DETACHED PROCESSES
         static::__acting_as_user($user_id);
         $state = static::__run_task_method(Records_Service::class, 'bulk_set_status', $params);
 
-    With nobody declared it is refused ("nobody is acting here"). Dispatching it
-    still needs a sign-in, which a test does not have (rsx:man tasks, RUNNING AS
-    THE DISPATCHER).
+    With nobody declared it is refused ("nobody is acting here").
+
+    THE ENDPOINT THAT STARTS IT is tested through a signed-in browser.
+    Task::dispatch() binds the run to the dispatching SIGN-IN, so the test
+    signs in with __as_signed_in_browser(), calls the endpoint, and runs the
+    pending run with __run_pending_task():
+
+        __run_pending_task(int $task_id): Task_Run_Model
+            Executes a PENDING run exactly as a worker does - in a context of
+            its own, a #[Run_As_Dispatcher] run bound to the sign-in it was
+            dispatched from (refused when that dispatcher may no longer act) -
+            settles it, gives the test its own context back and returns the
+            settled row. A failed run is returned, not thrown: assert on
+            status_id, error and state().
+
+        static::__as_signed_in_browser($user_id);
+        $answer = Ajax::internal('Records_Controller', 'bulk_set_status', ['ids' => $ids, 'status_id' => $status_id]);
+
+        $run = Task_Run_Model::find($answer['task_id']);
+        static::__assert_equals(Session::get_user_session_id(), (int) $run->user_session_id);
+
+        $run = static::__run_pending_task((int) $answer['task_id']);
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $run->status_id);
+        static::__assert_equals(count($ids), $run->state()['updated']);
+
+    (rsx:man tasks, RUNNING AS THE DISPATCHER.)
 
     A process a test starts DETACHED - a task worker spawned by an opted-in
     Task::spawn_worker(), or any Rsx_Artisan::dispatch_detached() call - belongs

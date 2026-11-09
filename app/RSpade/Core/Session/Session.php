@@ -743,6 +743,13 @@ class Session extends Rsx_System_Model_Abstract
         self::$_cli_session_id = null;
         self::$_cli_user_session_id = null;
 
+        // The rest of a sign-in a test acted as (Rsx_Test_Abstract::__as_signed_in_browser()):
+        // its impersonator and the audit session its requests record. Both belong to the
+        // sign-in, so they end with the test, like the browser and the user session above.
+        self::$_cli_impersonator_login_user_id = null;
+        self::$_cli_impersonation_started_at = null;
+        Audit_Session::_declare(null);
+
         // DELIBERATELY NOT CLEARED: $_cli_site_id / $_cli_login_user_id / $_cli_user_id.
         //
         // Those are the virtual session's DECLARATION - "act as this user on this site" - and the

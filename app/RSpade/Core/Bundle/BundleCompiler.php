@@ -203,6 +203,14 @@ class BundleCompiler
 
     /**
     * Compile a bundle
+    *
+    * The bundle build lock a compile takes is released when the compile ends, however it
+    * ends. A long-lived process (the test runner, a worker, rsx:build) goes on to other work,
+    * and a lock held past its compile would make that process the holder of a box-wide flock
+    * nobody can see: a bundle compile it then waits on in a child process (Rsx_Artisan)
+    * queues behind its own parent forever - a flock has no lock group and no deadlock
+    * detection. A nested compile in the same process re-acquires on the reentrant count and
+    * releases its own level.
     */
     public function compile(string $bundle_class, array $options = []): array
     {
@@ -212,6 +220,11 @@ class BundleCompiler
             return $this->__compile($bundle_class, $options);
         } finally {
             static::$compiles_in_flight--;
+
+            if ($this->bundle_build_lock !== null) {
+                RsxLocks::release_lock($this->bundle_build_lock);
+                $this->bundle_build_lock = null;
+            }
         }
     }
 
@@ -283,7 +296,8 @@ class BundleCompiler
 
             // Get a bundle build lock to prevent parallel RPC server interference
             // SYSTEM lock: compiled bundles are artifacts on THIS box's local disk. Waits
-            // forever - a full compile runs for minutes and is held for its whole duration.
+            // forever - a full compile runs for minutes and is held for its whole duration,
+            // released by compile() when the compile ends.
             // Box-physical resource (the bundle build dir), unscoped across databases.
             $this->bundle_build_lock = RsxLocks::system_lock(RsxLocks::LOCK_BUNDLE_BUILD, null, false);
 

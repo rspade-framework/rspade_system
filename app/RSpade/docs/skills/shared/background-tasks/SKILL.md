@@ -203,7 +203,7 @@ public static function delete_clients(Task_Instance $task, array $params = [])
 - **An export or report over a variable amount of data is a task too**: it reads one keyset page per `Site_Lock::read()` section (rule 5), stores its file with `Rsx_Temp_Files`, and the browser follows the run with `Rsx_Task.watch()` and takes the result from the feature's own endpoint.
 - **Re-decide inside the section**: the record may have changed, vanished or fallen out of the filter since the selection was read, and the person may have lost the permission - skip (or refuse the rest) and say so.
 - **The browser follows the run**: the reference app's `Mass_Edit_Progress_Modal.show(task_id, title)` (`rsx/theme/components/datagrid/`) shows `<Task_Report $kind="status_text">` and a `progress_text` bar, closes itself when `Rsx_Task.get()` says the run is no longer live, and the grid flashes the run's `summary` report. Worked example: `rsx/services/mass_edit_service.php`.
-- **In a test**: drive the task with `__acting_as_user()` + `__run_task_method()` and assert on its `state()`; the endpoint's dispatch needs a browser sign-in a test does not have, so test the endpoint for its validation.
+- **In a test**: drive the task with `__acting_as_user()` + `__run_task_method()` and assert on its `state()`; test the endpoint end to end under `__as_signed_in_browser($user_id)` - it answers the run id, the run is bound to that sign-in - then `__run_pending_task($task_id)` runs it as the dispatcher (`rsx:man testing`).
 
 `rsx:man tasks`, RUNNING AS THE DISPATCHER.
 

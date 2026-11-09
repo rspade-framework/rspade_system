@@ -1850,6 +1850,12 @@ TESTING
         static::__acting_as_user($user_id);
         $state = static::__run_task_method(Records_Service::class, 'bulk_set_status', $params);
 
+    The ENDPOINT that dispatches such a task is tested through a signed-in browser:
+    __as_signed_in_browser($user_id) gives the test a real sign-in, the endpoint's
+    Task::dispatch() binds the run to it (PENDING under the suite), and
+    __run_pending_task($task_id) executes it as a worker would, as its dispatcher,
+    returning the settled run (rsx:man testing).
+
     An in-process worker is a real pool member: it needs rsx-lockd, joins under the pool
     lock and leaves before Artisan::call() returns. Pools are named by the connection
     scope, so the test database's pools are never the developer database's.

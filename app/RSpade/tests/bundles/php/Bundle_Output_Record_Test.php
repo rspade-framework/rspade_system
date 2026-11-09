@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Bundles\Php;
 
 use App\RSpade\Core\Bundle\BundleCompiler;
+use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -77,6 +78,26 @@ class Bundle_Output_Record_Test extends Rsx_Test_Abstract
         $again = static::__compile();
         static::__assert_equals($css, $again['app_css_bundle_path'] ?? null, 'the page is given the stylesheet again');
         static::__assert_true(is_file($path), 'the stylesheet is back on disk');
+    }
+
+    /**
+     * A compile that takes the bundle build lock lets it go when it ends: a long-lived process
+     * that went on to wait for a compile in a child process (Rsx_Artisan) would otherwise hold
+     * the box-wide flock that child queues behind - forever.
+     */
+    public static function test_a_compile_releases_the_bundle_build_lock()
+    {
+        $result = static::__compile();
+        $path = Rsx_Project_Paths::bundles_dir() . '/' . $result['app_css_bundle_path'];
+        unlink($path);                                     // the next compile must take the lock
+
+        static::__compile();
+
+        static::__assert_true(is_file($path), 'sanity: the compile ran and wrote the stylesheet again');
+        static::__assert_false(
+            RsxLocks::holds(RsxLocks::SYSTEM_LOCK, RsxLocks::LOCK_BUNDLE_BUILD, RsxLocks::WRITE_LOCK),
+            'the bundle build lock is released when the compile ends'
+        );
     }
 
     public static function test_a_record_for_another_hash_is_no_cache()
