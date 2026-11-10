@@ -813,7 +813,7 @@ TEST ADDRESSES
 
 THE DEVELOPMENT CATCHER
 
-    The dev container runs system/bin/mail_catcher.py as [program:mail-catcher] under
+    The dev container runs system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py as [program:mail-catcher] under
     supervisor: SMTP only, 127.0.0.1:1025, NO web UI and no HTTP listener of any kind,
     writing a Maildir at tmp/mail-catcher (config rsx.mail.catcher_maildir). It accepts
     every recipient.

@@ -107,7 +107,7 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - `Task_Lock.php` — one named `RsxLocks` lock held across control flow (the enqueue and run
   locks). A claim is guarded by its pool lock and a guarded write, never by a `Task_Lock`.
 - `Task_Pool.php` — the client of rsx-lockd's worker-pool accountant (`pool.*` ops,
-  `system/bin/rsx-lockd/README.md` "Worker pools") for the THREE pools (`ON_DEMAND`,
+  `system/app/RSpade/resource/docker/rsx-lockd/README.md` "Worker pools") for the THREE pools (`ON_DEMAND`,
   `SCHEDULED`, `KILL`; daemon name `tasks:<pool>:<scope>`): ONE lifelong connection per
   process, no lock group, every call acknowledged. Lock/unlock, `join()` (answers `wid` +
   `generation`), `leave`, `count()` (excludes the caller), `member_alive()` /

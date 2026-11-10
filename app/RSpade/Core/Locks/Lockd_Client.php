@@ -8,7 +8,7 @@ use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Connection;
 
 /**
- * The RsxLocks transport to rsx-lockd (system/bin/rsx-lockd), the lock daemon whose
+ * The RsxLocks transport to rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd), the lock daemon whose
  * CONNECTION IS THE LOCK: a static facade over ONE Lockd_Connection per script execution.
  * The socket, framing, hello, response correlation and death handling are
  * Lockd_Connection's; every lock semantic lives in RsxLocks above and the daemon below.
@@ -111,7 +111,7 @@ class Lockd_Client
                 'detail' => 'rsx-lockd not listening on ' . $endpoint['host'] . ':' . $endpoint['port']
                     . ' (' . trim($errstr) . ') - every cluster lock will throw',
                 'remediation' => 'start the lock daemon - check supervisor [program:rsx-lockd]'
-                    . ' (bash system/bin/rsx-lockd/lockd-run.sh)',
+                    . ' (in the container: bash /opt/rspade/rsx-lockd/lockd-run.sh)',
             ];
         }
 

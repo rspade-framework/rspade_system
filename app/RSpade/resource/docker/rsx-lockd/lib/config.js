@@ -11,9 +11,10 @@
  *   3. <project>/lockd.conf       the operator's file
  *   4. <shipped>/lockd.conf       the copy beside the binary
  *
- * Step 3 is the one that matters inside RSpade: system/bin/ is a framework-owned zone that
- * `rsx:framework:pull` hard-syncs, so a downstream edit to the SHIPPED file is overwritten
- * on the next pull. The project-root file is the supported place to change settings.
+ * Step 3 is the one that matters inside RSpade: the shipped file is the container image's
+ * (or the framework's, which `rsx:framework:pull` hard-syncs), so a downstream edit to it is
+ * overwritten by the next image build or pull. The project-root file is the supported place
+ * to change settings.
  *
  * Validation is loud and total: an unknown key, a wrong type, or both listeners disabled
  * is an error with a message naming the key, never a silent default.

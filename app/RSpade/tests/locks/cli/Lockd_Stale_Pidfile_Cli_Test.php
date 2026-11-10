@@ -49,7 +49,7 @@ class Lockd_Stale_Pidfile_Cli_Test extends Rsx_Test_Abstract
 
     private static function __lockd_js(): string
     {
-        return base_path('bin/rsx-lockd/lockd.js');
+        return base_path('app/RSpade/resource/docker/rsx-lockd/lockd.js');
     }
 
     private static function __port_free(int $port): bool

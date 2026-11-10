@@ -1,0 +1,54 @@
+RSX-LOCKD (AND THE DEV MAIL CATCHER) ARE PART OF THE CONTAINER IMAGE; THEIR CHECKOUT PATHS ARE GONE
+Date: 2026-11-10
+
+IF YOU DO NOTHING: the next time rsx-lockd restarts - a crash, a supervisorctl restart, a container restart - it does not come back, and every request that takes a lock fails ("Cannot reach rsx-lockd at 127.0.0.1:6210"), because your container's supervisor still runs /var/www/html/system/bin/rsx-lockd/lockd-run.sh, which a framework pull has removed. A running daemon keeps running until then. On a box without the RSpade image, the same happens to a supervisor config copied from system/supervisor/rsx-lockd.conf. In the development image the mail catcher (system/bin/mail_catcher.py) is gone the same way.
+
+SUMMARY
+    Category 2 (a framework-owned file your environment runs by path). Affects
+    every deployment: a container built from an image older than this release,
+    and a box that runs rsx-lockd under its own supervisor configuration.
+
+THE CHANGE
+    rsx-lockd, the cluster lock daemon, is part of the container image, like
+    Proxority and the task scheduler. Its source moved from system/bin/rsx-lockd/
+    to system/app/RSpade/resource/docker/rsx-lockd/; the image installs it at
+    /opt/rspade/rsx-lockd/ and supervisor runs
+
+        bash /usr/local/bin/rspade-retry-run rsx-lockd bash /opt/rspade/rsx-lockd/lockd-run.sh
+
+    so a change to the daemon reaches a container when its image is rebuilt.
+    It serves the project at /var/www/html and reads that project's .env
+    (APP_KEY, the storage roots) as before; a <project>/lockd.conf still wins
+    over the shipped defaults.
+
+    The development mail catcher moved the same way: system/bin/mail_catcher.py
+    -> system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py, installed
+    at /opt/rspade/mail-catcher/.
+
+    Released alongside it: a stale pidfile never keeps a supervised service down
+    (rsx-lockd's own pidfile and the supervisor runner's per-service check) -
+    which reaches a container through the same image rebuild.
+
+ACTION REQUIRED
+    In a container (the RSpade image):
+    1. Pull the framework, then REBUILD THE IMAGE from it
+       (bash system/app/RSpade/resource/docker/build.sh <target>) and recreate
+       the container. Do both together: between the pull and the new container,
+       a restart of rsx-lockd does not come back.
+
+    Without the RSpade image (your own supervisor configuration):
+    1. Point your [program:rsx-lockd] at the framework's copy:
+
+           command=bash /var/www/html/system/app/RSpade/resource/docker/rsx-lockd/lockd-run.sh
+
+       (system/supervisor/rsx-lockd.conf carries the new line), then
+       supervisorctl reread && supervisorctl update rsx-lockd.
+
+    Your own scripts or tooling that ran node system/bin/rsx-lockd/lockd.js
+    (dump, exec, log) use system/app/RSpade/resource/docker/rsx-lockd/lockd.js
+    instead - in a container also /opt/rspade/rsx-lockd/lockd.js.
+
+VERIFICATION
+    supervisorctl status rsx-lockd is RUNNING, ps shows
+    "node /opt/rspade/rsx-lockd/lockd.js run" (or the framework path without the
+    image), and php artisan rsx:health reports Lock Server OK.

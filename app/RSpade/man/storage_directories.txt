@@ -421,7 +421,7 @@ WHAT RSX:CLEAN WIPES
 
     NOTE: never restart the web server to "clear locks". A web-cluster lock is
     held by a live connection to rsx-lockd and is released the instant its
-    holder exits - `node system/bin/rsx-lockd/lockd.js dump` shows exactly who
+    holder exits - `node system/app/RSpade/resource/docker/rsx-lockd/lockd.js dump` shows exactly who
     holds what, and force_clear is the deliberate override.
 
 THE ENVIRONMENT UPDATES

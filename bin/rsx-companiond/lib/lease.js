@@ -13,8 +13,11 @@
 
 const path = require('path');
 
-const lockd_client = require(path.join(__dirname, '..', '..', 'rsx-lockd', 'lib', 'client.js'));
-const protocol = require(path.join(__dirname, '..', '..', 'rsx-lockd', 'lib', 'protocol.js'));
+// rsx-lockd's client library, from the framework's copy of the daemon's source (the container
+// image runs its own copy of the daemon; the protocol is the same).
+const LOCKD_LIB = path.join(__dirname, '..', '..', '..', 'app', 'RSpade', 'resource', 'docker', 'rsx-lockd', 'lib');
+const lockd_client = require(path.join(LOCKD_LIB, 'client.js'));
+const protocol = require(path.join(LOCKD_LIB, 'protocol.js'));
 
 /** The server's own keepalive interval: a partitioned peer is noticed on the same clock. */
 const KEEPALIVE_MS = 30000;

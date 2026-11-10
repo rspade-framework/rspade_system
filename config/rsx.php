@@ -1860,7 +1860,7 @@ return [
     | Locks (rsx-lockd)
     |--------------------------------------------------------------------------
     |
-    | Web-cluster locks are served by rsx-lockd (system/bin/rsx-lockd), the lock
+    | Web-cluster locks are served by rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd), the lock
     | daemon whose CONNECTION IS THE LOCK - no lease, no TTL, no renewal. System
     | locks are flock() on this box and are not configured here.
     |
@@ -2550,7 +2550,7 @@ return [
         //              redirect a development install's mail at a real relay. The
         //              catcher's SMTP greeting must contain 'aiosmtpd' or every
         //              message is refused as a server error - see
-        //              system/bin/mail_catcher.py.
+        //              system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py.
         //   live       Real delivery through the Laravel mailer MAIL_MAILER names
         //              (config/mail.php). 'log' and 'array' are refused - they deliver
         //              nothing. The .dev.-hostname recipient whitelist/catchall gate

@@ -13,7 +13,7 @@ use App\RSpade\Core\Health\Rsx_Container_Sizing;
 use App\RSpade\Core\Locks\Lockd_Connection;
 
 /**
- * The task worker pools, as accounted by rsx-lockd (the `pool.*` ops, system/bin/rsx-lockd
+ * The task worker pools, as accounted by rsx-lockd (the `pool.*` ops, system/app/RSpade/resource/docker/rsx-lockd
  * README "Worker pools"). The daemon is the ONE party that knows how many workers exist:
  * membership belongs to a connection, so a worker that exits, crashes or is `kill -9`'d
  * stops being a member the moment its socket closes, with no heartbeat, lease or reaper.

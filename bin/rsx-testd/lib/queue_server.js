@@ -2,7 +2,7 @@
  * The work queue the test containers pull from.
  *
  * ONE unix socket, newline-delimited JSON, one request per connection - the house RPC
- * shape (see Core/JsParsers/resource/node-service.js and bin/rsx-lockd). The PHP client is
+ * shape (see Core/JsParsers/resource/node-service.js and app/RSpade/resource/docker/rsx-lockd). The PHP client is
  * Rsx_Test_Command::queue_request(): connect, write one line, read ONE line with fgets,
  * close. So every response goes back on the connection its request arrived on, and nothing
  * is ever written unsolicited.
@@ -39,7 +39,7 @@ const net = require('net');
 // The frame protocol is rsx-lockd's: one newline-delimited JSON frame per line, the same
 // splitter and the same MAX_FRAME_BYTES cap. The dependency points testd -> lockd only,
 // because rsx-lockd must stay liftable into its own repository with no dependencies.
-const { encode_frame, decode_frame, Frame_Reader } = require('../../rsx-lockd/lib/protocol.js');
+const { encode_frame, decode_frame, Frame_Reader } = require('../../../app/RSpade/resource/docker/rsx-lockd/lib/protocol.js');
 
 
 /**

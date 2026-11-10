@@ -31,11 +31,14 @@ const { Lockd_Server } = require('./lib/server');
 
 const VERSION = '1.0.0';
 
-// This file lives at <project>/system/bin/rsx-lockd/lockd.js inside RSpade. Outside it,
-// PROJECT_ROOT is simply three levels up and the only thing it is used for is locating an
-// optional .env and an optional <project>/lockd.conf - both absent is fine.
+// The daemon is part of the CONTAINER IMAGE: installed at /opt/rspade/rsx-lockd, its source
+// in the framework at system/app/RSpade/resource/docker/rsx-lockd (where a box with no image
+// runs it from). Either way the RSpade project it serves is at /var/www/html - the one place
+// every supervisor configuration names - and that is where it reads the .env (APP_KEY, the
+// storage roots) and an optional <project>/lockd.conf. The lockd.conf beside this file is the
+// shipped default.
 const SHIPPED_DIR = __dirname;
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
+const PROJECT_ROOT = '/var/www/html';
 
 // Exit codes. 124/125 follow GNU `timeout`'s convention of reserving the high codes for
 // "the tool itself gave up", so a caller can tell them from any code the child produced.
@@ -48,9 +51,11 @@ const EXIT_DEADLOCK = 125;
 // Environment
 // ---------------------------------------------------------------------------
 
-// The .env reader every node helper in system/bin shares. Only fills keys that are not
-// already in the real environment, so an explicit export always wins.
-const rsx_paths = require(path.join(__dirname, '..', 'lib', 'rsx_paths.js'));
+// The project's own .env reader and path resolver (system/bin/lib/rsx_paths.js), the one every
+// node helper shares. Only fills keys that are not already in the real environment, so an
+// explicit export always wins. Read from the project: with no checkout there is no key to
+// authenticate with either, and the start fails loudly and is retried.
+const rsx_paths = require(path.join(PROJECT_ROOT, 'system', 'bin', 'lib', 'rsx_paths.js'));
 const { load_env_file } = rsx_paths;
 
 // ---------------------------------------------------------------------------

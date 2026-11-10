@@ -340,6 +340,6 @@ public static function import_rows(Request $request, array $params = [])
 - **`SITE-LOCK-01: declares #[Reader] on #[Ajax_Endpoint], which is already a reader by default.`** - remove it.
 - **`... gives no reason`** / **`requires a reason`** (`#[Site_Lock_Exempt]`, `the SITE_LOCK_EXEMPT constant`, `Site_Lock::bypass()`, `Site_Lock::write_exception()`) - give one; it is logged / read by the next developer.
 - **`Site lock held too long: WRITE lock on site 7 held by ... for 3.412s (waited ...)`** in the log - `rsx.locks.warn_write_hold_seconds` / `warn_read_hold_seconds` (default 2, 0 disables). Move the slow work to a task, or split the hold (section 8). "waited" large and "held" small = a slow queue, not a slow holder.
-- **Everything waits, nothing errors** - a slow writer holds the site. `node system/bin/rsx-lockd/lockd.js dump` names the holder (`rspade:locks-and-subprocesses`).
+- **Everything waits, nothing errors** - a slow writer holds the site. `node system/app/RSpade/resource/docker/rsx-lockd/lockd.js dump` names the holder (`rspade:locks-and-subprocesses`).
 
 Related: `rsx:man site_locks`, `rsx:man request_history` (`_request_ref` replay on writers), skills `rspade:background-tasks`, `rspade:form-engine`, `rspade:session-auth`.

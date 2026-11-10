@@ -3,9 +3,9 @@
 # Supervisor entry point for rsx-lockd.
 #
 # Invoke with an explicit interpreter, never by relying on the exec bit:
-#   command=bash /var/www/html/system/bin/rsx-lockd/lockd-run.sh
-# (`rsx:framework:pull` rsyncs this zone with core.fileMode false downstream, so the exec
-# bit is not reliable.)
+#   command=bash /usr/local/bin/rspade-retry-run rsx-lockd bash /opt/rspade/rsx-lockd/lockd-run.sh
+# (the container image installs it at /opt/rspade/rsx-lockd; a box with no image runs the
+# framework's copy, system/app/RSpade/resource/docker/rsx-lockd. The exec bit is not relied on.)
 #
 # Why a wrapper at all: supervisor starts at boot, but on a freshly-provisioned or
 # mid-update box lockd.js may not be on disk yet - system/ is vendored and arrives with a

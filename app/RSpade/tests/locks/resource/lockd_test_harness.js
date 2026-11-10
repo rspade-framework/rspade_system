@@ -14,7 +14,7 @@
 
 const path = require('path');
 
-const LOCKD_DIR = process.env.LOCKD_DIR || '/var/www/html/system/bin/rsx-lockd';
+const LOCKD_DIR = process.env.LOCKD_DIR || '/var/www/html/system/app/RSpade/resource/docker/rsx-lockd';
 const PROJECT_ROOT = process.env.LOCKD_PROJECT_ROOT || '/var/www/html';
 
 const lockd = require(path.join(LOCKD_DIR, 'lockd.js'));

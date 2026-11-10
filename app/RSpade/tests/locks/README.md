@@ -10,7 +10,7 @@ asks for, and `?int $timeout = null` (the default everywhere) means wait forever
 **Two kinds of lock, and the choice is not a tuning knob:**
 
 1. **`CLUSTER_LOCK`** - spans every web server in the cluster, the way the cluster shares one
-   database. Served by the **rsx-lockd** daemon (`system/bin/rsx-lockd`) over a socket:
+   database. Served by the **rsx-lockd** daemon (`system/app/RSpade/resource/docker/rsx-lockd`) over a socket:
    readers-writer semantics, strict FIFO grant order, deadlock detection at enqueue, and
    counting semaphores. `named_*_lock()`, `site_*_lock()` and `acquire_semaphore()` are all
    cluster. **The connection IS the lock** - a socket close (clean exit, crash, `kill -9`, or a
@@ -63,18 +63,18 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   `Site_Lock_Rollback_Fixture_Api_Controller` and the shared task / command fixtures)
 - `system/app/RSpade/Core/Locks/Lockd_Client.php` - socket transport, hello handshake, the
   `#[Health_Check('Lock Server')]` probe
-- `system/bin/rsx-lockd/lib/protocol.js` - frames, the newline splitter, hello HMAC, THE
+- `system/app/RSpade/resource/docker/rsx-lockd/lib/protocol.js` - frames, the newline splitter, hello HMAC, THE
   timeout message
-- `system/bin/rsx-lockd/lib/pool.js` - worker pool accounting (`pool.*` ops): the pool lock,
+- `system/app/RSpade/resource/docker/rsx-lockd/lib/pool.js` - worker pool accounting (`pool.*` ops): the pool lock,
   membership, per-connection cleanup
-- `system/bin/rsx-lockd/lib/locktable.js` - holders, queues, grants, semaphores, deadlock
-- `system/bin/rsx-lockd/lib/server.js`, `lib/client.js`, `lib/config.js`
-- `system/bin/rsx-lockd/lockd.js` - CLI (`run`/`start`/`stop`/`dump`/`exec`)
+- `system/app/RSpade/resource/docker/rsx-lockd/lib/locktable.js` - holders, queues, grants, semaphores, deadlock
+- `system/app/RSpade/resource/docker/rsx-lockd/lib/server.js`, `lib/client.js`, `lib/config.js`
+- `system/app/RSpade/resource/docker/rsx-lockd/lockd.js` - CLI (`run`/`start`/`stop`/`dump`/`exec`)
 
 ## Man pages
 
 - `php artisan rsx:man locks`
-- `system/bin/rsx-lockd/README.md` (the daemon's own protocol/config/CLI spec)
+- `system/app/RSpade/resource/docker/rsx-lockd/README.md` (the daemon's own protocol/config/CLI spec)
 
 ## Testable surface
 

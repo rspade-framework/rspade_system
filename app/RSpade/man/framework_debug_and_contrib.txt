@@ -472,7 +472,7 @@ WHAT IS ALREADY ON YOUR DISK
       ../../bin/environment_updates/CLAUDE.md
                                       self-detecting idempotent scripts that
                                       repair an environment after an update
-      ../../bin/rsx-lockd/CLAUDE.md   the standalone lock daemon
+      resource/docker/rsx-lockd/CLAUDE.md   the standalone lock daemon
 
   What does NOT ship
     Two things are absent by design. (The framework test suite,
@@ -1636,7 +1636,7 @@ SUBSYSTEM PRIMERS
     References
       Man pages: tasks, task_commands, locks, maintenance_mode, health,
       realtime, revisions.
-      Colocated: Core/Task/CLAUDE.md, bin/rsx-lockd/CLAUDE.md.
+      Colocated: Core/Task/CLAUDE.md, resource/docker/rsx-lockd/CLAUDE.md.
       Source: Core/Task/ (Task.php, Task_Runner, Task_Run_Outcome,
       Task_Instance, Task_Run_Model, Task_Concurrency, Task_Pool, Task_Lock,
       Task_Kill_Worker, Task_Gates, Task_Notify, Rsx_Task_Controller,
@@ -1646,7 +1646,7 @@ SUBSYSTEM PRIMERS
       Task_Worker_Command.php, Task_Killer_Command.php, Task_Run_Command.php,
       Tasks_*_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php,
       Lockd_Connection.php),
-      Core/Console/Rsx_Artisan.php, system/bin/rsx-lockd/,
+      Core/Console/Rsx_Artisan.php, system/app/RSpade/resource/docker/rsx-lockd/,
       config/rsx.php (tasks, locks).
       Skills: rspade:background-tasks, rspade:task-access, rspade:task-commands,
       rspade:locks-and-subprocesses, rspade:maintenance-mode.
@@ -2188,7 +2188,7 @@ SUBSYSTEM PRIMERS
       Mail_Queue_Service, Rsx_Mail_Builder, Rsx_Mail_Transport,
       Mail_Unsubscribe_Controller, Email_ManifestSupport),
       Core/Models/Email_Queue_Model.php, Core/Sms/,
-      Commands/Rsx/Mail_*.php, system/bin/mail_catcher.py,
+      Commands/Rsx/Mail_*.php, system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py,
       config/rsx.php (mail, sms),
       resource/reference_app/emails/ (worked examples).
       Skill: rspade:email-and-sms.

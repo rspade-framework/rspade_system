@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Locks;
 use RuntimeException;
 
 /**
- * ONE socket to rsx-lockd (system/bin/rsx-lockd): dial with retry, the HMAC hello, newline
+ * ONE socket to rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd): dial with retry, the HMAC hello, newline
  * JSON framing, request ids, out-of-order response parking, and loud death. It owns bytes
  * and framing only - what a frame MEANS belongs to its owner.
  *
@@ -278,7 +278,7 @@ class Lockd_Connection
 
     /**
      * Authenticate the connection: HMAC-SHA256 over host:pid:ts keyed by APP_KEY, exactly as
-     * system/bin/rsx-lockd/lib/protocol.js signs it. The RAW APP_KEY string is the shared
+     * system/app/RSpade/resource/docker/rsx-lockd/lib/protocol.js signs it. The RAW APP_KEY string is the shared
      * secret (the daemon reads the same characters out of the environment or .env) - never a
      * base64-decoded form of it.
      */

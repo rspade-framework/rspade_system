@@ -161,9 +161,10 @@ for one file. A service added to the image that keeps such a file gets an entry 
 | `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics, companion application records; LRU over all of it, capped to the machine (below) |
 | `mysql` | dev target only |
 | `realtime` | WebSocket relay behind `/ws` |
-| `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
+| `rsx-lockd` | cluster lock daemon — load-bearing, see its config. Part of the image: `rsx-lockd/` here, installed at `/opt/rspade/rsx-lockd/`, so a change to it ships with an image rebuild; it reads the project's `.env` at `/var/www/html` |
 | `rsx-companiond` | runs the application's companion applications (`rsx:man companion_apps`); always up and idle until one is started. `stopwaitsecs=360` (the largest companion grace, 300, plus a minute) covers its stop: the retry runner passes the signal on and waits. Absent from the test worker images, whose tests start their own |
 | `tasks` | **the cron replacement**: `rspade-taskd` runs `rsx:task:process` when work comes due and when the application pokes it |
+| `mail-catcher` | dev target only — the SMTP mail sink on `127.0.0.1:1025`; `mail-catcher/` here, installed at `/opt/rspade/mail-catcher/` |
 | `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 | `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
 

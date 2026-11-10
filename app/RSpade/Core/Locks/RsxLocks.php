@@ -30,7 +30,7 @@ if (file_exists($helpers_path)) {
  * TWO KINDS OF LOCK. They are different things and the choice is not a tuning knob:
  *
  *   CLUSTER_LOCK - spans every web server in the cluster, the same way the cluster shares
- *       one database. Served by the rsx-lockd daemon (system/bin/rsx-lockd) over a socket,
+ *       one database. Served by the rsx-lockd daemon (system/app/RSpade/resource/docker/rsx-lockd) over a socket,
  *       with full readers-writer semantics, strict FIFO grant order, and deadlock detection
  *       at enqueue. Use it for anything guarding shared state: a tenant, the blob store, a
  *       cluster-wide concurrency quota. `named_*_lock()` and `site_*_lock()` are cluster.
@@ -911,7 +911,7 @@ class RsxLocks
      * `['available' => false, 'reason' => ...]`, never an exception. System (flock) locks
      * never reach the daemon and are not logged.
      *
-     * CLI twin: `node system/bin/rsx-lockd/lockd.js log on|off [--verbose] [--path=<file>]`.
+     * CLI twin: `node system/app/RSpade/resource/docker/rsx-lockd/lockd.js log on|off [--verbose] [--path=<file>]`.
      *
      * @param  bool        $enabled Record events, or stop recording them.
      * @param  string|null $path    Absolute destination on the daemon's host; null keeps
@@ -1255,7 +1255,7 @@ class RsxLocks
     /**
      * THE timeout message, emitted verbatim. system/bin/framework-pull-upstream.sh greps
      * `Failed to acquire.*lock` to classify a retryable pull failure, and
-     * system/bin/rsx-lockd/lib/protocol.js produces character-for-character the same string.
+     * system/app/RSpade/resource/docker/rsx-lockd/lib/protocol.js produces character-for-character the same string.
      * Do not reword.
      */
     private static function __timeout_message(string $domain, string $name, string $type, int $timeout): string

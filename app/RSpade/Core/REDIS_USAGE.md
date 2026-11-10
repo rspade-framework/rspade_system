@@ -30,7 +30,7 @@ memory, otherwise the larger of 64 MB and 5% of memory, written by the container
 start (`REDIS_MAXMEMORY_MB` overrides it; `rspade-sizing`).
 
 **Redis does NOT back locking.** `RsxLocks` left Redis entirely: web-cluster locks are held
-by a live socket to the `rsx-lockd` daemon (`system/bin/rsx-lockd/`), and system locks are
+by a live socket to the `rsx-lockd` daemon (`system/app/RSpade/resource/docker/rsx-lockd/`), and system locks are
 `flock()` files under `storage/flock/`. A lock has no TTL, no lease and no renewal, because
 its holder is a connection rather than a key with an expiry. See `php artisan rsx:man locks`
 and `Core/Locks/RsxLocks.php`. Nothing in this file applies to locks.

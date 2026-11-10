@@ -182,7 +182,7 @@ class Mail_Catcher_Delivery_Test extends Rsx_Test_Abstract
 
         static::__assert_true(
             stripos($banner, 'aiosmtpd') !== false,
-            'the greeting says aiosmtpd (got: ' . $banner . ') - see system/bin/mail_catcher.py'
+            'the greeting says aiosmtpd (got: ' . $banner . ') - see system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py'
         );
 
         static::__assert_null(

@@ -449,15 +449,22 @@ MAINTENANCE MODE
     See rsx:man maintenance_mode.
 
 THE RSX LOCKD DAEMON
-    system/bin/rsx-lockd/ - a standalone Node process, zero npm dependencies,
-    speaking newline-delimited JSON over TCP and/or a unix socket. It runs under
-    supervisor:
+    A standalone Node process, zero npm dependencies, speaking newline-delimited
+    JSON over TCP and/or a unix socket. It is part of the CONTAINER IMAGE: its
+    source is system/app/RSpade/resource/docker/rsx-lockd/, the image installs it
+    at /opt/rspade/rsx-lockd/, and supervisor runs it:
 
         [program:rsx-lockd]
-        command=bash /var/www/html/system/bin/rsx-lockd/lockd-run.sh
+        command=bash /usr/local/bin/rspade-retry-run rsx-lockd bash /opt/rspade/rsx-lockd/lockd-run.sh
         autostart=true
         autorestart=true
         startsecs=5
+
+    So a change to the daemon reaches a container when its image is rebuilt, not
+    on rsx:framework:pull. A box with no image runs the framework's copy
+    (system/supervisor/rsx-lockd.conf). Either way it serves the project at
+    /var/www/html: APP_KEY and the storage roots come from that project's .env.
+    A stale pidfile never keeps it down: only a running rsx-lockd blocks a start.
 
     IT MUST BE RUNNING. Outside maintenance mode there is no degraded mode:
     every cluster lock throws if the daemon is unreachable, which means a site
@@ -527,7 +534,7 @@ THE RSX LOCKD DAEMON
     CONFIGURATION lives on both sides and is hand-synced, because the daemon is
     a Node process that cannot read Laravel's config:
 
-        listen side   system/bin/rsx-lockd/lockd.conf (or <project>/lockd.conf,
+        listen side   system/app/RSpade/resource/docker/rsx-lockd/lockd.conf (or <project>/lockd.conf,
                       which wins - system/bin/ is framework property, overwritten on every update, whose
                       shipped copy is overwritten on framework pull)
         connect side  config('rsx.locks.server_host' / 'server_port'), from
@@ -537,7 +544,7 @@ THE RSX LOCKD DAEMON
     The two are legitimately different VALUES: the daemon binds 0.0.0.0:6210 and
     PHP dials 127.0.0.1:6210. Change the port on both sides together.
 
-    Full protocol and configuration reference: system/bin/rsx-lockd/README.md.
+    Full protocol and configuration reference: system/app/RSpade/resource/docker/rsx-lockd/README.md.
 
 THE RSX LOCKD CLI
     Run it with node from the daemon directory:
@@ -768,6 +775,6 @@ SEE ALSO
     rsx:man libreoffice       Document rendering (one #[Exclusive] worker)
     rsx:man health            The Lock Server and Task Worker Pools checks
     rsx:man config_rsx        The rsx.locks config block
-    system/bin/rsx-lockd/README.md   The daemon's own protocol and CLI reference
+    system/app/RSpade/resource/docker/rsx-lockd/README.md   The daemon's own protocol and CLI reference
 
 LOCKS(1)                          RSpade Manual                          LOCKS(1)

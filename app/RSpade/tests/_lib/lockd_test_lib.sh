@@ -18,7 +18,7 @@
 # Every function is deliberately quiet on success (unix philosophy); failures print an
 # [ERROR] line naming what went wrong.
 
-LOCKD_DIR="/var/www/html/system/bin/rsx-lockd"
+LOCKD_DIR="/var/www/html/system/app/RSpade/resource/docker/rsx-lockd"
 LOCKD_PROJECT_ROOT="/var/www/html"
 # The node-side helper lives under a `resource/` dir on purpose: that basename is excluded
 # from manifest scanning, and a module.exports file anywhere the JS indexer looks is a build

@@ -289,6 +289,17 @@ RUN chown -R root:root /opt/rspade/rspade-taskd \
     && find /opt/rspade/rspade-taskd -type f -exec chmod 644 {} + \
     && chmod 755 /usr/local/bin/rspade-taskd
 
+# rsx-lockd - the cluster lock daemon every application lock is granted by. Source:
+# resource/docker/rsx-lockd/, installed at /opt/rspade/rsx-lockd/ and run by supervisor as
+# `bash /opt/rspade/rsx-lockd/lockd-run.sh`, so a change to it ships with the image. It serves
+# the project at /var/www/html and reads that project's .env (APP_KEY, the storage roots,
+# through system/bin/lib/rsx_paths.js) - with no checkout it has no key, fails loudly, and the
+# retry runner tries again. Node core only, nothing installed. Root-owned, world-readable.
+COPY rsx-lockd/ /opt/rspade/rsx-lockd/
+RUN chown -R root:root /opt/rspade/rsx-lockd \
+    && find /opt/rspade/rsx-lockd -type d -exec chmod 755 {} + \
+    && find /opt/rspade/rsx-lockd -type f -exec chmod 644 {} +
+
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
@@ -567,6 +578,13 @@ RUN chmod 644 /etc/supervisor/conf.d/mysql.conf
 # at best ignored and at worst writable by anything in the container.
 COPY supervisor/conf.d/mail-catcher.conf /etc/supervisor/conf.d/mail-catcher.conf
 RUN chmod 644 /etc/supervisor/conf.d/mail-catcher.conf
+
+# Its source: resource/docker/mail-catcher/, installed at /opt/rspade/mail-catcher/ (the
+# python3-aiosmtpd it runs on is installed above). Root-owned, world-readable.
+COPY mail-catcher/ /opt/rspade/mail-catcher/
+RUN chown -R root:root /opt/rspade/mail-catcher \
+    && find /opt/rspade/mail-catcher -type d -exec chmod 755 {} + \
+    && find /opt/rspade/mail-catcher -type f -exec chmod 644 {} +
 
 # -----------------------------------------------------------------------------
 # prod - application runtime only; the database lives elsewhere

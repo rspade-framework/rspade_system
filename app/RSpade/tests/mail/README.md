@@ -72,7 +72,7 @@ Invariants the tests exist to hold:
 | `Commands/Rsx/Mail_Queue_Command.php` | `rsx:mail:queue` - the summary and the filtered listing |
 | `Commands/Rsx/Mail_Show_Command.php` | `rsx:mail:show` - one row in full |
 | `Commands/Rsx/Mail_Resend_Command.php` | `rsx:mail:resend` - the escape hatch, and the Blocked `--force` gate |
-| `system/bin/mail_catcher.py` | The development catcher, the `aiosmtpd` greeting the mode verifies, and the Maildir it re-creates before every delivery |
+| `system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py` | The development catcher, the `aiosmtpd` greeting the mode verifies, and the Maildir it re-creates before every delivery |
 | `helpers.php` (`rsx_absolute_url`) | The origin every emailed link needs |
 
 Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.

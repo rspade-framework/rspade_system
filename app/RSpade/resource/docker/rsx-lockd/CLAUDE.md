@@ -1,8 +1,17 @@
 # rsx-lockd - agent notes
 
 Standalone lock daemon. **Zero npm dependencies** (node core only) so this directory can
-be lifted into its own repo unchanged. Do not add one. `system/bin/` is a framework-owned
-hard-synced zone, so anything here self-distributes downstream on `rsx:framework:pull`.
+be lifted into its own repo unchanged. Do not add one.
+
+**Part of the container image.** This directory is the source; the image installs it at
+`/opt/rspade/rsx-lockd/` and supervisor runs `bash /opt/rspade/rsx-lockd/lockd-run.sh`, so a
+change here reaches a container when its IMAGE is rebuilt, not on `rsx:framework:pull`. A box
+with no image runs this copy (`system/supervisor/rsx-lockd.conf`). The project it serves is
+always `/var/www/html`: its `.env` (APP_KEY, storage roots, read through
+`system/bin/lib/rsx_paths.js`) and an optional `<project>/lockd.conf`. `lib/client.js` and
+`lib/protocol.js` are also a LIBRARY other checkout code loads from here (the companion
+daemon's leases, the test runner's queue codec, the PHP client's parity tests) - the image's
+copy serves only the daemon.
 
 Read `README.md` first - it is the user-facing spec (protocol table, config keys, CLI,
 exit codes). This file is the map of the implementation.

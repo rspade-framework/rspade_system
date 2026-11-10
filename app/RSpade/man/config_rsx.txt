@@ -968,7 +968,7 @@ LOCKS
     lock. System locks are flock() on this box and are not configured here.
 
     server_host/server_port are the CONNECT side and must agree with the
-    daemon's own listen side in system/bin/rsx-lockd/lockd.conf (or the
+    daemon's own listen side in system/app/RSpade/resource/docker/rsx-lockd/lockd.conf (or the
     project-root lockd.conf that overrides it). The Node daemon reads that
     JSON file directly and has no access to Laravel's config, so the two
     are kept in sync BY HAND. They are legitimately different VALUES - the
