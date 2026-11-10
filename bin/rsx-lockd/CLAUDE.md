@@ -250,3 +250,10 @@ accommodated by teaching the detector about pools.
   work without the key. Everything else requires the handshake.
 - **Unix socket bind probes before unlinking.** A stale file is removed; a live one is
   refused, so a second daemon can never steal a running instance's path.
+- **The pidfile blocks only a running rsx-lockd** (`is_lockd()`: alive AND `/proc/<pid>/cmdline`
+  names `lockd.js`). `run` replaces a pidfile naming anything else, logging what the pid was;
+  `start` treats it as not running; `stop` removes it and NEVER signals that pid. Pids in a
+  container restart from 1, so after a host reboot a surviving pidfile usually names some
+  unrelated live process - a liveness-only check kept the daemon down for hours on a live
+  deployment, and `stop` would have killed the stranger. The real single-instance guarantee
+  is the port bind. Tests: `tests/locks/cli/Lockd_Stale_Pidfile_Cli_Test.php`.

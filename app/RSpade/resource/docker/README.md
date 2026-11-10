@@ -141,6 +141,18 @@ the service were the program itself. Two exceptions: `mysql` relies on superviso
 restart (also forever), because `migrate` stops it to copy the data directory, and `dockerd`
 is never restarted (its launcher exits on purpose when the host grants no nested Docker).
 
+**A stale pid or lock file never keeps a service down.** Before EVERY start - the first and
+each restart - the runner removes each pid or lock file the service is known to keep (its
+table: `rsx-lockd`, `nginx`, `mysql`'s pid and socket locks, `dockerd` and its containerd)
+unless the pid in it is a running copy of THAT service, matched on the process's command line.
+Pids in a container start again from 1, so after a host reboot that kept the container's
+`/run` a leftover file usually names some unrelated live process, and a daemon that refuses to
+start while "its" pid lives would stay down until that process happened to exit. Checked at
+every start, the next attempt recovers from inside the running container. `mysql` and
+`dockerd` start through the runner's `--exec` mode: the same check, then the runner becomes
+the program, with no loop. `retry-run.sh --clear-stale-pidfile <file> <pattern>` is the check
+for one file. A service added to the image that keeps such a file gets an entry in the table.
+
 | Service | What it does |
 |---|---|
 | `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator, plus the loopback-only listeners of the request path (below) |

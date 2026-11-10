@@ -34,6 +34,110 @@
 #
 set -u
 
+# STALE PID AND LOCK FILES. Before EVERY start - the first one and each restart - the wrapper
+# checks the pid and lock files the service is known to keep, and removes each one whose pid
+# is not a running copy of THAT service. A pidfile only blocks a start when the process it
+# names is alive AND is the program named.
+#
+# Why every start and not just container boot: pids in a container start again from 1, so
+# after a host reboot that kept the container's filesystem (/run is not a tmpfs) a pidfile's
+# old pid is almost always taken by some other process - a php-fpm worker - and a service
+# that refuses to start while "its" pid is alive stays down until that unrelated process
+# happens to exit. That kept the lock daemon down for six hours on a live deployment while
+# supervisor showed it RUNNING. Checked at every start, the wrapper's next attempt recovers
+# from inside the running container, whatever made the file stale.
+#
+# THE TABLE is keyed by the supervisor program label, so a service is covered wherever it
+# is declared. A service not listed keeps no such file. Each entry: a file and the pattern
+# its process's command line must match (/proc/<pid>/cmdline, NULs as spaces, grep -E).
+#
+#     retry-run.sh <label> <command> [args...]           retry forever (the default)
+#     retry-run.sh --exec <label> <command> [args...]    check, then BECOME the service:
+#         no retry and no restart - for a program supervisor must restart itself, or not
+#         at all (mysql: `migrate` stops it to snapshot the datadir; dockerd)
+#     retry-run.sh --clear-stale-pidfile <file> <pattern>   the check for one file
+#
+runtime_files() {
+    case "$1" in
+        rsx-lockd)
+            # lockd checks its own (configurable) pidfile by identity too; this is the default.
+            echo '/var/run/rsx-lockd.pid|lockd\.js'
+            ;;
+        nginx)
+            echo '/run/nginx.pid|(^|/| )nginx( |:|$)'
+            ;;
+        mysql)
+            echo '/var/run/mysqld/mysqld.pid|(^|/)mysqld( |$)'
+            echo '/var/run/mysqld/mysqld.sock.lock|(^|/)mysqld( |$)'
+            echo '/var/run/mysqld/mysqlx.sock.lock|(^|/)mysqld( |$)'
+            ;;
+        dockerd)
+            echo '/var/run/docker.pid|(^|/)dockerd( |$)'
+            # dockerd starts its own containerd and acts on a pid it finds here as its own.
+            echo '/var/run/docker/containerd/containerd.pid|(^|/)containerd( |$)'
+            ;;
+    esac
+}
+
+# Remove $1 unless the pid in it is a running process whose command line matches $2. Says
+# what it removed and why, one line.
+clear_stale_pidfile() {
+    local file="$1" pattern="$2" pid cmdline
+
+    [ -e "$file" ] || return 0
+
+    pid="$(tr -cd '0-9' < "$file" 2>/dev/null | head -c 10)"
+
+    # This wrapper is never a running copy of the service it is about to start - and its own
+    # command line names that service, so after a reboot that handed it the old pid it would
+    # otherwise match.
+    if [ "$pid" = "$$" ]; then
+        echo "[pidfile] removing stale ${file}: pid ${pid} is this wrapper, not the service"
+        rm -f -- "$file"
+        return 0
+    fi
+
+    if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ]; then
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+
+        # A zombie's cmdline is empty: it is no running service.
+        if [ -n "$cmdline" ] && printf '%s' "$cmdline" | grep -Eq -- "$pattern"; then
+            return 0
+        fi
+
+        echo "[pidfile] removing stale ${file}: pid ${pid} is not this service (${cmdline:-a zombie})"
+    else
+        echo "[pidfile] removing stale ${file}: pid ${pid:-<none>} is not running"
+    fi
+
+    rm -f -- "$file"
+}
+
+clear_stale_runtime_files() {
+    local entry
+
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        clear_stale_pidfile "${entry%%|*}" "${entry#*|}"
+    done < <(runtime_files "$1")
+}
+
+if [ "${1:-}" = '--clear-stale-pidfile' ]; then
+    [ "$#" -eq 3 ] || { echo 'usage: retry-run.sh --clear-stale-pidfile <file> <pattern>' >&2; exit 1; }
+    clear_stale_pidfile "$2" "$3"
+    exit 0
+fi
+
+if [ "${1:-}" = '--exec' ]; then
+    shift
+    LABEL="${1:?retry-run.sh --exec needs a label}"
+    shift
+    [ "$#" -gt 0 ] || { echo "[$LABEL] no command given" >&2; exit 1; }
+
+    clear_stale_runtime_files "$LABEL"
+    exec "$@"
+fi
+
 LABEL="${1:?retry-run.sh needs a label}"
 shift
 
@@ -68,6 +172,8 @@ attempt=0
 while true; do
     attempt=$((attempt + 1))
     started=$SECONDS
+
+    clear_stale_runtime_files "$LABEL"
 
     ( trap - INT QUIT; exec "$@" ) &
     child=$!

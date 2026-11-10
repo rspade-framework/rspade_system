@@ -326,6 +326,33 @@ function is_alive(pid) {
     }
 }
 
+/**
+ * Is $pid a running rsx-lockd? A pidfile only means anything when it names one: pids are
+ * reused, and inside a container they start again from 1 after a reboot, so a pidfile that
+ * outlived its daemon usually names some OTHER live process. Read from /proc (Linux); a
+ * process whose command line cannot be read is not taken to be lockd.
+ */
+function is_lockd(pid) {
+    if (!is_alive(pid)) return false;
+    try {
+        const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0').join(' ');
+        return /lockd\.js( |$)/.test(cmdline);
+    } catch (err) {
+        return false;
+    }
+}
+
+/** What a pid is, for a log line: its command line, or why there is none. */
+function describe_pid(pid) {
+    if (!is_alive(pid)) return 'not running';
+    try {
+        const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0').join(' ').trim();
+        return cmdline === '' ? 'a zombie' : 'another process: ' + cmdline;
+    } catch (err) {
+        return 'another process';
+    }
+}
+
 function write_pidfile(pidfile, pid) {
     const dir = path.dirname(pidfile);
     if (!fs.existsSync(dir)) {
@@ -358,12 +385,15 @@ async function command_run(flags) {
     });
     const log = (message) => logger.write(message);
 
+    // Only a live rsx-lockd blocks the start. A pidfile naming anything else is stale - after
+    // a host reboot its pid usually belongs to some unrelated process - and is replaced below.
     const existing = read_pidfile(config.pidfile);
-    if (existing && is_alive(existing) && existing !== process.pid) {
+    if (existing && existing !== process.pid && is_lockd(existing)) {
         fail('rsx-lockd is already running as pid ' + existing + ' (' + config.pidfile + ')');
     }
-    if (existing && !is_alive(existing)) {
-        log('[WARNING] Removing stale pidfile ' + config.pidfile + ' (pid ' + existing + ' is not running)');
+    if (existing && existing !== process.pid) {
+        log('[WARNING] Removing stale pidfile ' + config.pidfile + ' (pid ' + existing + ' is ' + describe_pid(existing) + ')');
+        remove_pidfile(config.pidfile);
     }
 
     log('rsx-lockd ' + VERSION + ' starting (config ' + resolved.path + ', source ' + resolved.source + ')');
@@ -421,12 +451,12 @@ async function command_start(flags) {
     resolve_hmac_key(config);
 
     const existing = read_pidfile(config.pidfile);
-    if (existing && is_alive(existing)) {
+    if (existing && is_lockd(existing)) {
         console.log('[lockd] Already running as pid ' + existing);
         return EXIT_OK;
     }
     if (existing) {
-        console.log('[lockd] [WARNING] Stale pidfile ' + config.pidfile + ' (pid ' + existing + ' is gone)');
+        console.log('[lockd] [WARNING] Stale pidfile ' + config.pidfile + ' (pid ' + existing + ' is ' + describe_pid(existing) + ')');
         remove_pidfile(config.pidfile);
     }
 
@@ -469,8 +499,9 @@ async function command_stop(flags) {
         console.log('[lockd] Not running (no pidfile at ' + config.pidfile + ')');
         return EXIT_OK;
     }
-    if (!is_alive(pid)) {
-        console.log('[lockd] [WARNING] Stale pidfile ' + config.pidfile + ' (pid ' + pid + ' is gone) - removing');
+    // Never signal a pid that is not lockd: a stale pidfile names whatever process took it.
+    if (!is_lockd(pid)) {
+        console.log('[lockd] [WARNING] Stale pidfile ' + config.pidfile + ' (pid ' + pid + ' is ' + describe_pid(pid) + ') - removing');
         remove_pidfile(config.pidfile);
         return EXIT_OK;
     }

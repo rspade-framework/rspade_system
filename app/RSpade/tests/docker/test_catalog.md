@@ -65,3 +65,16 @@
 | DOCKER-PROX-05 | in the built image `nginx -t` passes with each variant active, and with the checkout variant a `.php` URL answers 404 on all four listeners while `/` still reaches index.php | manual | the DOCKER-PROX-04 container, variant swapped + `nginx -s reload` | as stated | verified by hand 2026-11-03 (dev) | 2026-11-03 |
 
 With a checkout mounted, the live request path through the image's Proxority (the `.php` refusal included) is `tests/proxority`'s `Proxority_Live_Stack_Test`, which runs in the docker test workers built from the development image.
+
+## Retry_Run_Stale_Pidfile_Test (php) - a stale pid or lock file never keeps a service down
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-PID-01 | a pidfile naming a live process of ANOTHER program is removed, saying what the pid is; that process is untouched | php | `--clear-stale-pidfile` on a file holding a `sleep`'s pid, mysqld pattern | file gone, message names `sleep`, the sleep alive | implemented | 2026-11-10 |
+| DOCKER-PID-02 | a pidfile naming a live copy of the service is kept, silently | php | the sleep's pid, sleep pattern | file kept, no output | implemented | 2026-11-10 |
+| DOCKER-PID-03 | a dead pid, a non-numeric file and an empty file are removed | php | `999999999`, `not a pid`, empty | all removed | implemented | 2026-11-10 |
+| DOCKER-PID-04 | a lock file holding a bare pid (mysqld's socket lock) is read like a pidfile | php | pid with no newline | removed when it names another program | implemented | 2026-11-10 |
+| DOCKER-PID-05 | the runner's own pid is never the service, though its command line names it | php | pidfile holding the checking process's pid, pattern matching it | removed, "is this wrapper" | implemented | 2026-11-10 |
+| DOCKER-PID-06 | `--exec` becomes the command | php | `--exec <label> bash -c 'echo ran; exit 7'` | output `ran`, exit 7 | implemented | 2026-11-10 |
+| DOCKER-PID-07 | every service that keeps such a file has a table entry; nginx's matches nginx.conf; mysql and dockerd start through `--exec` | php | the shipped runner, nginx.conf, mysql.conf, dockerd-run.sh | entries and command lines present | implemented | 2026-11-10 |
+

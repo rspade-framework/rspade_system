@@ -102,4 +102,7 @@ fi
 mkdir -p /var/lib/docker
 
 log "starting dockerd."
-exec dockerd "$@"
+# Through the runner's --exec mode: a docker.pid or containerd.pid left by an earlier boot,
+# naming a pid some other process now holds, is removed first (dockerd refuses to start
+# while such a pid lives, and acts on a containerd pid it finds as its own). No retry.
+exec bash /usr/local/bin/rspade-retry-run --exec dockerd dockerd "$@"
