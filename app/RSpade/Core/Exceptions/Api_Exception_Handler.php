@@ -27,7 +27,9 @@ use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
  *
  * For a caller Rsx_Diagnostics::caller_sees_detail() admits (a developer, outside
  * production) the message carries the exception text and class. Everybody else gets the
- * generic "Internal server error" and an error_id, with the detail logged under that id.
+ * generic "Internal server error" (or the failure's user-safe sentence,
+ * Rsx_Diagnostics::user_message() - an outage's included) and an error_id, with the detail
+ * logged under that id.
  */
 class Api_Exception_Handler extends Rsx_Exception_Handler_Abstract
 {
@@ -64,7 +66,7 @@ class Api_Exception_Handler extends Rsx_Exception_Handler_Abstract
         }
 
         return Api_Dispatcher::stamp_response(
-            Api_Dispatcher::_error('internal_error', 'Internal server error', 500, null, [
+            Api_Dispatcher::_error('internal_error', Rsx_Diagnostics::user_message($e) ?? 'Internal server error', 500, null, [
                 'error_id' => Rsx_Diagnostics::report_redacted($e, 'api'),
             ]),
             $request

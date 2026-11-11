@@ -246,12 +246,14 @@ class _Apidocs_Catalog {
     }
 
     /**
-     * URL of the OpenAPI document, derived from where the console is mounted.
+     * URL of the console's browser download of the OpenAPI document, derived from where the
+     * console is mounted.
      *
-     * NOT Rsx.Route(): the framework declares no route for the console or the document -
-     * the APPLICATION declares both - so there is no framework route target to name. The
-     * document sits beside the console at <mount>/openapi.json, which is the contract the
-     * template's Apidocs_Controller implements.
+     * NOT Rsx.Route(): the APPLICATION declares the console and this download beside it at
+     * <mount>/openapi.json (the contract the template's Apidocs_Controller implements), so
+     * there is no framework route target to name. A link cannot carry a bearer key, which is
+     * why the console does not point at the framework's GET /api/vN/openapi.json - the one a
+     * program reads.
      */
     static openapi_url() {
         return _Apidocs_Catalog.base_path().replace(/\/+$/, '') + '/openapi.json';

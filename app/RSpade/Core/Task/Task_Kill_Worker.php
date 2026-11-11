@@ -235,17 +235,29 @@ class Task_Kill_Worker
     /**
      * Claim a pending request for THIS process to carry out directly (rsx:tasks:disable, which
      * cannot spawn a kill worker under maintenance mode). False when a kill worker took it.
+     * The claimer is recorded as its pid AND that pid's start time: the claim is live only
+     * while both still name a running process (Process_Identity::is_running()).
      */
     public static function claim_for_this_process(int $request_id): bool
     {
         return (bool) DB::table('_task_kill_requests')
             ->where('id', $request_id)
             ->where('status_id', Task_Kill_Request_Model::STATUS_PENDING)
-            ->update([
-                'status_id' => Task_Kill_Request_Model::STATUS_CLAIMED,
-                'worker_pid' => getmypid(),
-                'updated_at' => now(),
-            ]);
+            ->update(['status_id' => Task_Kill_Request_Model::STATUS_CLAIMED] + static::__claimer_fields());
+    }
+
+    /**
+     * The claiming process's identity columns: its pid and that pid's kernel start time.
+     */
+    private static function __claimer_fields(): array
+    {
+        $pid = getmypid();
+
+        return [
+            'worker_pid' => $pid,
+            'worker_pid_start_time' => Process_Identity::start_time($pid),
+            'updated_at' => now(),
+        ];
     }
 
     /**
@@ -273,11 +285,9 @@ class Task_Kill_Worker
                 ->where('status_id', Task_Kill_Request_Model::STATUS_PENDING)
                 ->update([
                     'status_id' => Task_Kill_Request_Model::STATUS_CLAIMED,
-                    'worker_pid' => getmypid(),
                     'worker_id' => $identity['wid'],
                     'worker_generation' => $identity['generation'],
-                    'updated_at' => now(),
-                ]);
+                ] + static::__claimer_fields());
 
             if ($claimed) {
                 return (int) $id;

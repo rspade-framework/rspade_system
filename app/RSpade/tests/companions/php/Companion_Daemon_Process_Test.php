@@ -129,26 +129,35 @@ class Companion_Daemon_Process_Test extends Rsx_Test_Abstract
             $daemon = static::__start_daemon($s);
             static::__desire($s, 'alpha', true);
 
-            $started = microtime(true);
-            static::__poll_until(fn () => static::__status($s, 'alpha')['restart_count'] >= 3, 'three restarts of a crashing companion');
-            $elapsed = microtime(true) - $started;
+            // Four ended instances: the first run and three restarts.
+            static::__poll_until(fn () => count(static::__history($s, 'alpha')) >= 4, 'three restarts of a crashing companion, each ended');
 
-            // The delays before restarts 1, 2 and 3 are 1, 2 and 2 seconds: 5 at least, however
-            // fast the box is. A storm would be three restarts in a fraction of that.
-            static::__assert_greater_than(4.5, $elapsed, 'three restarts took at least the backoff they owe');
+            // The delays owed before restarts 1, 2 and 3 are 1, 2 and 2 seconds. Read from the
+            // daemon's own records (an instance's ended_at, the next one's started_at, both its
+            // clock), so how long this process took to look is no part of the measure. A storm
+            // would start the next instance a moment after the last one ended.
+            $instances = array_slice(array_reverse(static::__history($s, 'alpha')), 0, 4);
+            foreach ([1000, 2000, 2000] as $i => $owed_ms) {
+                $gap_ms = (int) $instances[$i + 1]['started_at'] - (int) $instances[$i]['ended_at'];
+                static::__assert_true($gap_ms >= $owed_ms, 'restart ' . ($i + 1) . " waited the {$owed_ms} ms it owes (started {$gap_ms} ms after the crash)");
+            }
 
-            $summary = static::__status($s, 'alpha');
-            static::__assert_equals('crashed', $summary['last_exit']['status']);
-            static::__assert_contains('crashed', static::__requests($s), 'each crash fires companion.error through the event verb');
+            static::__assert_equals('crashed', $instances[0]['status']);
+            static::__assert_equals('crashed', static::__status($s, 'alpha')['last_exit']['status']);
+            static::__poll_until(fn () => str_contains(static::__requests($s), 'crashed'), 'a crash fired companion.error through the event verb');
 
-            static::__assert_equals([], static::__zombie_children($daemon->getPid()), 'no exited child is left unreaped');
+            // A child that has just exited is a zombie until the daemon's exit handler reaps it,
+            // a moment later: the property is that none STAYS unreaped.
+            static::__poll_until(fn () => static::__zombie_children($daemon->getPid()) === [], 'no exited child is left unreaped');
         });
     }
 
     public static function test_waiting_never_counts_as_a_restart()
     {
         static::__in_scratch(function (array $s) {
-            file_put_contents($s['app'] . '/ready', json_encode(['ready' => false, 'scope' => 'install', 'reason' => '2 migrations are pending']));
+            // Renamed into place: the fake application must never read a half-written answer.
+            file_put_contents($s['app'] . '/ready.partial', json_encode(['ready' => false, 'scope' => 'install', 'reason' => '2 migrations are pending']));
+            rename($s['app'] . '/ready.partial', $s['app'] . '/ready');
 
             static::__declare($s, 'alpha', 'sdk');
             static::__start_daemon($s);
@@ -775,7 +784,9 @@ class Companion_Daemon_Process_Test extends Rsx_Test_Abstract
             $summary = static::__status($s, $name);
 
             return $summary['status'] === $status;
-        }, "{$name} reaches {$status}");
+        }, function () use ($name, $status, &$summary) {
+            return "{$name} reaches {$status}; last seen " . ($summary === null ? 'nothing (the daemon never answered)' : "{$summary['status']}, waiting_reason " . json_encode($summary['waiting_reason']) . ', last_exit ' . json_encode($summary['last_exit']));
+        });
 
         return $summary;
     }
@@ -850,13 +861,19 @@ class Companion_Daemon_Process_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A bounded poll of a condition, the house shape. The 120 s bound is a wait on processes
-     * this test does not control, expiry truncates no work, and it FAILS the test naming the
-     * condition: without it a broken daemon would hang the suite with no evidence at all.
+     * A bounded poll of a condition, the house shape (tests/CLAUDE.md, the contention
+     * principle): it returns the moment the condition holds, and only an event that never
+     * fires reaches the bound. The bound is 100 times what the event takes on an idle box;
+     * $idle_seconds is that time, and 2 s covers everything this class waits for (a daemon
+     * answering, a child spawning, a restart's backoff). Expiry truncates no work and FAILS the
+     * test naming the condition: without it a broken daemon would hang the suite with no
+     * evidence at all. $condition_description may be a closure, read at expiry, so the message
+     * can say what was last seen.
      */
-    private static function __poll_until(callable $condition, string $condition_description): void
+    private static function __poll_until(callable $condition, string|\Closure $condition_description, float $idle_seconds = 2.0): void
     {
-        $deadline = microtime(true) + 120;
+        $bound_seconds = 100 * $idle_seconds;
+        $deadline = microtime(true) + $bound_seconds;
 
         do {
             if ($condition()) {
@@ -866,6 +883,7 @@ class Companion_Daemon_Process_Test extends Rsx_Test_Abstract
             usleep(50000);
         } while (microtime(true) < $deadline);
 
-        static::__fail($condition_description . ' (waited 120s)');
+        $description = $condition_description instanceof \Closure ? $condition_description() : $condition_description;
+        static::__fail($description . " (never reached in {$bound_seconds} s, 100x its idle time)");
     }
 }

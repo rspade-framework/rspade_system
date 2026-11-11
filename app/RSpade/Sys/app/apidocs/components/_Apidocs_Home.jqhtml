@@ -92,5 +92,6 @@ $version - the selected catalog version (int), for the counts and the version ca
 <div class="_Apidocs_Home__footnote">
     Building a client? <a href="<%= _Apidocs_Catalog.openapi_url() %>" target="_blank" rel="noopener">openapi.json</a>
     describes this API in OpenAPI 3.1 - feed it to a client generator, Postman, or an agent toolchain.
+    A program fetches one version's document with its key: <code>GET /api/vN/openapi.json</code>.
 </div>
 </Define:_Apidocs_Home>

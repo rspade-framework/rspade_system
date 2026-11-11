@@ -20,11 +20,6 @@ use App\RSpade\Core\Rsx;
 class Debugger
 {
     /**
-     * POSIX signal USR1 (used to tell nginx to reopen log files)
-     */
-    public const SIGUSR1 = 10;
-
-    /**
      * Array to batch console debug messages for HTTP output
      */
     protected static array $console_messages = [];
@@ -135,29 +130,31 @@ class Debugger
      * nginx reopens log files when receiving USR1 signal,
      * which is the standard way to handle log rotation.
      *
+     * The master is found by its command line at the moment of signalling, never by a pid read
+     * from /run/nginx.pid: that file outlives nginx, and its pid may since name an unrelated
+     * process (SIGUSR1's default action terminates). Only a master in THIS process's pid
+     * namespace is ours - a container started from this one (the parallel test runner's) is
+     * visible here with an nginx of its own. No nginx master running = nothing to do.
+     *
      * @return void
      */
     protected static function __signal_nginx_reopen_logs(): void
     {
-        // Try to find nginx master process
-        $pid_file = '/var/run/nginx.pid';
+        $output = [];
+        $return_var = 0;
+        // pgrep exits 1 when nothing matched, which is not an error here.
+        \exec_safe("pgrep -f '^nginx: master process'", $output, $return_var);
 
-        if (file_exists($pid_file)) {
-            $pid = trim(file_get_contents($pid_file));
-            if ($pid && is_numeric($pid)) {
-                // Send USR1 signal to nginx master process
-                @posix_kill((int)$pid, self::SIGUSR1);
+        $own_namespace = @readlink('/proc/self/ns/pid');
+
+        foreach ($output as $line) {
+            $pid = (int) trim($line);
+            if ($pid <= 0 || $own_namespace === false || @readlink('/proc/' . $pid . '/ns/pid') !== $own_namespace) {
+                continue;
             }
-        } else {
-            // Try to find nginx process via ps
-            $output = [];
-            @\exec_safe('ps aux | grep "nginx: master" | grep -v grep', $output);
-            if (!empty($output)) {
-                // Extract PID from ps output
-                $parts = preg_split('/\s+/', trim($output[0]));
-                if (isset($parts[1]) && is_numeric($parts[1])) {
-                    @posix_kill((int)$parts[1], self::SIGUSR1);
-                }
+            $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+            if ($cmdline !== false && str_starts_with($cmdline, 'nginx: master process')) {
+                @posix_kill($pid, SIGUSR1);
             }
         }
     }

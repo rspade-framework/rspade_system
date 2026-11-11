@@ -15,6 +15,7 @@ use App\RSpade\Core\Api\Api_Endpoint_ManifestSupport;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Openapi;
 use App\RSpade\Core\Api\Api_Route_Usage;
+use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -168,37 +169,50 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
         static::__assert_equals([], Api_Route_Usage::last_called_for_version(7), 'an unused version has no rows');
     }
 
-    /** The framework's four endpoints, by verb and path key. */
+    /** The framework's five endpoints, by verb and path key. */
     private const FRAMEWORK_ROUTES = [
         'get /me' => 'Identity_Api_Controller::me',
         'post /files' => 'Files_Api_Controller::upload',
         'get /files/{key}' => 'Files_Api_Controller::info',
         'get /files/{key}/text' => 'Files_Api_Controller::text',
+        'get /openapi.json' => 'Openapi_Api_Controller::document',
     ];
 
     /**
-     * Dispatch one GET as the holder of a fresh unrestricted key, with Api_Main_Hook_Probe
-     * standing in as the application's Main for that dispatch (see api-ver-04).
+     * Dispatch one GET as the holder of a fresh key (unrestricted unless $scopes), with
+     * Api_Main_Hook_Probe standing in as the application's Main for that dispatch (see
+     * api-ver-04), refusing with $refuse_with when it is non-null.
      */
-    private static function __get_as_key_holder(string $url)
+    private static function __get_as_key_holder(string $url, ?string $scopes = null, $refuse_with = null)
     {
         $user = User_Model::without_site_scope(fn () => User_Model::find(1));
         $user->is_api_access_enabled = 1;
         $user->save();
-        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid())['key'];
+        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid(), 'live', null, null, $scopes)['key'];
 
-        $request = Request::create($url, 'GET', [], [], [], [
-            'HTTP_AUTHORIZATION' => 'Bearer ' . $key,
-            'REMOTE_ADDR' => '127.0.0.1',
-        ]);
+        return static::__dispatch_get($url, $key, $refuse_with);
+    }
+
+    /**
+     * Dispatch one GET carrying $key (none when null), with Api_Main_Hook_Probe standing in
+     * as the application's Main, refusing with $refuse_with when it is non-null.
+     */
+    private static function __dispatch_get(string $url, ?string $key, $refuse_with = null)
+    {
+        $server = ['REMOTE_ADDR' => '127.0.0.1'];
+        if ($key !== null) {
+            $server['HTTP_AUTHORIZATION'] = 'Bearer ' . $key;
+        }
+        $request = Request::create($url, 'GET', [], [], [], $server);
 
         $index = &Manifest::$data['data']['php_subclass_index'];
         $original = $index['Main_Abstract'] ?? null;
         $index['Main_Abstract'] = ['Api_Main_Hook_Probe'];
-        Api_Main_Hook_Probe::$refuse_with = null;
+        Api_Main_Hook_Probe::$refuse_with = $refuse_with;
         try {
             return Api_Dispatcher::dispatch($url, 'GET', [], $request);
         } finally {
+            Api_Main_Hook_Probe::$refuse_with = null;
             if ($original === null) {
                 unset($index['Main_Abstract']);
             } else {
@@ -208,9 +222,86 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * api-ver-08 - GET /api/vN/openapi.json answers, at every version the application serves,
+     * THAT version's document exactly (Api_Openapi::document(null, N)): 200, application/json,
+     * none of the timing fields every other answer carries, and listing its own route.
+     */
+    public static function test_the_openapi_route_answers_each_versions_document_unstamped()
+    {
+        foreach (Api_Catalog::get_versions() as $version) {
+            $url = "/api/v{$version}/openapi.json";
+            $response = static::__get_as_key_holder($url);
+
+            static::__assert_equals(200, $response->getStatusCode(), (string) $response->getContent());
+            static::__assert_contains('application/json', (string) $response->headers->get('Content-Type'), "{$url} is JSON");
+
+            $body = json_decode((string) $response->getContent(), true);
+            $expected = json_decode(json_encode(Api_Openapi::document(null, $version), JSON_UNESCAPED_SLASHES), true);
+            static::__assert_equals($expected, $body, "{$url} is v{$version}'s document exactly");
+            static::__assert_equals("v{$version}", $body['info']['version']);
+            static::__assert_false(array_key_exists('_duration_ms', $body), "{$url} is unstamped (_duration_ms)");
+            static::__assert_false(array_key_exists('_completed_at', $body), "{$url} is unstamped (_completed_at)");
+            static::__assert_not_null($body['paths'][$url]['get'] ?? null, "{$url} lists itself");
+        }
+
+        static::__assert_true(count(Api_Catalog::get_versions()) >= 2, 'more than one version was exercised');
+    }
+
+    /**
+     * api-ver-09 - the document's gate is /me's: no key is 401, a key whose user lacks API
+     * access (users.is_api_access_enabled) is the uniform 401, and the application's account
+     * policy (Main::pre_dispatch) can still refuse it (403 account_refused).
+     */
+    public static function test_the_openapi_route_refuses_without_api_access()
+    {
+        $no_key = static::__dispatch_get('/api/v1/openapi.json', null);
+        static::__assert_equals(401, $no_key->getStatusCode(), (string) $no_key->getContent());
+
+        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid())['key'];
+        $user = User_Model::without_site_scope(fn () => User_Model::find(1));
+        $user->is_api_access_enabled = 0;
+        $user->save();
+        try {
+            $disabled = static::__dispatch_get('/api/v1/openapi.json', $key);
+        } finally {
+            $user->is_api_access_enabled = 1;
+            $user->save();
+        }
+        static::__assert_equals(401, $disabled->getStatusCode(), (string) $disabled->getContent());
+
+        $refused = static::__get_as_key_holder('/api/v1/openapi.json', null, 'api_access_not_granted');
+        static::__assert_equals(403, $refused->getStatusCode(), (string) $refused->getContent());
+        static::__assert_equals('account_refused', json_decode((string) $refused->getContent(), true)['error']['code']);
+    }
+
+    /**
+     * api-ver-10 - key scopes never refuse the document: a key scoped to one resource reads
+     * every version's document (while it is still refused /me), and Api_Scopes reports the
+     * route reachable for any scope set.
+     */
+    public static function test_a_scoped_key_reads_the_openapi_document()
+    {
+        $scopes = static::__path(1, '/items');
+
+        foreach (Api_Catalog::get_versions() as $version) {
+            $response = static::__get_as_key_holder("/api/v{$version}/openapi.json", $scopes);
+            static::__assert_equals(200, $response->getStatusCode(), (string) $response->getContent());
+        }
+
+        $me = static::__get_as_key_holder('/api/v1/me', $scopes);
+        static::__assert_equals(403, $me->getStatusCode(), 'the same key is still scoped everywhere else');
+        static::__assert_equals('insufficient_scope', json_decode((string) $me->getContent(), true)['error']['code']);
+
+        static::__assert_true(Api_Scopes::decide($scopes, '/api/v2/openapi.json'), 'decide() grants the document');
+        static::__assert_true(Api_Scopes::reaches_route($scopes, '/api/v1/openapi.json'), 'reaches_route() lists the document');
+        static::__assert_false(Api_Scopes::decide($scopes, '/api/v1/openapi.json/x'), 'only the document path itself');
+        static::__assert_false(Api_Scopes::decide($scopes, '/api/v1/x/openapi.json'), 'only at the version root');
+    }
+
+    /**
      * api-ver-06 - the framework's identity and file endpoints follow the application to v2
      * (#[Api_Versions(every: true)]; the suite's fixture makes v2 a served version): the v2
-     * OpenAPI document lists all four at /api/v2/... and none at /api/v1/..., each by the same
+     * OpenAPI document lists all five at /api/v2/... and none at /api/v1/..., each by the same
      * handler, and GET /api/v2/me answers as GET /api/v1/me does.
      */
     public static function test_the_framework_endpoints_are_served_at_every_version()

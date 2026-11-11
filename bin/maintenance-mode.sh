@@ -319,16 +319,18 @@ do_enable() {
     # on-demand contract is what keeps a post-update daemon from serving the code
     # it was started with.
     #
-    # Best-effort like the task stop above, and NO TIMEOUT: TERM, one settle pass,
-    # then whatever is still there goes. Same reaper pattern as
+    # Best-effort like the task stop above, and NO TIMEOUT: TERM, then KILL whatever
+    # still matches. Each pass matches the command line afresh (pkill -f) and never
+    # re-signals a pid read earlier - a daemon that exited on TERM frees its pid, and a
+    # pid alone is no proof of which process holds it. Same reaper pattern as
     # bin/environment_updates/110_relocate_build_tmp.sh.
     # -------------------------------------------------------------------------
     if command -v pgrep >/dev/null 2>&1; then
         rpc_orphans="$(pgrep -f -- "--socket=$(rsx_tmp_root)/" 2>/dev/null || true)"
         if [ -n "$rpc_orphans" ]; then
             rpc_count="$(printf '%s\n' "$rpc_orphans" | grep -c .)"
-            printf '%s\n' "$rpc_orphans" | xargs -r kill 2>/dev/null || true
-            printf '%s\n' "$rpc_orphans" | xargs -r -I{} bash -c 'kill -0 {} 2>/dev/null && kill -9 {} 2>/dev/null' || true
+            pkill -TERM -f -- "--socket=$(rsx_tmp_root)/" 2>/dev/null || true
+            pkill -KILL -f -- "--socket=$(rsx_tmp_root)/" 2>/dev/null || true
             say "  Quiesced $rpc_count node daemon(s) (respawned on demand)."
         fi
     fi

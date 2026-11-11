@@ -29,6 +29,10 @@ use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
  *     after-commit callback still runs, then the outage ends the request without claiming
  *     a rollback.
  *
+ * Every caller is told USER_MESSAGE (through Rsx_Diagnostics::user_message()) in place of
+ * the generic error sentence - the Ajax 500 body, the external API's internal_error and the
+ * 500 page; a developer caller still gets the exception's own detail.
+ *
  * It is reported once, by the front controller, like any fault. There is no substitute path and no
  * degraded mode. FRAMEWORK-INTERNAL: framework code that must catch broadly (a per-item
  * catch that records an item's failure and moves on) lets an outage through with
@@ -39,6 +43,12 @@ use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
  */
 class Infrastructure_Outage
 {
+    /**
+     * What every caller is told about an outage. User-safe: it names no service, host or
+     * error - only that the failure is temporary and worth retrying.
+     */
+    public const USER_MESSAGE = 'The service is temporarily unavailable. Please try again in a moment.';
+
     /**
      * MySQL client / server error codes that mean the connection to the database is gone:
      * 2002 CR_CONNECTION_ERROR, 2003 CR_CONN_HOST_ERROR, 2005 CR_UNKNOWN_HOST,

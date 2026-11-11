@@ -1,0 +1,28 @@
+THE FRAMEWORK SERVES THE OPENAPI DOCUMENT AT /api/vN/openapi.json; DELETE THE TEMPLATE'S OWN ROUTE
+Date: 2026-11-11
+
+IF YOU DO NOTHING: your copy of rsx/app/api/v1/openapi_api_controller.php silently replaces the framework's OpenAPI route (same class name, so it is read as a class override - no build error), so the document is served at /api/v1 only, behind your own checks, and /api/v2/openapi.json and every later version answer 404 or 410 instead of that version's document.
+
+SUMMARY
+    Category 1 (a template file you received now duplicates a framework
+    feature). Affects every application provisioned from, or updated with, the
+    starter release of 2026-11-11 that shipped
+    rsx/app/api/v1/openapi_api_controller.php.
+
+THE CHANGE
+    The framework declares GET /api/vN/openapi.json itself
+    (Openapi_Api_Controller, #[Api_Versions(every: true)]), at every API version
+    the application serves, answering that version's document unstamped. Any
+    valid bearer key with API access may read it, whatever its scopes. The
+    template no longer carries a route of its own; the console's browser
+    download (<mount>/openapi.json in the apidocs controller) is unchanged.
+
+ACTION REQUIRED
+    1. Delete rsx/app/api/v1/openapi_api_controller.php (unless you changed it
+       on purpose - then keep your class under a different name and route).
+    2. php artisan rsx:overrides:list no longer names Openapi_Api_Controller.
+
+VERIFICATION
+    curl -H "Authorization: Bearer <key>" http://<host>/api/v1/openapi.json
+    answers 200 with the document; with a second API version declared,
+    /api/v2/openapi.json answers that version's document.

@@ -33,8 +33,9 @@
  *             probe whose document was replaced under it ("Execution context was destroyed")
  *             or whose globals are not up yet counts as "not yet". Use it after anything that
  *             can load a document: page.waitForFunction() dies with the document it runs in.
- *             Bounded at the house 120 s (tests/CLAUDE.md, the contention principle); reaching
- *             the bound throws naming the condition, never the elapsed time.
+ *             Bounded at 100 times what the condition takes on an idle box (tests/CLAUDE.md,
+ *             the contention principle): 2 s idle, so 200 s, unless the caller passes a longer
+ *             idle_seconds. Reaching the bound throws naming the condition, never the elapsed time.
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
@@ -107,21 +108,23 @@ function is_chromium_load_noise(text) {
 }
 
 /**
- * The house bound for a wait on a browser condition (tests/CLAUDE.md, the contention
- * principle). A bounded wait on a party the test does not control is the sanctioned test
- * exception to the no-timeout mandate: only a genuinely stuck condition reaches 120 s.
+ * What a browser condition takes on an idle box when the caller states nothing. The bound is
+ * 100 times it (tests/CLAUDE.md, the contention principle): a bounded poll for an event that
+ * may never fire is the test carve-out from the no-timeout mandate, and only an event that
+ * never fires reaches it.
  */
-const POLL_BOUND_MS = 120000;
+const POLL_IDLE_SECONDS = 2;
 
 /** Interval between probes: how often the condition is asked, never how long anything takes. */
 const POLL_INTERVAL_MS = 100;
 
 /**
  * Poll `fn` (evaluated in the page with `arg`) until it returns a truthy value, and return
- * that value. See the header for when to use it.
+ * that value. See the header for when to use it; `idle_seconds` is what the condition takes on
+ * an idle box, when that is longer than 2 s.
  */
-async function poll_until(page, what, fn, arg) {
-    const deadline = Date.now() + POLL_BOUND_MS;
+async function poll_until(page, what, fn, arg, idle_seconds = POLL_IDLE_SECONDS) {
+    const deadline = Date.now() + 100 * idle_seconds * 1000;
     let last_error = null;
     for (;;) {
         try {

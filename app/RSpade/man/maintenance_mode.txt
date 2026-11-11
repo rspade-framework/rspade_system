@@ -51,8 +51,9 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
        lists it, and it ends when php-fpm is stopped in step 4.
     3. Quiesce the node daemons - every node process whose command line names a socket
        under tmp/ (the node service and ssr-server, plus anything added later,
-       since the match is on the socket DIRECTORY rather than a name): SIGTERM, one settle
-       pass, SIGKILL, with one line reporting the count. Pure bash, so it works on a broken
+       since the match is on the socket DIRECTORY rather than a name): SIGTERM, then
+       SIGKILL to whatever still matches - each pass matches the command line afresh,
+       never a pid read earlier - with one line reporting the count. Pure bash, so it works on a broken
        tree. This is the twin of Rsx_Node_Service::quiesce_all(), which rsx:clean calls; see
        WHY THE RPC DAEMONS ARE A SPECIAL CASE below.
     4. supervisorctl stop, in this order: realtime, fpc-proxy, php-fpm, rsx-lockd, and redis

@@ -84,8 +84,15 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
                     $process->wait();
                 }
             }
+            // A hanging fake refresh records its pid; it is signalled only while that pid is
+            // still the fake (its command line names this run's mode file) - it usually exited
+            // already, when its parent did, and the pid may name another process by now.
             if (is_file($s['mode_file'] . '.pid')) {
-                @posix_kill((int) file_get_contents($s['mode_file'] . '.pid'), SIGKILL);
+                $hung_pid = (int) file_get_contents($s['mode_file'] . '.pid');
+                $cmdline = $hung_pid > 0 ? @file_get_contents('/proc/' . $hung_pid . '/cmdline') : false;
+                if ($cmdline !== false && str_contains($cmdline, 'fake_refresh.js') && str_contains($cmdline, $s['mode_file'])) {
+                    @posix_kill($hung_pid, SIGKILL);
+                }
             }
 
             $cleanup = new Process(['rm', '-rf', $root]);

@@ -55,7 +55,7 @@ the live dev server and the template's `hello` companion.
 | D-DESIRED-STOP | nothing runs without a flag; a stop is graceful and recorded | php | flag on/off | stopped, history | implemented | 2026-11-02 |
 | D-GRACE-KILL | the grace ends in SIGKILL | php | SIGTERM ignored, grace 1 | killed | implemented | 2026-11-02 |
 | D-GROUP | an exit takes the whole process group | php | grandchild ignoring SIGTERM | grandchild gone | implemented | 2026-11-02 |
-| D-REAP-BACKOFF | no zombies, backoff cannot storm, crashes fire companion.error | php | exit 1 loop | >= 5 s for 3 restarts, no Z child | implemented | 2026-11-02 |
+| D-REAP-BACKOFF | no zombies, backoff cannot storm, crashes fire companion.error | php | exit 1 loop | each restart starts >= its owed 1, 2, 2 s after the crash (the daemon's own ended_at/started_at), no Z child stays | implemented | 2026-11-11 |
 | D-WAITING | waiting never counts | php | ready false, then true | restart_count 0 | implemented | 2026-11-02 |
 | D-MAINTENANCE | overlay and framework flag hold down, desired untouched | php | flag files | stopped, desired running | implemented | 2026-11-02 |
 | D-CONTROL | pause/resume reach the SDK; an operator stop is held until start | php | socket control | paused, held | implemented | 2026-11-02 |

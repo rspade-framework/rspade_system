@@ -89,16 +89,17 @@ mkdir -p "$TMP_ROOT" "$STATE_ROOT" "$STATE_ROOT/flock" 2>/dev/null || true
 # Every node daemon - the RPC node service, the SSR server, anything left over from an
 # older release - took its socket path as an argv argument at spawn time and never
 # reconsiders it. Moving the directory under a running daemon strands it permanently: it
-# keeps serving an inode nobody can reach again. TERM, one settle pass, then whatever is
-# still there goes. NO TIMEOUT: the settle pass is a single check, not a deadline.
+# keeps serving an inode nobody can reach again. TERM, then KILL whatever still matches:
+# each pass matches the command line afresh (pkill -f) and never re-signals a pid read
+# earlier, since a pid alone is no proof of which process holds it. NO TIMEOUT.
 #
 # The container-start trigger runs this before supervisor, which is the safe moment.
 if [ -d "$STORAGE_ROOT/rsx-tmp" ] && command -v pgrep >/dev/null 2>&1; then
     orphans="$(pgrep -f -- "--socket=$STORAGE_ROOT/rsx-tmp/" 2>/dev/null || true)"
     if [ -n "$orphans" ]; then
         count="$(printf '%s\n' "$orphans" | grep -c .)"
-        printf '%s\n' "$orphans" | xargs -r kill 2>/dev/null || true
-        printf '%s\n' "$orphans" | xargs -r -I{} bash -c 'kill -0 {} 2>/dev/null && kill -9 {} 2>/dev/null' || true
+        pkill -TERM -f -- "--socket=$STORAGE_ROOT/rsx-tmp/" 2>/dev/null || true
+        pkill -KILL -f -- "--socket=$STORAGE_ROOT/rsx-tmp/" 2>/dev/null || true
         info "Quiesced $count node daemon(s) bound to the old socket directory (respawned on demand)."
     fi
 fi

@@ -8,13 +8,18 @@
 namespace App\RSpade\Tests\Errors\Php;
 
 use Exception;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use PDOException;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Exceptions\Ajax_Exception_Handler;
 use App\RSpade\Core\Exceptions\Api_Exception_Handler;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
+use App\RSpade\Core\Exceptions\Rsx_User_Facing_Exception;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -125,6 +130,107 @@ class Diagnostic_Detail_Test extends Rsx_Test_Abstract
 
                     static::__assert_equals('Internal server error', $payload['error']['message']);
                     static::__assert_true(isset($payload['error']['error_id']), 'the API error carries an error id');
+                });
+            });
+        } finally {
+            Rsx_Request_Channel::reset();
+        }
+    }
+
+    /**
+     * The user-safe sentence resolver: a Rsx_User_Facing_Exception anywhere in the chain
+     * wins, an outage (lock daemon, lost database connection) answers the outage sentence,
+     * anything else carries none.
+     */
+    public static function test_user_message_resolves_user_facing_exceptions_and_outages()
+    {
+        $facing = new Rsx_User_Facing_Exception('The provider did not answer. Please try again.', new RuntimeException('probe internal text'));
+
+        static::__assert_equals('The provider did not answer. Please try again.', Rsx_Diagnostics::user_message($facing));
+        static::__assert_equals(
+            'The provider did not answer. Please try again.',
+            Rsx_Diagnostics::user_message(new RuntimeException('wrapper', 0, $facing)),
+            'a wrapped user-facing exception still speaks'
+        );
+
+        static::__assert_equals(
+            Infrastructure_Outage::USER_MESSAGE,
+            Rsx_Diagnostics::user_message(new Lockd_Unavailable_Exception('lockd unreachable at 127.0.0.1:9999'))
+        );
+
+        $gone = new PDOException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away');
+        $gone->errorInfo = ['HY000', 2006, 'MySQL server has gone away'];
+        static::__assert_equals(
+            Infrastructure_Outage::USER_MESSAGE,
+            Rsx_Diagnostics::user_message(new QueryException('mysql', 'select 1', [], $gone)),
+            'a lost database connection is an outage'
+        );
+
+        static::__assert_equals(null, Rsx_Diagnostics::user_message(new RuntimeException('probe')));
+    }
+
+    /**
+     * A remote caller is shown a user-facing exception's own sentence (with the error id)
+     * in place of the generic one, never what it wraps; a developer caller also gets the origin.
+     */
+    public static function test_ajax_envelope_carries_a_user_facing_sentence()
+    {
+        Rsx_Request_Channel::classify(Request::create('/_ajax/X/y', 'POST'));
+
+        try {
+            static::__with_mode(Rsx::MODE_DEVELOPMENT, function () {
+                $handler = new Ajax_Exception_Handler();
+                $request = Request::create('/_ajax/X/y', 'POST');
+                $facing = new Rsx_User_Facing_Exception('The provider did not answer. Please try again.', new RuntimeException('probe internal text'));
+
+                static::__as_remote_caller(function () use ($handler, $request, $facing) {
+                    $payload = $handler->handle($facing, $request)->getData(true);
+
+                    static::__assert_equals('The provider did not answer. Please try again.', $payload['error']['error']);
+                    static::__assert_true(isset($payload['error']['error_id']), 'still logged under an error id');
+                    static::__assert_false(isset($payload['error']['file']), 'no file for a remote caller');
+                    static::__assert_false(str_contains(json_encode($payload), 'probe internal text'), 'the wrapped failure stays in the log');
+                });
+
+                $payload = $handler->handle($facing, $request)->getData(true);
+                static::__assert_true(isset($payload['error']['file']), 'a developer caller sees the origin');
+            });
+        } finally {
+            Rsx_Request_Channel::reset();
+        }
+    }
+
+    /**
+     * An outage answers a remote caller with the outage sentence on every JSON channel: the
+     * Ajax request's HTTP 500 body (whose reason the client shows) and the external API's
+     * internal_error - never the daemon's address.
+     */
+    public static function test_an_outage_is_worded_for_a_remote_caller()
+    {
+        $outage = new Lockd_Unavailable_Exception('probe lockd unreachable at 127.0.0.1:9999');
+
+        try {
+            static::__with_mode(Rsx::MODE_DEVELOPMENT, function () use ($outage) {
+                static::__as_remote_caller(function () use ($outage) {
+                    Rsx_Request_Channel::classify(Request::create('/_ajax/X/y', 'POST'));
+                    $response = (new Ajax_Exception_Handler())->handle($outage, Request::create('/_ajax/X/y', 'POST'));
+                    $payload = $response->getData(true);
+
+                    static::__assert_equals(500, $response->getStatusCode());
+                    static::__assert_equals(Infrastructure_Outage::USER_MESSAGE, $payload['reason']);
+                    static::__assert_equals(Infrastructure_Outage::USER_MESSAGE, $payload['error']['error']);
+                    static::__assert_true(isset($payload['error']['error_id']), 'the outage body carries an error id');
+
+                    Rsx_Request_Channel::reset();
+                    Rsx_Request_Channel::classify(Request::create('/api/v1/x'));
+                    $payload = (new Api_Exception_Handler())->handle($outage, Request::create('/api/v1/x'))->getData(true);
+
+                    static::__assert_equals(Infrastructure_Outage::USER_MESSAGE, $payload['error']['message']);
+                    static::__assert_true(isset($payload['error']['error_id']), 'the API outage carries an error id');
+                    static::__assert_false(
+                        str_contains(json_encode($payload), '127.0.0.1'),
+                        'the daemon address never reaches a remote caller'
+                    );
                 });
             });
         } finally {

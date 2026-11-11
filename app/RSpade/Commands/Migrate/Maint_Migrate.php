@@ -1451,10 +1451,17 @@ class Maint_Migrate extends Command
     /**
      * Wait until mysqld has fully stopped before copying the datadir. Copying while
      * mysqld is still flushing/holding files open captures an inconsistent snapshot.
+     *
+     * SANCTIONED TIMEOUT (owner ruling 2026-11-11, an exception to the no-timeout mandate):
+     * this waits on an external party - mysqld finishing its own shutdown - and gives up after
+     * 10 minutes. A clean shutdown of even a large datadir finishes far inside that; a mysqld
+     * still present after 10 minutes is a stray or hung server (see
+     * preflight_mysqld_topology()), and expiry fails the migration LOUDLY before any
+     * copy is made, so nothing is truncated or half-done.
      */
     protected function wait_for_mysql_stopped(): void
     {
-        $max_attempts = 60;
+        $max_attempts = 600;
         $attempt = 0;
 
         while ($attempt < $max_attempts) {
@@ -1467,7 +1474,7 @@ class Maint_Migrate extends Command
             $attempt++;
         }
 
-        throw new \Exception('MySQL did not stop within 60 seconds');
+        throw new \Exception('MySQL did not stop within 10 minutes: a mysqld process is still running (pgrep -x mysqld)');
     }
 
     /**
@@ -1478,7 +1485,7 @@ class Maint_Migrate extends Command
      * exit (wait_for_mysql_stopped) before copying the datadir. But `supervisorctl stop` only
      * stops the instance supervisor manages. If a stray SECOND mysqld is running - a leftover
      * manual `mysqld`/`mysqld_safe` from an earlier recovery, unmanaged by supervisor - it
-     * keeps SERVING the datadir: the wait times out after 60s and every migration silently
+     * keeps SERVING the datadir: the wait times out (10 minutes) and every migration silently
      * fails. In the field this masqueraded as a generic timeout and went unnoticed for DAYS,
      * with pulled columns/tables simply absent until a runtime "unknown column" 500 exposed it.
      *

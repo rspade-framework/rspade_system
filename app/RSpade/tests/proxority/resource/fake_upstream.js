@@ -223,11 +223,11 @@ for (const [flavour, server] of Object.entries(servers)) {
 }
 
 // A poll for the parent's exit, so an orphan never outlives its test.
+// The parent is gone when this process has been reparented - asked of our own ppid, never of a
+// remembered pid, which the kernel may since have handed to another process.
 const parent = process.ppid;
 setInterval(() => {
-    try {
-        process.kill(parent, 0);
-    } catch (error) {
+    if (process.ppid !== parent) {
         process.exit(0);
     }
 }, 1000);

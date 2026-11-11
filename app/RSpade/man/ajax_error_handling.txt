@@ -124,8 +124,11 @@ HTTP STATUS CODE STRATEGY
     call's failure: every call needs both. It is not answered as a call's
     'fatal' envelope. The request fails as a whole with HTTP 500, no later
     call of the batch runs, and the client rejects every call it carried
-    with 'server_error' ("A server error occurred. Please try again.",
-    logged through Debugger.log_error). It is reported once, like any fault.
+    with ONE 'server_error' (logged through Debugger.log_error) whose
+    message is the 500 body's reason: "The service is temporarily
+    unavailable. Please try again in a moment." plus its error id, or the
+    exception text for a developer caller. A 5xx with no such body (the web
+    server's 502) reads "A server error occurred. Please try again.". It is reported once, like any fault.
     The same holds after a writer's commit (an after-commit callback or the
     lock release meeting the outage): the committed write stands, nothing
     claims it was rolled back, and a retry carrying its _request_ref is
@@ -153,8 +156,10 @@ ERROR TYPES
     Ajax::ERROR_FATAL
     -----------------
     Uncaught PHP exceptions, database errors, bugs in code.
-    Dev mode: Shows file/line/error/backtrace
-    Prod mode: Generic "An error occurred" message
+    A developer caller: file/line/error/backtrace (client code 'php_exception').
+    Everybody else: "An unexpected error occurred. Please try again." - or the
+    exception's user-safe sentence (rsx:man error_handling, USER-SAFE
+    MESSAGES) - with its error id; the client's message ends "(error id ...)".
 
     Ajax::ERROR_VALIDATION
     ----------------------
@@ -355,14 +360,31 @@ CLIENT-SIDE IMPLEMENTATION
 
     Automatic Error Handling
     ------------------------
-    Uncaught Ajax errors automatically display via Modal.error():
+    EVERY failure is shown to the user without the calling code doing
+    anything, so application code catches only an error it has a PURPOSE for
+    (a not-found it recovers from, a refusal it words itself) - never one it
+    would merely display, and never "something unexpected" (a bug, the lock
+    daemon down):
 
-    // No try/catch - error shows in modal automatically
+    - a form submission: in the form's <Form_Errors /> (below);
+    - any other call nobody caught: the application's error dialog,
+      registered with Rsx.set_ajax_error_handler(fn) from a static
+      on_app_modules_define() (the template's Modal registers one) - or,
+      with none registered, the framework's own Rsx_Error_Dialog, which is
+      in every bundle (SPA, Blade, the /_sys panel).
+
+    // No try/catch - an uncaught failure is shown automatically
     const user = await User_Controller.get_user(123);
 
-    Global unhandled rejection handler detects uncaught Ajax errors and
-    shows red danger modal with error details. This prevents silent failures.
-    It recognises an Ajax error by the marker every one carries
+    The handler is called with the rejected Error, once per failure: a
+    request that failed as a whole rejects all of its calls with one Error,
+    shown once. error.code is 'php_exception' (with metadata file, line,
+    backtrace) only for a caller the server admits as a developer. Nothing is
+    shown during the SPA's navigation grace period - 1.5 seconds after a
+    navigation starts (requests a previous page left behind). An uncaught Ajax error does not disable SPA navigation: it
+    is the server's answer, not a fault in the page's code.
+
+    The listener recognises an Ajax error by the marker every one carries
     (error.__rsx_ajax_error === true), so it covers an error whatever promise
     chain carried it - a generated stub, Model.fetch(), an application's own
     async wrapper that let it propagate.
@@ -435,8 +457,8 @@ CLIENT-SIDE IMPLEMENTATION
 
     - Shows red danger modal
     - Can stack over other open modals
-    - Used automatically for uncaught Ajax errors
-    - Displays error message in monospace pre format
+    - The template's registered handler for uncaught Ajax errors
+      (Modal.fatal_error() for a 'php_exception', Modal.error() otherwise)
 
 WHO SEES FATAL-ERROR DETAIL
 
@@ -446,7 +468,6 @@ WHO SEES FATAL-ERROR DETAIL
     request carrying a valid rsx:debug credential, or a loopback caller (the peer and
     every forwarded hop are local). A development-mode site may be public, so an
     anonymous caller is redacted there too. Strict production redacts for everybody.
-    (The client's Modal display choice is a separate, additional gate.)
 
     The same predicate governs every channel: the Ajax and batch envelopes, the
     external API's internal_error, the full-page error screen and the Ignition debug

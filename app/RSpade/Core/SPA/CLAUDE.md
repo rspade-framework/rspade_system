@@ -212,7 +212,7 @@ position already is.
   `match_url_to_route()` strips the portal prefix itself. Anything added to one support module is
   considered for the other.
 - **The two millisecond constants here are not work timeouts and no new one is welcome.**
-  `NAVIGATION_GRACE_PERIOD_MS` (10s) suppresses errors from the previous page's in-flight requests;
+  `NAVIGATION_GRACE_PERIOD_MS` (1.5 s) suppresses errors from the previous page's in-flight requests;
   `scroll_to_anchor`'s `timeout_ms` (500) is a look-again window for a DOM node that may still be
   rendering, whose expiry degrades to "no scroll". Nothing in a dispatch is bounded, and nothing
   should be.

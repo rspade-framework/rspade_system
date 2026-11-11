@@ -74,10 +74,16 @@ class Ajax {
         Ajax._flush_scheduled = false;
         Ajax._call_counter = 0;
 
-        // An Ajax failure nobody caught gets the framework's error dialog instead of the
-        // browser's bare "Uncaught (in promise)". Recognised by the marker every Ajax error
-        // carries (Ajax._error()), so it holds whatever promise chain the error travelled -
-        // a generated stub, the ORM fetch, an app's own async wrapper.
+        // Uncaught failures already shown, so a request that failed as a whole - which
+        // rejects every call it carried with ONE Error - is shown once.
+        Ajax._shown_errors = new WeakSet();
+
+        // An Ajax failure nobody caught is shown to the user instead of the browser's bare
+        // "Uncaught (in promise)": the application's registered error dialog
+        // (Rsx.set_ajax_error_handler()), else the framework's own (Rsx_Error_Dialog).
+        // Recognised by the marker every Ajax error carries (Ajax._error()), so it holds
+        // whatever promise chain the error travelled - a generated stub, the ORM fetch, an
+        // app's own async wrapper. Rsx's generic listener leaves these to this one.
         window.addEventListener('unhandledrejection', async (event) => {
             const error = event.reason;
 
@@ -86,24 +92,26 @@ class Ajax {
             }
 
             event.preventDefault();
+
+            if (Ajax._shown_errors.has(error)) {
+                return;
+            }
+            Ajax._shown_errors.add(error);
+
             console.error('Uncaught Ajax error:', error);
 
             // Suppress errors during navigation grace period
             // After page navigation, pending requests from the old page may error out
             // These errors are not relevant to the new page
-            if (typeof Spa !== 'undefined' && Spa.is_within_navigation_grace_period()) {
-                console_debug('AJAX', 'Suppressing error modal during navigation grace period');
+            if (Spa.is_within_navigation_grace_period()) {
+                console_debug('AJAX', 'Suppressing error dialog during navigation grace period');
                 return;
             }
 
-            // Show error modal for uncaught Ajax errors
-            // In debug mode, use fatal_error() for detailed file/line info
-            if (typeof Modal !== 'undefined') {
-                if (window.rsxapp?.debug && Modal.fatal_error) {
-                    await Modal.fatal_error(error, 'Uncaught Ajax Error');
-                } else if (Modal.error) {
-                    await Modal.error(error, 'Uncaught Ajax Error');
-                }
+            if (Rsx._ajax_error_handler) {
+                await Rsx._ajax_error_handler(error);
+            } else {
+                await Rsx_Error_Dialog.show_error(error);
             }
         });
     }
@@ -477,9 +485,23 @@ class Ajax {
      */
     static _http_failure(xhr, url) {
         let error;
+        let body_error = null;
 
         if (xhr.status >= 500) {
-            error = Ajax._error(Ajax.ERROR_SERVER, 'A server error occurred. Please try again.');
+            // An infrastructure outage answers 500 with the fatal envelope's fields
+            // (Ajax::outage_response()): its reason is the sentence to show - the user-safe
+            // one, or the exception text for a developer caller. Any other 5xx (the web
+            // server's 502, PHP dying) carries no such body.
+            const body = typeof xhr.responseJSON === 'object' && xhr.responseJSON !== null ? xhr.responseJSON : {};
+            const reason = typeof body.reason === 'string' && body.reason !== '' ? body.reason : null;
+            body_error = typeof body.error === 'object' && body.error !== null ? body.error : null;
+
+            error = Ajax._error(
+                Ajax.ERROR_SERVER,
+                reason !== null
+                    ? Ajax._with_error_id(reason, body_error ? body_error.error_id : null)
+                    : 'A server error occurred. Please try again.'
+            );
             Debugger.log_error({
                 message: `Ajax Server Error ${xhr.status}`,
                 type: 'ajax_server_error',
@@ -493,8 +515,20 @@ class Ajax {
         }
 
         error.metadata = { status: xhr.status, statusText: xhr.statusText || '' };
+        if (body_error !== null) {
+            error.metadata.error = body_error;
+        }
 
         return error;
+    }
+
+    /**
+     * A server's user-facing sentence with the error id it was logged under, the reference
+     * a user quotes to support ("... (error id 7f3c...)").
+     * @private
+     */
+    static _with_error_id(message, error_id) {
+        return error_id ? message + ' (error id ' + error_id + ')' : message;
     }
 
     /**
@@ -569,7 +603,7 @@ class Ajax {
                 };
                 console.error('PHP Exception:', fatal_error_data.error, 'at', fatal_error_data.file + ':' + fatal_error_data.line);
             } else {
-                error.message = fatal_error_data.error || 'Fatal error occurred';
+                error.message = Ajax._with_error_id(fatal_error_data.error || 'An unexpected error occurred. Please try again.', fatal_error_data.error_id);
                 error.metadata = envelope.error;
                 console.error('Ajax error response from server:', envelope.error);
             }

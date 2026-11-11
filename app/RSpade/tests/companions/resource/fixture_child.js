@@ -25,8 +25,11 @@ const mode = process.argv[2];
 const directory = process.env.FIXTURE_DIR;
 const instance = process.env.RSX_COMPANION_INSTANCE;
 
+// Written whole and renamed into place: the test polls for the file, and a file that exists
+// before its content is written reads as no record at all.
 function record(extra) {
-    fs.writeFileSync(path.join(directory, instance + '.json'), JSON.stringify(Object.assign({
+    const file = path.join(directory, instance + '.json');
+    fs.writeFileSync(file + '.partial', JSON.stringify(Object.assign({
         pid: process.pid,
         env: {
             RSX_COMPANION_NAME: START_ENV.RSX_COMPANION_NAME,
@@ -39,6 +42,7 @@ function record(extra) {
             secret_left_in_env: !!process.env.RSX_COMPANION_SECRET,
         },
     }, extra)));
+    fs.renameSync(file + '.partial', file);
 }
 
 const idle = () => setInterval(() => {}, 1000);

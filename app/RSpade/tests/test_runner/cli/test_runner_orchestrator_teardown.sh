@@ -15,10 +15,12 @@ TEST_NAME="test_runner cli orchestrator teardown"
 #     started after this run's sweep, survives the teardown;
 #   - the generated .dockerignore is removed.
 #
-# The fake docker keeps one file per "container" (its label) and one pid per
-# "container" process: `docker run` records itself and then execs `sleep infinity`,
-# `docker kill` kills that process and forgets the container (the orchestrator runs
-# containers --rm), `docker ps --filter label=K[=V]` lists the matching records.
+# The fake docker keeps one file per "container" (its label) and one process per
+# "container": `docker run` records itself and then execs `sleep infinity` under the argv[0]
+# `rsx-fake-container:<state dir>/<name>`, `docker kill` kills that process and forgets the
+# container (the orchestrator runs containers --rm), `docker ps --filter label=K[=V]` lists
+# the matching records. A container process is found by that command line, never by a
+# remembered pid, which may name another process once the container is gone.
 #
 # SIGKILL of the orchestrator itself cannot be trapped; the container side of that
 # guarantee (the worker wrapper ending its container when the queue socket closes) is
@@ -45,17 +47,18 @@ WORK_DIR="$(mktemp -d)"
 FOREIGN_PID=''
 
 cleanup() {
-    # Every fake container process still alive, whatever the outcome.
-    local f
-    for f in "$WORK_DIR"/state/pids/*; do
-        [ -f "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null
-    done
-    [ -n "$FOREIGN_PID" ] && kill -KILL "$FOREIGN_PID" 2>/dev/null
+    # Every fake container process still alive, whatever the outcome - by command line.
+    pkill -KILL -f -- "^rsx-fake-container:$WORK_DIR/state/" 2>/dev/null
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
 FAILURES=0
+
+# Whether the fake container $1 is running: its process found by its command line.
+fake_container_running() {
+    pgrep -f -- "^rsx-fake-container:$WORK_DIR/state/$1 infinity\$" > /dev/null
+}
 
 check() {
     local description="$1" condition="$2" detail="${3:-}"
@@ -70,7 +73,7 @@ check() {
 # -----------------------------------------------------------------------------
 # The fake docker.
 # -----------------------------------------------------------------------------
-mkdir -p "$WORK_DIR/bin" "$WORK_DIR/state/containers" "$WORK_DIR/state/pids"
+mkdir -p "$WORK_DIR/bin" "$WORK_DIR/state/containers"
 
 cat > "$WORK_DIR/bin/docker" <<'FAKE_DOCKER'
 #!/bin/bash
@@ -108,19 +111,18 @@ case "$command" in
             esac
         done
         printf '%s' "$label" > "$state/containers/$name"
-        printf '%s' "$$" > "$state/pids/$name"
-        exec sleep infinity
+        exec -a "rsx-fake-container:$state/$name" sleep infinity
         ;;
     kill)
         for id in "$@"; do
-            [ -f "$state/pids/$id" ] && kill -KILL "$(cat "$state/pids/$id")" 2>/dev/null
-            rm -f "$state/containers/$id" "$state/pids/$id"
+            pkill -KILL -f -- "^rsx-fake-container:$state/$id infinity\$" 2>/dev/null
+            rm -f "$state/containers/$id"
         done
         ;;
     rm)
         for id in "$@"; do
             [ "$id" = "-f" ] && continue
-            rm -f "$state/containers/$id" "$state/pids/$id"
+            rm -f "$state/containers/$id"
         done
         ;;
 esac
@@ -168,7 +170,7 @@ run_scenario() {
     local args=(
         "$ORCHESTRATOR"
         "--run-dir=$run_dir" --workers=2 --image=fake-test:latest --dev-image=fake-dev:latest
-        "--project-root=$WORK_DIR/project" --framework-developer=true --suite=framework
+        "--project-root=$WORK_DIR/project" --framework-developer=true --suite=framework --php-memory-limit-mb=500
     )
 
     if [ "$mode" = "parent-gone" ]; then
@@ -186,7 +188,7 @@ run_scenario() {
 
     # Both of this run's containers are up (or the orchestrator died trying).
     while kill -0 "$orchestrator_pid" 2>/dev/null \
-        && { [ ! -f "$WORK_DIR/state/pids/rsx-test-w1" ] || [ ! -f "$WORK_DIR/state/pids/rsx-test-w2" ]; }; do
+        && { ! fake_container_running rsx-test-w1 || ! fake_container_running rsx-test-w2; }; do
         sleep 0.1
     done
 
@@ -196,16 +198,11 @@ run_scenario() {
         return
     fi
 
-    local w1_pid w2_pid
-    w1_pid="$(cat "$WORK_DIR/state/pids/rsx-test-w1")"
-    w2_pid="$(cat "$WORK_DIR/state/pids/rsx-test-w2")"
-
     # Another run's container, planted AFTER this run's sweep. fd 7 is closed for it: a
     # child holding the write end of the parent pipe would keep the "parent" alive.
-    bash -c 'exec sleep infinity' 7>&- &
+    bash -c 'exec -a "$0" sleep infinity' "rsx-fake-container:$WORK_DIR/state/foreign" 7>&- &
     FOREIGN_PID=$!
     printf '%s' 'rsx-test-run=some-other-run' > "$WORK_DIR/state/containers/foreign"
-    printf '%s' "$FOREIGN_PID" > "$WORK_DIR/state/pids/foreign"
 
     case "$mode" in
         sigterm)     kill -TERM "$orchestrator_pid" ;;
@@ -223,16 +220,16 @@ run_scenario() {
     check "$mode: both of this run's containers are gone" \
         "$([ ! -e "$WORK_DIR/state/containers/rsx-test-w1" ] && [ ! -e "$WORK_DIR/state/containers/rsx-test-w2" ] && echo 1 || echo 0)"
     check "$mode: both of this run's container processes are dead" \
-        "$(! kill -0 "$w1_pid" 2>/dev/null && ! kill -0 "$w2_pid" 2>/dev/null && echo 1 || echo 0)"
+        "$(! fake_container_running rsx-test-w1 && ! fake_container_running rsx-test-w2 && echo 1 || echo 0)"
     check "$mode: another run's container is untouched" \
-        "$([ -e "$WORK_DIR/state/containers/foreign" ] && kill -0 "$FOREIGN_PID" 2>/dev/null && echo 1 || echo 0)"
+        "$([ -e "$WORK_DIR/state/containers/foreign" ] && fake_container_running foreign && echo 1 || echo 0)"
     check "$mode: the generated .dockerignore is removed" \
         "$([ ! -e "$WORK_DIR/project/.dockerignore" ] && echo 1 || echo 0)"
 
     kill -KILL "$FOREIGN_PID" 2>/dev/null
     wait "$FOREIGN_PID" 2>/dev/null
     FOREIGN_PID=''
-    rm -f "$WORK_DIR/state/containers/foreign" "$WORK_DIR/state/pids/foreign"
+    rm -f "$WORK_DIR/state/containers/foreign"
 }
 
 run_scenario sigterm

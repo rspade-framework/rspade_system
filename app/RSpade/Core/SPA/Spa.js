@@ -44,7 +44,7 @@ class Spa {
     static _navigation_timestamp = 0;
 
     // Grace period in milliseconds for suppressing errors after navigation
-    static NAVIGATION_GRACE_PERIOD_MS = 10000;
+    static NAVIGATION_GRACE_PERIOD_MS = 1500;
 
     // URL of the page currently showing, captured once a navigation actually
     // completes. It is what a fragment-only Back/Forward is compared against, and the

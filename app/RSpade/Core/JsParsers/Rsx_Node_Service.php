@@ -11,6 +11,7 @@ use Symfony\Component\Process\Process;
 use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Process\Process_Identity;
 
 /**
  * THE node service: one daemon per PHP process, one socket, one lifecycle, eight subsystems.
@@ -599,6 +600,10 @@ class Rsx_Node_Service
      * A survivor is a wedged daemon on a socket nobody can reach; there is nothing in it
      * worth preserving.
      *
+     * Each pid was matched by its command line immediately before; its start time is read
+     * with it, and the SIGKILL goes only to a pid that is still that same process
+     * (Process_Identity) - a daemon that exited on SIGTERM frees its pid for reuse.
+     *
      * @param  int[] $pids
      * @return int   How many processes were signalled
      */
@@ -608,14 +613,18 @@ class Rsx_Node_Service
             return 0;
         }
 
+        $start_times = [];
         foreach ($pids as $pid) {
-            @posix_kill($pid, SIGTERM);
+            $start_times[$pid] = Process_Identity::start_time($pid);
+            if ($start_times[$pid] !== null) {
+                @posix_kill($pid, SIGTERM);
+            }
         }
 
         usleep(200000); // 200ms settle: this is a cooperative server that closes on SIGTERM.
 
         foreach ($pids as $pid) {
-            if (@posix_kill($pid, 0)) {
+            if (Process_Identity::is_running($pid, $start_times[$pid])) {
                 @posix_kill($pid, SIGKILL);
             }
         }

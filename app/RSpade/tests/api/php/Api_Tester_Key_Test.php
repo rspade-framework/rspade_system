@@ -240,7 +240,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
         Api_Tester_Key::forget();
     }
 
-    public static function test_a_key_scoped_to_nothing_reaches_nothing()
+    public static function test_a_key_scoped_to_nothing_reaches_only_the_document()
     {
         // Deny by default is the whole point of the feature: a scope set naming a resource
         // that does not exist must not degrade to the user's full answer.
@@ -253,7 +253,11 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             '/api/v1/no_such_resource/*'
         )['model'];
 
-        static::__assert_equals([], static::__allowed(Api_Tester_Key::accessible_targets_for_key($key)));
+        // Every key reaches the OpenAPI document whatever its scopes; nothing else.
+        static::__assert_equals(
+            ['Openapi_Api_Controller::document'],
+            static::__allowed(Api_Tester_Key::accessible_targets_for_key($key))
+        );
     }
 
     public static function test_every_published_target_is_answered()

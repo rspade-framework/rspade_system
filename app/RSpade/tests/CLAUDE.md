@@ -187,23 +187,38 @@ isolation is back before the next class starts.
 thing happened, and that it happened after the thing it depends on - and NEVER speed. A
 suite running twenty containers on a loaded box gives any single process arbitrarily little
 CPU, so any assertion that depends on something completing "quickly enough" is not a test,
-it is a coin toss.
+it is a coin toss. **That the intended effect eventually happens, or does not, is all a test
+asserts.**
 
 - **Every wait is a bounded POLL of the condition**, never a fixed sleep. Poll on a short
   interval, return the moment the condition holds.
-- **120 seconds is the house bound.** It is generous by design: only a genuinely stuck
-  condition can reach it, so reaching it is evidence, not noise.
-- **The failure message names the condition that was never reached**, not the elapsed time.
-  "the idle daemon never exited and unlinked its socket <path>" is a diagnosis;
-  "timed out after 120s" is not.
+- **The bound is 100 times what the event takes on an idle box** - an event that takes 2 s
+  idle is given about 3 minutes (200 s). It exists only to catch an event that NEVER fires,
+  so reaching it is evidence, not noise. The house helpers take 2 s as the idle time when the
+  caller states none (a 200 s bound): that covers a daemon answering, a process spawning, a
+  row appearing. A wait on something slower states its own idle time and gets 100 times it.
+- **No test asserts on how long something took, or on when it happened relative to the wall
+  clock.** A duration measured by the test includes however long the test process was
+  descheduled. Where the SUBJECT is a delay the code owes (a backoff, a grace), read it from
+  the code's own timestamps - a record's ended_at against the next one's started_at - never
+  from a stopwatch the test holds (`Companion_Daemon_Process_Test::test_children_are_reaped_and_backoff_cannot_storm`).
+  A fixture never sits near a clock boundary: a schedule's cadence is chosen so its NEXT
+  occurrence cannot fall inside a window the code defines, whenever the test starts
+  (`Task_Daemon_Due_Rules_Test::__schedule()`, hourly half an hour out).
+- **The failure message names the condition that was never reached**, not the elapsed time,
+  and says what was last seen when the helper can. "the idle daemon never exited and unlinked
+  its socket <path>" is a diagnosis; "timed out after 120s" is not.
+- **A file another process writes is published whole** - written beside its name and renamed
+  into place - when a test polls for it: a poll that sees the file before its content reads an
+  empty port, an empty record, a half answer, and waits on that forever.
 - **Fixed sleeps are not synchronization.** The one legitimate fixed wait is proving a
   NEGATIVE over a window the code itself defines (nothing happened while a request was still
   arriving) - and then the window belongs to the code under test, not to the sleep.
-- A wait on an external process is the sanctioned exception to the no-timeout mandate
-  (`01-engineering-mandates.md`): it bounds a wait on a party this test does not control, it
-  truncates no work, and expiry FAILS the test loudly. Say so in a comment beside the bound.
+- A bounded poll for an event that may never fire is the single carve-out from the no-timeout
+  mandate (`01-engineering-mandates.md`): it bounds a wait, never work, and expiry FAILS the
+  test loudly naming the condition. Say so in a comment beside the bound.
 
-`Rpc_Lifecycle_Test::__poll_until()` is the worked example.
+`Companion_Daemon_Process_Test::__poll_until()` is the worked example.
 
 ## Shared global state (settle, then assert)
 

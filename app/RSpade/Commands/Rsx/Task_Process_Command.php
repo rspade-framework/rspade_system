@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -226,11 +227,6 @@ class Task_Process_Command extends Command
         }
     }
 
-    private function pid_alive(int $pid): bool
-    {
-        return $pid > 0 && posix_kill($pid, 0);
-    }
-
     /**
      * Settle a RUNNING run whose worker is gone - only the run as it was read (still RUNNING
      * under the same worker). Abandonment is not a failure of the task, so a DISPATCHED run is
@@ -438,7 +434,7 @@ class Task_Process_Command extends Command
         $claimed = DB::table('_task_kill_requests')
             ->where('host', Task_Pool::host())
             ->where('status_id', Task_Kill_Request_Model::STATUS_CLAIMED)
-            ->get(['id', 'worker_id', 'worker_generation', 'worker_pid']);
+            ->get(['id', 'worker_id', 'worker_generation', 'worker_pid', 'worker_pid_start_time']);
 
         if ($claimed->isEmpty()) {
             return;
@@ -446,23 +442,30 @@ class Task_Process_Command extends Command
 
         Task_Pool::lock(Task_Pool::KILL);
         try {
+            // Only a kill worker is a pool member: a claim with no worker_id has no identity
+            // the daemon could be asked about.
             $members = [];
             foreach ($claimed as $request) {
-                $members[$request->id] = ['wid' => (int) $request->worker_id, 'generation' => (int) $request->worker_generation];
+                if ($request->worker_id !== null) {
+                    $members[$request->id] = ['wid' => (int) $request->worker_id, 'generation' => (int) $request->worker_generation];
+                }
             }
-            $verdicts = Task_Pool::members_alive(Task_Pool::KILL, $members);
+            $verdicts = $members ? Task_Pool::members_alive(Task_Pool::KILL, $members) : [];
 
             foreach ($claimed as $request) {
-                $verdict = $verdicts[$request->id];
-                // An older generation's kill worker is judged like a task worker: by its
-                // command line. A request with no worker_id was claimed by a command carrying
-                // out its own kills (rsx:tasks:disable), which is no worker: its pid is probed.
+                $verdict = $verdicts[$request->id] ?? ['known' => false, 'alive' => false];
+                // A pid alone is no proof: the claimer is the process recorded with that pid's
+                // start time. An older generation's kill worker must also still be a task
+                // worker of this project (its command line); a request with no worker_id was
+                // claimed by a command carrying out its own kills (rsx:tasks:disable).
+                $worker_pid = (int) $request->worker_pid;
+                $start_time = $request->worker_pid_start_time !== null ? (int) $request->worker_pid_start_time : null;
                 if ($verdict['known']) {
                     $gone = !$verdict['alive'];
                 } elseif ($request->worker_id !== null) {
-                    $gone = !Task::is_worker_process((int) $request->worker_pid);
+                    $gone = !Process_Identity::is_running($worker_pid, $start_time) || !Task::is_worker_process($worker_pid);
                 } else {
-                    $gone = !$this->pid_alive((int) $request->worker_pid);
+                    $gone = !Process_Identity::is_running($worker_pid, $start_time);
                 }
                 if (!$gone) {
                     continue;
@@ -475,6 +478,7 @@ class Task_Process_Command extends Command
                     ->update([
                         'status_id' => Task_Kill_Request_Model::STATUS_PENDING,
                         'worker_pid' => null,
+                        'worker_pid_start_time' => null,
                         'worker_id' => null,
                         'worker_generation' => null,
                         'updated_at' => now(),

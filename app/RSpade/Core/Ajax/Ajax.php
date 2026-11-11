@@ -685,8 +685,9 @@ class Ajax
     /**
      * The answer to an INFRASTRUCTURE OUTAGE (Infrastructure_Outage: the lock daemon or the
      * database connection gone) anywhere in an Ajax request: the whole request fails with
-     * HTTP 500, and the client rejects every call of it with server_error. The body is the
-     * fatal envelope's fields with no side channels - it reads nothing from the session, the
+     * HTTP 500, and the client rejects every call of it with server_error, worded with the
+     * body's reason (Infrastructure_Outage::USER_MESSAGE for a non-developer caller). The
+     * body is the fatal envelope's fields with no side channels - it reads nothing from the session, the
      * database or the lock daemon, because one of them is what failed.
      *
      * @param Throwable $e
@@ -707,8 +708,9 @@ class Ajax
 
     /**
      * A fault's reason and error object: the detail (file, line, message, backtrace) for a
-     * caller Rsx_Diagnostics admits, a generic sentence and an error_id (the detail logged
-     * under it) for everybody else.
+     * caller Rsx_Diagnostics admits; for everybody else the failure's user-safe sentence
+     * (Rsx_Diagnostics::user_message()) or the generic one, and an error_id (the detail
+     * logged under it).
      *
      * @param Throwable $e
      * @return array [string $reason, array $error]
@@ -736,7 +738,7 @@ class Ajax
             $reason = $e->getMessage();
         } else {
             $error = [
-                'error' => 'An unexpected error occurred. Please try again.',
+                'error' => Rsx_Diagnostics::user_message($e) ?? 'An unexpected error occurred. Please try again.',
                 'error_id' => Rsx_Diagnostics::report_redacted($e, 'ajax'),
             ];
 

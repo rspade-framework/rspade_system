@@ -51,6 +51,12 @@ use App\RSpade\Core\Api\Api_Scope_Validation_Exception;
  * path validates, so the only way to get one is to edit the column by hand - and every request
  * that evaluates one logs a warning naming the key, the text and the reason.
  *
+ * THE OPENAPI DOCUMENT IS OUTSIDE THE SCOPE NAMESPACE. GET /api/vN/openapi.json (the
+ * framework's Openapi_Api_Controller) is reached by EVERY key, whatever its scopes:
+ * decide() and reaches_route() grant it before matching. The document describes calls,
+ * not data, and an integration narrowed to one resource still needs the description of what
+ * it calls - so no scope set needs to, or can, withhold it.
+ *
  * SCOPES SUBTRACT ONLY. The scope check never replaces the #[Auth] gates: effective authority
  * is the user's live permissions INTERSECTED with the key's scopes. A scope can never grant
  * what the user lacks, and a user who loses a permission narrows every key they hold
@@ -315,6 +321,10 @@ class Api_Scopes
 
         $path_segments = static::_segments(static::normalize($path));
 
+        if (static::_is_document(static::normalize($path))) {
+            return true;
+        }
+
         foreach ($parsed['valid'] as $scope) {
             if (static::_segments_match(static::_segments($scope), $path_segments, false)) {
                 return true;
@@ -338,6 +348,10 @@ class Api_Scopes
     public static function reaches_route(?string $scopes, string $route_pattern): bool
     {
         if (static::is_unrestricted($scopes)) {
+            return true;
+        }
+
+        if (static::_is_document(static::normalize($route_pattern))) {
             return true;
         }
 
@@ -367,6 +381,15 @@ class Api_Scopes
         foreach ($malformed as $text => $reason) {
             Log::warning("API key #{$api_key_id}: ignoring malformed scope '{$text}' - {$reason}");
         }
+    }
+
+    /**
+     * Is this normalized path the OpenAPI document of some version, /api/vN/openapi.json -
+     * the one path every key reaches (see the class docblock)?
+     */
+    private static function _is_document(string $path): bool
+    {
+        return preg_match('#^/api/v[0-9]+/openapi\.json$#', $path) === 1;
     }
 
     /**

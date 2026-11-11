@@ -604,7 +604,7 @@ Children are real `php artisan` processes on the test database: a task being sto
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-due-01 | a schedule within SCHEDULE_LEAD_SECONDS is claimed now and advances past the run it claimed; a second worker runs nothing | schedule due in 3 s; two scheduled workers | one run; next_run_at after the due time | implemented |
+| task-due-01 | a schedule within SCHEDULE_LEAD_SECONDS is claimed now and advances past the run it claimed; a second worker runs nothing | schedule due in 3 s, hourly half an hour out (its next occurrence never inside the lead, whenever the test starts); two scheduled workers | one run; next_run_at after the due time | implemented |
 | task-due-02 | a schedule beyond the lead waits | due in 35 s | no run | implemented |
 | task-due-03 | a dispatched run is due at its time exactly; a schedule-origin run early | both due in 3 s; on-demand worker | dispatched PENDING; scheduled COMPLETED | implemented |
 | task-due-04 | next_wake_ms(): null when nothing waits; a schedule at its own time, never early; a deferred run sooner; a minute while anything runs | rows as named | as named | implemented |

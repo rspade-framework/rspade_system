@@ -16,6 +16,7 @@ use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 
 /**
@@ -49,12 +50,22 @@ class Task_Daemon_Due_Rules_Test extends Rsx_Test_Abstract
         return now()->addSeconds($seconds_from_now)->format('Y-m-d H:i:s.v');
     }
 
+    /**
+     * A schedule whose next run is $due_in_seconds away. Its cadence is hourly at the minute
+     * half an hour from now, so the run AFTER the one claimed is never inside the claim window
+     * (Task_Daemon::SCHEDULE_LEAD_SECONDS) whenever the test starts. An every-minute cadence
+     * made the claim test depend on the wall clock: claimed in a minute's last seconds, the
+     * advanced next run (the coming minute) is already due and the worker rightly takes it too.
+     */
     private static function __schedule(int $due_in_seconds): int
     {
+        // Read on the server timezone's wall clock, as Cron_Parser reads the expression.
+        $minute = ((int) (new \DateTime('now', new \DateTimeZone(Rsx_Time::get_server_timezone())))->format('i') + 30) % 60;
+
         return DB::table('_task_schedules')->insertGetId([
             'class' => Task_Exec_Fixture_Service::class,
             'method' => 'marker_a',
-            'cron_expression' => 'every minute',
+            'cron_expression' => $minute . ' * * * *',
             'timezone' => 'UTC',
             'next_run_at' => static::__at($due_in_seconds),
             'created_at' => now(),
@@ -81,7 +92,7 @@ class Task_Daemon_Due_Rules_Test extends Rsx_Test_Abstract
         static::__assert_true($next > $due_at, "it advanced past the run it claimed ({$next} after {$due_at})");
 
         Artisan::call('rsx:task:worker', ['--pool' => Task_Pool::SCHEDULED]);
-        static::__assert_equals(1, static::__runs_of($schedule_id), 'claiming it early never runs that minute twice');
+        static::__assert_equals(1, static::__runs_of($schedule_id), 'claiming it early never runs that occurrence twice');
     }
 
     public static function test_a_schedule_beyond_the_lead_waits()

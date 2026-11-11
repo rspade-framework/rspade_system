@@ -7,7 +7,7 @@ description: "Handling Ajax errors - the {_success, _ajax_return_value} envelope
 
 ## Response Architecture
 
-RSX returns **HTTP 200 for every Ajax response** (success and errors). Success/failure is encoded in the response body via `_success` field. **The one exception is an infrastructure OUTAGE** - the lock daemon or the database connection gone: it is no call's failure, so it is never a `fatal` envelope at 200. The whole request fails with **HTTP 500**, no later call of the batch runs, and the client rejects every call with `server_error`. Never catch or name it (`rsx:man error_handling`, INFRASTRUCTURE OUTAGE).
+RSX returns **HTTP 200 for every Ajax response** (success and errors). Success/failure is encoded in the response body via `_success` field. **The one exception is an infrastructure OUTAGE** - the lock daemon or the database connection gone: it is no call's failure, so it is never a `fatal` envelope at 200. The whole request fails with **HTTP 500**, no later call of the batch runs, and the client rejects every call with ONE `server_error` worded from the 500 body ("The service is temporarily unavailable. Please try again in a moment." plus the error id). Never catch or name it (`rsx:man error_handling`, INFRASTRUCTURE OUTAGE).
 
 ```javascript
 // Success response
@@ -135,6 +135,10 @@ Only catch failures you expect and can describe (a file upload, an outbound API 
 
 **When try/catch IS appropriate**: File uploads, external API calls, user input parsing (expected failures).
 
+**A write's side effect is part of the write.** A "best-effort" `catch (\Throwable $e) {}` around a notification in a `#[Writer]` tells the user the write worked while what it promised never happened. Let it throw (the writer rolls back, the user sees the error and retries) or run it after the commit (`DB::afterCommit()`, whose failure is reported while the committed write answers success).
+
+**A sentence the user can act on**: `throw new Rsx_User_Facing_Exception('The payment provider did not answer. Please try again.', $e);` - its message replaces the generic one for EVERY caller on every channel (with the error id); `$e` is logged, never shown. Still a fault: logged, the writer rolled back (`rsx:man error_handling`, USER-SAFE MESSAGES).
+
 ---
 
 ## Client-Side: Handling Errors
@@ -156,14 +160,19 @@ try {
 
 ### Automatic Error Display
 
-Uncaught Ajax errors automatically display via `Modal.error()`:
+**Every failure is shown without your code doing anything**, so catch only an error you have a PURPOSE for (a not-found you recover from, a refusal you word yourself) - never one you would merely display (`Modal.alert(err.message)`), and never "something unexpected" (a bug, the lock daemon down):
+
+- a form submission: in its `<Form_Errors />`;
+- any other call nobody caught: the dialog the application registered with `Rsx.set_ajax_error_handler(fn)` from a static `on_app_modules_define()` (the template's `Modal` does), else the framework's own `Rsx_Error_Dialog` - in every bundle, Blade and `/_sys` included.
 
 ```javascript
-// No try/catch - error shows in modal automatically
+// No try/catch - an uncaught failure is shown automatically
 const user = await User_Controller.get_user(123);
 ```
 
-The dialog recognises an Ajax error by its marker (`error.__rsx_ajax_error === true`, set on every error the Ajax layer builds), so it covers a rejection whatever promise chain carried it - a generated stub, `Model.fetch()`, your own `async` wrapper that lets it propagate.
+The handler gets the rejected Error once per failure (a request that failed as a whole rejects all its calls with ONE Error, shown once); `error.code === Ajax.ERROR_PHP_EXCEPTION` (with `metadata.file/line/backtrace`) only for a developer caller. Nothing is shown during the SPA's navigation grace period (1.5 s after a navigation starts), and an uncaught Ajax error does not disable SPA navigation.
+
+The listener recognises an Ajax error by its marker (`error.__rsx_ajax_error === true`, set on every error the Ajax layer builds), so it covers a rejection whatever promise chain carried it - a generated stub, `Model.fetch()`, your own `async` wrapper that lets it propagate.
 
 ---
 
@@ -221,7 +230,7 @@ try {
 await Modal.error(error, 'Operation Failed');
 ```
 
-Red danger modal, can stack over other modals.
+Red danger modal, can stack over other modals. The template's registered uncaught-error handler uses it (`Modal.fatal_error()` for a `php_exception`).
 
 ### Rsx.render_error() - Container Display
 
@@ -245,8 +254,8 @@ Keyed on the CALLER, server-side (`Rsx_Diagnostics::caller_sees_detail()`): deve
 - Stack trace (up to 10 frames)
 
 **Everybody else**:
-- Generic message: "An unexpected error occurred. Please try again."
-- An `error_id` (the envelope's `error.error_id`; `error.metadata.error_id` on the rejected JS Error); the detail is logged as `[error_id=<id>] ...`
+- Generic message: "An unexpected error occurred. Please try again." - or a `Rsx_User_Facing_Exception`'s own sentence, or the outage sentence
+- An `error_id` (the envelope's `error.error_id`; `error.metadata.error_id` on the rejected JS Error, whose `message` ends "(error id <id>)"); the detail is logged as `[error_id=<id>] ...`
 - A target that is not an endpoint answers one message, "`<Controller>::<action>` is not an Ajax endpoint" — no class-name oracle
 
 ---
@@ -286,7 +295,7 @@ try {
     } else if (error.code === Ajax.ERROR_UNAUTHORIZED) {
         redirect_to_login();
     } else {
-        // Let default handler show modal
+        // Not ours to handle: the registered error dialog shows it
         throw error;
     }
 }

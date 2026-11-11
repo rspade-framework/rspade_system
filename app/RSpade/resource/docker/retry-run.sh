@@ -272,6 +272,15 @@ for signal in TERM INT QUIT HUP USR1 USR2; do
     trap "forward $signal" "$signal"
 done
 
+# Whether $child is still a running job of this shell - its own job table, never a pid probe.
+child_is_running_job() {
+    local job_pid
+    for job_pid in $(jobs -rp); do
+        [ "$job_pid" = "$child" ] && return 0
+    done
+    return 1
+}
+
 delay="$MIN_DELAY"
 attempt=0
 
@@ -315,7 +324,11 @@ while true; do
         else
             wait "$child"
         fi
-        kill -0 "$child" 2>/dev/null || break
+        # Still running is asked of bash's own job table, never of the kernel: once a wait
+        # has reaped the service its pid is free, and a bare pid probe could find whatever
+        # process took it next. A child exited but not yet noticed only costs one more wait,
+        # which returns its status at once.
+        child_is_running_job || break
     done
 
     # The service's own status, whichever wait above reaped it: bash keeps it for the pid.

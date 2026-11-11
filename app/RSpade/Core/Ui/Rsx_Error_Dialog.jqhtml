@@ -1,0 +1,30 @@
+<%--
+Rsx_Error_Dialog
+
+The framework's own error dialog: what an Ajax failure nobody caught shows when the
+application registered no error dialog of its own (Rsx.set_ajax_error_handler()). It is in
+every bundle - SPA, Blade, the /_sys panel - so no page fails silently, and it depends on
+no theme: core has no palette, so its look is self-contained (Rsx_Error_Dialog.scss) and
+sits in the framework's reserved z-index range for uncaught-error displays.
+
+    await Rsx_Error_Dialog.show_error(error);   // an Ajax Error, as the transport shows it
+    await Rsx_Error_Dialog.show({title, message, detail});
+
+$title    the heading
+$message  the sentence to show (line breaks kept)
+$detail   optional preformatted developer detail (file, line, trace) - present only when the
+          server admitted the caller as a developer
+$on_close called once when the dialog is closed (Close, Escape)
+--%>
+<Define:Rsx_Error_Dialog tag="div">
+    <div class="Rsx_Error_Dialog__box">
+        <div class="Rsx_Error_Dialog__title" $sid="title"><%= this.args.title %></div>
+        <div class="Rsx_Error_Dialog__message"><%br= this.args.message %></div>
+        <% if (this.args.detail) { %>
+            <pre class="Rsx_Error_Dialog__detail"><%= this.args.detail %></pre>
+        <% } %>
+        <div class="Rsx_Error_Dialog__actions">
+            <button type="button" class="Rsx_Error_Dialog__close" $sid="close">Close</button>
+        </div>
+    </div>
+</Define:Rsx_Error_Dialog>

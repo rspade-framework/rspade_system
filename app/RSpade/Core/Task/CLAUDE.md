@@ -119,7 +119,12 @@ says what is in this DIRECTORY and what must stay true when editing it.
   target's `worker_host`; spawns a kill worker when that is this host), `run()` (the
   `rsx:task:killer` loop under the kill pool), `carry_out()` (poll until due or moot,
   SIGKILL - a pool run's pid only while `Task::is_worker_process()` - settle KILLED),
-  `claim_for_this_process()` (`rsx:tasks:disable`).
+  `claim_for_this_process()` (`rsx:tasks:disable`). Every claim records the claimer's
+  `worker_pid` + `worker_pid_start_time` together; `rsx:task:process`
+  (`recover_kill_requests()`) re-queues a CLAIMED request whose claimer is gone - a kill
+  worker of the daemon's generation by `members_alive()`, anyone else by
+  `Process_Identity::is_running()` (plus `Task::is_worker_process()` for an older-generation
+  kill worker), never by bare pid existence.
 - `Task_Gates.php` — the browser task API's one access seam, decided PER TASK TYPE by
   `#[Task_Access]`: `decide($run, $action)` (ALLOWED / DENIED / UNDECLARED / WRONG_REALM; a
   staff developer passes without a check being asked; a caller not signed in in the realm

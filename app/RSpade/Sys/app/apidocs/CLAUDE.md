@@ -18,8 +18,10 @@ apidocs/
 The framework declares NO route for the console and has no visibility setting.
 An application routes to it and calls `Rsx_Api_Docs::page()` (`Core/Api/`, which
 is the ENGINE's home and stays there); that one call renders `_Apidocs_App`,
-which names `_Apidocs_Bundle` by FQCN. `Rsx_Api_Docs::openapi_document()` is the
-separate call for the OpenAPI document, so the two can be gated differently.
+which names `_Apidocs_Bundle` by FQCN. The console links to `<mount>/openapi.json`,
+the application's browser download of the document (`Rsx_Api_Docs::openapi_document()`,
+headers chosen by that route); a program reads the framework's
+`GET /api/vN/openapi.json` (`Core/Api/Openapi_Api_Controller`) with its key.
 The template app's mount is `rsx/app/apidocs/apidocs_controller.php` - a gate
 and two one-line bodies, and the only thing an application ever writes.
 

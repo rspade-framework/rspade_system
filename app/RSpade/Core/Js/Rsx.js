@@ -259,6 +259,13 @@ class Rsx {
         // Handle unhandled promise rejections
         window.addEventListener('unhandledrejection', function (event) {
             const reason = event.reason;
+
+            // An Ajax failure nobody caught is Ajax.js's to show (its own listener, the
+            // registered error dialog): a server's answer, not a fault in this page's code.
+            if (reason && reason.__rsx_ajax_error === true) {
+                return;
+            }
+
             const exception = Rsx._rejection_as_error(reason);
 
             // View Transition API rejections are benign — the page rendered fine,
@@ -550,6 +557,35 @@ class Rsx {
      */
     static set_session_expired_handler(fn) {
         Rsx._session_expired_handler = fn;
+    }
+
+    // The application's uncaught-Ajax-error handler, or null. ONE slot.
+    static _ajax_error_handler = null;
+
+    /**
+     * Register how an Ajax failure NOBODY CAUGHT is shown to the user - the application's
+     * error dialog.
+     *
+     * Every failed call is shown somewhere without the calling code doing anything: a form's
+     * submission in its <Form_Errors />, every other call here. So application code catches
+     * only an error it has a purpose for (a not-found it recovers from, a refusal it words
+     * itself) and lets everything else - "the lock daemon is down" included - reach this.
+     *
+     * The handler is called with the Error the call rejected with (.code is an
+     * Ajax.ERROR_* constant, .message is what to show: the server's user-safe sentence and
+     * error id, or, for a caller the server admits as a developer, the exception text with
+     * .code Ajax.ERROR_PHP_EXCEPTION and .metadata {file, line, backtrace}). It is called
+     * once per failure: a request that failed as a whole rejects all of its calls with ONE
+     * Error, shown once. Nothing is shown during the SPA's navigation grace period.
+     *
+     * With no handler registered the framework shows its own dialog (Rsx_Error_Dialog), so
+     * no page ever fails silently. Register one from a static on_app_modules_define(). One
+     * slot, last wins.
+     *
+     * @param {function(Error): (void|Promise<void>)} fn
+     */
+    static set_ajax_error_handler(fn) {
+        Rsx._ajax_error_handler = fn;
     }
 
     /**

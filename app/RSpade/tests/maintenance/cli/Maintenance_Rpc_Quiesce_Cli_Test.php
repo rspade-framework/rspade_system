@@ -32,7 +32,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The fakes are real node processes whose argv carries a socket path, which is the ONLY
  * handle the reaper uses (these daemons are PID-1 orphans; the socket path in their command
  * line is what identifies them). One exits on SIGTERM, one ignores it - so the test proves
- * both halves of TERM -> settle -> KILL.
+ * both halves of TERM -> KILL.
  */
 class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
 {
@@ -138,14 +138,18 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         );
     }
 
-    /** The reaper escalates: TERM every match, one settle pass, KILL whatever survived. */
+    /**
+     * The reaper escalates: TERM every match, then KILL whatever still matches. Each pass
+     * matches the command line afresh - a pid read earlier is never signalled again, since a
+     * daemon that exited on TERM frees its pid for reuse.
+     */
     public static function test_the_quiesce_block_terms_then_kills()
     {
         $block = static::__extract_quiesce_block(static::__script_source());
 
-        static::__assert_contains('xargs -r kill', $block, 'every match is TERMed first');
-        static::__assert_contains('kill -9', $block, 'a survivor is KILLed');
-        static::__assert_contains('kill -0', $block, 'the KILL pass only signals what is still alive');
+        static::__assert_contains('pkill -TERM -f -- "--socket=$(rsx_tmp_root)/"', $block, 'every match is TERMed first');
+        static::__assert_contains('pkill -KILL -f -- "--socket=$(rsx_tmp_root)/"', $block, 'a survivor is KILLed by a fresh command-line match');
+        static::__assert_false(str_contains($block, 'kill -0'), 'no pass trusts a bare pid to still be the daemon');
         static::__assert_contains('say "', $block, 'the reap is reported');
     }
 
@@ -225,7 +229,7 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         static::__assert_contains('Quiesced 2 node daemon(s)', $text, 'the reap reports its count');
 
         // Wait for each fake to actually exit. A SIGKILLed task is torn down when the kernel
-        // next schedules it, so an assertion taken the instant xargs returns can observe a
+        // next schedules it, so an assertion taken the instant pkill returns can observe a
         // process that is already dead - which is a race in the OBSERVER, not in the reaper.
         //
         // This wait is deliberately unbounded (no deadline anywhere in this codebase): these

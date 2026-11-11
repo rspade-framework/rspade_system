@@ -108,9 +108,11 @@ EOF
     LOCKD_BG_PID=$!
 
     # The pidfile is written AFTER a successful bind, so a listening port plus a pidfile
-    # is proof the daemon is actually serving - not merely that node started.
-    local attempt=0
-    while [ "$attempt" -lt 100 ]; do
+    # is proof the daemon is actually serving - not merely that node started. Bounded at 100
+    # times what a start takes on an idle box (2 s): the test carve-out from the no-timeout
+    # mandate, reached only by a daemon that never comes up (tests/CLAUDE.md).
+    local deadline=$((SECONDS + 200))
+    while [ "$SECONDS" -lt "$deadline" ]; do
         if ! lockd_port_free "$LOCKD_PORT" && [ -s "$LOCKD_TMP/lockd.pid" ]; then
             export LOCKD_PORT LOCKD_DIR LOCKD_PROJECT_ROOT
             return 0
@@ -119,7 +121,6 @@ EOF
             break
         fi
         sleep 0.1
-        attempt=$((attempt + 1))
     done
 
     echo "[ERROR] the scratch daemon did not come up on port $LOCKD_PORT"

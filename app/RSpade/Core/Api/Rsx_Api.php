@@ -41,7 +41,7 @@ class Rsx_Api
      * level, where an extra field is invalid - an OpenAPI document's root admits only its own
      * fields and x- extensions:
      *
-     *     return Rsx_Api::document(Rsx_Api_Docs::openapi_document(null, 1));
+     *     return Rsx_Api::document(Api_Openapi::document(null, $version));   // Openapi_Api_Controller
      *
      * Still a JSON object like every API body ($data must be an associative array; a list is
      * refused). Not for ordinary answers, which carry the timing fields every client reads.

@@ -190,6 +190,13 @@ Handles various error formats:
 
 Returns: Promise<void>
 
+The uncaught Ajax error dialog: Modal registers Modal._on_ajax_error with
+Rsx.set_ajax_error_handler() from its on_app_modules_define(), so an Ajax
+failure nothing caught is shown with Modal.error() - or Modal.fatal_error()
+(file and line) when the server sent a developer caller the PHP origin.
+Never catch an Ajax error only to show it with Modal.error(); see
+rsx:man ajax_error_handling.
+
 ================================================================================
 CUSTOM MODALS
 ================================================================================

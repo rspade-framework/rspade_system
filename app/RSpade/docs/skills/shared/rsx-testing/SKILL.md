@@ -1,6 +1,6 @@
 ---
 name: rsx-testing
-description: "Writing and running tests with Rsx_Test_Abstract and php artisan rsx:test - discovery, the __assert_* helpers, user impersonation helpers, a signed-in test browser (__as_signed_in_browser, __run_pending_task) for an endpoint that dispatches a #[Run_As_Dispatcher] task, per-test transactions, database baselines, --filter / --group / class selectors. Use when writing a test for a feature, deciding whether a class needs $requires_db_reset or --fresh, or on 'test database is the same as the development database'."
+description: "Writing and running tests with Rsx_Test_Abstract and php artisan rsx:test - discovery, the __assert_* helpers, user impersonation helpers, a signed-in test browser (__as_signed_in_browser, __run_pending_task) for an endpoint that dispatches a #[Run_As_Dispatcher] task, per-test transactions, database baselines, --filter / --group / class selectors. Use when writing a test for a feature, a test that waits on a process or a schedule (a bounded poll, the 100x-idle bound), a test that fails only under load or near a minute boundary, deciding whether a class needs $requires_db_reset or --fresh, or on 'test database is the same as the development database'."
 ---
 
 # RSpade testing
@@ -48,6 +48,16 @@ $e = static::__assert_throws(\RuntimeException::class, function () {
 ```
 
 Assertions are strict (`===`); use `__assert_equals_approx()` for floats and money. `__skip()` is for a genuinely inapplicable environment (a missing optional binary), **never** to silence a failure.
+
+## Time in a test
+
+**A test proves that the intended effect eventually happens, or does not - never how fast.** Assume extreme contention: a loaded box gives the test process, and every process it waits on, arbitrarily little CPU.
+
+- **Wait by POLLING the condition**, returning the moment it holds; a fixed sleep is not synchronization. The one legitimate fixed wait proves a NEGATIVE over a window the code under test defines.
+- **The poll's bound is 100x what the event takes on an idle box** - 2 s idle gets about 3 minutes (200 s). It is the single test carve-out from the no-timeout mandate: it exists only to catch an event that NEVER fires, and expiry FAILS the test naming the condition (and what was last seen), never the elapsed time.
+- **Never assert on a duration the test measured** (`microtime()` around a call fed into an assertion): it includes however long the test was descheduled. When the subject IS a delay the code owes (a backoff, a grace), compare the code's own timestamps - one record's ended_at against the next one's started_at.
+- **Never let a fixture depend on where the wall clock stands.** A schedule due "in 3 s" with an every-minute cadence passes or fails by the second it starts in; choose a cadence whose NEXT occurrence cannot fall inside the window the code defines (hourly, half an hour out).
+- **A file another process writes for the test to poll is written beside its name and renamed into place**; a poll that sees it before its content reads an empty value and can wait on that forever.
 
 ## Choosing the isolation mode
 

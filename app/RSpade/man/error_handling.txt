@@ -79,6 +79,21 @@ CORE PHILOSOPHY
         operations are never wrapped "just in case"; a schema error is a bug
         and must surface.
 
+    Unexpected failures are SHOWN, never caught
+        Every failure the application did not anticipate - a bug, the lock
+        daemon down, the database gone - reaches the user without any code
+        handling it: a form shows it in its <Form_Errors />, any other Ajax
+        call in the application's registered error dialog
+        (Rsx.set_ajax_error_handler()) or the framework's own, a page renders
+        the 500 screen. So nothing in the application names such an error,
+        and specialized handling exists only where it has a purpose (a
+        not-found the page recovers from, a concurrent-edit question). A
+        side effect of a write (a notification, a queued email) is part of
+        the write: let its failure fail the request - the writer rolls back
+        and the user retries - or run it after the commit (DB::afterCommit(),
+        whose failure is reported); never swallow it (rsx:man
+        ajax_error_handling, Automatic Error Handling).
+
     These rules are mechanically enforced. rsx:check flags fallback/legacy
     naming (PHP-FALLBACK-01, JS-FALLBACK-01) and defensive existence checks
     for core classes (JS-DEFENSIVE-01). See: php artisan rsx:man code_quality
@@ -243,12 +258,13 @@ RESPONSE HELPERS
             const project = await Project_Controller.get(id);
         } catch (e) {
             if (e.code === Ajax.ERROR_NOT_FOUND) { /* handle */ }
-            else { throw e; }   // let the global handler flash it
+            else { throw e; }   // let the error dialog show it
         }
 
-    Uncaught Ajax rejections are auto-logged and surfaced in a flash/modal
-    by the global handler - so an endpoint returning response_error() never
-    fails silently even when the caller writes no catch. The full envelope,
+    Uncaught Ajax rejections are logged and shown by the dialog registered
+    with Rsx.set_ajax_error_handler() (the framework's Rsx_Error_Dialog when
+    none is) - so an endpoint returning response_error() never fails
+    silently even when the caller writes no catch. The full envelope,
     every code, and every client display path live in ajax_error_handling.
 
     WHICH PAGE a web refusal renders is the application's own declaration
@@ -331,6 +347,31 @@ EXCEPTION HANDLER CHAIN
     the handler FORMATS the error for its context; it does not recover or
     reroute application logic.
 
+USER-SAFE MESSAGES
+    An unexpected failure is answered to everybody but a developer caller
+    with a generic sentence ("An unexpected error occurred. Please try
+    again.") and an error id, the detail logged under that id (rsx:man
+    ajax_error_handling, WHO SEES FATAL-ERROR DETAIL). A failure the user can
+    act on may instead carry a sentence written for them:
+
+        throw new Rsx_User_Facing_Exception(
+            'The payment provider did not answer. Please try again in a few minutes.',
+            $e   // the failure behind it: logged, never shown
+        );
+
+    Its message is shown to EVERY caller in place of the generic sentence,
+    with the error id still beside it, on every channel: the Ajax 'fatal'
+    envelope (so the form's <Form_Errors /> or the error dialog), the
+    external API's 500 internal_error message, the 500 page's message. It is
+    still a fault - logged, a writer rolled back - only the words change.
+    Write it for an anonymous visitor in strict production: a complete
+    sentence, no class names, paths, hosts, SQL or identifiers. A subclass
+    that declares its own methods carries #[Instantiatable] as the base does.
+
+    Rsx_Diagnostics::user_message($e) is the one resolver every channel asks:
+    the first Rsx_User_Facing_Exception in the exception's chain, else
+    Infrastructure_Outage::USER_MESSAGE for an outage (below), else null.
+
 INFRASTRUCTURE OUTAGE
     The lock daemon (rsx-lockd) and the database are infrastructure: the
     application assumes they work. When one is gone - the daemon unreachable
@@ -344,6 +385,13 @@ INFRASTRUCTURE OUTAGE
         companion     500 internal_error
         page          the framework's 500 error page
         task/command  the run settles FAILED; a command exits non-zero
+
+    Every caller but a developer is told "The service is temporarily
+    unavailable. Please try again in a moment." (Infrastructure_Outage::
+    USER_MESSAGE, through USER-SAFE MESSAGES above) with the error id - the
+    Ajax 500 body's reason, which the client shows in place of its generic
+    server_error text; the API's internal_error message; the 500 page. The
+    companion channel's 500 is unchanged (a program, not a person, reads it).
 
     It is reported once, by the front controller, like any fault. There is
     no fallback, no degraded mode and no retry-and-continue. After a commit
@@ -398,6 +446,11 @@ COMMON PITFALLS
       flags it.
     - Wrapping DB/framework operations in "just in case" try/catch. Let them
       bubble to the handler chain, which formats them properly.
+    - Swallowing a write's side effect ("best-effort" notification in a
+      catch-all). The user is told the write worked while what it promised
+      did not happen; make it part of the write or run it after the commit.
+    - Catching an Ajax error only to show it (Modal.alert(err.message)). An
+      uncaught one is already shown, by the registered error dialog.
     - Hand-setting HTTP 4xx/5xx on Ajax endpoints. Return response_error();
       the framework wraps it as HTTP 200 with a failure body.
 

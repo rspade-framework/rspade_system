@@ -5,7 +5,7 @@
  *
  *     node fake_app.js <directory>
  *
- * <directory>/port      written once listening
+ * <directory>/port      written once listening, whole (renamed into place)
  * <directory>/requests  one JSON line per request: {path, body}
  * <directory>/ready     the ready verb's answer as JSON; absent = ready
  * <directory>/contract_mismatch   present = every companion call answers 409
@@ -45,6 +45,10 @@ const server = http.createServer((request, response) => {
     });
 });
 
+// Written whole and renamed into place: the test polls for the file, and a file that exists
+// before its content is written reads as an empty port.
 server.listen(0, '127.0.0.1', () => {
-    fs.writeFileSync(path.join(directory, 'port'), String(server.address().port));
+    const file = path.join(directory, 'port');
+    fs.writeFileSync(file + '.partial', String(server.address().port));
+    fs.renameSync(file + '.partial', file);
 });

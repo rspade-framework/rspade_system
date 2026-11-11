@@ -164,9 +164,22 @@ an object when present.
 ## The client settles every call
 
 `Ajax.js`: an answer missing a call rejects that call with `Ajax.ERROR_SERVER`
-(`server_error`); an HTTP 5xx rejects every call in the request with `server_error` (logged
-via `Debugger.log_error`); status 0 is `network_error`; any other HTTP failure `generic`.
-A hydration or side-channel failure for one call rejects that call only. Every Ajax error
-is built by `Ajax._error()` and carries `__rsx_ajax_error = true`; the uncaught-Ajax-error
-dialog keys on that marker, so it covers whatever promise chain the error travelled (a
-generated stub, the ORM fetch, an app's own async wrapper).
+(`server_error`); an HTTP 5xx rejects every call in the request with ONE `server_error`
+Error (logged via `Debugger.log_error`), worded from the body's `reason` when the body is
+`outage_response()`'s, else "A server error occurred"; status 0 is `network_error`; any other
+HTTP failure `generic`. A non-developer `fatal`'s message ends "(error id <id>)"
+(`_with_error_id()`), as the outage's does. A hydration or side-channel failure for one call
+rejects that call only. Every Ajax error is built by `Ajax._error()` and carries
+`__rsx_ajax_error = true`; Ajax.js's own `unhandledrejection` listener keys on that marker
+(Rsx's generic listener skips it, so an Ajax failure neither raises the exception flash nor
+disables the SPA), so it covers whatever promise chain the error travelled (a generated stub,
+the ORM fetch, an app's own async wrapper). It shows each Error once (a `WeakSet`), outside
+the SPA navigation grace period, through `Rsx.set_ajax_error_handler()`'s handler or, with
+none, `Core/Ui/Rsx_Error_Dialog`.
+
+## User-safe sentences
+
+`__fault_detail()` answers a non-developer with `Rsx_Diagnostics::user_message($e)` (a
+`Exceptions/Rsx_User_Facing_Exception` in the chain, else `Infrastructure_Outage::USER_MESSAGE`
+for an outage) or the generic sentence, plus the `error_id`. The same resolver words the API's
+`internal_error` and the 500 page (`Errors/Error_Screens::fatal()`).

@@ -27,7 +27,8 @@ next, and triggers the phase's event:
 
 `_`-prefixed phases are the framework's. **A registration the first page needs goes in
 `on_app_modules_define()`** - the spinner (`Rsx.set_default_spinner()`), the form question
-handler, the error-screen components - because the first SPA page draws before `app_ready`.
+handler, the Ajax error dialog (`Rsx.set_ajax_error_handler()`), the error-screen
+components - because the first SPA page draws before `app_ready`.
 `on_app_ready()` is the Blade page hook (with its page guard).
 
 ## What is here
@@ -35,8 +36,10 @@ handler, the error-screen components - because the first SPA page draws before `
 - `Rsx.js` — the core: the boot above, `Rsx.Route()`, `url_hash_get()` and friends (the
   setters tell `Spa_Journal` the entry's address moved; reserved hash keys `HASH_ANCHOR_KEY`
   `at` and `HASH_SCROLL_KEY` `_scroll`),
-  `load_external()`, `set_default_spinner()`, `set_session_expired_handler()`, the
-  navigation guard, unhandled-exception routing to `Exception_Handler.js`.
+  `load_external()`, `set_default_spinner()`, `set_session_expired_handler()`,
+  `set_ajax_error_handler()` (the app's dialog for an uncaught Ajax failure; with none,
+  `Core/Ui/Rsx_Error_Dialog`), the navigation guard, unhandled-exception routing to
+  `Exception_Handler.js` (an Ajax failure is left to `Ajax.js`'s own listener).
 - `Rsx_Navigation.js` — the one navigation door behind `Rsx.navigate()` / `Rsx.redirect()`:
   option validation, target classification, `_via` carrying, the single transport that writes
   `location` / `history`, and the full-load hand-off `Spa._on_spa_init()` reads once (it also

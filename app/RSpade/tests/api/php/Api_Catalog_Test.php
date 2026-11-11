@@ -121,9 +121,43 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
         static::__assert_equals($plain, Api_Catalog::resolve_for_scopes(1, "   \n  "));
     }
 
+    /**
+     * resolve_for_scopes() without the OpenAPI document's own route: every key reaches
+     * GET /api/vN/openapi.json whatever its scopes (test_every_scope_set_reaches_the_document),
+     * so a test about what the SCOPES narrow compares the rest.
+     */
+    private static function __scoped_without_document(int $version, ?string $scopes, bool $include_hidden = false, bool $read_only = false): array
+    {
+        $out = [];
+        foreach (Api_Catalog::resolve_for_scopes($version, $scopes, $include_hidden, $read_only) as $resource => $group) {
+            $group['endpoints'] = array_values(array_filter(
+                $group['endpoints'],
+                static fn ($ep) => $ep['pattern'] !== '/api/v' . $version . '/openapi.json'
+            ));
+            if (!empty($group['endpoints'])) {
+                $out[$resource] = $group;
+            }
+        }
+
+        return $out;
+    }
+
+    public static function test_every_scope_set_reaches_the_document()
+    {
+        foreach (['/api/v1/no_such_resource/*', '/api/v1/contacts/*'] as $scopes) {
+            $patterns = [];
+            foreach (Api_Catalog::resolve_for_scopes(1, $scopes) as $group) {
+                foreach ($group['endpoints'] as $ep) {
+                    $patterns[] = $ep['pattern'];
+                }
+            }
+            static::__assert_true(in_array('/api/v1/openapi.json', $patterns, true), 'the OpenAPI document is reachable with scopes ' . $scopes);
+        }
+    }
+
     public static function test_resolve_for_scopes_keeps_only_reachable_endpoints()
     {
-        $groups = Api_Catalog::resolve_for_scopes(1, '/api/v1/contacts/*');
+        $groups = static::__scoped_without_document(1, '/api/v1/contacts/*');
 
         static::__assert_not_empty($groups, 'the template app publishes v1 contacts endpoints');
 
@@ -151,7 +185,7 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
     {
         // Deny by default, projected: a scope naming a resource that does not exist reaches
         // nothing, and the whole catalogue drops out rather than degrading to 'everything'.
-        static::__assert_equals([], Api_Catalog::resolve_for_scopes(1, '/api/v1/no_such_resource/*'));
+        static::__assert_equals([], static::__scoped_without_document(1, '/api/v1/no_such_resource/*'));
     }
 
     public static function test_resolve_for_scopes_is_a_strict_subset()
@@ -171,7 +205,7 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
     {
         // Reading never throws - the preview panel asks this question about text an operator
         // is still typing. A malformed scope simply grants nothing.
-        static::__assert_equals([], Api_Catalog::resolve_for_scopes(1, '/api/v1/contacts*'));
+        static::__assert_equals([], static::__scoped_without_document(1, '/api/v1/contacts*'));
 
         $mixed = Api_Catalog::resolve_for_scopes(1, "/api/v1/contacts*\n/api/v1/contacts/*");
         static::__assert_not_empty($mixed, 'the valid scope still reaches its endpoints');
@@ -213,8 +247,8 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
     {
         // The two narrowings are independent and both apply: paths from the scopes, verbs
         // from the flag.
-        $scoped = Api_Catalog::resolve_for_scopes(1, '/api/v1/contacts/*', false, false);
-        $both = Api_Catalog::resolve_for_scopes(1, '/api/v1/contacts/*', false, true);
+        $scoped = static::__scoped_without_document(1, '/api/v1/contacts/*', false, false);
+        $both = static::__scoped_without_document(1, '/api/v1/contacts/*', false, true);
 
         static::__assert_not_empty($both, 'contacts still has a GET endpoint');
         static::__assert_less_than(

@@ -566,16 +566,18 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
      * EXECUTION, never elapsed time, so every wait is a poll rather than a fixed sleep, and
      * the bound is generous enough that only a genuinely stuck condition can reach it.
      *
-     * SANCTIONED BOUND (no-timeout mandate): 120 seconds bounds a wait on an EXTERNAL process
-     * this test does not control, and expiry does not truncate any work - it fails the test
-     * loudly, naming the condition that was never reached. Without it a broken daemon would
-     * hang the suite forever with no evidence at all.
+     * SANCTIONED BOUND (no-timeout mandate, the test carve-out): 100 times what the event
+     * takes on an idle box, and both waits here - a daemon starting, a daemon exiting - take
+     * well under the 2 s idle time this assumes, so 200 s. It bounds a wait on an EXTERNAL
+     * process this test does not control, and expiry does not truncate any work - it fails
+     * the test loudly, naming the condition that was never reached. Without it a broken daemon
+     * would hang the suite forever with no evidence at all.
      */
     private static function __poll_until(callable $condition, string $condition_description): void
     {
-        $max_wait_ms = 120000;
+        $bound_seconds = 100 * 2;
         $interval_ms = 25;
-        $deadline = microtime(true) + ($max_wait_ms / 1000);
+        $deadline = microtime(true) + $bound_seconds;
 
         do {
             if ($condition()) {
@@ -586,7 +588,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
         } while (microtime(true) < $deadline);
 
         static::__fail(
-            $condition_description . ' (waited ' . ($max_wait_ms / 1000) . 's)'
+            $condition_description . " (never reached in {$bound_seconds} s, 100x its idle time)"
         );
     }
 

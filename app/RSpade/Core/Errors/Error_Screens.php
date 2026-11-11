@@ -163,7 +163,9 @@ class Error_Screens
      *
      * @param Request $request The failed request
      * @param Throwable|null $e The exception, when one is available
-     * @return Response A 500 page (detail for a developer caller, an error id otherwise)
+     * @return Response A 500 page (detail for a developer caller, an error id otherwise; the
+     *                  failure's user-safe sentence, Rsx_Diagnostics::user_message(), as its
+     *                  message when it carries one)
      */
     public static function fatal(Request $request, ?Throwable $e = null): Response
     {
@@ -175,7 +177,7 @@ class Error_Screens
 
         return static::render(
             $request,
-            static::__context(500, $request, null, '', $detail, false, $error_id)
+            static::__context(500, $request, null, $e !== null ? (Rsx_Diagnostics::user_message($e) ?? '') : '', $detail, false, $error_id)
         );
     }
 

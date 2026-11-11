@@ -33,6 +33,10 @@ SYNOPSIS
                                                   content (APPLICATION SECTIONS)
         Rsx_Api_Docs::openapi_document(): array   (the app builds the response)
 
+    The OpenAPI document, for a program (framework route, every version):
+        curl -H "Authorization: Bearer rsx_live_xxx" \
+             https://your.host/api/v1/openapi.json
+
     Provisioning a key from a script (see COMMAND LINE, under API KEYS):
         KEY=$(php artisan rsx:api:key:temp --user=1 --expires="2 hours" \
               --scope="/api/v1/*" --read-only \
@@ -484,18 +488,19 @@ AUTHENTICATION
     and rsx:man file_upload.
 
 THE IDENTITY ENDPOINT - GET /api/vN/me
-    One of the four endpoints every RSpade API has, shipped by the framework
-    rather than written per app (Identity_Api_Controller; the other three are
-    the file endpoints below). A client hits it FIRST and OFTEN:
+    One of the five endpoints every RSpade API has, shipped by the framework
+    rather than written per app (Identity_Api_Controller; the others are the
+    three file endpoints below and GET /api/vN/openapi.json, THE OPENAPI
+    DOCUMENT). A client hits it FIRST and OFTEN:
     to check a key at setup, to fail fast on a revoked one, to show "connected
     as" in a UI.
 
-    SERVED AT EVERY VERSION THE APPLICATION SERVES. The four framework
+    SERVED AT EVERY VERSION THE APPLICATION SERVES. The five framework
     endpoints carry #[Api_Versions(every: true)] (see VERSIONING): they are
     declared at v1 and answer at /api/vN/... for every N the application's own
     endpoints are served at - same handler, params, gates and payload at each.
     A client that knows one supported prefix reaches identity, upload,
-    metadata and text there; a version the application stops serving stops
+    metadata, text and the OpenAPI document there; a version the application stops serving stops
     serving them too (410 api_version_retired, like any retired address); an
     application with no API endpoints of its own still has them at v1.
 
@@ -804,8 +809,8 @@ API KEYS
 
     rsx:api:openapi writes the OpenAPI 3.1 document to stdout, for feeding a
     client generator, a diff against last release's copy, or jq. It is the same
-    document /apidocs/openapi.json serves, without a browser or an HTTP round
-    trip.
+    document /apidocs/openapi.json serves (GET /api/vN/openapi.json is one
+    version of it), without a browser, a key or an HTTP round trip.
 
     It has NO --json flag: every other command has a human form and a machine
     form and --json selects between them, while this one has only the machine
@@ -942,7 +947,9 @@ KEY SCOPES
     NULL IS UNRESTRICTED. A null or blank scopes column leaves the key at its
     holder's full authority. The presence of ANY scope flips the key into
     whitelist mode: DENY BY DEFAULT. There is therefore nothing to write a
-    denial for, and no way to write one.
+    denial for, and no way to write one. The one path outside the language is
+    the OpenAPI document, GET /api/vN/openapi.json: every key reaches it,
+    whatever its scopes (THE OPENAPI DOCUMENT).
 
     THE METHOD IS NOT PART OF A SCOPE. GET and POST are indistinguishable to
     this language, and "read-only" is not expressible in it. That is what the
@@ -1442,10 +1449,12 @@ DOCS AND TESTER PAGE
             }
         }
 
-    Page and document are SEPARATE calls so they can be gated differently - a
-    public openapi.json beside a staff-only console is a normal arrangement.
+    The console links to <mount>/openapi.json, so a mount declares that route
+    too: the document downloaded by a person signed in to the browser that
+    shows the console. A PROGRAM never reads it there - it reads the
+    framework's GET /api/vN/openapi.json with its key (THE OPENAPI DOCUMENT).
 
-    They are also different KINDS of call. page() renders a RESPONSE;
+    page() renders a RESPONSE;
     openapi_document() returns an ARRAY, and the controller builds the response
     around it. Status, content type and whether the browser renders the JSON
     inline or downloads it are the route's business, not the generator's - the
@@ -1638,11 +1647,39 @@ DOCS AND TESTER PAGE
         _Apidocs_Key_Bar        paste a key (the page never mints one); the key is
                            held in Rsx_Storage session scope (never persisted)
 
-    THE OPENAPI DOCUMENT. /apidocs/openapi.json (login-gated) returns
-    Api_Openapi::document() - an OpenAPI 3.1 description of every published
-    endpoint across every version, served application/json with
-    Content-Disposition: inline so a browser renders it in its JSON viewer
-    rather than downloading it.
+    THE OPENAPI DOCUMENT. GET /api/vN/openapi.json is the framework's route
+    (Openapi_Api_Controller) and the ONE way a program fetches the document:
+
+        curl https://host/api/v1/openapi.json -H "Authorization: Bearer rsx_..."
+
+      - VERSIONS: served at every version the application serves
+        (#[Api_Versions(every: true)], like GET /api/vN/me), each answering
+        THAT version's surface - Api_Openapi::document(null, N), info.version
+        vN. A retired version answers 410 api_version_retired like any path.
+      - CONTENT: the whole published surface of the version, not the caller's
+        reachable part, so a client generated from it is the same whoever
+        fetched it. It lists itself, under the OpenAPI tag: it is a callable
+        endpoint, and a generated client gets a method for it.
+      - UNSTAMPED: answered through Rsx_Api::document(), so the body is the
+        document exactly - no _duration_ms / _completed_at (A DOCUMENT IS SENT
+        AS WRITTEN, under RESPONSE CONTRACT). application/json.
+      - GATE: #[Auth('is_logged_in')], like /me - any valid key whose user has
+        API access (users.is_api_access_enabled; otherwise the uniform 401).
+        The application's Main::pre_dispatch still runs and may refuse the
+        account (403 account_refused) - the reference app does for a user
+        without its can_use_api permission. A read-only key reads it (GET).
+      - SCOPES NEVER REFUSE IT. /api/vN/openapi.json is granted to every scope
+        set (Api_Scopes::decide() / reaches_route()): the document describes
+        calls, not data, and a key narrowed to one resource still needs the
+        description of what it calls. No scope is needed for it, and none can
+        withhold it.
+
+    The console's <mount>/openapi.json (the reference app's
+    /apidocs/openapi.json, gated like the console) is the same document,
+    every version at once, for a person in that browser - a link cannot carry
+    a bearer key. The application builds that response from
+    Rsx_Api_Docs::openapi_document() and chooses its headers (the reference
+    app serves it as an attachment).
 
     OpenAPI rather than a house format because everything that consumes an API
     description already speaks it: client generators, Postman/Insomnia, mock
@@ -1706,25 +1743,6 @@ DOCS AND TESTER PAGE
 
     /_compiled/ and /_vendor/ deliberately do NOT fall through - a miss there is
     a build problem, and a route scan would turn a loud failure into a 404.
-
-    THE DOCUMENT OVER THE API. An integration holding only a key reads the
-    document from an ordinary GET endpoint of the application's own - the
-    framework declares no document route, exactly as it declares none for the
-    console. The reference app's (rsx/app/api/v1/openapi_api_controller.php):
-
-        #[Auth('is_logged_in', 'can_use_api')]
-        class Openapi_Api_Controller extends Rsx_Api_Controller_Abstract
-        {
-            #[Api_Endpoint('/api/v1/openapi.json', methods: ['GET'])]
-            public static function document(Request $request, array $params = [])
-            {
-                return Rsx_Api::document(Rsx_Api_Docs::openapi_document(null, 1));
-            }
-        }
-
-    Rsx_Api::document() is what keeps the timing fields off the root (A
-    DOCUMENT IS SENT AS WRITTEN, under RESPONSE CONTRACT). A scoped key reaches
-    it only when a scope grants its path.
 
 REQUEST LOGGING
     EVERY API request - success and every failure path - writes one
@@ -1878,7 +1896,7 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     for auth.
 
 TEMPLATE ENDPOINTS
-    The starter template ships four reference API controllers
+    The starter template ships three reference API controllers
     (rsx/app/api/v1/) as the working pattern to copy:
 
         GET  /api/v1/contacts            list (page, per_page, search) -> {items, meta}
@@ -1896,11 +1914,6 @@ TEMPLATE ENDPOINTS
         POST /api/v1/clients/:id/attachments/:attachment_id/delete
         ... and the same three for /api/v1/tasks (which also has list, one,
         create and present-only update - no delete)
-
-    And the API's own description, for a key holder:
-
-        GET  /api/v1/openapi.json        the v1 OpenAPI document, unstamped
-                                         (THE DOCUMENT OVER THE API)
 
     Clients attach into the SAME category the staff Documents tab reads, so a
     file uploaded over the API shows up in the UI; removing one revokes its
@@ -1967,7 +1980,7 @@ RSX VS LARAVEL
         RSX:     the model's redacting toArray() (neverExport + enum labels).
     Docs:
         Laravel: hand-write OpenAPI or bolt on a generator.
-        RSX:     /apidocs and /apidocs/openapi.json are generated from the manifest.
+        RSX:     /apidocs and GET /api/vN/openapi.json are generated from the manifest.
 
 TROUBLESHOOTING
     "External API endpoint X::y answered a list." (or null, a scalar, ...)

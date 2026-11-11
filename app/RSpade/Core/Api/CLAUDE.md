@@ -84,7 +84,8 @@ the one point every answer passes, which also adds the timing fields.
 - `Api_Param_Validator.php` — pure validate-and-coerce over the baked specs: undeclared keys
   rejected, defaults applied, `file` params passed through, text envelopes unwrapped.
 - `Api_Scopes.php` + `Api_Scope_Validation_Exception.php` — the scope language: one bare
-  path-pattern GRANT per line, `?` / `#` / trailing `*` as whole segments. `validate()` is the
+  path-pattern GRANT per line, `?` / `#` / trailing `*` as whole segments; the OpenAPI
+  document's path is granted to every key. `validate()` is the
   ONE validator every write path runs, `matches()` the ONE matcher; scopes only subtract, and a
   malformed stored scope still counts, so the key fails closed.
 - `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display), revoke, expiry,
@@ -96,9 +97,9 @@ the one point every answer passes, which also adds the timing fields.
   resource grouping) and its projection into OpenAPI 3.1: `_request_ref` on every writer
   operation (the lock mode read off the same surface index the dispatcher reads), with 409 /
   410 among its responses, and `x-build` = `Rsx::build_info()` (the build identity the seal
-  records) at the root. The framework declares NO document route - the application's own
-  routes serve it (the browser one beside the console, a key holder's as an ordinary GET
-  endpoint answering `Rsx_Api::document()`).
+  records) at the root. A program reads it from the framework's
+  `Openapi_Api_Controller.php` (below); the console's `<mount>/openapi.json` is the
+  application's browser download of the same document.
 - `Rsx_Api_Docs.php`, `Api_Tester_Key.php` — the `/apidocs` console as one call
   (`Rsx_Api_Docs::page()`): the application owns the route and the gate, the framework owns
   the rest (UI lives in `Sys/app/apidocs/`). The application may hand it content only:
@@ -109,10 +110,16 @@ the one point every answer passes, which also adds the timing fields.
   `Api_Dispatcher::_error()`), and `document()`: a JSON object in a plain `Response`, the one
   object answer `stamp_response()` sends as written (it stamps a `JsonResponse` only) - for a
   standard-shaped body such as an OpenAPI root, where the timing fields are invalid.
-- `Identity_Api_Controller.php` (`GET /api/vN/me`) and `Files_Api_Controller.php`
-  (`POST /api/vN/files`, `GET /api/vN/files/:key[/text]`) — the framework's own endpoints, a
-  stable contract across installs. Attaching a file to a record is application policy, never
-  a framework endpoint. Both carry `#[Api_Versions(every: true)]`: declared at v1, the
+- `Identity_Api_Controller.php` (`GET /api/vN/me`), `Files_Api_Controller.php`
+  (`POST /api/vN/files`, `GET /api/vN/files/:key[/text]`) and `Openapi_Api_Controller.php`
+  (`GET /api/vN/openapi.json`: `Rsx_Api::document(Api_Openapi::document(null, N))`, N parsed
+  from the request path, the full published surface of that version, unstamped; gated
+  `is_logged_in` like `/me`, listed in the catalog and the document under its own `OpenAPI`
+  resource) — the framework's own endpoints, a stable contract across installs. Attaching a
+  file to a record is application policy, never a framework endpoint. **Scopes never refuse
+  the document**: `Api_Scopes::decide()` / `reaches_route()` grant `/api/vN/openapi.json` to
+  every scope set (after the malformed-scope warning). All three carry
+  `#[Api_Versions(every: true)]`: declared at v1, the
   manifest expands them in a SECOND pass to every version the other declarations serve (from
   the declared version up; v1 alone when nothing else is declared), so they live at the
   application's supported prefix and leave a version the application retires (410).

@@ -1,0 +1,96 @@
+/* Rsx_Error_Dialog (Rsx_Error_Dialog.js). A full-viewport scrim with one centered box.
+   Self-contained - core has no palette and the dialog must read the same on a Blade page,
+   an SPA and the /_sys panel - and in the framework's reserved z-index range for
+   uncaught-error displays (rsx:man zindex), above every application layer. */
+.Rsx_Error_Dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 9100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.45);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    .Rsx_Error_Dialog__box {
+        width: 100%;
+        max-width: 520px;
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 20px 24px;
+        border-top: 4px solid #c62828;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #212529;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .Rsx_Error_Dialog__title {
+        margin-bottom: 8px;
+        font-size: 18px;
+        font-weight: 600;
+        color: #b71c1c;
+    }
+
+    .Rsx_Error_Dialog__message {
+        font-size: 15px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+    }
+
+    .Rsx_Error_Dialog__detail {
+        margin: 12px 0 0;
+        padding: 10px;
+        border-radius: 4px;
+        background: #f5f5f5;
+        color: #333333;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    .Rsx_Error_Dialog__actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 16px;
+    }
+
+    .Rsx_Error_Dialog__close {
+        padding: 6px 18px;
+        border: 0;
+        border-radius: 4px;
+        background: #c62828;
+        color: #ffffff;
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+
+        &:hover {
+            background: #a51f1f;
+        }
+
+        &:focus-visible {
+            outline: 2px solid #1565c0;
+            outline-offset: 2px;
+        }
+    }
+
+    /* The per-identity dark preference (rsx:man dark_mode) marks <html>. */
+    html.rsx-dark & {
+        .Rsx_Error_Dialog__box {
+            background: #1f2328;
+            color: #e6e6e6;
+        }
+
+        .Rsx_Error_Dialog__title {
+            color: #ef9a9a;
+        }
+
+        .Rsx_Error_Dialog__detail {
+            background: #2b3036;
+            color: #d0d0d0;
+        }
+    }
+}

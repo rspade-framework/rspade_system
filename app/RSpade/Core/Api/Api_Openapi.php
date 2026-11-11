@@ -11,9 +11,10 @@ use App\RSpade\Core\Rsx;
 /**
  * Api_Openapi - projects the manifest's API catalog into an OpenAPI 3.1 document.
  *
- * Served at /apidocs/openapi.json. The manifest remains the single source of truth; this
- * class is a pure projection of Api_Catalog::get_endpoint_list() and adds no facts of its
- * own.
+ * Served to a program at GET /api/vN/openapi.json (Openapi_Api_Controller), one version per
+ * request, and by an /apidocs console mount as its openapi.json download. The manifest
+ * remains the single source of truth; this class is a pure projection of
+ * Api_Catalog::get_endpoint_list() and adds no facts of its own.
  *
  * WHY A STANDARD FORMAT. Everything downstream of an API description - client generators,
  * Postman/Insomnia, mock servers, contract testers, and the LLM/agent toolchains - already

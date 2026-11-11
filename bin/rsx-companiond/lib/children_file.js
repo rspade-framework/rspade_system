@@ -7,7 +7,9 @@
  *
  * Identity is pid + start time (field 22 of /proc/<pid>/stat), because a pid is reused. When the
  * leader has gone, the group's other members are found by session id: each child leads a session
- * of its own, and a reused pid would be a live process AT that pid, which is checked first.
+ * of its own, and a reused pid would be a live process AT that pid, which is checked first. A
+ * member counts only when it started no earlier than the recorded leader (a session's members
+ * are born after its leader), so a session id that merely equals the old pid is not enough.
  */
 
 const fs = require('fs');
@@ -28,15 +30,15 @@ function proc_stat(pid) {
     return { state: fields[0], session: Number(fields[3]), start_time: fields[19] };
 }
 
-/** Every pid whose session id is `session`. */
-function session_members(session) {
+/** Every pid whose session id is `session` and which started no earlier than `leader_start_time`. */
+function session_members(session, leader_start_time) {
     const members = [];
 
     for (const entry of fs.readdirSync('/proc')) {
         if (!/^\d+$/.test(entry)) continue;
 
         const stat = proc_stat(entry);
-        if (stat !== null && stat.session === session) {
+        if (stat !== null && stat.session === session && Number(stat.start_time) >= Number(leader_start_time)) {
             members.push(Number(entry));
         }
     }
@@ -80,7 +82,7 @@ function sweep(file) {
         if (leader !== null && leader.start_time === child.start_time) {
             kill_group(child.pid);
             swept.push(child.name + ' pid ' + child.pid);
-        } else if (leader === null && session_members(child.pid).length > 0) {
+        } else if (leader === null && /^\d+$/.test(child.start_time || '') && session_members(child.pid, child.start_time).length > 0) {
             kill_group(child.pid);
             swept.push(child.name + ' process group ' + child.pid + ' (leader already gone)');
         }

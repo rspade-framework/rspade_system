@@ -82,7 +82,8 @@ request **exactly once**. One ~40ms respawn, never a failure mode.
 
 ## Self-heal, and why a socket message is not teardown
 `stop()` and the respawn path both end in the same reaper: `pgrep -f -- '--socket=<abs
-path>'`, SIGTERM, one settle pass, SIGKILL, then remove the socket. It matches only THIS
+path>'`, SIGTERM, one settle pass, SIGKILL (only to a pid still the same process - its
+start time, `Process_Identity`), then remove the socket. It matches only THIS
 process's own socket path, so no other process's daemon can be touched. A daemon whose socket
 file was unlinked under it (by `rsx:clean`, by a storage relocation) keeps a listener on the
 dead inode forever and can NEVER receive another socket message - but its argv still names the

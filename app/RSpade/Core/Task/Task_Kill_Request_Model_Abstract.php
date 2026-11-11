@@ -45,6 +45,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property int $worker_generation
  * @property int $worker_id
  * @property int $worker_pid
+ * @property int $worker_pid_start_time
  *
  * @property-read string $mode_id__label
  * @property-read string $mode_id__constant

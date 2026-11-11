@@ -320,4 +320,81 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // A claim whose claimer is gone (rsx:task:process, recover_kill_requests())
+    // -------------------------------------------------------------------------
+
+    /** A pending request for a run on this host, claimed and then stamped with $claimer. */
+    private static function __claimed_request(array $claimer): int
+    {
+        $run = static::__running_row(static::DEAD_PID, null);
+        $request = Task_Kill_Worker::request($run, Task_Kill_Request_Model::MODE_FORCE_STOP, 3600, 'claimed', 'a tester');
+        static::__assert_true(Task_Kill_Worker::claim_for_this_process((int) $request->id), 'the request was claimable');
+        if ($claimer) {
+            DB::table('_task_kill_requests')->where('id', $request->id)->update($claimer);
+        }
+
+        return (int) $request->id;
+    }
+
+    private static function __tick(): void
+    {
+        Artisan::call('rsx:task:process');
+    }
+
+    /** A claim records the claimer as its pid AND that pid's start time. */
+    public static function test_a_claim_records_the_claimers_pid_and_start_time()
+    {
+        $request_id = static::__claimed_request([]);
+        $row = DB::table('_task_kill_requests')->where('id', $request_id)->first();
+
+        static::__assert_equals(Task_Kill_Request_Model::STATUS_CLAIMED, (int) $row->status_id);
+        static::__assert_equals(getmypid(), (int) $row->worker_pid);
+        static::__assert_equals(Process_Identity::start_time(getmypid()), (int) $row->worker_pid_start_time);
+    }
+
+    /**
+     * A claim made by a command carrying out its own kills (no worker_id) is live only while
+     * its pid is still the process recorded with that pid's start time: a pid that is running
+     * but is another process (a different start time) is no proof, and the request is queued
+     * again; the claimer itself keeps its claim.
+     */
+    public static function test_a_command_claim_whose_pid_is_another_process_is_queued_again()
+    {
+        $me = getmypid();
+        $reused = static::__claimed_request(['worker_pid' => $me, 'worker_pid_start_time' => Process_Identity::start_time($me) + 1]);
+        $live = static::__claimed_request(['worker_pid' => $me, 'worker_pid_start_time' => Process_Identity::start_time($me)]);
+
+        static::__tick();
+
+        $row = DB::table('_task_kill_requests')->where('id', $reused)->first();
+        static::__assert_equals(Task_Kill_Request_Model::STATUS_PENDING, (int) $row->status_id, 'a live pid with another start time is not the claimer');
+        static::__assert_null($row->worker_pid, 'the claimer columns are cleared together');
+        static::__assert_null($row->worker_pid_start_time, 'the claimer columns are cleared together');
+        static::__assert_equals(Task_Kill_Request_Model::STATUS_CLAIMED, (int) DB::table('_task_kill_requests')->where('id', $live)->value('status_id'), 'the claimer that is still running keeps its claim');
+    }
+
+    /**
+     * A kill worker of an older rsx-lockd generation is judged on this host by its pid, its
+     * start time AND its command line: a task worker of this project holding the recorded
+     * pid under another start time is not the claimer.
+     */
+    public static function test_an_older_generation_kill_workers_reused_pid_is_queued_again()
+    {
+        $current = Task_Pool::stats(Task_Pool::KILL)['generation'];
+        $older = $current === 1 ? 2 : $current - 1;
+        $pid = static::__spawn_victim();
+        try {
+            $reused = static::__claimed_request(['worker_pid' => $pid, 'worker_pid_start_time' => Process_Identity::start_time($pid) + 1, 'worker_id' => 51, 'worker_generation' => $older]);
+            $live = static::__claimed_request(['worker_pid' => $pid, 'worker_pid_start_time' => Process_Identity::start_time($pid), 'worker_id' => 52, 'worker_generation' => $older]);
+
+            static::__tick();
+
+            static::__assert_equals(Task_Kill_Request_Model::STATUS_PENDING, (int) DB::table('_task_kill_requests')->where('id', $reused)->value('status_id'), 'a worker-shaped pid with another start time is not the claimer');
+            static::__assert_equals(Task_Kill_Request_Model::STATUS_CLAIMED, (int) DB::table('_task_kill_requests')->where('id', $live)->value('status_id'), 'the older-generation kill worker still running keeps its claim');
+        } finally {
+            static::__reap($pid);
+        }
+    }
 }

@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
+use App\RSpade\Core\Exceptions\Rsx_User_Facing_Exception;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -35,7 +37,8 @@ use App\RSpade\Core\Session\Session;
  *
  * Everyone else gets the channel's generic answer plus an ERROR ID, and the full detail
  * goes to the log under that id (report_redacted()), so a user's "it said ref 7f3c..." is
- * one grep away from the trace.
+ * one grep away from the trace. user_message() replaces the generic answer's WORDS when the
+ * failure carries a deliberately user-safe sentence (Rsx_User_Facing_Exception, an outage).
  */
 class Rsx_Diagnostics
 {
@@ -61,6 +64,33 @@ class Rsx_Diagnostics
         }
 
         return static::__session_is_developer();
+    }
+
+    /**
+     * The user-safe sentence a failure carries, shown to every caller in place of the
+     * channel's generic error sentence; null when it carries none.
+     *
+     * Walks the exception and everything it wraps: the first Rsx_User_Facing_Exception's
+     * user_message() wins; otherwise an infrastructure outage (lock daemon or database
+     * connection gone) answers Infrastructure_Outage::USER_MESSAGE. The ONE resolver - the
+     * Ajax envelope and outage response, the external API and the 500 page all ask it.
+     *
+     * @param Throwable $e
+     * @return string|null
+     */
+    public static function user_message(Throwable $e): ?string
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof Rsx_User_Facing_Exception) {
+                return $current->user_message();
+            }
+        }
+
+        if (Infrastructure_Outage::is_outage($e)) {
+            return Infrastructure_Outage::USER_MESSAGE;
+        }
+
+        return null;
     }
 
     /**

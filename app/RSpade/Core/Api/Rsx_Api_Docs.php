@@ -36,20 +36,21 @@ use App\RSpade\Core\Files\Markdown_Rendition;
  *         }
  *     }
  *
- * There is no framework route and no framework visibility setting: the console exists if and
- * only if an application declared a route for it, and it is protected by whatever #[Auth]
- * that route carries. That is a better answer than any config value could be - the developer
+ * There is no framework route for the console and no framework visibility setting: the
+ * console exists if and only if an application declared a route for it, and it is protected
+ * by whatever #[Auth] that route carries. That is a better answer than any config value could be - the developer
  * already has a permission vocabulary, and this reuses it instead of inventing a parallel
  * one that cannot express "our integrations team only".
  *
- * The page and the document are SEPARATE calls on purpose. Gating them differently is a real
- * requirement: a public openapi.json beside a staff-only console is a normal arrangement, and
- * one combined helper would force them to share a gate.
+ * THE DOCUMENT A PROGRAM FETCHES IS THE FRAMEWORK'S: GET /api/vN/openapi.json
+ * (Openapi_Api_Controller), read with any API key. The <mount>/openapi.json route above is
+ * the console's own link - the same document downloaded by a person signed in to the
+ * browser that shows the console, gated like the console. The console links to it there,
+ * so a console mount declares both.
  *
- * They are also different KINDS of call: page() renders a RESPONSE, openapi_document()
- * returns an ARRAY. The framework has no business deciding the document's content type or
- * whether the browser renders it inline or downloads it - the route's controller sets its
- * own headers, because the route is what the application owns.
+ * page() renders a RESPONSE; openapi_document() returns an ARRAY, and the console route's
+ * controller sets its own headers (inline or download), because that route is the
+ * application's.
  */
 class Rsx_Api_Docs
 {
@@ -258,11 +259,10 @@ class Rsx_Api_Docs
     /**
      * The OpenAPI 3.1 description of the API, as DATA.
      *
-     * The framework produces the document; the APPLICATION produces the response. The
-     * controller that declared the route owns its status, its headers and whether the
-     * browser renders the JSON inline or downloads it - a presentation decision belonging
-     * to the route, not to the generator. The class docblock above shows the shape of a
-     * caller; reference_app/app/apidocs/apidocs_controller.php is the worked one.
+     * For the console's own <mount>/openapi.json link: the controller that declared that
+     * route owns its status, its headers and whether the browser renders the JSON inline or
+     * downloads it. The class docblock above shows the shape of a caller;
+     * reference_app/app/apidocs/apidocs_controller.php is the worked one.
      *
      * $accessible_targets narrows the document to one identity's reachable endpoints - pass
      * Api_Tester_Key::accessible_targets_for_user($user). Omit it for the full surface, which
@@ -271,10 +271,8 @@ class Rsx_Api_Docs
      * $version narrows it to one API version's surface, as the docs page shows that version
      * (the input for generating one version's client); omit it for every version.
      *
-     * For a KEY HOLDER, the application serves it from an ordinary GET API endpoint answering
-     * Rsx_Api::document($doc) - the document exactly as built, without the timing fields every
-     * other API answer carries, which an OpenAPI root does not admit
-     * (reference_app/app/api/v1/openapi_api_controller.php).
+     * A KEY HOLDER reads it from the framework's GET /api/vN/openapi.json
+     * (Openapi_Api_Controller), never from an application route.
      *
      * @return array The OpenAPI 3.1 document
      */
