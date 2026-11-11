@@ -2,10 +2,10 @@
 
 namespace App\RSpade\Core\Locks;
 
-use RuntimeException;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Connection;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 
 /**
  * The RsxLocks transport to rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd), the lock daemon whose
@@ -31,6 +31,13 @@ use App\RSpade\Core\Locks\Lockd_Connection;
  *
  * WAITING IS SILENCE. A blocking acquire receives NO frame until it is granted or fails, and
  * the read under it has NO timeout - see Lockd_Connection.
+ *
+ * THE DAEMON IS REQUIRED INFRASTRUCTURE, like mysqld. A request that cannot reach it - or
+ * whose connection dies under it - throws Lockd_Unavailable_Exception, and that ends the
+ * whole request as a 500 on every channel, exactly as a lost database connection does
+ * (Infrastructure_Outage). No substitute path, no degraded mode, no retry-and-continue; nothing
+ * catches it, and application code never names it. The one planned exception is a raised
+ * maintenance flag (RsxLocks' straggler path).
  *
  * This is not the only connection a process may hold: a task worker also holds Task_Pool's,
  * which is independent of this one in every respect (no group, no release_all).
@@ -97,7 +104,7 @@ class Lockd_Client
             return [
                 'status' => 'INFO',
                 'detail' => 'the maintenance flag is up - rsx-lockd is stopped on purpose'
-                    . ' (cluster locks degraded to flock)',
+                    . ' (cluster lock calls are granted as no-ops)',
             ];
         }
 
@@ -152,7 +159,8 @@ class Lockd_Client
      * Connects (and says hello) on first use. Blocks for as long as the daemon takes to
      * answer - which for a parked acquire is "until the lock is available".
      *
-     * @throws RuntimeException on connect failure, socket death, or a protocol violation.
+     * @throws Lockd_Unavailable_Exception on connect failure, socket death, or a protocol
+     *                                     violation - the outage (see the class docblock).
      */
     public static function request(array $frame): array
     {

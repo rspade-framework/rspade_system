@@ -1,6 +1,6 @@
 ---
 name: email-and-sms
-description: "Sending email and SMS - an email class (Rsx_Email_Abstract with CATEGORY, subject(), data(), sample()) sent with ->to()->send(), categories incl. SECURITY, the queue and its statuses, rsx.mail.delivery, MAIL_MAILER, Rsx_Mail::preview() / deliverable_to() / block_address(), Rsx_Sms. Use when a feature notifies by email or text, a message did not arrive, using rsx:mail:queue / rsx:mail:resend, or on EMAIL-TEMPLATE-01 or 'expected server aiosmtpd'."
+description: "Sending email and SMS - an email class (Rsx_Email_Abstract with CATEGORY, subject(), data(), sample()) sent with ->to()->send(), categories incl. SECURITY, the queue and its statuses, rsx.mail.delivery, MAIL_MAILER, ->from() for a per-message sender, Rsx_Mail::preview() / deliverable_to() / block_address(), Rsx_Sms. Use when a feature notifies by email or text, a message did not arrive, using rsx:mail:queue / rsx:mail:resend, or on EMAIL-TEMPLATE-01 or 'expected server aiosmtpd'."
 ---
 
 # Email and SMS
@@ -93,7 +93,8 @@ public function tag(): ?string { return $this->notification->type_id__constant; 
 (new Invoice_Email($invoice))
     ->to($client, 'Accounts Payable')      // address string, or an object with ->email
     ->cc($manager)->bcc('archive@example.com')     // cc/bcc ACCUMULATE
-    ->reply_to($staff)                     // to()/reply_to() REPLACE
+    ->reply_to($staff)                     // to()/reply_to()/from() REPLACE
+    ->from($billing_address, 'Billing')    // default: MAIL_FROM_ADDRESS
     ->attach($file_attachment)             // File_Attachment_Model, or an absolute path
     ->attach_bytes($csv, 'lines.csv', 'text/csv')  // name + mime REQUIRED
     ->embed('chart', $chart_attachment)    // template: <img src="cid:chart">
@@ -102,6 +103,8 @@ public function tag(): ?string { return $this->notification->type_id__constant; 
     ->about($related_type, $related_id)
     ->send();
 ```
+
+**`from()` is a per-message sender** (a billing address for invoices; everything else keeps `MAIL_FROM_ADDRESS`): frozen on the row as `from_address`/`from_name` at `send()`, so a later settings change rewrites nothing queued and a resend keeps it; no name = the configured name; a malformed address throws at the call. **The framework does not check the transport may send as it** - pick an address whose domain's SPF/DKIM/DMARC cover the transport, that the relay/SES has verified, or that the API mailbox (Graph) has send-as rights for; a refusal retries then FAILS with the provider's reply, an accepted-but-unauthorised From lands in spam. The "Mail sender domain" health row checks only `MAIL_FROM_ADDRESS`. It is also the envelope sender, so bounces go to it.
 
 A recipient object's display name comes from `get_printed_name()`, else `first_name`/`last_name`, else nothing. **A `dedupe_key` already used by this site returns THAT row and enqueues nothing** — a replayed webhook cannot double-mail anybody.
 
@@ -125,12 +128,12 @@ A root-relative `<img src="/img/logo.png">` is embedded as a `cid:` part automat
 
 ```php
 foreach (Rsx_Mail::catalogue() as $view_id => $entry) { ... }   // ['class' => FQCN, 'view_id', 'category', 'file']
-$preview = Rsx_Mail::preview($entry['class']::sample());        // ['subject', 'html', 'text']
+$preview = Rsx_Mail::preview($entry['class']::sample());        // ['subject', 'from', 'html', 'text']
 ```
 
 **`Rsx_Mail::catalogue()`** is every concrete email class, framework ones included, keyed and sorted by view id - exactly the table the manifest bakes. Never walk the class index for it: that restates the build's rules (abstract bases skipped, the three FATALs passed). `rsx:mail:test --email=` resolves against it.
 
-**`Rsx_Mail::preview($email)`** renders an INSTANCE through the send's own assembly - the blade with `$subject`/`$branding`/`$unsubscribe_url` injected, the stylesheet inlined, the text part as a send derives it - and makes it displayable: every root-relative image and `->embed()` part becomes a `data:` URI of its CURRENT bytes, so the HTML goes straight into an iframe `srcdoc` under the default CSP. A category with an unsubscribe link gets `Rsx_Mail::preview_unsubscribe_url()` (unsigned, refused by the route). It **persists nothing** (no row, no attachment row, no blob), needs no recipient, and ignores the block list, opt-out and dev gate. A missing asset or an un-embedded `cid:` throws, as the send would. Never hand-render the blade for a preview: it skips the inlining and the image step, so it does not look like what is sent.
+**`Rsx_Mail::preview($email)`** renders an INSTANCE through the send's own assembly - the blade with `$subject`/`$branding`/`$unsubscribe_url` injected, the stylesheet inlined, the text part as a send derives it - names the `from` (`['address', 'name']`) the send would use, and makes it displayable: every root-relative image and `->embed()` part becomes a `data:` URI of its CURRENT bytes, so the HTML goes straight into an iframe `srcdoc` under the default CSP. A category with an unsubscribe link gets `Rsx_Mail::preview_unsubscribe_url()` (unsigned, refused by the route). It **persists nothing** (no row, no attachment row, no blob), needs no recipient, and ignores the block list, opt-out and dev gate. A missing asset or an un-embedded `cid:` throws, as the send would. Never hand-render the blade for a preview: it skips the inlining and the image step, so it does not look like what is sent.
 
 Per-email send history is a query on the queue: `_email_queue` is indexed `(site_id, email_class, created_at)` and `(site_id, email_class, tag, created_at)`.
 

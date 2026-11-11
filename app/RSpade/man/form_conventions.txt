@@ -2,8 +2,8 @@ FORM_CONVENTIONS(3)             RSX Framework Manual             FORM_CONVENTION
 
 NAME
     Form Conventions - The Rsx_Form contract: declaration, submission,
-    validation ownership, server-driven questions, loading and dirty
-    protection
+    validation ownership, server-driven questions, resubmission, loading and
+    dirty protection
 
 SYNOPSIS
     <Rsx_Form $controller="Frontend_Tasks_Controller" $method="save"
@@ -133,10 +133,12 @@ THE SUBMISSION PIPELINE
         6.  before_submit hook, when the host installed one.
         7.  Submit affordance - Button_Utils animates the submit buttons and
             makes them inert.
-        8.  Ajax POST to /_ajax/{controller}/{method}.
-        9a. Success: touched and parked values cleared, the inputs re-baselined
-            ('dirty' flips to false), 'submitted' fired
-            with the result, result.redirect followed through Rsx.navigate()
+        8.  Ajax POST to /_ajax/{controller}/{method}, carrying the form's
+            _request_ref (see RESUBMITTING).
+        9a. Success: touched and parked values cleared, the reference kept
+            (used) or replaced, the inputs re-baselined ('dirty' flips to
+            false), 'submitted' fired with the result - and 'replayed' when the
+            request history answered - result.redirect followed through Rsx.navigate()
             with {via: result.redirect_via || 'carry'} (the affordance
             deliberately stays until the page goes), result resolved.
         9b. Failure: errors rendered, 'submit_error' fired, false resolved. The
@@ -159,6 +161,10 @@ THE SUBMISSION PIPELINE
         'submitted'     (result)   a successful submit; the payload is exactly
                                    what the endpoint returned
         'submit_error'  (error)    a failed submit, after the errors rendered
+        'replayed'      ({result, completed_at})
+                                   the success was answered from the request
+                                   history (fires after 'submitted'); see
+                                   RESUBMITTING
         'input'         (name, v)  the user changed a field, by name
 
 VALIDATION LIVES ON THE SERVER, ONCE
@@ -257,7 +263,9 @@ THE ENDPOINT CONTRACT
         Return whatever the caller needs; ['redirect' => Rsx::Route(...)] makes
         the form navigate, through Rsx.navigate() (rsx:man navigation).
         Flash_Alert::success(...) before returning is the normal companion to
-        a redirect. A create endpoint whose page was reached from another
+        a redirect. A CREATE answers with somewhere to go - the redirect, or
+        the new record's id: that answer is what a resubmission is replayed
+        with and what the resubmit dialog's "View it" uses (RESUBMITTING). A create endpoint whose page was reached from another
         record adds 'redirect_via' => 'continue', so the record it created
         keeps that breadcrumb origin (rsx:man breadcrumb_origins); 'carry' is
         the default and 'drop' the third value, anything else throws in the
@@ -476,6 +484,140 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
 
         system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php
             save(): validate, ask about the duplicate email, then write.
+
+RESUBMITTING (THE REQUEST REFERENCE)
+
+    A submission can commit while its answer never reaches the user - a dropped
+    connection, a proxy 502, a lock or database outage after the commit - and the
+    user presses Save again. Or they create a record, press Back, and submit the
+    create form again. Either way the write must not happen twice. The form
+    sends a _request_ref with every call submit() makes, and a writer endpoint
+    answers a reference it has already succeeded under from the request history
+    (rsx:man request_history) instead of running again. Endpoints and forms
+    write nothing for it.
+
+    THE REFERENCE LIFECYCLE
+
+        A form holds ONE reference: a random UUID (Ajax.request_ref()), unique
+        across page loads because the server keeps it with its _transactions
+        row for good. It is sent on every call of a submission, question
+        rounds included (_answers, _changed and _loaded_updated_at are outside
+        the fingerprint).
+
+        KEPT while submissions fail: a transport failure, a 5xx, an answer
+        missing the call, a validation error the user fixes, a question. A
+        validation error or a question records nothing, so the corrected resend
+        simply runs.
+
+        BOUND TO THE HISTORY ENTRY. The reference belongs to the form's
+        identity - controller|method|record id or 'new', the parking key - on
+        the browser history entry the form is on, kept in that entry's state.
+        The form reached again by Back is a new instance, and still sends the
+        same reference; so does the form on a reload of that entry. This holds
+        on an SPA page and a Blade page alike.
+
+        After a SUCCESS:
+            the success navigates away (result.redirect)
+                -> the reference stays on the entry, marked used. Coming
+                   Back and submitting again replays (same values) or is
+                   refused as reused (changed values) - never a second record
+            the form stays on screen (an inline add form, an edit form that
+            remains open, a dialog its host keeps open)
+                -> a new reference: the next submission is a new act
+
+        A FORM IN A DIALOG (inside <dialog>, or an element with role="dialog"
+        or role="alertdialog") is bound to its INSTANCE, not the entry: the
+        reference dies with the dialog, and reopening it is a new act. KNOWN
+        LIMIT: a user who closes the dialog after a lost answer and starts over
+        in a new dialog is not protected.
+
+        TWO LIVE FORMS WITH ONE IDENTITY on a page (two "add note" forms posting
+        to one endpoint) cannot be told apart on Back: the first to submit
+        holds the entry's reference and the other is bound to its instance.
+
+        form.already_submitted() is true once this entry's reference has
+        succeeded - a create form reached by Back after it saved - so a host
+        may say so before the user types.
+
+    WHAT THE USER SEES
+
+        A REPLAYED SUCCESS IS A SUCCESS. The success path runs with the stored
+        result - dirty and parking cleared, 'submitted' fired, result.redirect
+        followed - and additionally 'replayed' fires and the application's
+        REPLAY NOTICE is called. For the Back case on a create form, this lands
+        the user on the record that was created, told why. Side channels of the
+        original answer (a Flash_Alert the endpoint queued) are not replayed.
+
+        A REUSED REFUSAL IS A QUESTION. request_ref_reused on the form's own
+        endpoint means "this form, on this entry, already succeeded, and the
+        values changed". request_response_expired means the earlier submission
+        is older than the server keeps answers. Both go to the application's
+        RESUBMIT HANDLER, which answers:
+
+            Rsx_Form.RESUBMIT_AS_NEW ('new')
+                a fresh reference, and the current values submitted - in the
+                same submit() call
+            Rsx_Form.CANCELLED
+                stop: nothing rendered, no 'submit_error', the form open with
+                its values (exactly as a cancelled question). A handler that
+                navigates to the earlier result itself ("View it") returns this
+
+        Any other answer throws, naming the two. A request_ref_reused on ANOTHER
+        endpoint is a client defect and renders as an ordinary error.
+
+    REGISTERING THE HANDLERS
+
+        Once per application, from the same static on_app_modules_define() that
+        registers the question handler:
+
+            Rsx_Form.set_replay_notice((result, context) => { ... });
+                context: {form, completed_at}. Presentation only (a flash);
+                NOT awaited. completed_at is the ORIGINAL completion, ISO UTC
+
+            Rsx_Form.set_resubmit_handler(async (context) => answer);
+                context: {form, completed_at, original, expired}
+                original   the earlier submission's result while the server
+                           still keeps it (its redirect, its id), else null
+                expired    true for request_response_expired
+
+        A form may override either - $replay_notice= / $resubmit_handler= on
+        the tag, or form.replay_notice / form.resubmit_handler.
+
+        NEITHER IS REQUIRED. With no replay notice a replay is a silent
+        success. With no resubmit handler the refusal renders in <Form_Errors />
+        ("This form was already submitted on <time>, so nothing was saved this
+        time. Submit it again to save it as a new submission.") and the
+        reference is replaced, so the user's next submit runs as new - never a
+        silent skip, and never a form that refuses forever on that entry.
+
+        The framework defines the protocol and ships no dialog. The template's
+        version is Modal._on_form_replayed() / Modal._on_form_resubmitted() in
+        system/app/RSpade/resource/reference_app/lib/modal/modal.js: a flash
+        "This was already saved on <time>.", and a dialog "You already submitted
+        this form on <time>." with Cancel, Submit again as new, and View it
+        (when original.redirect names somewhere to go).
+
+    WHAT A SAVE ENDPOINT OWES (nothing new to build)
+
+        - be a writer: #[Writer], or #[Manual_Lock] that takes a site write
+          lock. A reader, or a manual endpoint that takes no write lock,
+          records nothing and is not protected;
+        - answer a create with somewhere to go (redirect, or the new id) - the
+          replay returns it and "View it" uses it;
+        - keep every effect inside the transaction (queue rows, never an inline
+          send) - already the writer rule (rsx:man site_locks);
+        - a coded failure (response_form_error(), a question) records no
+          reference, so the corrected resend runs - unchanged.
+
+        A signed-in actor is what a reference is kept under: a form nobody is
+        signed in to (a sign-in or accept-invitation form) sends one, and it is
+        echoed, never honoured - the form behaves exactly as without it.
+
+    A CALLER THAT IS NOT A FORM
+
+        A writer called straight from a stub has the same lost-answer problem:
+        Ajax.action() keeps a reference per user action and endpoint across
+        that action's retries (rsx:man request_history, BROWSER CALLERS).
 
 EDITING A RECORD
     A form that edits a record saves through Form_Edit. Two things go wrong without it:
@@ -947,6 +1089,11 @@ COMMON MISTAKES
         false is an ANSWER the endpoint acts on ("No"). Rsx_Form.CANCELLED is
         the cancel, and it never reaches the endpoint.
 
+    Creating a record without saying where it is
+        A create endpoint answering only {ok: true} replays that to a user who
+        pressed Back and saved again - and the resubmit dialog has nothing to
+        show. Answer redirect (or the new id).
+
     Asking two questions in one response
         One question per response. Return the FIRST unanswered one; the next
         round asks the next.
@@ -962,6 +1109,7 @@ SEE ALSO
     rsx:man form_input
     rsx:man modals
     rsx:man ajax_error_handling
+    rsx:man request_history - _request_ref replay, the server half of RESUBMITTING
     rsx:man auth_gates
     rsx:man jqhtml
     rsx:man spa - THE NAVIGATION GUARD: the browser asks before unsaved work is lost

@@ -420,9 +420,9 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
 
     /**
      * Whether the process that claimed a RUNNING run is still there; see the WORKER_*
-     * constants. A run claimed by a pool worker is checked against the worker's command line
-     * (a pid the kernel reused is not that worker); a run outside the pool (inline) has no
-     * worker_id, and its pid is simply probed.
+     * constants. Task::is_run_process(): the pid must still be the process the run recorded
+     * (its start time; a pid the kernel reused is not it), and a pool run's must also be a
+     * task worker by its command line.
      */
     public static function worker_state(Task_Run_Model $task): string
     {
@@ -435,9 +435,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
             return self::WORKER_UNKNOWN;
         }
 
-        $alive = $task->worker_id !== null ? Task::is_worker_process($pid) : posix_kill($pid, 0);
-
-        return $alive ? self::WORKER_ALIVE : self::WORKER_GONE;
+        return Task::is_run_process($task) ? self::WORKER_ALIVE : self::WORKER_GONE;
     }
 
     /** The lifecycle actions that apply to a run in its present state. */

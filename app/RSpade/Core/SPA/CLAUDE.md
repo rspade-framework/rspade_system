@@ -44,6 +44,21 @@ bundle)**
   (carrying - `augment()` - and the full-load hand-off), `Spa.js` (the new-tab href rewrite,
   `Spa.via()` / `Spa.via_push()`) and in
   `Breadcrumbs/Rsx_Breadcrumb_Resolver.js` (the walk, `settle_via()` - the keep/strip decision).
+- `Spa_Journal.js` - the per-tab journal of the journey through history entries, in session
+  storage (`Rsx_Storage`, key `spa_journal`, 100 records): per entry key `<spa_run>:<spa_index>`
+  its `url` (fragment included, followed by `note_url()` on every in-place rewrite -
+  `Rsx.url_hash_set()`, a `load: 'none'` replace, the `_via` keep/strip), the `scroll` it was
+  left at, `from` (the entry a FORWARD move came from; a replace inherits it; Back/Forward and
+  reload never touch it) and the `trail` the resolver walked. `return_url(T)` (public as
+  `Spa.return_url()`) walks `from` back to the nearest entry whose `Spa_Via.bare()` is T's,
+  passing only entries whose trail shows T, and answers T with that entry's fragment plus
+  `Rsx.HASH_SCROLL_KEY`; anything else is T unchanged. Writers: `_dispatch()` (push =
+  `forward()`, replace = `replaced()`, popstate = `left()` + `arrived()`), `_rewrite_entry()`,
+  the fragment-only popstate (an unstamped entry is a new one, `forward(..., same_page)`),
+  `pagehide`, `_on_spa_init` (`arrived()` with the hand-off's `from`), the door's full load
+  (`Spa_Journal.from_for()` into the hand-off), and `Rsx_Breadcrumb_Resolver` (`set_trail()`,
+  and every emitted crumb's `href`). history.state cannot hold this: it is readable only for
+  the entry on screen, and the rule needs the entries BEHIND it.
 - `Spa_Layout.js` - the persistent wrapper. `$content()` (i.e. `$sid('content')`),
   `resolve_page_title(paint, placeholder)` - the ONE way a layout obtains a title - the
   `on_action(url, action_name, args)` hook, the `on_breadcrumb_complete(chain, meta)` hook (called
@@ -153,12 +168,23 @@ Layouts are awaited to `rendered()`; the action's `ready()` is deliberately NOT 
 Scroll restoration is ONE mechanism (`_begin_scroll_restoration()` and its siblings), decided
 at dispatch start from `opts.scroll` - a popstate's recorded position, or, for the initial
 dispatch of a reload / back_forward document load, `history.state.scroll` (`_on_spa_init`).
-`history.scrollRestoration` is `'manual'`. It applies after `_resolve_layout_chain()`, at ready
+`history.scrollRestoration` is `'manual'`.
+
+An entry's `history.state` also carries keys the SPA does not own - per-entry state written
+through `Rsx_Navigation._set_entry_value()`, such as `Rsx_Form`'s request references
+(`rsx_form_refs`). Every SPA write to the CURRENT entry spreads the existing state and keeps
+them; a dispatch's pushed entry starts from `_entry_state()` with none (a `load: 'none'`
+push copies the entry's state, since the same page is still on screen), and a `'replace'`
+dispatch overwrites the entry (the page it described is gone). It applies after `_resolve_layout_chain()`, at ready
 (`_apply_scroll_position()`), then under a `ResizeObserver` until a notification reports no
 height change; user input (wheel, touch, scroll keys, a scrollbar press, a scroll to a position
 it did not write) ends it, and `_dispatch_is_restoration` keeps such a page off the top at
 ready. Scroll anchoring is off on the scroller while it runs, so the only scrolls are its own
-and the user's.
+and the user's. A URL whose fragment carries the one-time scroll key (`Rsx.HASH_SCROLL_KEY`,
+`_scroll=y` or `x,y` - a crumb returning to where a page was left) feeds the same mechanism:
+`_take_scroll_key()` removes it from the URL before the entry is written (or rewrites the
+address in place for an initial load), and it becomes `opts.scroll` unless a recorded
+position already is.
 
 ## Invariants a change here must keep
 
@@ -214,7 +240,8 @@ and the user's.
 
 `app/RSpade/tests/spa/playwright/` - Playwright scripts, NOT manifest-discovered, so `rsx:test`
 never runs them: each is run directly with `node` (title ladder, guard, history, spinner,
-breadcrumb origins - `breadcrumb_origins.js`, the navigation door - `navigate.js`); the concern's
+breadcrumb origins - `breadcrumb_origins.js`, crumbs returning to the state a page was left in
+(the journal and the scroll key) - `breadcrumb_return_state.js`, the navigation door - `navigate.js`); the concern's
 `test_catalog.md` lists the rows and the holes. `JS-NAVIGATE-01` / `JS-NEW-TAB-01` are
 `tests/code_quality/php/Navigation_Rule_Test.php` / `New_Tab_Rule_Test.php`. `SPA-VIA-01` (the manifest FATALs) is
 `tests/code_quality/php/Spa_Via_Rule_Test.php`. The

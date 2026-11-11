@@ -3,7 +3,8 @@
  *
  * NOT an SPA action. The application declares the route (Rsx_Api_Docs::page), so this is a
  * plain page component that does its own history handling: clicking a sidebar link pushes
- * state and redraws ONLY the body, and Back/Forward restores the previous endpoint. Spa's
+ * state and redraws ONLY the body, and Back/Forward restores the previous endpoint or
+ * section. Spa's
  * link interception does not apply - the route is an ordinary #[Route], not an SPA route -
  * so this handler is unambiguous rather than competing with the router.
  *
@@ -15,6 +16,7 @@ class _Apidocs_Console extends Component {
         this.state = {
             version: _Apidocs_Catalog.resolve_version(_Apidocs_Console.__version_from_url()),
             slug: _Apidocs_Console.__slug_from_url(),
+            section: _Apidocs_Console.__section_from_url(),
         };
     }
 
@@ -40,7 +42,7 @@ class _Apidocs_Console extends Component {
             }
 
             e.preventDefault();
-            that.__navigate(parsed.version, parsed.slug, href);
+            that.__navigate(parsed.version, parsed.slug, parsed.section, href);
         });
 
         // Back/Forward. Bound on window rather than this.$, so it is removed in on_stop -
@@ -48,7 +50,8 @@ class _Apidocs_Console extends Component {
         this._popstate_handler = () => {
             that.__show(
                 _Apidocs_Catalog.resolve_version(_Apidocs_Console.__version_from_url()),
-                _Apidocs_Console.__slug_from_url()
+                _Apidocs_Console.__slug_from_url(),
+                _Apidocs_Console.__section_from_url()
             );
         };
 
@@ -63,12 +66,12 @@ class _Apidocs_Console extends Component {
     }
 
     /**
-     * Navigate to an endpoint: update the address bar, then repaint.
+     * Navigate to an endpoint or a section: update the address bar, then repaint.
      */
-    __navigate(version, slug, href) {
+    __navigate(version, slug, section, href) {
         // @JS-NAVIGATE-01-EXCEPTION non-SPA page with its own router; pushState is safe only off the SPA
-        history.pushState({ version: version, slug: slug }, '', href);
-        this.__show(version, slug);
+        history.pushState({ version: version, slug: slug, section: section }, '', href);
+        this.__show(version, slug, section);
     }
 
     /**
@@ -78,9 +81,10 @@ class _Apidocs_Console extends Component {
      * active highlight moves, which preserves its filter text because _Apidocs_Sidebar keeps
      * that in its own state and re-applies it on render.
      */
-    __show(version, slug) {
+    __show(version, slug, section) {
         this.state.version = version;
         this.state.slug = slug;
+        this.state.section = section;
 
         this.render('main');
 
@@ -88,6 +92,7 @@ class _Apidocs_Console extends Component {
         if (sidebar) {
             sidebar.args.version = version;
             sidebar.args.active = slug;
+            sidebar.args.active_section = section;
             sidebar.render();
         }
 
@@ -101,7 +106,8 @@ class _Apidocs_Console extends Component {
     }
 
     /**
-     * Parse an in-console href into {version, slug}, or null when it is not one of ours.
+     * Parse an in-console href into {version, slug, section}, or null when it is not one of
+     * ours.
      *
      * Matched against the page's OWN base path rather than a hardcoded '/apidocs', because
      * the application chose where this console lives.
@@ -122,6 +128,7 @@ class _Apidocs_Console extends Component {
         return {
             version: _Apidocs_Catalog.resolve_version(url.searchParams.get('version')),
             slug: url.searchParams.get('endpoint') || null,
+            section: url.searchParams.get('section') || null,
         };
     }
 
@@ -131,5 +138,9 @@ class _Apidocs_Console extends Component {
 
     static __slug_from_url() {
         return new URL(window.location.href).searchParams.get('endpoint') || null;
+    }
+
+    static __section_from_url() {
+        return new URL(window.location.href).searchParams.get('section') || null;
     }
 }

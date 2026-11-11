@@ -698,6 +698,11 @@ Post-Write Lifecycle Hooks (after_create / after_update / after_delete):
     not Eloquent's inline created/updated/deleted events - a hook never runs for a
     change the database rejected.
 
+    A hook that throws never cancels the other hooks of the same commit: every
+    one runs, then the first throw surfaces - to the saving code for a write
+    outside any transaction, and after a commit as a logged report that never
+    fails the committed request (rsx:man site_locks, AFTER THE COMMIT).
+
     These are #[Replaceable] template hooks (NOT chain-mandatory like booted()): an
     overriding model REPLACES the hook and must NOT call parent::after_*() - the
     base bodies are empty, so there is nothing to chain, and the default parent-call

@@ -1,0 +1,155 @@
+// _Apidocs_Section - an application section rendered from its Markdown.
+// Reads the --rsx-* palette custom properties Sys/theme/theme.scss declares on :root.
+//
+// The same panel an endpoint card sits in (surface, border, radius, padding), at the landing
+// pane's prose measure. The body is Markdown_Rendition output - the GFM element set and
+// nothing else - so every element that set can produce is styled here and nothing more.
+._Apidocs_Section {
+    display: block;
+    max-width: 960px;
+    margin: 0 auto;
+    background: var(--rsx-surface);
+    border: 1px solid var(--rsx-border);
+    border-radius: 10px;
+    padding: 20px 22px;
+
+    &__title {
+        margin: 0 0 16px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--rsx-border);
+        font-size: 24px;
+        line-height: 1.2;
+        font-weight: 600;
+        color: var(--rsx-text);
+    }
+
+    &__body {
+        font-size: 14px;
+        line-height: 1.65;
+        color: var(--rsx-text);
+        // A long URL or an unbroken code span must not force the panel to scroll sideways.
+        overflow-wrap: anywhere;
+
+        > *:first-child {
+            margin-top: 0;
+        }
+
+        > *:last-child {
+            margin-bottom: 0;
+        }
+
+        p,
+        ul,
+        ol,
+        blockquote,
+        pre,
+        table {
+            margin: 0 0 14px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            margin: 24px 0 10px;
+            line-height: 1.25;
+            font-weight: 600;
+            color: var(--rsx-text);
+        }
+
+        h1 { font-size: 20px; }
+        h2 { font-size: 18px; }
+        h3 { font-size: 16px; }
+        h4, h5, h6 { font-size: 14px; }
+
+        ul, ol {
+            padding-left: 24px;
+        }
+
+        li {
+            margin: 4px 0;
+        }
+
+        li > ul,
+        li > ol {
+            margin: 4px 0 0;
+        }
+
+        a {
+            color: var(--rsx-accent);
+
+            &:hover {
+                color: var(--rsx-accent-hover);
+            }
+        }
+
+        blockquote {
+            padding: 2px 0 2px 14px;
+            border-left: 3px solid var(--rsx-border);
+            color: var(--rsx-muted);
+        }
+
+        hr {
+            height: 1px;
+            margin: 20px 0;
+            border: 0;
+            background: var(--rsx-border);
+        }
+
+        code {
+            font-family: var(--rsx-mono);
+            font-size: 12.5px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            background: var(--rsx-raised);
+            color: var(--rsx-text);
+        }
+
+        pre {
+            padding: 12px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--rsx-border);
+            background: var(--rsx-bg);
+            // A fenced block keeps its authored line breaks and scrolls sideways.
+            overflow-x: auto;
+            white-space: pre;
+            overflow-wrap: normal;
+        }
+
+        pre code {
+            padding: 0;
+            background: transparent;
+        }
+
+        // A wide table scrolls its own overflow rather than widening the panel.
+        table {
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th,
+        td {
+            padding: 7px 12px;
+            border: 1px solid var(--rsx-border);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        // A heading names its column in one line; only the cells below it wrap.
+        th {
+            white-space: nowrap;
+            background: var(--rsx-raised);
+            font-weight: 600;
+        }
+
+        th[align="center"],
+        td[align="center"] {
+            text-align: center;
+        }
+
+        th[align="right"],
+        td[align="right"] {
+            text-align: right;
+        }
+    }
+}

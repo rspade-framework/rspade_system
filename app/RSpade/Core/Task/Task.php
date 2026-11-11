@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Session\Session;
@@ -292,13 +293,15 @@ class Task
         // none is open): a worker or a tick is another process, which cannot see an
         // uncommitted row - started now it would find nothing to claim and the run would wait
         // for whatever ticks next. A rollback takes the row away, and nothing is started.
+        //
+        // Two callbacks, not one: each after-commit callback runs on its own
+        // (Rsx_DatabaseTransactionsManager), so a spawn that throws is reported and the daemon is
+        // still told.
         $spawn = $managed || $scheduled_for === null || !$scheduled_for->isFuture();
-        DB::afterCommit(function () use ($spawn) {
-            if ($spawn) {
-                static::spawn_worker(Task_Pool::ON_DEMAND) || static::spawn_worker(Task_Pool::SCHEDULED);
-            }
-            Task_Daemon::poke();
-        });
+        if ($spawn) {
+            DB::afterCommit(fn () => static::spawn_worker(Task_Pool::ON_DEMAND) || static::spawn_worker(Task_Pool::SCHEDULED));
+        }
+        DB::afterCommit(fn () => Task_Daemon::poke());
 
         return $id;
     }
@@ -653,9 +656,9 @@ class Task
      * reaped yet (a zombie) has an empty command line. A process can exit between the check
      * and the read, and that race IS the answer "not running", so a failed read means gone.
      *
-     * Everything that decides whether a POOL run's worker is still there asks this: the spawn
-     * cap, the reaper's judgment of a run from a previous rsx-lockd generation, the kill
-     * worker before it signals, and the /_sys worker evidence.
+     * The spawn cap asks this, and is_run_process() asks it of a POOL run's recorded pid (the
+     * reaper's judgment of a run from a previous rsx-lockd generation, the kill worker before
+     * it signals, the /_sys worker evidence) after holding the pid to its start time.
      *
      * @param int $pid
      * @return bool
@@ -681,6 +684,35 @@ class Task
 
         return in_array('artisan', explode("\0", $cmdline), true)
             && @readlink('/proc/' . $pid . '/cwd') === base_path();
+    }
+
+    /**
+     * Is the process that claimed this RUNNING run still running on this host? The run's
+     * worker_pid must still be the process it recorded - the same kernel start time
+     * (worker_pid_start_time, Process_Identity) - so a pid the kernel has handed to another
+     * process since (after the run's process died, or across a container restart, where pids
+     * start again from 1) is gone, never the run's. A POOL run's process must also still be a
+     * task worker of this project (is_worker_process()). A run with no start time recorded
+     * matches no process.
+     *
+     * Everything that judges or signals a run's process by its pid asks this: the reaper's
+     * pid evidence (an inline run, or a pool run from an older rsx-lockd generation), the
+     * kill worker before it signals, and the /_sys worker evidence. Only meaningful on the
+     * run's own host (worker_host).
+     *
+     * @param object $run A _tasks row (or Task_Run_Model) carrying worker_pid,
+     *                    worker_pid_start_time and worker_id
+     */
+    public static function is_run_process(object $run): bool
+    {
+        $pid = (int) $run->worker_pid;
+        $start_time = $run->worker_pid_start_time !== null ? (int) $run->worker_pid_start_time : null;
+
+        if (!Process_Identity::is_running($pid, $start_time)) {
+            return false;
+        }
+
+        return $run->worker_id === null || static::is_worker_process($pid);
     }
 
     /**

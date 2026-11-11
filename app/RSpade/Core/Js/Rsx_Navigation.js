@@ -322,7 +322,11 @@ class Rsx_Navigation {
             });
         }
 
-        return Rsx_Navigation._full_load(url, options.history, kind === 'elsewhere' ? null : arrival);
+        if (kind === 'elsewhere') {
+            return Rsx_Navigation._full_load(url, options.history, null);
+        }
+
+        return Rsx_Navigation._full_load(url, options.history, arrival, Spa_Journal.from_for(options.history));
     }
 
     /**
@@ -362,8 +366,10 @@ class Rsx_Navigation {
      * Rsx.navigate()'s fall-through, and Spa._dispatch() when Back/Forward lands on a URL
      * this SPA cannot render.
      *
-     * When the target is this site and carries a _via, the hand-off is written first, so the
-     * next document judges its origin exactly as an SPA navigation would have.
+     * When the target is this site and carries a _via, or the navigation continues a journey
+     * the SPA journal records (`from`), the hand-off is written first, so the next document
+     * judges its origin exactly as an SPA navigation would have and its first entry knows
+     * which entry the user came from (Spa_Journal).
      *
      * A target with the same path and query as the page on screen would be a mere fragment
      * navigation to location.assign() (no document load at all), so the entry is written
@@ -371,12 +377,16 @@ class Rsx_Navigation {
      *
      * @param {string} url
      * @param {string} history_mode - 'push' | 'replace'
-     * @param {string|null} arrival - how the target's _via arrived; null = no hand-off
+     * @param {string|null} arrival - how the target's _via arrived; null = none to hand off
+     * @param {string|null} [from] - the journal entry the next document's first entry comes
+     *   from (Spa_Journal.from_for()); null = none. Only the navigation door passes it.
      * @returns {Promise<void>}
      */
-    static async _full_load(url, history_mode, arrival) {
-        if (arrival !== null && Spa_Via.raw(url) !== null) {
-            await Rsx_Navigation._write_handoff(url, arrival);
+    static async _full_load(url, history_mode, arrival, from = null) {
+        const via_arrival = arrival !== null && Spa_Via.raw(url) !== null ? arrival : null;
+
+        if (via_arrival !== null || from !== null) {
+            await Rsx_Navigation._write_handoff(url, via_arrival, from);
         }
 
         const target = new URL(url, window.location.href);
@@ -404,12 +414,13 @@ class Rsx_Navigation {
     /**
      * 5. THE HAND-OFF. One session-storage entry naming the target (path + query) and what
      * the in-app path would have handed the next action: how its _via arrived and the
-     * decider of the page being left (awaited from that page's own settlement).
+     * decider of the page being left (awaited from that page's own settlement), and the
+     * journal entry the target's entry comes from (Spa_Journal).
      *
      * Single use and URL-matched - the next SPA boot deletes it whatever it says, and uses
      * it only when it names the URL that booted. No expiry of any kind.
      */
-    static async _write_handoff(url, arrival) {
+    static async _write_handoff(url, arrival, from) {
         let previous_decider = null;
 
         if (arrival === 'carried') {
@@ -426,12 +437,14 @@ class Rsx_Navigation {
             url: target.pathname + target.search,
             arrival: arrival,
             previous_decider: previous_decider,
+            from: from,
         });
     }
 
     /**
      * Read and delete the hand-off (Spa._on_spa_init, once per document). Returns
-     * {arrival, previous_decider} when it names this document's path + query, else null.
+     * {arrival, previous_decider, from} when it names this document's path + query, else
+     * null. arrival is null when the target carried no _via.
      */
     static _take_handoff() {
         const handoff = Rsx_Storage.session_get(Rsx_Navigation.HANDOFF_KEY);
@@ -441,6 +454,40 @@ class Rsx_Navigation {
             return null;
         }
 
-        return { arrival: handoff.arrival, previous_decider: handoff.previous_decider ?? null };
+        return {
+            arrival: handoff.arrival ?? null,
+            previous_decider: handoff.previous_decider ?? null,
+            from: typeof handoff.from === 'string' ? handoff.from : null,
+        };
+    }
+
+    /**
+     * PER-ENTRY STATE: a value kept on the browser history entry the page is on, read back
+     * when that entry is shown again - by Back/Forward, by a reload of it, on an SPA page or
+     * a Blade page alike - and never seen by any other entry. A new entry starts with none.
+     *
+     * It lives in history.state beside the SPA's own bookkeeping (spa_run, spa_index,
+     * scroll), which is why only this door writes it: every SPA write of the entry keeps the
+     * keys it does not own. Keys are namespaced by their owner (Rsx_Form.ENTRY_STATE_KEY);
+     * values are anything structured-cloneable.
+     *
+     * @param {string} key
+     * @returns {*} The value, or null when this entry holds none
+     */
+    static _entry_value(key) {
+        const state = history.state;
+
+        return state && typeof state === 'object' && key in state ? state[key] : null;
+    }
+
+    /**
+     * Write a per-entry value onto the entry the page is on (see _entry_value()). The URL
+     * and every other key of the entry's state are kept; nothing navigates.
+     *
+     * @param {string} key
+     * @param {*} value
+     */
+    static _set_entry_value(key, value) {
+        history.replaceState({ ...(history.state || {}), [key]: value }, '');
     }
 }

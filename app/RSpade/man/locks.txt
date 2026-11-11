@@ -134,13 +134,21 @@ WAITING AND TIMEOUTS
     free. Pass a number only when the caller genuinely has something better to
     do than wait.
 
-    A wait timeout throws RuntimeException with exactly this message:
+    A wait timeout throws Lock_Timeout_Exception (a RuntimeException) with
+    exactly this message:
 
         Failed to acquire WRITE lock for cluster:SITE_1 after 30 seconds
 
     That wording is load-bearing (the framework updater greps it to classify a
     retryable pull failure) and is produced identically by the daemon, the PHP
     client and the flock backend. Do not reword it.
+
+    CONTENTION AND OUTAGE ARE DIFFERENT ANSWERS. Lock_Timeout_Exception means
+    "another holder has it" and nothing else; a probe ($timeout = 0) catches
+    that type - never a message - and treats it as "held elsewhere". An
+    unreachable lock daemon is never contention: it is an outage (THE RSX
+    LOCKD DAEMON, below), which is not a RuntimeException at all, so a catch
+    written for a timeout never receives it.
 
 FIFO AND DEADLOCK REFUSAL
     One ordered queue per lock name; grants come off the head only.
@@ -193,9 +201,11 @@ RELEASING
             RsxLocks::release_lock($token);
         }
 
-    release_lock() never throws. A transport failure at release time IS the
-    answer (the daemon died, therefore the lock is gone), and throwing there
-    would replace the caller's real exception with this one.
+    release_lock() throws only for an OUTAGE: a daemon that is gone at release
+    time took the lock with the connection, the section ran without the
+    exclusion its caller believed it had, and the request ends as a 500 like
+    any outage (THE RSX LOCKD DAEMON, below). A write that already committed
+    stays committed, and nothing claims it was rolled back.
 
     Releasing is not strictly required for correctness: the connection closes at
     the end of the script and the daemon releases everything it held. Release
@@ -371,8 +381,8 @@ COUNTING SEMAPHORES
           to degrade.
 
     release_semaphore(?token): void
-        Releases a slot. Safe with null or a sentinel token (both no-ops), and
-        never throws.
+        Releases a slot. Safe with null or a sentinel token (both no-ops). It
+        throws only for an outage, exactly as release_lock().
 
     get_semaphore_usage(name, max_slots): int
         Slots currently held cluster-wide, for monitoring.
@@ -466,12 +476,33 @@ THE RSX LOCKD DAEMON
     /var/www/html: APP_KEY and the storage roots come from that project's .env.
     A stale pidfile never keeps it down: only a running rsx-lockd blocks a start.
 
-    IT MUST BE RUNNING. Outside maintenance mode there is no degraded mode:
-    every cluster lock throws if the daemon is unreachable, which means a site
-    write lock throws, which means the app is down. rsx:health reports it as
+    IT MUST BE RUNNING. The daemon is infrastructure in the same class as
+    mysqld, and losing it is an OUTAGE: a cluster lock call that cannot reach
+    it, or whose connection dies under it - an acquire, a release, a semaphore,
+    a site lock, the task pool - fails, and the failure ends the WHOLE request
+    exactly as a lost database connection does:
+
+        Ajax          HTTP 500 for the whole request; no later call of a batch
+                      runs (the client rejects every call with server_error)
+        API           500 internal_error (the same code as a database outage)
+        page          the framework's 500 error page
+        task/command  the run settles FAILED; a command exits non-zero
+
+    It is reported once, like any fault. There is no fallback, no degraded
+    mode and no retry-and-continue, and application code never catches it,
+    names it or branches on it. (The framework recognises it by the class
+    Lockd_Unavailable_Exception; that is not an API.) The one planned
+    exception is maintenance mode, above. rsx:health reports it as
     "Lock Server" - OK when listening, FAIL when not (with the supervisor
     program named in the remediation), INFO while the maintenance flag is up
     because it is stopped on purpose then.
+
+    "supervisorctl status" is NOT evidence that it serves: supervisor's process
+    is the retry runner, which shows RUNNING while lockd exits on every attempt.
+    A failing run is visible in three places - the runner prints one [ERROR]
+    line at 5 consecutive exits (and at each doubling after), rsx:health's
+    "Supervised Services" row FAILs, and the container's HEALTHCHECK reports
+    unhealthy (it also pings lockd). rsx:man health has the rows.
 
     Connections authenticate with an HMAC-SHA256 hello over host:pid:ts keyed
     by APP_KEY, within a 60-second replay window. Clock skew over a minute
@@ -769,6 +800,7 @@ NOTES
 
 SEE ALSO
     rsx:man site_locks        The per-site reader/writer locks every request takes
+    rsx:man error_handling    How an infrastructure outage is answered per channel
     rsx:man maintenance_mode  The no-op grant and why the daemon stops
     rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock)
                               and the worker pools the daemon accounts

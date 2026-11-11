@@ -12,8 +12,10 @@ use Symfony\Component\Mime\Email;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
+use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -551,6 +553,69 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
 
         static::__assert_count(1, $message->getCc(), 'the Cc was carried');
         static::__assert_equals('watcher@example.com', $message->getCc()[0]->getAddress(), 'with its address');
+    }
+
+    /**
+     * With no from() the message carries the configured sender, read when it is built.
+     */
+    public static function test_without_an_override_the_message_is_from_the_configured_sender()
+    {
+        $row = static::__queue();
+        $message = Rsx_Mail_Builder::build($row);
+
+        static::__assert_count(1, $message->getFrom(), 'one From');
+        static::__assert_equals(Rsx_Mail_Transport::from_address(), $message->getFrom()[0]->getAddress(), 'the configured address');
+        static::__assert_equals(Rsx_Mail_Transport::from_name(), $message->getFrom()[0]->getName(), 'and the configured name');
+    }
+
+    /**
+     * The row's sender is what is sent - a config change after enqueue rewrites nothing.
+     */
+    public static function test_the_rows_from_is_the_messages_from()
+    {
+        $row = static::__queue(fn ($email) => $email->from('billing@example.com', 'Billing Office'));
+
+        $previous = config('mail.from.address');
+        config(['mail.from.address' => 'changed_after_enqueue@example.com']);
+
+        try {
+            $message = Rsx_Mail_Builder::build($row);
+        } finally {
+            config(['mail.from.address' => $previous]);
+        }
+
+        static::__assert_count(1, $message->getFrom(), 'one From');
+        static::__assert_equals('billing@example.com', $message->getFrom()[0]->getAddress(), 'the address frozen on the row');
+        static::__assert_equals('Billing Office', $message->getFrom()[0]->getName(), 'with its display name');
+    }
+
+    /**
+     * An address with no display name takes the configured name: the address changed,
+     * the organisation sending it did not.
+     */
+    public static function test_a_from_with_no_name_takes_the_configured_name()
+    {
+        $row = static::__queue(fn ($email) => $email->from('billing@example.com'));
+        $message = Rsx_Mail_Builder::build($row);
+
+        static::__assert_equals('billing@example.com', $message->getFrom()[0]->getAddress(), 'the override address');
+        static::__assert_equals(Rsx_Mail_Transport::from_name(), $message->getFrom()[0]->getName(), 'under the configured name');
+    }
+
+    /**
+     * A resend sends the message the row holds - its sender included.
+     */
+    public static function test_a_resent_row_keeps_its_from()
+    {
+        $row = static::__queue(fn ($email) => $email->from('billing@example.com', 'Billing Office'));
+        $row->mark_failed('probe: failed so it can be resent');
+
+        static::__assert_equals(Rsx_Mail::RESEND_QUEUED, Rsx_Mail::resend($row), 'the failed row went back on the queue');
+
+        $message = Rsx_Mail_Builder::build($row->fresh());
+
+        static::__assert_equals('billing@example.com', $message->getFrom()[0]->getAddress(), 'the resend is from the same address');
+        static::__assert_equals('Billing Office', $message->getFrom()[0]->getName(), 'under the same name');
     }
 
     /**

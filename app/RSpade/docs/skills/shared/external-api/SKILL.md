@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building external REST endpoints - #[Api_Endpoint] + #[Api_Param] on Rsx_Api_Controller_Abstract under /api/vN/, Bearer rsx_ keys, rsx:api:key:create, key scopes and --read-only, POST /api/v1/files, /apidocs, #[Writer] on a POST, Rollback_Response, Site_Lock::write_exception() in a reader, object-only response bodies, _duration_ms / _completed_at, _request_ref replay. Use when exposing an API or minting a key, or on a 401, 403 insufficient_scope, 403 read_only_key, a 422 on an undeclared param, 409 request_ref_reused, 410 request_response_expired, 410 api_version_retired, 'Every external API response body is a JSON object', API-GET-PURE-01, or a scan dying on an attribute argument."
+description: "Building external REST endpoints - #[Api_Endpoint] + #[Api_Param] on Rsx_Api_Controller_Abstract under /api/vN/, Bearer rsx_ keys, rsx:api:key:create, key scopes and --read-only, POST /api/vN/files, #[Api_Versions(through: N | every: true)], /apidocs, #[Writer] on a POST, Rollback_Response, Site_Lock::write_exception() in a reader, object-only response bodies, _duration_ms / _completed_at, _request_ref replay, Rsx_Api::document() for an unstamped OpenAPI document, x-build / Rsx::build_info(). Use when exposing an API or minting a key, or on a 401, 403 insufficient_scope, 403 read_only_key, a 422 on an undeclared param, 409 request_ref_reused, 410 request_response_expired, 410 api_version_retired, 'Every external API response body is a JSON object', API-GET-PURE-01, or a scan dying on an attribute argument."
 ---
 
 # External API
@@ -64,12 +64,15 @@ The failure looks like a broken manifest build with a class-not-found deep in th
 | `Rsx_Api::not_found()` / `unauthorized()` / `forbidden()` | 404 / 401 / 403 |
 | `Rsx_Api::validation_error($fields)` | 422 |
 | `Rsx_Api::error(...)` | the error you name |
+| `Rsx_Api::document($array)` | 200, the object EXACTLY as given - no timing fields, no echoed `_request_ref` |
 | a file / streamed response | sent as it is (downloads are exempt) |
 | `null`, a list, `[]`, a scalar, a Collection | **refused**: a 500 naming the endpoint (`Every external API response body is a JSON object ... a list goes inside an object (['items' => $list])`), a writer rolled back |
 
 There is no 204. Error shape is always `{"error":{"code","message","fields"?, ...documented extras}}`, built only by `Api_Dispatcher::_error()` - branch on `error.code`, never the message.
 
 **Every object answer carries `_duration_ms` and `_completed_at`** (ISO UTC) at the top level. **`_request_ref`** (a system param on every endpoint, 1-128 chars, never in `$params`; `#[Api_Param]` names never start with `_`) is echoed on every response; on a writer it names the request, so a retry with the same ref and body is answered from the record (`_replayed: true`, original timing) instead of run twice - a different body is 409 `request_ref_reused`, a pruned record 410 `request_response_expired`. Only a success records its ref; nobody signed in = echoed, never honoured. `rsx:man request_history`.
+
+**A standard-shaped document is the one unstamped object**: an OpenAPI root admits only its own fields and `x-` extensions, so the timing fields would make it invalid. Answer it with `Rsx_Api::document($array)` (a plain `Response`, `application/json`) - `stamp_response()` stamps a `JsonResponse` only. Never for an ordinary answer.
 
 ## Authentication
 
@@ -140,9 +143,11 @@ Every param is validated AND coerced, except `file` — that one is validated on
 
 | Endpoint | Returns |
 |---|---|
-| `POST /api/v1/files` | 201 + the file payload, including an unclaimed `key` |
-| `GET /api/v1/files/:key` | metadata, URLs, `preview_status`, `text_status` |
-| `GET /api/v1/files/:key/text` | `{key, text, text_status}`, or 409 while pending |
+| `POST /api/vN/files` | 201 + the file payload, including an unclaimed `key` |
+| `GET /api/vN/files/:key` | metadata, URLs, `preview_status`, `text_status` |
+| `GET /api/vN/files/:key/text` | `{key, text, text_status}`, or 409 while pending |
+
+All three (and `GET /api/vN/me`) are served at every version the application serves - see Versioning below.
 
 Upload is `multipart/form-data`, declared with the **`file` param type**:
 
@@ -189,6 +194,8 @@ URL-only, **exact-match at runtime** - there is no fallthrough from `/api/v2/x` 
 
 **Carry unchanged endpoints into v2 by declaring a range, never by copying attributes**: `#[Api_Versions(through: 2)]` on the controller serves every endpoint in it at v1 AND v2 (the manifest expands real `/api/v2/...` route rows, one handler); `through: N` on an `#[Api_Endpoint]` overrides it - the endpoint v2 revises says `through: 1`. A range below the pattern's own version, or an expanded address another declaration claims, fails the build ("Duplicate route definition" naming the range).
 
+**An endpoint that belongs to no versioned resource FOLLOWS the application** with `#[Api_Versions(every: true)]` on its controller: it is served at every version the application's other endpoints serve, from its declared version up (its own version alone when they serve none). The framework's four endpoints (`/me`, `/files`, `/files/:key`, `/files/:key/text`) carry it, so they answer at `/api/v3/...` once the app serves v3, and stop answering (410) at a version the app retires. An application endpoint at the same address as a follower is a "Duplicate route definition" build failure - never declare your own `/api/vN/me` or `/api/vN/files...`. `#[Api_Versions]` takes exactly one of `through: N` or `every: true`; an endpoint's own `through:` still overrides the controller's.
+
 **A v2 controller needs its own class name** - class names are unique per file type and namespaces are not consulted, so a `V1\` / `V2\` split of one class name is a build failure. Name it `Contacts_V2_Api_Controller` and put `#[Api_Resource('Contacts')]` on BOTH controllers: that is the group the docs page and OpenAPI tags list them under (absent, the group derives from the class name and v2 shows as a separate "Contacts V2").
 
 The docs GROUP by (verb, path with the `vN` stripped) and show the newest version <= the one selected, so `/apidocs/v1` shows a v1 endpoint even when v2 exists elsewhere. `@api-deprecated <note>` in an endpoint's docblock marks it deprecated (docs + OpenAPI) with no successor needed. **Is anything still calling v1?** `Api_Route_Usage::last_called_for_version(1)` - `_api_route_usage` keeps each route pattern's last authenticated call, refreshed at most once a minute. `rsx:api:openapi --api-version=2` emits one version's surface for client generation. Details: `rsx:man external_api` (VERSIONING).
@@ -217,15 +224,18 @@ public static function api_openapi(Request $request, array $params = []) {
 - **The framework produces DATA, the app produces the RESPONSE.** `page()` renders a response; `openapi_document()` returns an array. Headers, status, and inline-vs-download belong to the route that declared them.
 - **Gate the console on `Session::has_api_access()`, not on a role** — it is the same predicate `Api_Dispatcher` applies to a Bearer key, so the console cannot advertise an API the viewer will be refused. Render the denial with `Error_Screens::unauthorized($request)` (login redirect for an unidentified caller, themed 403 for an identified one); `response_unauthorized()` is the Ajax envelope and would reach a browser as JSON.
 
-- **You declare no bundle and forward no hook.** `_Apidocs_Bundle` is framework-owned (it lives in the framework's own application tree, `system/app/RSpade/Sys/app/apidocs/`, and wears that tree's `--rsx-*` theme) and is named by the framework's own view; there is no supported way to customize the console and nothing to re-adopt when it changes. (Bundle validation normally demands that a bundle cover its dispatching controller's directory — that check is waived for a FRAMEWORK view, which is what makes a framework-side bundle legal on an app route.) Worked example, controller only: `system/app/RSpade/resource/reference_app/app/apidocs/`.
-- **`page()`'s argument restricts the listing** (default `true`): only endpoints whose `#[Auth]` gates pass for the API key the viewer supplied — scoped to the **key's** user, not the viewer. With no key it lists nothing and the landing card asks for one; supplying one **reloads**, because the catalog is baked in at render.
+- **You declare no bundle and forward no hook.** `_Apidocs_Bundle` is framework-owned (it lives in the framework's own application tree, `system/app/RSpade/Sys/app/apidocs/`, and wears that tree's `--rsx-*` theme) and is named by the framework's own view; there is no supported way to restyle or extend the console and nothing to re-adopt when it changes. (Bundle validation normally demands that a bundle cover its dispatching controller's directory — that check is waived for a FRAMEWORK view, which is what makes a framework-side bundle legal on an app route.) Worked example, controller only: `system/app/RSpade/resource/reference_app/app/apidocs/`.
+- **`page(sections: [...])` adds the application's own prose** - its error codes and what to do about each, its conventions: each section exactly `['title' => ..., 'markdown' => ...]`, listed under "Guides" atop the sidebar and shown at `<mount>?section=<slug>` (slug from the title). Markdown is GFM (a table is a table - write an error inventory kept as data out as one) through `Markdown_Rendition::render()`, so raw HTML is discarded. Any other key, a blank title or Markdown, or two titles sharing a slug throws `InvalidArgumentException` at the call. Content only - the framework owns the markup and styles. Worked example: the reference app's `Apidocs_Controller::__sections()`.
+- **`page()`'s first argument restricts the listing** (default `true`): only endpoints whose `#[Auth]` gates pass for the API key the viewer supplied — scoped to the **key's** user, not the viewer. With no key it lists nothing and the landing card asks for one; supplying one **reloads**, because the catalog is baked in at render.
 - Restricted listing hides what a caller cannot use; it is **not access control** — `Api_Dispatcher` gates every call regardless. That gate is: the key resolves, its user is active, AND `users.is_api_access_enabled` is set. All three failures return the one uniform `unauthorized` / "Invalid or expired API key" 401, so a caller never learns which.
 - The filter works by briefly becoming the key's user (`Api_Tester_Key::accessible_targets()` -> `Session::_set_api_identity` + `Auth_Gates::can_access`, torn down in a `finally`). The identity fence is the whole fence: gates evaluate live, so the answers follow whichever identity is installed at the moment of the ask.
 - **OpenAPI 3.1 document at `/apidocs/openapi.json`** (gated with the console), generated by `Api_Openapi::document()` from the same manifest catalog. Feed it to client generators, Postman, or an agent toolchain. Every version is listed at its real path; an endpoint another handler supersedes at a later version, or one carrying `@api-deprecated`, carries `deprecated: true`. `openapi_document($targets, $version)` / `rsx:api:openapi --api-version=N` narrows to one version.
+- **Every WRITER operation documents `_request_ref`** (`#[Writer]`, or `#[Manual_Lock]`): an optional body property (`$ref` `components.schemas.RequestRef`, the replay described), plus 409 `request_ref_reused` / 410 `request_response_expired` in its responses; readers carry neither. **`x-build`** at the root is `Rsx::build_info()` - `{commit, built_at, framework_revision, code_key}`, recorded in the seal by `rsx:build` (git, or `--commit` / `--framework-revision` on a host with no `.git`), all but `code_key` null on a development box (`rsx:man prod`, BUILD IDENTITY). `info.version` stays the API version.
+- **For a key holder, serve it from an API endpoint of your own** - the framework declares no document route: `#[Api_Endpoint('/api/v1/openapi.json', methods: ['GET'])]` returning `Rsx_Api::document(Rsx_Api_Docs::openapi_document(null, 1))` (`rsx/app/api/v1/openapi_api_controller.php`).
 
 ### The identity endpoint
 
-**`GET /api/v1/me` ships with the framework** (`Identity_Api_Controller`) — the one endpoint every RSpade API has. Returns the site-scoped `user_id`, `email`, `site_id`, and the key's own `name`/`prefix`/`expires_at`/`last_used_at`.
+**`GET /api/vN/me` ships with the framework** (`Identity_Api_Controller`, served at every version the app serves) — the one endpoint every RSpade API has. Returns the site-scoped `user_id`, `email`, `site_id`, and the key's own `name`/`prefix`/`expires_at`/`last_used_at`.
 
 Reaching it **is** the validation: a bad, revoked or expired key is a 401 from the dispatcher before it runs, so a 200 means the key is good. It is a contract — path, verb and field names are stable across installs — and deliberately thin, because integrations poll it. `expires_at: null` means no expiry, not unknown.
 
@@ -235,7 +245,7 @@ Reaching it **is** the validation: a bad, revoked or expired key is a 401 from t
 
 ### Console behaviour worth knowing
 
-- **The key is validated before it is accepted** (against `/api/v1/me`), so a bad key fails at the paste rather than later on an unrelated endpoint.
+- **The key is validated before it is accepted** (against `/me` at the newest catalog version), so a bad key fails at the paste rather than later on an unrelated endpoint.
 - **The tester validates path parameters only.** Everything else reaches the server unchecked — a blank required field should come back as the endpoint's own 422, which is what a tester is for. An unparseable body is sent too, so you see the dispatcher's `invalid_json`.
 - **Unset means omitted** — blank query params and blank body fields are dropped, never sent as `""`.
 - **"Fill in values"** swaps the samples to the exact request the tester would send (real key, typed values, merged path params), live. It reads `_Apidocs_Tester::current_values()`, the same method Send uses. Unfilled path params stay as `{name}`, marked red.
@@ -280,7 +290,7 @@ try {
 
 **One matcher, in PHP.** `Api_Scopes::matches()` is the only implementation. A preview or a narrowed listing **asks a PHP endpoint** — never a JavaScript twin, which would drift from what the dispatcher does.
 
-**Two different 403s.** `insufficient_scope` (`{"error":{"code","message","required":"/api/v1/clients/:id/delete"}}` — `required` is the matched **route pattern**, omitted for an `@api-hidden` endpoint) means *mint a wider key*; `forbidden` from the gates means *ask your administrator for the permission*. Both are logged in `_api_request_log`. The file-serving web routes (`/_file/`, `/_thumbnail/`, …) clamp a scoped key against a synthetic path in the files subtree and answer the same 403.
+**Two different 403s.** `insufficient_scope` (`{"error":{"code","message","required":"/api/v1/clients/:id/delete"}}` — `required` is the matched **route pattern**, omitted for an `@api-hidden` endpoint) means *mint a wider key*; `forbidden` from the gates means *ask your administrator for the permission*. Both are logged in `_api_request_log`. The file-serving web routes (`/_file/`, `/_thumbnail/`, …) clamp a scoped key against a synthetic path in the files subtree of EVERY version serving the file routes (`/api/vN/files/anything`) and answer the same 403 only when no version's subtree is reached - a key scoped `/api/v3/files/*` downloads what `GET /api/v3/files/:key` describes.
 
 **`API-GET-PURE-01`** — a GET handler's body may not contain a write call (saves, deletes, restores, updates, increments, creates on a model or relation, pivot attach/detach/sync, `->raw_bulk(` `->force_destroy(` `->attach_to(`, raw `DB::` writes, `Task::dispatch(` — the list is `Api_Endpoint_ManifestSupport::GET_MUTATION_TOKENS`, matched case-insensitively); it is a **manifest-build failure**, because a scope carries no method and a read grant's read-only-ness rests entirely on it. A GET handler whose body cannot be located fails too, and **one endpoint may not declare both GET and POST**. Escape: `@API-GET-PURE-01-EXCEPTION <rationale>` in the method docblock — **the rationale is required**, a bare tag still fails. **It is a guardrail, not a proof**: only the handler's own body is scanned; a helper it calls or a dynamic call is not followed.
 

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
@@ -732,6 +733,11 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                     $attachment->apply_serve_freshness();
                     $path = $attachment->resolve_storage()->get_full_path();
                 } catch (\Throwable $e) {
+                    // An infrastructure outage is not one member's problem: the download
+                    // fails as a whole (the archive is cut short) rather than marking every
+                    // remaining member as missing.
+                    Infrastructure_Outage::rethrow_if_outage($e);
+
                     Log::error(
                         "download_multiple_zip: could not resolve bytes for attachment {$attachment->id}: " . $e->getMessage()
                     );

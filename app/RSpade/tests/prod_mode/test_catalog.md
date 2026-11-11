@@ -35,7 +35,7 @@ One row per test worth having (implemented AND not). Status is one of
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| SEAL-01 | write() records every build asset + metadata; read() round-trips | php | staged fake build root | 4 assets, build_key from disk | implemented | 2026-07-15 |
+| SEAL-01 | write() records every build asset + metadata; read() round-trips | php | staged fake build root | 5 assets, build_key from disk, built_at | implemented | 2026-11-10 |
 | SEAL-02 | verify() clean when untampered (only mode drift under dev test proc) | php | seal then verify | no asset/build_key drift | implemented | 2026-07-15 |
 | SEAL-03 | verify() detects a deleted asset | php | unlink a sealed file | "Missing asset" finding | implemented | 2026-07-15 |
 | SEAL-04 | verify() detects a tampered asset (hash mismatch) | php | rewrite a sealed file | "Hash mismatch" finding | implemented | 2026-07-15 |
@@ -43,6 +43,10 @@ One row per test worth having (implemented AND not). Status is one of
 | SEAL-06 | verify() reports cleanly when no seal present | php | no write() | single "No seal present" | implemented | 2026-07-15 |
 | SEAL-07 | is_sealed() reflects mode when a seal file is present (== is_production) | php | seal file, any mode | is_sealed()==is_production() | implemented | 2026-07-15 |
 | SEAL-08 | is_sealed() false without a seal file | php | no seal file | is_sealed() false | implemented | 2026-07-15 |
+| SEAL-ID-01 | write() records built_at (ISO UTC) and commit / framework_revision read from git (an object name, or null when git cannot answer); a given identity is recorded as given | php | write('production'); write(.., 'abc1234def5678', <40 hex>) | ISO built_at; revision-or-null; the given values on disk | implemented | 2026-11-10 |
+| SEAL-ID-02 | is_revision() accepts 7-64 lowercase hex only (no trailing newline) | php | short, upper, tag, branch, 65 chars, "abc1234\n" | true for hex 7/40/64; false otherwise | implemented | 2026-11-10 |
+| SEAL-ID-03 | Rsx::build_info() reports the sealed identity with no git consulted; a seal of another build key, or an unsealed box, reports only code_key | php | staged seal with the live build key / another key; _testing_set_sealed(true/false) | the recorded values; nulls + code_key | implemented | 2026-11-10 |
+| SEAL-ID-04 | rsx:build --commit / --framework-revision: a malformed value, or either flag in development, refuses with nothing built | cli | rsx:build --commit=xyz | refusal, exit 1 | deferred (running rsx:build from a test rebuilds the box's tree; the refusal precedes every build step) | 2026-11-10 |
 
 ## Prod_Guard_Test (php)
 

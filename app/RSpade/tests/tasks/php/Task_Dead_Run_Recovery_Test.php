@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Pool;
@@ -16,6 +17,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Task\Task_Waiting;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Tests\Tasks\Php\Task_Concurrency_Fixture_Service;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
@@ -29,8 +31,9 @@ use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
  *   retry, a scheduled run FAILED and counted on its schedule, an inline run FAILED.
  *
  *   AN OLD PID IS HELD BY AN UNRELATED PROCESS: a pool run is still abandoned (its pid is
- *   held to a task worker's command line), the process is never signalled, and no kill is
- *   requested for it.
+ *   held to its recorded start time and a task worker's command line), the process is never
+ *   signalled, and no kill is requested for it. An inline run is held to its recorded start
+ *   time alone, and is settled FAILED all the same.
  *
  *   ANOTHER HOST'S RUN THAT NEVER SETTLES does not hold the queue back: its #[Exclusive]
  *   identity runs again, because the run lock lived in the lock daemon and went with it.
@@ -89,6 +92,7 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
     {
         return Task_Runner::insert_row($class, $method, [], $fields['origin_id'] ?? Task_Run_Model::ORIGIN_DISPATCHED, array_merge(Task_Runner::running_fields(), [
             'worker_pid' => $pid,
+            'worker_pid_start_time' => Process_Identity::start_time($pid),
             'worker_id' => $wid,
             'worker_generation' => static::__older_generation(),
             'pool_id' => Task_Run_Model::POOL_ON_DEMAND,
@@ -180,9 +184,36 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
             $output = Artisan::output();
 
             static::__assert_equals(Task_Run_Model::STATUS_PENDING, static::__status($id), 'the run is abandoned and retried');
-            static::__assert_contains("PID {$pid} is not a task worker", (string) DB::table('_tasks')->where('id', $id)->value('status_reason'));
+            static::__assert_contains("PID {$pid} is no longer that task worker", (string) DB::table('_tasks')->where('id', $id)->value('status_reason'));
             static::__assert_equals(0, Task_Kill_Request_Model::where('task_id', $id)->count(), 'no kill is requested for the pid');
             static::__assert_false(str_contains($output, '[TASK TIMEOUT]'), 'the silence limit never sees it');
+            static::__assert_true(Task_Worker_Victim::running($pid), 'the unrelated process is untouched');
+        } finally {
+            Task_Worker_Victim::reap($pid);
+            static::__reset();
+        }
+    }
+
+    /**
+     * An INLINE run whose pid is live but is no longer the process the run recorded (the start
+     * time differs: the kernel reused the pid) is gone - settled FAILED on the first tick, never
+     * left RUNNING for as long as the unrelated process lives.
+     */
+    public static function test_an_inline_runs_reused_pid_does_not_keep_it_running()
+    {
+        static::__reset();
+
+        $pid = Task_Worker_Victim::start_plain();
+        try {
+            $id = Task_Runner::insert_row(self::FIX, 'marker_b', [], Task_Run_Model::ORIGIN_INLINE, array_merge(Task_Runner::running_fields(), [
+                'worker_pid' => $pid,
+                'worker_pid_start_time' => Process_Identity::start_time($pid) + 1,
+            ]));
+
+            Artisan::call('rsx:task:process');
+
+            static::__assert_equals(Task_Run_Model::STATUS_FAILED, static::__status($id), 'the inline run is settled, not left running');
+            static::__assert_contains("PID {$pid}", (string) DB::table('_tasks')->where('id', $id)->value('status_reason'));
             static::__assert_true(Task_Worker_Victim::running($pid), 'the unrelated process is untouched');
         } finally {
             Task_Worker_Victim::reap($pid);
@@ -266,8 +297,14 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * A schedule that should have run every minute for a month runs ONCE when a worker comes
+     * A schedule that should have run every hour for a month runs ONCE when a worker comes
      * back: the claim sets its next run from now, not from the run it missed.
+     *
+     * The cadence is hourly at the minute half an hour from now, so its next run is never
+     * inside the claim window (Task_Daemon::SCHEDULE_LEAD_SECONDS). An every-minute cadence
+     * made the assertion depend on the wall clock: claimed in the last seconds of a minute,
+     * the advanced next run (the coming minute) is already due, and the worker rightly takes
+     * that NEXT run a moment early - a second row that is not a missed tick being replayed.
      */
     public static function test_a_long_overdue_schedule_runs_once()
     {
@@ -278,7 +315,8 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
         $schedule_id = DB::table('_task_schedules')->insertGetId([
             'class' => self::FIX,
             'method' => 'marker_a',
-            'cron_expression' => '* * * * *',
+            // Read on the server timezone's wall clock, as Cron_Parser reads the expression.
+            'cron_expression' => ((int) (new \DateTime('now', new \DateTimeZone(Rsx_Time::get_server_timezone())))->format('i') + 30) % 60 . ' * * * *',
             'timezone' => 'UTC',
             'next_run_at' => date('Y-m-d H:i:s', time() - 30 * 86400) . '.000',
             'created_at' => now(),
@@ -287,7 +325,7 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
         try {
             Artisan::call('rsx:task:worker', ['--pool' => Task_Pool::SCHEDULED]);
 
-            static::__assert_equals(1, DB::table('_tasks')->where('schedule_id', $schedule_id)->count(), 'one catch-up run, not one per missed minute');
+            static::__assert_equals(1, DB::table('_tasks')->where('schedule_id', $schedule_id)->count(), 'one catch-up run, not one per missed hour');
             static::__assert_equals(['A'], Task_Exec_Fixture_Service::$run_order);
             static::__assert_true(strtotime(DB::table('_task_schedules')->where('id', $schedule_id)->value('next_run_at')) > time(), 'the next run is in the future');
 

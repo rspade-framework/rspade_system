@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Core\Task;
 
-use RuntimeException;
+use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\RsxLocks;
 
 /**
@@ -55,7 +55,9 @@ class Task_Lock
      *
      * Returns TRUE once held. Returns FALSE only in the non-blocking case ($timeout = 0)
      * when a peer holds it - the sole outcome a caller is entitled to treat as ordinary.
-     * A genuine lock fault (daemon refusal, deadlock cycle) still throws.
+     * Contention is told apart by its TYPE (Lock_Timeout_Exception), never by a message:
+     * a deadlock refusal or a daemon refusal still throws, and an unreachable daemon throws
+     * Lockd_Unavailable_Exception - the outage, never "held elsewhere".
      *
      * @return bool
      */
@@ -66,16 +68,12 @@ class Task_Lock
         }
 
         if ($this->timeout === 0) {
-            // Non-blocking probe: contention is an expected answer, so it is caught here
-            // and reported as false. Nothing else about the failure is swallowed - a
-            // deadlock or a refusal carries a different message and is re-thrown.
+            // Non-blocking probe: contention is an expected answer, so it - and only it - is
+            // caught here and reported as false. A deadlock, a refusal and an outage are
+            // other types and propagate.
             try {
                 $this->token = RsxLocks::named_write_lock($this->lock_name, 0);
-            } catch (RuntimeException $e) {
-                if (str_contains($e->getMessage(), 'deadlock')) {
-                    throw $e;
-                }
-
+            } catch (Lock_Timeout_Exception $e) {
                 return false;
             }
 

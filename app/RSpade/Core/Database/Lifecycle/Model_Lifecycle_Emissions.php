@@ -2,9 +2,11 @@
 
 namespace App\RSpade\Core\Database\Lifecycle;
 
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Throwable;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 
 /**
@@ -158,13 +160,31 @@ class Model_Lifecycle_Emissions
         self::$pending = [];
 
         self::$flush_depth++;
+        $first_failure = null;
 
         try {
+            // Every entry's hook runs: hooks of different records are independent, and one
+            // that throws never cancels the rest of its generation. The first throw is then
+            // rethrown (to the saving code when no transaction was open; after a commit, to
+            // Rsx_DatabaseTransactionsManager, which reports it); any later one is reported here.
             foreach ($entries as $entry) {
-                self::_run($entry);
+                try {
+                    self::_run($entry);
+                } catch (Throwable $e) {
+                    if ($first_failure === null) {
+                        $first_failure = $e;
+                        continue;
+                    }
+
+                    app(ExceptionHandler::class)->report($e);
+                }
             }
         } finally {
             self::$flush_depth--;
+        }
+
+        if ($first_failure !== null) {
+            throw $first_failure;
         }
     }
 

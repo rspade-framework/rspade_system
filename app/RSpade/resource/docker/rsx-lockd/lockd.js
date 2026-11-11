@@ -332,19 +332,48 @@ function is_alive(pid) {
 }
 
 /**
- * Is $pid a running rsx-lockd? A pidfile only means anything when it names one: pids are
- * reused, and inside a container they start again from 1 after a reboot, so a pidfile that
- * outlived its daemon usually names some OTHER live process. Read from /proc (Linux); a
- * process whose command line cannot be read is not taken to be lockd.
+ * Is $pid a running rsx-lockd DAEMON? A pidfile only means anything when it names one: pids
+ * are reused, and inside a container they start again from 1 after a reboot, so a pidfile
+ * that outlived its daemon usually names some OTHER live process. Read from /proc (Linux); a
+ * process whose command line cannot be read is not taken to be lockd. The identity itself is
+ * is_lockd_argv().
  */
 function is_lockd(pid) {
     if (!is_alive(pid)) return false;
+    let argv;
     try {
-        const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0').join(' ');
-        return /lockd\.js( |$)/.test(cmdline);
+        argv = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0');
     } catch (err) {
         return false;
     }
+    if (argv.length > 0 && argv[argv.length - 1] === '') argv.pop();
+    return is_lockd_argv(argv);
+}
+
+/**
+ * Is $argv (a process's argument vector) the lock daemon? Node running a script named
+ * lockd.js whose first non-flag argument is `run` (`--x` / `--x=y` flags may come before
+ * it, as `start` and `--config=<f> run` pass them). The same script's clients - `exec`,
+ * which holds a lock for as long as its command runs, `dump`, `log` - are not the daemon,
+ * and neither is anything else that merely names the file (`tail -f .../lockd.js`).
+ * retry-run.sh's rsx-lockd entry matches the same identity.
+ */
+function is_lockd_argv(argv) {
+    if (argv.length < 3) return false;
+
+    const program = path.basename(argv[0]);
+    if (program !== 'node' && program !== 'nodejs' && program !== path.basename(process.execPath)) {
+        return false;
+    }
+    if (path.basename(argv[1]) !== 'lockd.js') return false;
+
+    for (let i = 2; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg.startsWith('--') && arg !== '--') continue;
+        return arg === 'run';
+    }
+
+    return false;
 }
 
 /** What a pid is, for a log line: its command line, or why there is none. */
@@ -484,7 +513,7 @@ async function command_start(flags) {
     for (let attempt = 0; attempt < 50; attempt++) {
         await sleep(100);
         const pid = read_pidfile(config.pidfile);
-        if (pid && is_alive(pid)) {
+        if (pid && is_lockd(pid)) {
             console.log('[lockd] [OK] Started as pid ' + pid);
             return EXIT_OK;
         }
@@ -513,13 +542,23 @@ async function command_stop(flags) {
 
     process.kill(pid, 'SIGTERM');
 
+    // Gone, a zombie, or already some other process: in every case the daemon has stopped.
     for (let attempt = 0; attempt < 100; attempt++) {
         await sleep(100);
-        if (!is_alive(pid)) {
+        if (!is_lockd(pid)) {
             remove_pidfile(config.pidfile);
             console.log('[lockd] [OK] Stopped pid ' + pid);
             return EXIT_OK;
         }
+    }
+
+    // Checked again immediately before the kill: the daemon may have exited in the moment
+    // since, and its pid been taken by another process, which must never be signalled.
+    if (!is_lockd(pid)) {
+        remove_pidfile(config.pidfile);
+        console.log('[lockd] [OK] Stopped pid ' + pid + ' (it exited as the SIGTERM wait ended; pid '
+            + pid + ' is now ' + describe_pid(pid) + ' - not signalled)');
+        return EXIT_OK;
     }
 
     console.log('[lockd] [WARNING] pid ' + pid + ' ignored SIGTERM for 10s - sending SIGKILL');
@@ -963,12 +1002,15 @@ const HELP = {
         'Usage: node lockd.js start [--config=<path>]',
         '',
         'Spawns a detached `run` and waits up to 5 seconds for its pidfile to appear.',
-        'A stale pidfile (pid not alive) is reported and removed rather than obeyed.',
+        'A stale pidfile (one not naming a running lockd daemon) is reported and removed',
+        'rather than obeyed. Started means the pidfile names the running daemon.',
     ],
     stop: [
         'Usage: node lockd.js stop [--config=<path>]',
         '',
         'SIGTERM the pid in the pidfile and wait up to 10 seconds, then SIGKILL.',
+        'A stale pidfile (one not naming a running lockd daemon) is removed and its pid',
+        'is never signalled - checked again immediately before the SIGKILL.',
         'Every lock the daemon was tracking disappears with it - by design: the holder',
         'connections are gone, so nothing is held.',
     ],
@@ -1077,6 +1119,7 @@ module.exports = {
     load_env_file,
     Lockd_Logger,
     default_log_path,
+    is_lockd_argv,
     main,
 };
 

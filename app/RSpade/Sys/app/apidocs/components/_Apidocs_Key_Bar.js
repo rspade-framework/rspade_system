@@ -9,8 +9,9 @@
  * spot, one hour long, against that account. The two are offered one at a time and never
  * together: see the template, and _sync_action() below for the live swap.
  *
- * THE KEY IS VALIDATED BEFORE IT IS ACCEPTED, against GET /api/v1/me - the framework's
- * identity endpoint, whose whole purpose is answering "is this key good". Storing an
+ * THE KEY IS VALIDATED BEFORE IT IS ACCEPTED, against GET /api/vN/me at the catalog's newest
+ * version - the framework's identity endpoint, served at every version the application
+ * serves, whose whole purpose is answering "is this key good". Storing an
  * unchecked key means the first failure surfaces later, on some unrelated endpoint, looking
  * like that endpoint's fault. Failing here says plainly that the key is the problem.
  */
@@ -18,9 +19,13 @@ class _Apidocs_Key_Bar extends Component {
     static STORAGE_KEY = 'apidocs_tester_key';
 
     /**
-     * The framework's key-validation endpoint. A 200 means the key authenticated.
+     * The framework's key-validation endpoint at the newest version the catalog lists (it is
+     * served at every version the application serves, and a retired one answers 410). A 200
+     * means the key authenticated.
      */
-    static VERIFY_PATH = '/api/v1/me';
+    static verify_path() {
+        return '/api/v' + _Apidocs_Catalog.newest_version() + '/me';
+    }
 
     on_create() {
         this.state = {
@@ -152,7 +157,7 @@ class _Apidocs_Key_Bar extends Component {
         let response;
 
         try {
-            response = await this.alive(fetch(_Apidocs_Key_Bar.VERIFY_PATH, {
+            response = await this.alive(fetch(_Apidocs_Key_Bar.verify_path(), {
                 headers: { 'Authorization': 'Bearer ' + value },
             }));
         } catch (e) {

@@ -9,7 +9,7 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
- * Identity_Api_Controller - GET /api/v1/me
+ * Identity_Api_Controller - GET /api/vN/me
  *
  * The one endpoint every RSpade API has, shipped by the framework rather than written per
  * app. It answers the question a client asks FIRST and asks OFTEN: "is this key good, and
@@ -33,8 +33,14 @@ use App\RSpade\Core\Time\Rsx_Time;
  * client hits on a timer, and anything expensive added here is paid for on every heartbeat
  * of every integration. It exposes nothing a caller does not already hold - they sent the
  * key, so telling them whose it is and when it dies leaks nothing.
+ *
+ * SERVED AT EVERY VERSION THE APPLICATION SERVES. #[Api_Versions(every: true)]: declared at
+ * v1, expanded by the manifest to /api/vN/me for every N the application's own endpoints are
+ * served at - a client that knows one supported prefix validates its key there, and a
+ * version the application retires stops serving it too.
  */
 #[Auth('is_logged_in')]
+#[Api_Versions(every: true)]
 class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
 {
     /**

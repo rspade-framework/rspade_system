@@ -8,6 +8,7 @@ namespace App\RSpade\Core\Env;
 
 use App\RSpade\Core\Env\Rsx_Env_Writer;
 use App\RSpade\Core\Env\Rsx_Initial_User;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Task;
 
@@ -94,16 +95,18 @@ class Rsx_First_User_Setup
     /**
      * True when the application has no credential records at all.
      *
-     * Any database failure answers FALSE - "do not show the setup screen". A
-     * missing table or an unreachable server is a different problem with its own
-     * loud reporting, and hijacking every request with a setup form would only
-     * bury it.
+     * A database failure answers FALSE - "do not show the setup screen": a missing
+     * table is a different problem with its own loud reporting, and hijacking every
+     * request with a setup form would only bury it. An infrastructure outage (the
+     * database unreachable) is not answered at all: it ends the request as a 500.
      */
     private static function __needs_setup(): bool
     {
         try {
             return Rsx_Initial_User::is_needed();
         } catch (\Throwable $e) {
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             return false;
         }
     }
@@ -136,6 +139,9 @@ class Rsx_First_User_Setup
         try {
             self::__create_initial_user($email, $password);
         } catch (\Throwable $e) {
+            // An outage is the request's 500, never a message on the form.
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             self::__render_form('Could not create the account: ' . $e->getMessage(), $email, $autofill, $sample_data);
             return;
         }
@@ -175,6 +181,10 @@ class Rsx_First_User_Setup
         try {
             $run_id = Task::dispatch($service, $method, ['site' => Rsx_Initial_User::resolve_site_id()]);
         } catch (\Throwable $e) {
+            // An outage (no lock daemon, no database) is the request's 500, never a line on
+            // the success page.
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             // The account exists either way; a misnamed task is the application's to fix.
             return 'Sample data could not be queued (' . self::sample_data_task() . '): ' . $e->getMessage();
         }

@@ -304,7 +304,8 @@ EXCEPTION HANDLER CHAIN
                                                never for an in-process dispatch)
         20    Ajax_Exception_Handler           the Ajax envelope - the AJAX channel;
                                                Ajax::error_envelope(), the same
-                                               mapping a call's own failure gets
+                                               mapping a call's own failure gets;
+                                               HTTP 500 for an outage (below)
         25    Api_Exception_Handler            the API's JSON error - the API
                                                channel; a coded failure keeps its
                                                status
@@ -329,6 +330,33 @@ EXCEPTION HANDLER CHAIN
     chain. This is the sanctioned way to customize how exceptions render -
     the handler FORMATS the error for its context; it does not recover or
     reroute application logic.
+
+INFRASTRUCTURE OUTAGE
+    The lock daemon (rsx-lockd) and the database are infrastructure: the
+    application assumes they work. When one is gone - the daemon unreachable
+    or its connection dead, a MySQL connection refused or lost - that is an
+    outage, and every channel answers it the same way, as a failure of the
+    WHOLE request:
+
+        Ajax          HTTP 500 (never a call's 'fatal' envelope at 200); no
+                      later call of the batch runs
+        API           500 internal_error
+        companion     500 internal_error
+        page          the framework's 500 error page
+        task/command  the run settles FAILED; a command exits non-zero
+
+    It is reported once, by the front controller, like any fault. There is
+    no fallback, no degraded mode and no retry-and-continue. After a commit
+    it still ends the request (every after-commit callback runs first) and
+    nothing claims the committed write was rolled back (rsx:man site_locks,
+    AFTER THE COMMIT).
+
+    APPLICATION CODE NEVER CATCHES, NAMES OR BRANCHES ON AN OUTAGE. The
+    framework recognises one with Infrastructure_Outage::is_outage() (the
+    lock daemon's Lockd_Unavailable_Exception, or a PDOException carrying a
+    MySQL connection error code) at its own boundaries; that is internal,
+    not an API. A broad catch in application code that swallows everything
+    swallows an outage too - which is one more reason there is none.
 
 DEBUGGING
     rsx_dump_die(...$values)
@@ -375,6 +403,7 @@ COMMON PITFALLS
 
 SEE ALSO
     rsx:man ajax_error_handling - Ajax error contract + client
+    rsx:man locks               - rsx-lockd, the infrastructure an outage loses
     rsx:man error_pages         - the full-page error screens a web refusal
                                   renders
     rsx:man code_quality        - fail-loud enforcement rules

@@ -126,7 +126,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-exec-03 | a failing run is FAILED and the worker goes on | always_throws then marker_a | FAILED with error; next COMPLETED | implemented |
 | task-exec-04 | a current-generation worker that left the pool is abandoned at once, live pid or not | departed wid, this pid | PENDING retry, abandon_count 1, reason, operator line | implemented |
 | task-exec-05 | a live member's run is left alone | this process joined; dead pid | RUNNING | implemented |
-| task-exec-06 | an older generation on this host is judged by pid, held to a task worker's command line | dead pid; worker-shaped pid; a pid an unrelated process holds | abandoned; RUNNING; abandoned ("is not a task worker"), that process untouched | implemented |
+| task-exec-06 | an older generation on this host is judged by pid, held to a task worker's command line | dead pid; worker-shaped pid; a pid an unrelated process holds | abandoned; RUNNING; abandoned ("is no longer that task worker"), that process untouched | implemented |
 | task-exec-07 | an older generation on another host is left alone and counted by health | three other-host rows + one local | RUNNING; previous_generation_rows 3 on 2 hosts; WARN | implemented |
 | task-exec-08 | a run with no worker_id is judged by pid on its own host | inline dead pid; dispatched dead pid; other host | inline FAILED; dispatched PENDING; other RUNNING | implemented |
 
@@ -275,6 +275,7 @@ A held lock is another process (Task_Lock_Holder); the run holding it is a RUNNI
 | task-kill-07 | a worker already gone is settled KILLED without a signal | dead pid | killed_no_process | implemented |
 | task-kill-08 | a killed scheduled run counts on its schedule | schedule + run | consecutive_failures 1, "killed: ..." | implemented |
 | task-kill-09 | a pool run whose pid an unrelated process now holds is never signalled | plain `sleep` on a pool row, force kill | killed_no_process; the process still running; run KILLED, "the worker process was already gone" | implemented |
+| task-kill-10 | a recorded pid held by another task-worker-shaped process (start time differs) is never signalled, pool and inline | worker-shaped victim, worker_pid_start_time + 1, pool row then inline row | killed_no_process; the process still running; run KILLED | implemented |
 | task-kill-11 | the kill worker loop (rsx:task:killer) admits itself to the kill pool and drains this host's requests | spawned killer | requests DONE; pool left | planned |
 | task-kill-12 | rsx:task:process hands a request whose kill worker died back to the queue | CLAIMED request, departed kill-pool wid | PENDING again | planned |
 
@@ -532,10 +533,11 @@ Children are real `php artisan` processes on the test database: a task being sto
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | task-dead-01 | one tick settles every run a rebooted host left RUNNING | previous-generation pool runs (dispatched, scheduled) and an inline run, all with dead pids | dispatched PENDING with a paced retry; scheduled FAILED, counted, next_run_at kept; inline FAILED | implemented |
-| task-dead-02 | a reused pid neither keeps a dead run alive nor gets killed | previous-generation pool run two hours old on a plain `sleep` pid | abandoned on the first tick ("is not a task worker"); no kill request, no [TASK TIMEOUT]; the process untouched | implemented |
+| task-dead-02 | a reused pid neither keeps a dead run alive nor gets killed | previous-generation pool run two hours old on a plain `sleep` pid | abandoned on the first tick ("is no longer that task worker"); no kill request, no [TASK TIMEOUT]; the process untouched | implemented |
+| task-dead-02b | an inline run's reused pid does not keep it RUNNING | inline row on a live `sleep` pid with worker_pid_start_time + 1 | FAILED on the first tick, reason names the pid; the process untouched | implemented |
 | task-dead-03 | another host's unsettled run does not hold its #[Exclusive] identity | other-host previous-generation RUNNING exclusive_task; dispatch + worker | stuck run RUNNING; the new run reads "queued" and COMPLETES | implemented |
 | task-dead-04 | a schedule's queued run that was never claimed is claimed by the next worker | PENDING scheduled-origin row with schedule_id, a day overdue | COMPLETED; schedule last_task_id + last_success_at | implemented |
-| task-dead-05 | a long-overdue schedule runs once | every-minute schedule 30 days overdue; two scheduled workers | one run row; next_run_at in the future | implemented |
+| task-dead-05 | a long-overdue schedule runs once | hourly schedule (at a minute half an hour from now) 30 days overdue; two scheduled workers | one run row; next_run_at in the future | implemented |
 | task-dead-06 | long-overdue pending runs each run once, oldest due first | three pending runs 10/30/20 days overdue | run order by due time; three rows, each COMPLETED | implemented |
 
 ## Deferred / planned

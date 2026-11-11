@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\SysPanel\Php;
 
+use App\RSpade\Core\Api\Rsx_Api_Docs;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Sys\App\Apidocs\_Apidocs_Bundle;
@@ -139,5 +140,73 @@ class Sys_Panel_Apidocs_Test extends Rsx_Test_Abstract
             $offenders,
             'Core/Api holds view-layer files: ' . implode(', ', $offenders)
         );
+    }
+
+    /**
+     * RP-APIDOCS-05 - An application's sections reach the page rendered and sanitized.
+     *
+     * page()'s $sections are exported in the order given as {slug, title, html}: the slug
+     * from the title, the html from Markdown_Rendition - a GFM table is a table, and raw
+     * HTML in the Markdown is discarded rather than passed through to the console.
+     */
+    public static function test_sections_are_exported_rendered_and_sanitized()
+    {
+        Rsx_Api_Docs::page(restrict_to_key: false, sections: [
+            [
+                'title' => 'Error Codes',
+                'markdown' => "| Code | Meaning |\n|---|---|\n| `not_found` | No such record. |\n\n<script>alert(1)</script><img src=x onerror=alert(2)>",
+            ],
+            ['title' => 'Conventions', 'markdown' => 'GET reads, **POST** writes.'],
+        ]);
+
+        $sections = Rsx_Api_Docs::rsxapp_data()['api_catalog']['sections'];
+
+        static::__assert_equals(['error-codes', 'conventions'], array_column($sections, 'slug'), 'slugs or order');
+        static::__assert_equals(['Error Codes', 'Conventions'], array_column($sections, 'title'), 'titles');
+        static::__assert_equals(['slug', 'title', 'html'], array_keys($sections[0]), 'a section exports exactly slug, title, html');
+
+        static::__assert_contains('<table>', $sections[0]['html'], 'the GFM table did not render as a table');
+        static::__assert_contains('<code>not_found</code>', $sections[0]['html'], 'inline code did not render');
+        static::__assert_false(str_contains($sections[0]['html'], '<script'), 'raw <script> passed through');
+        static::__assert_false(str_contains($sections[0]['html'], 'onerror'), 'an event handler attribute passed through');
+        static::__assert_contains('<strong>POST</strong>', $sections[1]['html'], 'emphasis did not render');
+
+        Rsx_Api_Docs::page(restrict_to_key: false);
+
+        static::__assert_equals([], Rsx_Api_Docs::rsxapp_data()['api_catalog']['sections'], 'no sections must export an empty list');
+    }
+
+    /**
+     * RP-APIDOCS-06 - A malformed section throws at the application's page() call.
+     *
+     * Unknown keys (a 'content' typo would publish an empty page), a blank title or
+     * Markdown, an associative $sections, a title with nothing to slug, and two titles
+     * that slug alike (one would be unreachable) are each refused.
+     */
+    public static function test_malformed_sections_are_refused()
+    {
+        $cases = [
+            'unknown key' => [[['title' => 'Errors', 'content' => 'x']], "unknown key(s) 'content'"],
+            'blank title' => [[['title' => '  ', 'markdown' => 'x']], "non-empty string 'title'"],
+            'missing markdown' => [[['title' => 'Errors']], "non-empty string 'markdown'"],
+            'not a string' => [[['title' => 'Errors', 'markdown' => ['x']]], "non-empty string 'markdown'"],
+            'not a list' => [['errors' => ['title' => 'Errors', 'markdown' => 'x']], 'must be a list'],
+            'not an array' => [['Errors'], 'must be an array'],
+            'no slug' => [[['title' => '---', 'markdown' => 'x']], 'no letter or digit'],
+            'duplicate slug' => [[
+                ['title' => 'Error codes', 'markdown' => 'x'],
+                ['title' => 'Error  Codes!', 'markdown' => 'y'],
+            ], "share the URL slug 'error-codes'"],
+        ];
+
+        foreach ($cases as $label => [$sections, $needle]) {
+            static::__assert_throws(
+                \InvalidArgumentException::class,
+                fn () => Rsx_Api_Docs::page(restrict_to_key: false, sections: $sections),
+                $needle
+            );
+        }
+
+        Rsx_Api_Docs::page(restrict_to_key: false);
     }
 }

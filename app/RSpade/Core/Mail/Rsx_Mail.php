@@ -105,6 +105,8 @@ class Rsx_Mail
             'category_id' => $category,
             'reply_to' => $envelope['reply_to']['address'] ?? null,
             'reply_to_name' => $envelope['reply_to']['name'] ?? null,
+            'from_address' => $envelope['from']['address'] ?? null,
+            'from_name' => $envelope['from']['name'] ?? null,
             'cc' => $envelope['cc'],
             'bcc' => $envelope['bcc'],
             'withheld_recipients' => [],
@@ -659,6 +661,8 @@ class Rsx_Mail
      * would render it, and made displayable, WITHOUT sending, queueing or storing anything.
      *
      *   subject  the email's subject()
+     *   from     ['address' => ..., 'name' => ...] - the sender the send would use: the
+     *            email's from() when it declared one, else the configured sender
      *   html     the send's own body (Rsx_Mail_Builder::compose(): the blade with its
      *            injected $subject, $branding and $unsubscribe_url, the email stylesheet
      *            inlined), with every local image - a root-relative src and every
@@ -679,7 +683,7 @@ class Rsx_Mail
      * A template naming a cid: nothing was embedded under, or a root-relative image that
      * resolves to no public asset, THROWS - the send would fail the same way.
      *
-     * @return array{subject: string, html: string, text: string}
+     * @return array{subject: string, from: array{address: string, name: string}, html: string, text: string}
      */
     public static function preview(Rsx_Email_Abstract $email): array
     {
@@ -695,6 +699,7 @@ class Rsx_Mail
 
         return [
             'subject' => $preview['subject'],
+            'from' => $preview['from'],
             'html' => $html,
             'text' => $preview['text'],
         ];

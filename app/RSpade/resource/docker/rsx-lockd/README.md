@@ -89,7 +89,7 @@ The shipped defaults:
 | `tcp.port` | integer | TCP port. |
 | `tcp.bind` | string | Bind address. `0.0.0.0` binds everywhere; the CLI dials `127.0.0.1` in that case. |
 | `auth.hmac_key_env` | string | Name of the environment variable holding the shared HMAC key. |
-| `pidfile` | string | Written after a successful bind, removed on clean shutdown. Blocks a start only while it names a running rsx-lockd; a pidfile naming any other process (a reused pid after a reboot) is replaced, and `stop` never signals it. |
+| `pidfile` | string | Written after a successful bind, removed on clean shutdown. Blocks a start only while it names a running rsx-lockd DAEMON (node running `lockd.js [--flags] run`); a pidfile naming any other process - a reused pid after a reboot, or a `lockd.js exec` client - is replaced, and `stop` never signals it (checked again immediately before its SIGKILL). |
 | `logfile` | string or null | WHERE output goes. `null` means stdout, which is what a supervisor captures. |
 | `log_events` | boolean | WHETHER contention events are recorded (see LOGGING). Off by default; switchable at runtime, so this only sets the state the daemon STARTS in. |
 | `log_verbose` | boolean | Also record every acquire and release. Requires `log_events`; `true` with `log_events: false` is a startup error, because it is a setting that would do nothing. |

@@ -211,6 +211,8 @@ FRAMEWORK INVENTORY
         Submodule Visibility        development   a git REVIEW surface; a
                                                   production checkout is
                                                   deployed, not reviewed
+        Supervised Services         all           INFO outside the RSpade
+                                                  container
         Task Schedule Failures      all
         Task Scheduler Liveness     all           WARN in development, FAIL on
                                                   a sealed build
@@ -501,6 +503,25 @@ FRAMEWORK INVENTORY
                                  naming TMPDIR (a php-fpm pool, an ini or a
                                  supervisor program answered first, and third-party
                                  scratch is landing outside the project).
+        Supervised Services      whether any service in the RSpade container is
+                                 failing. Every long-running service runs under
+                                 the retry runner, which restarts it forever, so
+                                 supervisor shows it RUNNING however often it
+                                 exits. The runner records each service in
+                                 /run/rspade-services/<label>.state and marks it
+                                 failing after five consecutive exits, until a
+                                 run lasts a minute. FAIL naming each failing
+                                 service with its consecutive exits, last exit
+                                 status and since when; OK counting the services
+                                 up. A file whose runner is no longer running is
+                                 left over and ignored. INFO when the directory
+                                 does not exist: outside the container nothing
+                                 writes it, and inside one it appears when a
+                                 runner first starts. The container's Docker
+                                 health check (rspade-healthcheck) reads the same
+                                 files, plus supervisor's own program states and
+                                 a lock-daemon ping. resource/docker/README.md,
+                                 Services.
         Task Scheduler Liveness  rsx:task:process cron ticking, inferred from
                                  _task_schedules staleness (the oldest
                                  next_run_at more than 10 minutes past). WARN in

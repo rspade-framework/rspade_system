@@ -12,6 +12,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Rsx;
@@ -197,7 +198,7 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
             try {
                 // Box-physical (the environment-update scripts), unscoped across databases.
                 $lock_token = RsxLocks::system_lock('ENVIRONMENT_UPDATES', 5, false);
-            } catch (\Throwable $e) {
+            } catch (Lock_Timeout_Exception $e) {
                 $lock_token = null;
             }
 

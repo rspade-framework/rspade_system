@@ -641,6 +641,12 @@ NAVIGATION
         and the page stays where the person put it - it is not sent to the top
         at ready either.
 
+        A link carrying the one-time scroll key (_scroll=<y>, Rsx.HASH_SCROLL_KEY -
+        a breadcrumb returning to the position a list was left at) is a
+        restoration too, unless a recorded position already is one; the key is
+        removed from the URL before the entry is written (rsx:man
+        breadcrumb_origins, RETURNING TO THE STATE YOU LEFT).
+
         An `at` anchor in the URL outranks a restoration (rsx:man anchors), and a
         layout marked data-anchor-scroll="manual" is left alone entirely - no
         restoration, no scroll-to-top.

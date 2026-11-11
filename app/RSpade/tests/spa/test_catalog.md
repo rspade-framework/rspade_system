@@ -4,7 +4,7 @@ The title rows live in `playwright/spa_action_title.js` (one browser session ove
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (the framework's own `/_sys` panel, so it depends on no
 application code; links, code navigation and real page exits) and the Back/Forward half of
-the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the breadcrumb-origin rows (`SPA-VIA-*`) live in `playwright/breadcrumb_origins.js` (`/_sys`, structure declared at run time; the manifest FATALs of rule SPA-VIA-01 are `code_quality`'s `Spa_Via_Rule_Test`, and the template sidebar's half is `rsx/tests/playwright/sidebar_trail_root.js`); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the navigation-door rows (`SPA-NAVIGATE-*`, `Rsx.navigate()` / `Rsx.redirect()`) live in `playwright/navigate.js` (`/_sys`, breadcrumb structure declared by an init script so it survives full loads); the fragment rows live in `playwright/fragment_popstate.js`
+the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the breadcrumb-origin rows (`SPA-VIA-*`) live in `playwright/breadcrumb_origins.js` (`/_sys`, structure declared at run time; the manifest FATALs of rule SPA-VIA-01 are `code_quality`'s `Spa_Via_Rule_Test`, and the template sidebar's half is `rsx/tests/playwright/sidebar_trail_root.js`); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the return-state rows (`SPA-RETURN-*`, the per-tab journal and the `_scroll` key) live in `playwright/breadcrumb_return_state.js` (`/_sys`, structure declared by an init script; the template grid's half is `rsx/tests/playwright/breadcrumb_return_state.js`); the navigation-door rows (`SPA-NAVIGATE-*`, `Rsx.navigate()` / `Rsx.redirect()`) live in `playwright/navigate.js` (`/_sys`, breadcrumb structure declared by an init script so it survives full loads); the fragment rows live in `playwright/fragment_popstate.js`
 (same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
@@ -110,6 +110,19 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-NAVIGATE-18 | The hand-off is single use: deleted once read; a reload afterwards is explicit again | playwright | after SPA-NAVIGATE-14; `page.reload()` | key gone; arrival `explicit` | implemented | 2026-11-06 |
 | SPA-NAVIGATE-19 | A hand-off naming another URL is ignored and still deleted | playwright | planted hand-off for `/_sys/somewhere-else`, reload | arrival `explicit`, key gone | implemented | 2026-11-06 |
 | SPA-NAVIGATE-20 | A Back/Forward onto a URL this SPA does not render goes through the one full-load function (replace + reload) | playwright | needs a same-document entry for a non-route URL | document reloaded on that URL | planned | 2026-11-06 |
+| SPA-RETURN-01 | The record's crumb links to the list with the fragment and position it was left at | playwright | `/_sys/sites` + `#probe=sorted`, scroll 1200 -> `/_sys/sites/1` | href `/_sys/sites#probe=sorted&_scroll=1200` | implemented | 2026-11-11 |
+| SPA-RETURN-02 | Two levels down each crumb returns to its own page as left; a page left at 0 carries no key | playwright | record left with `#tab=users` -> `/_sys/system-info` | list crumb stateful; record crumb `/_sys/sites/1#tab=users` | implemented | 2026-11-11 |
+| SPA-RETURN-03 | A forward move back to the record (a save) keeps the chain; `Spa.return_url()` answers the same; a page not on the journey stays bare | playwright | -> `/_sys/sites/1` | stateful crumb and API; `/_sys/tasks` unchanged | implemented | 2026-11-11 |
+| SPA-RETURN-04 | The journal survives a reload of the current page | playwright | `page.reload()` | crumb still stateful | implemented | 2026-11-11 |
+| SPA-RETURN-05 | Following the crumb lands on the list with its fragment, at its position, as a new entry | playwright | navigate to the href | `#probe=sorted`, y 1200, history +1 | implemented | 2026-11-11 |
+| SPA-RETURN-06 | The scroll key leaves the address bar at once; a reload after it carries none | playwright | same, then reload | no `_scroll` anywhere | implemented | 2026-11-11 |
+| SPA-RETURN-07 | Back/Forward still move between entries as recorded | playwright | Back, Forward | record, then list with its fragment | implemented | 2026-11-11 |
+| SPA-RETURN-08 | The NEAREST matching entry wins | playwright | list re-sorted + scrolled 300 -> record | `#probe=resorted&_scroll=300` | implemented | 2026-11-11 |
+| SPA-RETURN-09 | A detour through a page whose trail does not show the list makes the crumb bare | playwright | -> `/_sys/tasks` -> record | `/_sys/sites` | implemented | 2026-11-11 |
+| SPA-RETURN-10 | Reached from a page that never showed the list: bare | playwright | `/_sys` -> record | `/_sys/sites` | implemented | 2026-11-11 |
+| SPA-RETURN-11 | The user's own scroll during the restoration wins | playwright | navigate to `#_scroll=2000`, wheel + scroll to 500 mid-load | 500 after ready; key gone | implemented | 2026-11-11 |
+| SPA-RETURN-12 | A new tab opened on a stateful href lands in that state with a journal of one entry and no `from` | playwright | new context on `/_sys/sites#probe=sorted&_scroll=1200` | hash kept, y 1200, one record; journey continues from it | implemented | 2026-11-11 |
+| SPA-RETURN-13 | Session storage unavailable: bare crumbs, no console error | playwright | init script makes `sessionStorage` throw | bare href and `Spa.return_url()`; no errors | implemented | 2026-11-11 |
 
 ## Notes
 

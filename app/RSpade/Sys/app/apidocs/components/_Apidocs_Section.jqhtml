@@ -1,0 +1,15 @@
+<%--
+_Apidocs_Section - one of the application's own sections, as its own page in the console.
+
+The application hands Rsx_Api_Docs::page() a title and Markdown; the server renders the
+Markdown through Markdown_Rendition::render() (raw HTML discarded, an element allowlist on
+the output) before it is baked into the page, so section.html is placed unescaped here and
+nothing else on this page is.
+
+$section - {slug, title, html} from _Apidocs_Catalog.find_section()
+--%>
+<Define:_Apidocs_Section tag="article">
+<% const section = this.args.section; %>
+<h1 class="_Apidocs_Section__title"><%= section.title %></h1>
+<div class="_Apidocs_Section__body"><%!= section.html %></div>
+</Define:_Apidocs_Section>

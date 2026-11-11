@@ -337,6 +337,12 @@ API
                                                 else throws
     Spa_Layout.on_breadcrumb_complete(chain, meta)
     Rsx_Breadcrumb_Resolver.settle_via(action, url, navigation)
+    Spa.return_url(url)                         the URL returning to url in the
+                                                state it was left in on this
+                                                trail, else url (RETURNING TO
+                                                THE STATE YOU LEFT)
+    Rsx.HASH_SCROLL_KEY                         '_scroll', the one-time scroll
+                                                hash key
 
     Deliberately absent: a setter for the current URL's _via (an origin is
     something a LINK carries, never something a page asserts about itself),
@@ -348,7 +354,9 @@ WHEN NOT TO USE IT
     - Pre-filling a form. engagement_id on New Invoice is DATA and stays its
       own argument; _via only steers the trail. A link that starts a detour
       usually carries both.
-    - "Remember my filters". That belongs to the list (its own URL state).
+    - "Remember my filters". That belongs to the list (its own URL state),
+      and returning to it is the journal's job (RETURNING TO THE STATE YOU
+      LEFT).
 
 COMMON PITFALLS
     - Verifying nothing in the hook. The claim arrived in a URL; anyone can
@@ -371,6 +379,106 @@ COMMON PITFALLS
       on, which makes it exactly the URL on screen - a reload. Pass
       {via: 'drop'} to show the page without its origin.
 
+RETURNING TO THE STATE YOU LEFT
+    A crumb's href is the bare route of its page, so following one opens
+    that page fresh - a list with its default sort, no filters, page 1, at
+    the top - while Back returns to the exact entry. So the SPA keeps a
+    per-tab JOURNAL of the history entries the user moved through, and a
+    crumb leads to the page the user actually came through, in the state
+    they left it in - and only when they really came through it.
+
+    The journal records, per history entry (keyed by the spa_run/spa_index
+    stamp the SPA keeps in history.state, which survives a reload):
+
+        url     the entry's URL with its fragment, followed as the page
+                rewrites it in place (Rsx.url_hash_set(), a {load: 'none'}
+                replace, a stripped _via)
+        scroll  where the page was scrolled when the entry was LEFT
+        from    the entry the user was on when they moved FORWARD to this
+                one (a link, Rsx.navigate(), a form's redirect, a full load
+                through the navigation door). Back, Forward and a reload
+                never change it; Rsx.redirect() inherits the replaced
+                entry's
+        trail   the crumbs the page's trail showed (recorded by the walk)
+
+    THE RULE. For a crumb URL T, walk `from` back from the page on screen.
+    T inherits the state of the NEAREST entry in that chain whose URL
+    (without fragment and _via) is T's, provided every entry passed on the
+    way showed T in its own trail. Otherwise the crumb is the bare route.
+    In words: the saved state is used only while the user never left that
+    page's branch of the trail.
+
+        Journey                                         Crumb      Result
+        List (sorted, scrolled) -> record -> Edit ->    List       restored
+          Save -> record
+        List -> record A -> sub-record B                List       restored
+        List -> record -> another section -> its        List       bare
+          record -> record 2
+        Dashboard -> record                             List       bare
+        A new tab opened from an email link -> record   List       bare
+        List -> record -> List (re-sorted) -> record 2  List       the newer
+                                                                   state
+        any of the above, then a reload                 as before
+
+    Origins (_via) decide WHICH pages are on the trail; the journal decides
+    whether a crumb carries saved state. Nothing here changes which crumbs
+    appear.
+
+    THE HREF. A stateful crumb links to T's path and query (its _via
+    included) with the fragment of the entry found, plus the one-time
+    scroll key when that entry was left scrolled:
+
+        /clients#Clients_DataGrid_sort=name&Clients_DataGrid_page=3&_scroll=840
+
+    The state is in the href itself, so ctrl/middle-click opens the same
+    state in a new tab (whose own journal starts empty). The `at` anchor is
+    left out when a position is carried.
+
+    THE SCROLL KEY. Rsx.HASH_SCROLL_KEY ('_scroll') is a reserved hash key:
+    _scroll=<y> or _scroll=<x>,<y>, never written by scrolling - only
+    placed on a link (by the rule above, or by an application link that
+    wants to land at a position). The SPA removes it from the URL before
+    the history entry is written (or rewrites the address in place on a
+    first load), so a copied URL or a reload never jumps again, and applies
+    it through the same scroll restoration as Back: it follows a page that
+    grows while it loads, and yields to the user's own wheel, touch, key
+    or scrollbar. A recorded position (Back/Forward, a reload) outranks it;
+    an `at` anchor outranks both. An application must not use the key for
+    its own state.
+
+    WHERE THE RESOLVER PUTS IT. Every chain item the resolver emits
+    (on_chain, on_complete, on_breadcrumb_complete) carries
+
+        url    the page's identity - match, cache and compare on it
+        href   the link to render: Spa.return_url(url) for a crumb above
+               the current page, url for the active one
+
+    A layout renders href. The href is computed at every emission and is
+    never in the breadcrumb cache: the cache is per page, the href per
+    journey.
+
+    OTHER LINKS BACK. A Back or Cancel button, or a deleted record's exit,
+    to a page on the trail uses the same answer:
+
+        Spa.return_url(Rsx.Route('Clients_Index_Action'))
+
+    It is synchronous and returns the URL unchanged when the rule does not
+    hold. The template's Record_Page_Actions applies it to its Back href;
+    its edit pages' Cancel links and its delete exits call it.
+
+    A list's state must live under a STABLE fragment key for this to
+    work: a key derived from a component id (which depends on mount order)
+    is not read back by the grid of the next visit. The template's
+    DataGrid_Abstract keys its state by the component name ($hash_ns to
+    override), and its first load leaves the scroll position alone.
+
+    STORAGE. The journal is session storage (Rsx_Storage): per tab, kept
+    across reloads and full page loads, empty in a new tab, cleared with
+    the framework's other keys when the session, user, site or build
+    changes, and capped at the 100 most recently written entries. When
+    session storage is unavailable (a locked-down browser, quota) every
+    crumb is the bare route; nothing fails.
+
 MANIFEST-BUILD FATALS (SPA-VIA-01)
     - A route declaring a :_via parameter (#[Route], #[Portal_Route], @route).
     - JavaScript reading _via from an args object (this.args._via,
@@ -389,5 +497,7 @@ SEE ALSO
     primary_secondary_nav_breadcrumbs - breadcrumb methods, the resolver, Sidebar_Nav
     spa - actions, layouts, link interception
     navigation - Rsx.navigate() / Rsx.redirect() and the full-load hand-off
+    url_hash - fragment state, the reserved keys
+    anchors - where a page sits after a dispatch
     dispatch - how a request reaches its handler
     skill rspade:breadcrumb-origins - the task-level guide

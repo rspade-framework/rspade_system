@@ -18,6 +18,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Driven through --clear-stale-pidfile (the check for one file) against files in a scratch
  * directory - never a live service's file - and --exec (check, then become the service). The
+ * rsx-lockd entry is the DAEMON's identity (`lockd.js [--flags] run`): a `lockd.js exec`
+ * client, which holds a lock for as long as its command runs, never keeps the file. The
  * wiring is asserted from the shipped files: the services that keep such files have table
  * entries, and mysql and dockerd start through --exec.
  */
@@ -130,6 +132,57 @@ class Retry_Run_Stale_Pidfile_Test extends Rsx_Test_Abstract
             static::__assert_false(file_exists($file), 'a lock naming another program is removed');
         } finally {
             posix_kill($pid, SIGTERM);
+        }
+    }
+
+    /** The pattern the runner's table checks $file against, read from the shipped runner. */
+    private static function __table_pattern(string $file): string
+    {
+        $runner = (string) file_get_contents(static::__runner());
+        if (!preg_match("/echo '" . preg_quote($file, '/') . "\|([^']+)'/", $runner, $match)) {
+            static::__fail("the runner has no table entry for {$file}");
+        }
+
+        return $match[1];
+    }
+
+    /**
+     * A live node process with exactly the command line given after the script: a stand-in
+     * for a lockd.js process, so the table's pattern meets the real argument shapes.
+     */
+    private static function __node_process(string $arguments): int
+    {
+        $output = [];
+        exec_safe("node -e 'setTimeout(() => {}, 300000)' " . $arguments . ' > /dev/null 2>&1 & echo $!', $output);
+
+        return (int) trim(implode('', $output));
+    }
+
+    public static function test_the_rsx_lockd_entry_matches_the_daemon_and_never_a_lockd_exec_client()
+    {
+        $pattern = static::__table_pattern('/var/run/rsx-lockd.pid');
+        $script = escapeshellarg(static::$dir . '/rsx-lockd/lockd.js');
+
+        $shapes = [
+            'daemon.pid' => ["{$script} run", true],
+            'daemon_flags.pid' => ["{$script} --config=/etc/lockd.conf run", true],
+            'exec.pid' => ["{$script} exec --name=x -- sleep 300", false],
+            'dump.pid' => ["{$script} dump", false],
+        ];
+
+        foreach ($shapes as $name => [$arguments, $is_daemon]) {
+            $pid = static::__node_process($arguments);
+
+            try {
+                $file = static::__pidfile($name, "{$pid}\n");
+                [$code, $output] = static::__clear($file, $pattern);
+
+                static::__assert_equals(0, $code);
+                static::__assert_equals($is_daemon, file_exists($file), "node lockd.js {$arguments}: " . ($is_daemon ? 'the daemon, kept' : 'not the daemon, removed') . " ({$output})");
+                static::__assert_true(posix_kill($pid, 0), 'the process is left alone');
+            } finally {
+                posix_kill($pid, SIGTERM);
+            }
         }
     }
 

@@ -63,6 +63,14 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   declaration also claims is the ordinary duplicate-route failure - one address, one
  *   handler, never a precedence rule. A method may still carry several #[Api_Endpoint]
  *   attributes; each is expanded on its own.
+ * - #[Api_Versions(every: true)] on the controller makes its endpoints FOLLOW the application:
+ *   each is served at every version the OTHER declarations serve, from the version in its
+ *   pattern up (only its own version when they serve none at or above it). It is for an
+ *   endpoint that belongs to no versioned resource - the framework's identity and file
+ *   routes - so a client that knows one supported prefix reaches it there, and a version the
+ *   application stops serving stops serving it too (the dispatcher's 410). Followers are
+ *   expanded in a second pass, after every other declaration, and never count towards the
+ *   versions they follow. An endpoint's own through: still overrides it.
  * - #[Api_Resource('Name')] on the controller names the catalogue group its endpoints are
  *   listed under (a v2 controller must have its own class name, and declares its v1 sibling's
  *   resource to be listed with it). Absent, the group derives from the class name.
@@ -161,20 +169,36 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
         $files = $manifest_data['data']['files'];
 
-        foreach (array_keys($files) as $file) {
-            $metadata = $files[$file] ?? null;
-
-            if ($metadata === null || !isset($metadata['public_static_methods'])) {
-                continue;
+        // Two passes over the same declarations. The first records every endpoint whose
+        // versions it states itself; the second records the followers (#[Api_Versions(every:
+        // true)]) at the versions the first pass produced, so what they follow is complete
+        // before any of them is expanded and never includes another follower.
+        $versions_served = null;
+        foreach ([false, true] as $followers) {
+            if ($followers) {
+                $versions_served = [];
+                foreach ($manifest_data['data']['api_endpoints'] as $row) {
+                    $versions_served[$row['version']] = true;
+                }
+                $versions_served = array_keys($versions_served);
+                sort($versions_served);
             }
 
-            foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
-                foreach (($method_data['attributes'] ?? []) as $attr_name => $attr_instances) {
-                    if (!str_ends_with($attr_name, '\\Api_Endpoint') && $attr_name !== 'Api_Endpoint') {
-                        continue;
-                    }
+            foreach (array_keys($files) as $file) {
+                $metadata = $files[$file] ?? null;
 
-                    static::_record_endpoint($manifest_data, $file, $metadata, $method_name, $method_data, $attr_instances);
+                if ($metadata === null || !isset($metadata['public_static_methods'])) {
+                    continue;
+                }
+
+                foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
+                    foreach (($method_data['attributes'] ?? []) as $attr_name => $attr_instances) {
+                        if (!str_ends_with($attr_name, '\\Api_Endpoint') && $attr_name !== 'Api_Endpoint') {
+                            continue;
+                        }
+
+                        static::_record_endpoint($manifest_data, $file, $metadata, $method_name, $method_data, $attr_instances, $versions_served);
+                    }
                 }
             }
         }
@@ -183,7 +207,11 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
     }
 
     /**
-     * Validate and store every row one #[Api_Endpoint] method declares.
+     * Validate and store the rows one #[Api_Endpoint] method declares in one pass.
+     *
+     * @param array|null $versions_served Null in the first pass, which records every
+     *   declaration that states its own versions and skips the followers; in the second, the
+     *   versions the first pass serves (ascending), and only the followers are recorded.
      */
     private static function _record_endpoint(
         array &$manifest_data,
@@ -191,7 +219,8 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
         array $metadata,
         string $method_name,
         array $method_data,
-        array $attr_instances
+        array $attr_instances,
+        ?array $versions_served
     ): void {
         $fqcn = $metadata['fqcn'] ?? $metadata['class'] ?? '(unknown)';
         $location = "{$fqcn}::{$method_name} in {$file}";
@@ -218,10 +247,17 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
             }
         }
 
-        $class_through = static::_class_versions_through($metadata, $location);
+        $class_versions = static::_class_versions($metadata, $location);
         $resource = static::_class_resource($metadata, $location);
 
         foreach ($attr_instances as $route_args) {
+            // A declaration follows the application when its controller says every: true and
+            // it states no through: of its own; it is recorded in the second pass only.
+            $follows = $class_versions === 'every' && !array_key_exists('through', $route_args);
+            if ($follows !== ($versions_served !== null)) {
+                continue;
+            }
+
             $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
             $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
             $name = $route_args[2] ?? ($route_args['name'] ?? null);
@@ -311,7 +347,15 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
             $declared_version = static::parse_version($pattern);
             $path_key = static::path_key($pattern);
-            $through = static::_endpoint_through($route_args, $class_through, $declared_version, $pattern, $location);
+            $versions = $follows
+                ? static::_following_versions($versions_served, $declared_version)
+                : range($declared_version, static::_endpoint_through(
+                    $route_args,
+                    is_int($class_versions) ? $class_versions : null,
+                    $declared_version,
+                    $pattern,
+                    $location
+                ));
 
             // Declarative auth gates: class-level #[Auth] then the
             // method's own (additive). #[Auth] is deliberately NOT in
@@ -327,18 +371,20 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
             $target = ($metadata['class'] ?? '') . '::' . $method_name;
 
-            // One route row and one catalog row per version the declaration serves: the
-            // declared pattern, then the same path under every later version through $through.
-            for ($version = $declared_version; $version <= $through; $version++) {
+            // One route row and one catalog row per version the declaration serves: its range
+            // from the declared pattern up, or the versions it follows.
+            foreach ($versions as $version) {
                 $version_pattern = preg_replace('#^/api/v[0-9]+#', '/api/v' . $version, $pattern);
 
                 // Duplicate route detection (pattern must be unique across all route types).
                 // An expanded address another declaration also claims lands here too.
                 if (isset($manifest_data['data']['routes'][$version_pattern])) {
                     $existing = $manifest_data['data']['routes'][$version_pattern];
-                    $how = $version_pattern === $pattern
-                        ? ''
-                        : "  (served through v{$through} from '{$pattern}' - end the range before v{$version} with through: on the #[Api_Endpoint])\n";
+                    $how = match (true) {
+                        $version_pattern === $pattern => '',
+                        $follows => "  (served at v{$version} from '{$pattern}' by its controller's #[Api_Versions(every: true)], which serves it at every version the application serves)\n",
+                        default => "  (served through v" . max($versions) . " from '{$pattern}' - end the range before v{$version} with through: on the #[Api_Endpoint])\n",
+                    };
                     throw new \RuntimeException(
                         "Duplicate route definition: {$version_pattern}\n" .
                         "  Already defined: {$existing['class']}::{$existing['method']} in {$existing['file']}\n" .
@@ -389,24 +435,48 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
     }
 
     /**
-     * The controller's #[Api_Versions(through: N)], or null when it declares none.
+     * The controller's #[Api_Versions]: the integer N of through: N, the string 'every' for
+     * every: true, or null when it declares none. Exactly one of the two arguments.
      */
-    private static function _class_versions_through(array $metadata, string $location): ?int
+    private static function _class_versions(array $metadata, string $location): int|string|null
     {
         $args = static::_single_class_attribute($metadata, 'Api_Versions', $location);
         if ($args === null) {
             return null;
         }
 
+        $usage = "  Declare exactly one of through: N (a positive integer version, e.g.\n" .
+            "  #[Api_Versions(through: 2)]) or every: true (served at every version the application serves).";
+
+        if (array_key_exists('every', $args)) {
+            if ($args['every'] !== true || count($args) !== 1) {
+                throw new \RuntimeException("Invalid #[Api_Versions]: {$location}\n" . $usage);
+            }
+
+            return 'every';
+        }
+
         $through = $args['through'] ?? ($args[0] ?? null);
-        if (!is_int($through) || $through < 1) {
-            throw new \RuntimeException(
-                "Invalid #[Api_Versions]: {$location}\n" .
-                "  through: must be a positive integer version, e.g. #[Api_Versions(through: 2)]."
-            );
+        if (!is_int($through) || $through < 1 || count($args) !== 1) {
+            throw new \RuntimeException("Invalid #[Api_Versions]: {$location}\n" . $usage);
         }
 
         return $through;
+    }
+
+    /**
+     * The versions a follower declared at $declared_version is served at: every version the
+     * other declarations serve from $declared_version up, or its own version alone when they
+     * serve none there (an application with no API of its own still has the framework's).
+     *
+     * @param array<int> $versions_served Ascending.
+     * @return array<int>
+     */
+    private static function _following_versions(array $versions_served, int $declared_version): array
+    {
+        $versions = array_values(array_filter($versions_served, fn (int $v) => $v >= $declared_version));
+
+        return empty($versions) ? [$declared_version] : $versions;
     }
 
     /**

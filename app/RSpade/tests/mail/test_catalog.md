@@ -33,6 +33,9 @@ The enqueue path - `(new Some_Email(...))->to($x)->send()` up to the row - via
 | MAIL-25 | an explicit name always wins over a resolved one | php | `to($object, 'Explicit')` | `to_name` = the explicit one | implemented | 2026-08-31 |
 | MAIL-26 | a message has one To; cc/bcc accumulate in declaration order | php | two `to()`, two `cc()`, two `bcc()` | last To wins; 2 cc + 2 bcc, names carried, null where unresolved | implemented | 2026-08-31 |
 | MAIL-27 | `reply_to()` is recorded as address + name | php | `reply_to('support@...', 'Support Desk')` | both columns set | implemented | 2026-08-31 |
+| MAIL-340 | `from()` is recorded as address + name, normalised, and a later call replaces the earlier | php | two `from()` calls, the second `('Billing@Example.com', 'Billing Office')` | `from_address` lower-cased, `from_name` set | implemented | 2026-11-10 |
+| MAIL-341 | a send without `from()` records no sender, so the configured one is read at build time | php | plain send | `from_address` and `from_name` null | implemented | 2026-11-10 |
+| MAIL-342 | a malformed From throws at the call, not in the drain | php | `from('billing at example dot com')` | `InvalidArgumentException` "not a valid email address" | implemented | 2026-11-10 |
 | MAIL-28 | a send with no recipient throws rather than queueing a row addressed to nobody | php | `send()` with no `to()` | `InvalidArgumentException` naming the missing recipient | implemented | 2026-08-31 |
 | MAIL-29 | an empty address throws | php | `to('   ')` | `InvalidArgumentException` | implemented | 2026-08-31 |
 | MAIL-30 | an object with no `->email` throws | php | `to(new stdClass)` | `InvalidArgumentException` | implemented | 2026-08-31 |
@@ -48,6 +51,8 @@ The enqueue path - `(new Some_Email(...))->to($x)->send()` up to the row - via
 | MAIL-40 | `attach_bytes()` stores the blob content-addressed and PINS it against disposal | php | attach a CSV, then `release_blob_if_orphaned()` | attachment row correct, blob on disk, disposal returns false, bytes survive | implemented | 2026-08-31 |
 | MAIL-41 | `embed()` records an inline attachment under its content id | php | `embed('fixture_image', $png)` | disposition INLINE, `cid` = the name | implemented | 2026-08-31 |
 | MAIL-42 | attaching a file that does not exist throws at send time, not at drain time | php | `attach('/nonexistent/x.pdf')` | `RuntimeException` "no such file" | implemented | 2026-08-31 |
+| MAIL-343 | `attach()` of a stored `File_Attachment_Model` reuses its blob | php | `create_from_string()` then `attach($model)` | one row, `file_storage_id` = the model's, its file name, ATTACHMENT | implemented | 2026-11-10 |
+| MAIL-344 | `embed()` of a stored `File_Attachment_Model` reuses its blob | php | a stored PNG, `embed('fixture_image', $model)` | one INLINE row, the model's `file_storage_id`, `cid` fixture_image | implemented | 2026-11-10 |
 | MAIL-43 | `subject()` and `data()` are frozen at `send()` - mutating the instance afterwards changes nothing | php | send, then mutate the email object | row keeps the values the caller had | implemented | 2026-08-31 |
 | MAIL-44 | the row's category comes from the class's `const CATEGORY` | php | NOTIFICATION fixture | `category_id` = NOTIFICATION | implemented | 2026-08-31 |
 
@@ -73,6 +78,10 @@ Row -> MIME message, via `Rsx_Mail_Builder_Test`.
 | MAIL-65 | an image contributes its alt text, or nothing | php | `<img alt="...">` and `<img>` | the alt, then the empty string | implemented | 2026-08-31 |
 | MAIL-66 | the derived text part carries the message and its links, with no markup | php | build a row | body text present, button spelled out, no `<` | implemented | 2026-08-31 |
 | MAIL-67 | Reply-To and Cc reach the message with their display names | php | row with both | one Reply-To, one Cc, addresses and names correct | implemented | 2026-08-31 |
+| MAIL-345 | with no override the message is From the configured sender | php | plain row | From = `Rsx_Mail_Transport::from_address()` / `from_name()` | implemented | 2026-11-10 |
+| MAIL-346 | the row's From is the message's From, whatever the config says by then | php | `from('billing@...', 'Billing Office')`, then `mail.from.address` changed | From = the row's address and name | implemented | 2026-11-10 |
+| MAIL-347 | a From with no display name takes the configured name | php | `from('billing@...')` | the override address, `from_name()` | implemented | 2026-11-10 |
+| MAIL-348 | a resent row keeps its From | php | overridden row, `mark_failed()`, `Rsx_Mail::resend()` | RESEND_QUEUED; rebuilt From unchanged | implemented | 2026-11-10 |
 | MAIL-68 | the Message-ID is minted HERE and `X-RSX-Email-Id` names the queue row, both recorded on the row | php | build a row | headers present; `headers` column carries them | implemented | 2026-08-31 |
 | MAIL-69 | a NOTIFICATION carries `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058) | php | NOTIFICATION row | both headers, pointing at `/_mail/unsubscribe` | implemented | 2026-08-31 |
 | MAIL-70 | a TRANSACTIONAL message offers no unsubscribe, in the header or the footer | php | TRANSACTIONAL row | no header, no link in the html | implemented | 2026-08-31 |
@@ -317,6 +326,7 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | MAIL-302 | a preview's body and text are the send's, the unsubscribe link (signed vs placeholder) the only difference | php | one instance with an embed, built by the send path and previewed | displayable HTML equal after swapping the link; text equal; subject | implemented | 2026-10-15 |
 | MAIL-303 | the preview is CSS-inlined and every local image is a data: URI of its current bytes | php | root-relative asset + `->embed()` part | inlined button style, `<style>` in head, no `cid:`, two data: srcs with the right bytes | implemented | 2026-10-15 |
 | MAIL-304 | a transactional preview carries no unsubscribe link | php | `Rsx_Mail_Test_Email::sample()` | no `/_mail/unsubscribe` | implemented | 2026-10-15 |
+| MAIL-349 | a preview names the sender the send would use | php | `Rsx_Mail_Test_Email::sample()` with and without `from()` | `from` = the configured sender, then the declared one | implemented | 2026-11-10 |
 | MAIL-305 | a preview needs no recipient and writes no queue, attachment or storage row | php | an instance with no `->to()`, an embed and an asset | counts unchanged | implemented | 2026-10-15 |
 | MAIL-306 | an un-embedded `cid:` throws as the send would | php | a cid image with no `->embed()` | RuntimeException naming `->embed('preview_chart'` | implemented | 2026-10-15 |
 

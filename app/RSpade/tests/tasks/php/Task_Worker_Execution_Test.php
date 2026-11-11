@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Task_Health_Checks;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -73,6 +74,7 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     {
         return Task_Runner::insert_row(self::FIX, 'marker_a', [], $origin_id, array_merge(Task_Runner::running_fields(), [
             'worker_pid' => $pid,
+            'worker_pid_start_time' => Process_Identity::start_time($pid),
             'worker_id' => $wid,
             'worker_generation' => $generation,
             'pool_id' => $wid === null ? null : Task_Run_Model::POOL_ON_DEMAND,
@@ -249,7 +251,7 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
 
             $reused_row = static::__row($reused);
             static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $reused_row->status_id, 'a pid now held by an unrelated process -> abandoned');
-            static::__assert_contains("PID {$reused_pid} is not a task worker", (string) $reused_row->status_reason);
+            static::__assert_contains("PID {$reused_pid} is no longer that task worker", (string) $reused_row->status_reason);
             static::__assert_true(Task_Worker_Victim::running($reused_pid), 'the unrelated process is untouched');
         } finally {
             Task_Worker_Victim::reap($worker_pid);

@@ -3,7 +3,8 @@
 OVERVIEW
 
     RSpade implements a standardized Ajax error handling architecture that:
-    - Returns HTTP 200 for ALL Ajax responses (success and errors)
+    - Returns HTTP 200 for every Ajax response (success and errors) except
+      an infrastructure outage, which fails the whole request with HTTP 500
     - Encodes success/failure in response body via _success field
     - Differentiates between business logic errors and fatal PHP errors
     - Provides consistent error display across dev and production modes
@@ -13,7 +14,8 @@ OVERVIEW
 
 RESPONSE FORMATS
 
-    All Ajax endpoints return HTTP 200 with one of these formats:
+    All Ajax endpoints return HTTP 200 with one of these formats (the one
+    exception, an infrastructure outage, is HTTP STATUS CODE STRATEGY):
 
     Every envelope also carries "_server_time" and "_user_timezone" (the
     client syncs its clock from them), "_duration_ms" (integer milliseconds)
@@ -111,18 +113,38 @@ HTTP STATUS CODE STRATEGY
     - Fatal PHP errors: HTTP 200 with _success: false
     - Auth errors: HTTP 200 with _success: false
 
+    A failure AFTER a writer's commit (a DB::afterCommit() callback that
+    throws) is not an Ajax error: the call answers its result with
+    _success: true and the failure is reported to the log (rsx:man
+    site_locks, AFTER THE COMMIT).
+
+    Infrastructure Outage: HTTP 500 for the WHOLE request
+    ----------------------------------------------------
+    The lock daemon (rsx-lockd) or the database connection gone is not one
+    call's failure: every call needs both. It is not answered as a call's
+    'fatal' envelope. The request fails as a whole with HTTP 500, no later
+    call of the batch runs, and the client rejects every call it carried
+    with 'server_error' ("A server error occurred. Please try again.",
+    logged through Debugger.log_error). It is reported once, like any fault.
+    The same holds after a writer's commit (an after-commit callback or the
+    lock release meeting the outage): the committed write stands, nothing
+    claims it was rolled back, and a retry carrying its _request_ref is
+    answered from the request history. Application code never catches or
+    names the condition (rsx:man error_handling, rsx:man locks).
+
     Non-200 Responses
     -----------------
-    Only when the request never reached a PHP answer (nginx crashed,
-    PHP-FPM dead, network failure, a 5xx from the web server), and the HTTP
-    400 that refuses a malformed batch (see TRANSPORT).
+    An infrastructure outage (above), a request that never reached a PHP
+    answer (nginx crashed, PHP-FPM dead, network failure, a 5xx from the web
+    server), and the HTTP 400 that refuses a malformed batch (see TRANSPORT).
 
     Rationale
     ---------
     - Batch requests need uniform status codes (some succeed, some fail)
     - Always get parseable response body
     - Simpler client handling - check _success field, not HTTP status
-    - Non-200 only means "couldn't reach PHP at all"
+    - Non-200 means the request as a whole failed: PHP was not reached, or
+      the platform under it (lock daemon, database) is down
 
 ERROR TYPES
 
@@ -182,10 +204,20 @@ ERROR TYPES
     ---------------------------------------------------------------
     'request_ref_reused' and 'request_response_expired': a writer call
     carrying a _request_ref this actor already used on this site. Reused: the
-    reference names a request with different parameters or another endpoint.
-    Expired: the request already ran and its stored response was pruned
-    (metadata {completed_at}). Nothing ran in either case. Raised by the
-    framework, never returned by an endpoint (rsx:man request_history).
+    reference names a request with different parameters (metadata
+    {completed_at, original} - the original completion and, while kept, the
+    original _ajax_return_value) or another endpoint (metadata {}). Expired:
+    the request already ran and its stored response was pruned (metadata
+    {completed_at}). Nothing ran in either case. Raised by the framework,
+    never returned by an endpoint (rsx:man request_history).
+
+    WHERE THEY ARRIVE. A form handles them: Rsx_Form sends its own reference
+    and hands both to the application's resubmit handler, or renders them in
+    <Form_Errors /> when none is registered - nothing for the form's author to
+    write (rsx:man form_conventions, RESUBMITTING). A direct call that sent a
+    reference - Ajax.action(), or a hand-set _request_ref - receives them as
+    an ordinary Ajax error to present itself; uncaught, they reach the error
+    dialog like any other.
 
     WRITERS
     -------
@@ -487,7 +519,8 @@ TRANSPORT
         "C_2": {"_success": false, "error_code": "fatal", "reason": "...", "metadata": {}, "error": {...}, ...}
     }
 
-    HTTP status: Always 200
+    HTTP status: 200 (500 only for an infrastructure outage, which fails the
+                 whole batch)
     Each result: Has own _success field, and its own error_code
     Client: Settles each call from its own key
 
@@ -505,13 +538,30 @@ TRANSPORT
     A call always resolves or rejects - never stays pending:
     - an answer that does not carry the call rejects it with 'server_error';
     - a request that fails as a whole rejects every call it carried (HTTP
-      5xx 'server_error', status 0 'network_error', otherwise 'generic');
+      5xx 'server_error' - an infrastructure outage among them - status 0
+      'network_error', otherwise 'generic');
     - a failure turning one call's value into models (a record whose class
       the bundle lacks) rejects THAT call, never the page or its siblings.
     A failure that refuses the whole REQUEST on the server - a CSRF mismatch,
     a fault outside any call - is answered with the same envelope under
     every call_id the batch named (side channels included), so each caller
     receives it.
+
+    Replays And Request References
+    ------------------------------
+    Ajax.call() resolves the endpoint's value and nothing else, whatever the
+    envelope says. Ajax.call_detailed(url, params) is the same call resolving
+    {value, replayed, completed_at, duration_ms}: replayed is true when the
+    request history answered (_replayed - nothing ran), and completed_at /
+    duration_ms are then the ORIGINAL run's. It rejects exactly as
+    Ajax.call().
+
+    No call carries a _request_ref unless its caller sends one. Rsx_Form sends
+    its own on every submission (rsx:man form_conventions, RESUBMITTING);
+    Ajax.action() returns an Ajax_Action whose call(url, params) adds one per
+    endpoint, kept across that endpoint's failed attempts and replaced once it
+    succeeds (act.replayed / act.completed_at describe its last success);
+    Ajax.request_ref() mints one, a random UUID. rsx:man request_history.
 
     Priority Calls
     --------------

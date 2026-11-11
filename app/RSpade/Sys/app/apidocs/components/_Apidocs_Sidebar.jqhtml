@@ -1,5 +1,6 @@
 <%--
-_Apidocs_Sidebar - endpoint filter + resource-grouped endpoint navigation.
+_Apidocs_Sidebar - endpoint filter, the application's sections, and resource-grouped
+endpoint navigation.
 
 Lives in the LAYOUT, so it is built once per page load and survives navigation between
 endpoints. Only the active-link highlight changes, which the layout drives by setting
@@ -9,11 +10,17 @@ Each link carries its own lowercased haystack in data-search, so filtering is a 
 compare against an attribute rather than a re-derivation of the catalog on every keystroke.
 
 $version - the selected catalog version (int)
-$active  - the _slug of the endpoint currently shown, or null on the landing page
+$active         - the _slug of the endpoint currently shown, or null
+$active_section - the slug of the application section currently shown, or null
+
+The application's sections (Rsx_Api_Docs::page()'s $sections) lead, under "Guides", so the
+API-wide prose - error codes, conventions - is found before the first resource. They are
+ordinary nav links, so the filter matches their titles like any endpoint.
 --%>
 <Define:_Apidocs_Sidebar tag="nav" class="_Apidocs_Page__sidebar">
 <% const version = this.args.version; %>
 <% const active = this.args.active || null; %>
+<% const active_section = this.args.active_section || null; %>
 <% const filter = this.state.filter || ''; %>
 <% const clear_class = '_Apidocs_Page__filter-clear' + (filter === '' ? ' _Apidocs_Page__filter-clear--hidden' : ''); %>
 
@@ -25,6 +32,19 @@ $active  - the _slug of the endpoint currently shown, or null on the landing pag
 </div>
 
 <div $sid="filter_empty" class="_Apidocs_Page__filter-empty _Apidocs_Page__filter-empty--hidden">No endpoint matches that filter.</div>
+
+<% const sections = _Apidocs_Catalog.sections(); %>
+<% if (sections.length) { %>
+    <div class="_Apidocs_Page__nav-group" $sid="nav_group">
+        <div class="_Apidocs_Page__nav-title">Guides</div>
+        <% for (const section of sections) { %>
+            <% const nav_class = '_Apidocs_Page__nav-link' + (active_section === section.slug ? ' _Apidocs_Page__nav-link--active' : ''); %>
+            <a class="<%= nav_class %>" href="<%= _Apidocs_Catalog.section_url(version, section) %>" data-search="<%= section.title.toLowerCase() %>">
+                <span class="_Apidocs_Page__nav-section"><%= section.title %></span>
+            </a>
+        <% } %>
+    </div>
+<% } %>
 
 <% for (const [rk, group] of Object.entries(_Apidocs_Catalog.groups(version))) { %>
     <div class="_Apidocs_Page__nav-group" $sid="nav_group">

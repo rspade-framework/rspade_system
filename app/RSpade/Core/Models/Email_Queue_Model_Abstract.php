@@ -34,6 +34,8 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @property integer $category_id
  * @property string $reply_to
  * @property string $reply_to_name
+ * @property string $from_address  null = the configured sender (Rsx_Mail_Transport::from_address())
+ * @property string $from_name     null = the configured display name
  * @property array $cc
  * @property array $bcc
  * @property array $headers
@@ -81,6 +83,8 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @property string $dedupe_key
  * @property string $dev_original_to
  * @property string $email_class
+ * @property string $from_address
+ * @property string $from_name
  * @property array $headers
  * @property int $id
  * @property string $last_attempt_at
@@ -308,6 +312,8 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $record->category_id = $descriptor['category_id'];
         $record->reply_to = $descriptor['reply_to'] ?? null;
         $record->reply_to_name = $descriptor['reply_to_name'] ?? null;
+        $record->from_address = $descriptor['from_address'] ?? null;
+        $record->from_name = $descriptor['from_name'] ?? null;
         $record->cc = $descriptor['cc'] ?? [];
         $record->bcc = $descriptor['bcc'] ?? [];
         $record->dedupe_key = $descriptor['dedupe_key'] ?? null;

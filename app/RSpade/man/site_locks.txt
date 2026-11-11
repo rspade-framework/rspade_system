@@ -171,6 +171,24 @@ THE REQUEST BOUNDARY
     transaction the handler opened and left open is rolled back and fails the
     request naming it.
 
+    AFTER THE COMMIT. Once the transaction has committed, the request answers
+    what the handler returned - nothing after the commit fails it or rolls it
+    back. Every DB::afterCommit() callback runs, each on its own: one that
+    throws is REPORTED (the log, naming where the callback was declared), never
+    answered, and the callbacks after it still run. The same holds for a
+    Site_Lock::write() section (it returns its result) and a #[Manual_Lock]
+    request transaction. So register work after the commit only if the write
+    must stand without it; work the write depends on belongs inside the
+    transaction. A commit that itself fails rolls back and fails the request.
+
+    THE ONE EXCEPTION is an infrastructure OUTAGE - the lock daemon or the
+    database connection gone (rsx:man locks, THE RSX LOCKD DAEMON). Met in an
+    after-commit callback (a task dispatch, a worker spawn) or at the release
+    of the lock, it still ends the request as a 500: every after-commit
+    callback runs first, the committed write stands, and nothing says it was
+    rolled back. A retry that carries its _request_ref is answered from the
+    request history and writes nothing twice (rsx:man request_history).
+
     NESTING. A handler called in-process from inside another (Ajax::internal())
     runs under the outer hold: a reader under any hold, a writer under a WRITE
     hold (inside the outer transaction). A writer called from inside a READER
@@ -306,7 +324,9 @@ THE RULES
     COMMIT BEFORE RELEASE. A write lock is released only after its transaction
     committed or rolled back. A section that commits or rolls back the
     section's own transaction from inside, or returns with a transaction of its
-    own still open, is rolled back and refused.
+    own still open, is rolled back and refused. Releasing with the transaction
+    still open ("Site lock rule 3") rolls it back and says so - and says
+    "Nothing was rolled back here" when the transaction was already closed.
 
     CHILD PROCESSES through Rsx_Artisan only (ARTISAN-SPAWN-01). A child is a
     separate process with its own enforcement window: it takes its OWN
@@ -389,7 +409,8 @@ FORMS AND RECORD EDITS
 TASKS, REALTIME AND COMMIT
     Task::dispatch() from a writer writes the run row inside the writer's
     transaction; the worker spawn and the scheduler poke wait for the commit,
-    and a rollback takes the run away. Task_Notify lifecycle frames are sent
+    and a rollback takes the run away (a spawn that throws after the commit is
+    reported; the poke still runs). Task_Notify lifecycle frames are sent
     after the commit too. Model realtime frames go out for committed writes
     only.
 
@@ -848,6 +869,11 @@ TROUBLESHOOTING
      was committed or rolled back by the code inside it."
         Never commit or roll back a transaction you did not open; throw to
         abandon the section.
+
+    "After-commit failure: the after-commit callback declared at <file>:<line>
+     threw after its transaction committed. The committed write stands"
+        A logged report, not an error answer: the request succeeded and its
+        caller was answered. Fix the callback; nothing needs retrying.
 
     "Invalid site lock mode: <Class::method in file>
        SITE-LOCK-01: declares #[Writer] on a #[Task] method."

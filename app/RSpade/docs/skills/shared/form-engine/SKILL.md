@@ -1,6 +1,6 @@
 ---
 name: form-engine
-description: "Building forms on the Rsx_Form engine - <Rsx_Form $controller $method>, form.submit(), server-only validation with response_form_error(), the mandatory <Form_Errors />, populate() / set_loading(), form.dirty(), Form_Edit::run() for record edits (coupled records, Form_Edit::version_of()), response_form_question(). Use when creating or converting a form, writing its save endpoint (#[Writer]), or on 'no <Form_Errors /> in this form', 'Site lock enforcement' from a save, or values arriving blank."
+description: "Building forms on the Rsx_Form engine - <Rsx_Form $controller $method>, form.submit(), server-only validation with response_form_error(), the mandatory <Form_Errors />, populate() / set_loading(), form.dirty(), Form_Edit::run() for record edits (coupled records, Form_Edit::version_of()), response_form_question(), the per-submission _request_ref (Rsx_Form.set_replay_notice() / set_resubmit_handler(), form.already_submitted(), 'replayed'). Use when creating or converting a form, writing its save endpoint (#[Writer]), a user's Save writing a record twice, or on 'no <Form_Errors /> in this form', 'This form was already submitted', 'Site lock enforcement' from a save, or values arriving blank."
 ---
 
 # The Rsx_Form engine
@@ -202,6 +202,42 @@ static on_app_modules_define() {
 
 Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js` and
 `.../reference_app/app/frontend/contacts/contacts_controller.php`.
+
+## Resubmitting - the request reference
+
+Every call `submit()` makes carries a `_request_ref` (`rsx:man request_history`), so a
+submission whose answer was lost - a 502, a dropped connection, an outage after the commit -
+or a create form reached again by **Back** after it saved is answered from the request history
+instead of writing twice. **Nothing per form, nothing per endpoint** - the endpoint must be a
+writer, and a create must answer `redirect` (or the new id).
+
+- **One reference per form identity (`controller|method|id or 'new'`) per HISTORY ENTRY**, kept
+  in the entry's state: the instance re-created by Back, or by a reload of the entry, sends the
+  same one. **Kept** while submissions fail (transport, validation, questions); after a success
+  that **redirects** it stays on the entry, **used**; after a success that **leaves the form on
+  screen** it is replaced. `form.already_submitted()` is true once it has succeeded.
+- **A form inside a dialog** (`<dialog>`, `role="dialog"`) is bound to its INSTANCE - reopening
+  a dialog is a new act (a lost answer followed by close-and-reopen is not protected). A second
+  live form with an identity another live form holds is instance-bound too.
+- **A replay is a success**: the success path runs with the stored result (redirect followed),
+  then `'replayed'` (`{result, completed_at}`) fires and the replay notice is called.
+- **`request_ref_reused` (values changed) / `request_response_expired`** go to the resubmit
+  handler, answering `Rsx_Form.RESUBMIT_AS_NEW` (`'new'`: fresh reference, current values
+  submitted) or `Rsx_Form.CANCELLED` (stop; "View it" navigates itself and returns this).
+
+```javascript
+static on_app_modules_define() {          // beside set_question_handler()
+    Rsx_Form.set_replay_notice((result, { form, completed_at }) => Flash_Alert.info('Already saved.'));
+    Rsx_Form.set_resubmit_handler(async ({ form, completed_at, original, expired }) => 'new');
+}
+```
+
+Neither is required: no notice = a silent success; no resubmit handler = the refusal renders in
+`<Form_Errors />` ("This form was already submitted...") and the reference is replaced, so the
+next submit saves as new. Per-form overrides: `$replay_notice=` / `$resubmit_handler=`. A writer
+called from a button (not a form) uses `Ajax.action()` (skill `rspade:ajax-error-handling`).
+Contract: `rsx:man form_conventions`, RESUBMITTING. Template dialogs: `Modal._on_form_replayed()`
+/ `_on_form_resubmitted()` in `system/app/RSpade/resource/reference_app/lib/modal/modal.js`.
 
 ## The page pattern (SPA add/edit)
 

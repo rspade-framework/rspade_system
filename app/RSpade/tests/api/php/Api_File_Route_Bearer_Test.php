@@ -8,9 +8,12 @@
 namespace App\RSpade\Tests\Api\Php;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Dispatch\Dispatcher;
+use App\RSpade\Core\Dispatch\Rsx_Front_Controller;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Files\File_Attachment_Model;
@@ -65,6 +68,9 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
         static::$created_attachment_ids = [];
 
         config(['rsx.search.enabled' => true]);
+
+        app()->instance('request', Request::create('/'));
+        Rsx_Request_Channel::reset();
     }
 
     private static function __key_user(): User_Model
@@ -86,6 +92,37 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
         $user->save();
 
         return Api_Key_Model::generate(1, 'File route bearer probe (test)')['key'];
+    }
+
+    /**
+     * A key narrowed to $scope, held by user 1 with every permission (the real application's
+     * account policy admits it on the API channel).
+     */
+    private static function __mint_scoped_key(string $scope): string
+    {
+        static::__acting_as_user(1);
+
+        $user = static::__key_user();
+        $user->is_api_access_enabled = 1;
+        $user->save();
+        static::grant_every_permission(1);
+
+        return Api_Key_Model::generate(1, 'File route scoped probe (test)', 'live', null, null, $scope)['key'];
+    }
+
+    /**
+     * Send one /api/vN request through the front controller, as the kernel hands it over.
+     */
+    private static function __api_send(string $path, string $method, string $key, array $files = [])
+    {
+        $request = Request::create($path, $method, [], [], $files, [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . $key,
+            'REMOTE_ADDR' => '127.0.0.1',
+        ]);
+        app()->instance('request', $request);
+        static::__reset_session();
+
+        return Rsx_Front_Controller::handle($request);
     }
 
     private static function __attachment(): File_Attachment_Model
@@ -126,7 +163,12 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
         ]);
         Rsx_Request_Channel::classify($request);
 
-        // No browser session: the key is the only credential on this request.
+        // No browser session: the key is the only credential on this request. An API identity
+        // an earlier in-process request left standing is torn down here, as the front
+        // controller tears it down between real requests.
+        if (Session::is_api_request()) {
+            Session::_reset_api_identity();
+        }
         static::__reset_session();
 
         $index = &Manifest::$data['data']['php_subclass_index'];
@@ -225,6 +267,51 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
 
         static::__assert_false(Rsx_Api_Bearer::is_file_route('File_Attachment_Controller::upload'), 'the upload route does not take a key');
         static::__assert_false(Rsx_Api_Bearer::is_file_route('File_Preview_Controller::get_preview_info'), 'an Ajax endpoint does not take a key');
+    }
+
+    // API-FILE-BEARER-VERSION-PROBE: the file routes follow every version the application
+    // serves (the suite's v2 fixture makes v2 one), and the web routes' scope probe follows
+    // them - a key scoped to v2's files subtree uploads, reads the metadata and downloads the
+    // very file that metadata describes; a key scoped elsewhere at v2 is refused the download.
+    public static function test_a_key_scoped_to_a_later_versions_files_downloads_what_it_uploaded_there()
+    {
+        static::__assert_true(
+            in_array(2, Api_Catalog::versions_serving('/files/:key'), true),
+            'the file routes are served at v2, the version the suite fixture adds'
+        );
+
+        $files_key = static::__mint_scoped_key('/api/v2/files/*');
+        $contacts_key = static::__mint_scoped_key('/api/v2/contacts/*');
+
+        static::__allow_reads_and_record();
+        Event_Registry::_set_test_handlers('file.upload.authorize', [static fn () => true]);
+
+        $bytes = 'versioned upload ' . bin2hex(random_bytes(12)) . "\n";
+        $tmp = tempnam(sys_get_temp_dir(), 'rsx_api_v2_');
+        file_put_contents($tmp, $bytes);
+
+        $upload = static::__api_send('/api/v2/files', 'POST', $files_key, [
+            'file' => new UploadedFile($tmp, 'versioned.txt', null, null, true),
+        ]);
+        static::__assert_equals(201, $upload->getStatusCode(), 'POST /api/v2/files: ' . $upload->getContent());
+        $uploaded = json_decode((string) $upload->getContent(), true);
+        static::$created_attachment_ids[] = (int) $uploaded['id'];
+
+        $meta = static::__api_send('/api/v2/files/' . $uploaded['key'], 'GET', $files_key);
+        static::__assert_equals(200, $meta->getStatusCode(), 'GET /api/v2/files/:key: ' . $meta->getContent());
+        $download_path = parse_url(json_decode((string) $meta->getContent(), true)['urls']['download'], PHP_URL_PATH);
+        static::__assert_equals('/_download/' . $uploaded['key'], $download_path, 'the metadata names the download route');
+
+        $download = static::__dispatch($download_path, $files_key);
+        static::__assert_equals(200, $download->getStatusCode(), 'the v2-files key downloads the file it uploaded');
+        $served = $download instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse
+            ? file_get_contents($download->getFile()->getPathname())
+            : (string) $download->getContent();
+        static::__assert_equals($bytes, $served, 'the bytes it uploaded');
+
+        $refused = static::__dispatch($download_path, $contacts_key);
+        static::__assert_equals(403, $refused->getStatusCode(), 'a key scoped away from every files subtree is refused');
+        static::__assert_contains('insufficient_scope', (string) $refused->getContent());
     }
 
     // API-KEY-TRASHED-LOGIN: a soft-deleted login identity's key stops authenticating.

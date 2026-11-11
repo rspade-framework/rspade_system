@@ -49,6 +49,10 @@ ACTION REQUIRED
     instead - in a container also /opt/rspade/rsx-lockd/lockd.js.
 
 VERIFICATION
-    supervisorctl status rsx-lockd is RUNNING, ps shows
-    "node /opt/rspade/rsx-lockd/lockd.js run" (or the framework path without the
-    image), and php artisan rsx:health reports Lock Server OK.
+    php artisan rsx:health reports Lock Server OK - the one answer that proves
+    the daemon serves requests. (supervisorctl status rsx-lockd shows RUNNING
+    even while lockd fails on every attempt: supervisor's process is the retry
+    runner, which keeps retrying.) ps shows "node /opt/rspade/rsx-lockd/lockd.js
+    run" (or the framework path without the image). In a container built from
+    this release, docker inspect --format '{{.State.Health.Status}}' <container>
+    reports healthy, and rsx:health's Supervised Services row is OK.

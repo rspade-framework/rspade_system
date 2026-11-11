@@ -6,8 +6,10 @@ use Exception;
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Locks\Lockd_Connection;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
@@ -45,6 +47,15 @@ if (file_exists($helpers_path)) {
  * has to answer and the one question a clock-based lease can only guess at. Every lease
  * duration is a moment at which mutual exclusion silently stops being true; there is no such
  * moment here.
+ *
+ * THE DAEMON IS REQUIRED INFRASTRUCTURE, like mysqld (owner ruling 2026-11-10). A cluster
+ * lock call that cannot reach rsx-lockd, or whose connection dies under it - an acquire, a
+ * release, a semaphore - throws Lockd_Unavailable_Exception, and that ends the WHOLE request
+ * as a 500 on every channel, exactly as a lost database connection does
+ * (Infrastructure_Outage). No substitute path, no degraded mode, no retry-and-continue; nothing
+ * catches it and application code never names it. CONTENTION IS A DIFFERENT ANSWER: a wait
+ * budget that runs out throws Lock_Timeout_Exception (a RuntimeException), which an outage
+ * never is - so a probe ($timeout = 0) can never read a missing daemon as "held elsewhere".
  *
  * MAINTENANCE MODE GRANTS CLUSTER LOCKS AS NO-OPS (owner ruling 2026-08-11). Maintenance
  * stops the daemon along with the rest of the fleet, and the quiesce is the point: web
@@ -207,7 +218,9 @@ class RsxLocks
      * @param int|null $timeout Seconds to WAIT for the lock, or NULL to wait forever (the default).
      *                          Never bounds how long the lock is HELD.
      * @return string Lock token - pass to release_lock().
-     * @throws RuntimeException on wait timeout, or when the request would close a deadlock cycle.
+     * @throws Lock_Timeout_Exception when a given $timeout elapses before the grant (contention).
+     * @throws RuntimeException when the request would close a deadlock cycle, or the daemon refuses it.
+     * @throws Lockd_Unavailable_Exception when the daemon is unreachable - the outage.
      */
     public static function get_lock(
         string $domain,
@@ -292,7 +305,7 @@ class RsxLocks
         $status = $response['status'] ?? 'error';
 
         if ($status === 'timeout') {
-            throw new RuntimeException(self::__timeout_message($domain, $name, $type, (int) $timeout));
+            throw new Lock_Timeout_Exception(self::__timeout_message($domain, $name, $type, (int) $timeout));
         }
 
         if ($status === 'deadlock') {
@@ -327,6 +340,10 @@ class RsxLocks
      *              hold in place). FALSE means the backend no longer had us as the holder -
      *              which for a cluster lock means rsx-lockd RESTARTED while we held it, so
      *              mutual exclusion was not maintained. That case is logged as an error.
+     * @throws Lockd_Unavailable_Exception when the daemon is gone at release time: the lock
+     *              went with the connection, the section it guarded ran without the exclusion
+     *              its caller believed it had, and the request ends as the outage (a 500). A
+     *              committed write stays committed; nothing claims a rollback.
      */
     public static function release_lock(string $lock_token): bool
     {
@@ -369,32 +386,25 @@ class RsxLocks
             return true;
         }
 
-        // A release is nearly always in a finally block, so it never throws: a transport
-        // failure HERE is itself the answer (the daemon died, therefore the lock is gone),
-        // and throwing would replace the caller's real exception with this one.
-        $lost_reason = null;
-        try {
-            $response = self::__lockd(['op' => 'release', 'token' => $lock_info['server_token']]);
-        } catch (Exception $e) {
-            $response = null;
-            $lost_reason = $e->getMessage();
-        }
+        // A daemon that is GONE at release time throws the outage from here: the lock went
+        // with the connection, and an outage ends the request whatever else it was doing.
+        // (The process-exit sweeps, _release_since() and _cleanup_locks(), take it as released.)
+        $response = self::__lockd(['op' => 'release', 'token' => $lock_info['server_token']]);
 
-        if ($lost_reason === null && $response === null) {
+        if ($response === null) {
             // Maintenance came up mid-flight: it stopped the daemon, which released the lock
             // with the connection, and it stopped every peer that could have taken it. Nothing
             // is held anywhere and no exclusion was violated. A successful release.
             return true;
         }
 
-        $held = $lost_reason === null && (bool) ($response['held'] ?? false);
+        $held = (bool) ($response['held'] ?? false);
 
         if (!$held) {
             \Illuminate\Support\Facades\Log::error(
                 "RsxLocks: {$lock_info['type']} lock {$lock_info['domain']}:{$lock_info['name']} was no longer "
                 . 'held by this connection at release time. rsx-lockd restarted while the lock was held, so mutual '
                 . 'exclusion was NOT in force for the whole critical section.'
-                . ($lost_reason === null ? '' : ' (' . $lost_reason . ')')
             );
         }
 
@@ -691,7 +701,7 @@ class RsxLocks
         $status = $response['status'] ?? 'error';
 
         if ($status === 'timeout') {
-            throw new RuntimeException(
+            throw new Lock_Timeout_Exception(
                 self::__timeout_message($lock_info['domain'], $lock_info['name'], self::WRITE_LOCK, (int) $timeout)
             );
         }
@@ -790,7 +800,10 @@ class RsxLocks
                 self::release_lock($token);
                 $released[] = "{$lock_info['domain']}:{$lock_info['name']} ({$lock_info['type']})";
             } catch (Exception $e) {
-                // A lock we cannot release is not a reason to abandon the rest of them.
+                // A lock we cannot release is not a reason to abandon the rest of them. A
+                // daemon outage lands here too, and is not swallowed by it: a lock that went
+                // with the connection IS released, and the worker's next pool call meets the
+                // same outage and exits non-zero (Task_Worker_Command).
             }
         }
 
@@ -1129,6 +1142,7 @@ class RsxLocks
      *
      * @param string|null $token Token from acquire_semaphore().
      * @return void
+     * @throws Lockd_Unavailable_Exception when the daemon is gone - the outage, as release_lock().
      */
     public static function release_semaphore(?string $token): void
     {
@@ -1139,13 +1153,9 @@ class RsxLocks
         $server_token = self::$held_semaphores[$token]['server_token'];
         unset(self::$held_semaphores[$token]);
 
-        // Same reasoning as release_lock(): this runs in finally blocks, and a dead transport
-        // means the slot is already free. Never throw over a slot that no longer exists.
-        try {
-            self::__lockd(['op' => 'sem_release', 'token' => $server_token]);
-        } catch (Exception $e) {
-            // The daemon is gone; so is the slot.
-        }
+        // A daemon that is gone throws the outage, exactly as release_lock(): the slot went
+        // with the connection, and the quota was not enforced for the whole section.
+        self::__lockd(['op' => 'sem_release', 'token' => $server_token]);
     }
 
     /**
@@ -1183,19 +1193,23 @@ class RsxLocks
     /**
      * One request/response round trip to the lock daemon.
      *
-     * Returns NULL to mean "this process has just switched to the flock backend, re-enter" -
-     * the STRAGGLER PATH. A process that booted before maintenance mode went up carries a
-     * "no maintenance" snapshot but meets a stopped daemon; if the flag is on disk NOW, that
-     * is maintenance rather than a fault, and we degrade exactly as the redis backend used
-     * to. With no flag on disk, a failed request stays as loud as it has always been.
+     * Returns NULL to mean "this process has just switched to maintenance no-op grants,
+     * re-enter" - the STRAGGLER PATH. A process that booted before maintenance mode went up
+     * carries a "no maintenance" snapshot but meets a stopped daemon; if the flag is on disk
+     * NOW, that is planned maintenance rather than an outage, and its cluster locks become
+     * no-op grants like every process that booted after the flag went up.
      *
-     * @return array|null The response frame, or NULL if the caller must retry on flock.
+     * Only the OUTAGE (Lockd_Unavailable_Exception) takes this path, and only with the flag
+     * on disk. With no flag, the outage propagates and ends the request as a 500.
+     *
+     * @return array|null The response frame, or NULL if the caller must re-enter.
+     * @throws Lockd_Unavailable_Exception when the daemon is gone outside maintenance.
      */
     private static function __lockd(array $frame): ?array
     {
         try {
             return Lockd_Client::request($frame);
-        } catch (Exception $e) {
+        } catch (Lockd_Unavailable_Exception $e) {
             if (Framework_Maintenance::is_active_on_disk()) {
                 self::$maintenance_forced = true;
 
@@ -1436,7 +1450,7 @@ class RsxLocks
         $granted = self::__acquire_flock($domain, $name, $timeout, $db_scoped);
 
         if ($granted === null) {
-            throw new RuntimeException(self::__timeout_message($domain, $name, $type, (int) $timeout));
+            throw new Lock_Timeout_Exception(self::__timeout_message($domain, $name, $type, (int) $timeout));
         }
 
         self::$held_locks[$granted['token']] = [

@@ -5,14 +5,17 @@ namespace App\RSpade\Core\Api;
 use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Openapi;
 use App\RSpade\Core\Api\Api_Tester_Key;
+use App\RSpade\Core\Files\Markdown_Rendition;
 
 /**
  * Rsx_Api_Docs - the app-facing entry point for the API reference console.
  *
  * THE APPLICATION OWNS THE ROUTE AND THE GATE; the framework owns EVERYTHING ELSE - the
  * markup, the components, the styles and the bundle. The integration is one call, with the
- * simplicity of phpinfo(): there is nothing here for an application to customize, extend or
- * carry a copy of.
+ * simplicity of phpinfo(): there is nothing here for an application to restyle, extend or
+ * carry a copy of. The one thing an application may hand it is CONTENT - a few static
+ * sections of its own (an error-code inventory, its conventions), as Markdown, which the
+ * console lists in its navigation beside the resources (see page()).
  *
  *     #[Auth('can_manage_integrations')]
  *     class Developer_Tools_Controller extends Rsx_Controller_Abstract
@@ -66,6 +69,12 @@ class Rsx_Api_Docs
     private static string $_base_path = '/';
 
     /**
+     * The application's own sections, validated and rendered by page() and exported by
+     * rsxapp_data(): a list of {slug, title, html}. Request-scoped like the two above.
+     */
+    private static array $_sections = [];
+
+    /**
      * Render the API reference console - the whole page, bundle and all.
      *
      * The framework supplies its own module bundle (_Apidocs_Bundle) rather than taking one:
@@ -80,11 +89,21 @@ class Rsx_Api_Docs
      *
      * Pass false to list every published endpoint. That is about ADVERTISING, not access:
      * Api_Dispatcher gates every actual call regardless of what this page chose to show.
+     *
+     * $sections is the application's own prose - each ['title' => ..., 'markdown' => ...],
+     * listed in that order under "Guides" at the top of the console's navigation and shown
+     * as a page of its own at <mount>?section=<slug>, the slug derived from the title. They
+     * are static and shown whatever key is adopted: a section documents the API as a whole
+     * (its error codes and what to do about each, its conventions), never one endpoint - that
+     * is the endpoint's docblock. A table is a Markdown (GFM) table. The Markdown goes
+     * through Markdown_Rendition::render(), so raw HTML in it is discarded, never passed
+     * through. A malformed section throws here, at the application's call.
      */
-    public static function page(bool $restrict_to_key = true)
+    public static function page(bool $restrict_to_key = true, array $sections = [])
     {
         self::$_restrict_to_key = $restrict_to_key;
         self::$_base_path = '/' . ltrim(request()->path(), '/');
+        self::$_sections = self::__render_sections($sections);
 
         return rsx_view('_Apidocs_App');
     }
@@ -137,8 +156,67 @@ class Rsx_Api_Docs
                 // know that is why the write endpoints are absent.
                 'key_read_only' => Api_Tester_Key::current_is_read_only(),
                 'base_path' => self::$_base_path,
+                'sections' => self::$_sections,
             ],
         ];
+    }
+
+    /**
+     * Validate the application's sections and render each one's Markdown, once, at page().
+     *
+     * Exactly the two keys, both non-empty strings: an unknown key is a typo ('content',
+     * 'body') that would otherwise publish an empty page. The slug is the ?section= value,
+     * so two titles that slug alike would make one section unreachable - refused.
+     *
+     * @return array list of {slug, title, html}
+     */
+    private static function __render_sections(array $sections): array
+    {
+        if (!array_is_list($sections)) {
+            throw new \InvalidArgumentException('Rsx_Api_Docs::page() $sections must be a list of [\'title\' => ..., \'markdown\' => ...] arrays.');
+        }
+
+        $out = [];
+        $seen = [];
+
+        foreach ($sections as $i => $section) {
+            if (!is_array($section)) {
+                throw new \InvalidArgumentException("Rsx_Api_Docs::page() section {$i} must be an array with the keys 'title' and 'markdown'.");
+            }
+
+            $unknown = array_diff(array_keys($section), ['title', 'markdown']);
+
+            if (!empty($unknown)) {
+                throw new \InvalidArgumentException("Rsx_Api_Docs::page() section {$i} has unknown key(s) '" . implode("', '", $unknown) . "'; a section is exactly 'title' and 'markdown'.");
+            }
+
+            foreach (['title', 'markdown'] as $key) {
+                if (!isset($section[$key]) || !is_string($section[$key]) || trim($section[$key]) === '') {
+                    throw new \InvalidArgumentException("Rsx_Api_Docs::page() section {$i} needs a non-empty string '{$key}'.");
+                }
+            }
+
+            $title = trim($section['title']);
+            $slug = trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($title)), '-');
+
+            if ($slug === '') {
+                throw new \InvalidArgumentException("Rsx_Api_Docs::page() section title '{$title}' has no letter or digit to name its URL by.");
+            }
+
+            if (isset($seen[$slug])) {
+                throw new \InvalidArgumentException("Rsx_Api_Docs::page() sections '{$seen[$slug]}' and '{$title}' share the URL slug '{$slug}'; give them distinct titles.");
+            }
+
+            $seen[$slug] = $title;
+
+            $out[] = [
+                'slug' => $slug,
+                'title' => $title,
+                'html' => Markdown_Rendition::render($section['markdown']),
+            ];
+        }
+
+        return $out;
     }
 
     /**
@@ -192,6 +270,11 @@ class Rsx_Api_Docs
      *
      * $version narrows it to one API version's surface, as the docs page shows that version
      * (the input for generating one version's client); omit it for every version.
+     *
+     * For a KEY HOLDER, the application serves it from an ordinary GET API endpoint answering
+     * Rsx_Api::document($doc) - the document exactly as built, without the timing fields every
+     * other API answer carries, which an OpenAPI root does not admit
+     * (reference_app/app/api/v1/openapi_api_controller.php).
      *
      * @return array The OpenAPI 3.1 document
      */

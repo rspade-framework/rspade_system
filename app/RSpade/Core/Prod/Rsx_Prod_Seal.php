@@ -10,6 +10,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Sealed production build manifest ("the seal").
@@ -35,9 +36,14 @@ use App\RSpade\Core\Rsx;
  * The seal file lives inside the build root, and asset paths are stored relative to
  * it, so the seal is self-contained and location-independent.
  *
- * NOTE: created_at, git_commit and the seal file as a whole are deliberately NOT
- * part of any hashed build artifact - they carry the non-deterministic build
- * metadata that the manifest index intentionally drops for byte-stability.
+ * It is also the BUILD IDENTITY a running box reports (Rsx::build_info()): the
+ * application commit, the framework revision and the time the build was made, recorded
+ * here at build time because a deployed box may carry no git metadata to read them from.
+ *
+ * NOTE: built_at, commit, framework_revision and the seal file as a whole are
+ * deliberately NOT part of any hashed build artifact - they carry the
+ * non-deterministic build metadata that the manifest index intentionally drops for
+ * byte-stability.
  */
 class Rsx_Prod_Seal
 {
@@ -130,10 +136,20 @@ class Rsx_Prod_Seal
     /**
      * Collect + record the current build assets as a new seal for the given mode.
      *
+     * THE BUILD IDENTITY. commit is the application's commit (the HEAD of the repository
+     * holding the project root), framework_revision the framework's (the HEAD of the
+     * repository holding system/ - its own repository when system/ is a submodule, else the
+     * application's, which then carries the framework). A value the caller passes is
+     * recorded as given - the deploy step that knows them, on a host that has no git
+     * metadata; one it omits is read from git here, and is null when git cannot answer.
+     * Never guessed.
+     *
      * @param string $mode The RSX mode the build was produced for (production|debug)
+     * @param string|null $commit The application commit, or null to read it from git
+     * @param string|null $framework_revision The framework revision, or null to read it from git
      * @return array The seal array that was written
      */
-    public static function write(string $mode): array
+    public static function write(string $mode, ?string $commit = null, ?string $framework_revision = null): array
     {
         $build_root = self::_build_root();
 
@@ -144,11 +160,12 @@ class Rsx_Prod_Seal
         $build_key = trim(file_get_contents($build_key_file));
 
         $seal = [
-            'schema' => 1,
+            'schema' => 2,
             'rsx_mode' => $mode,
             'build_key' => $build_key,
-            'git_commit' => self::_git_commit(),
-            'created_at' => date('c'),
+            'commit' => $commit ?? self::git_head(dirname(base_path())),
+            'framework_revision' => $framework_revision ?? self::git_head(base_path()),
+            'built_at' => Rsx_Time::now_iso(),
             'assets' => self::_collect_assets(),
         ];
 
@@ -307,18 +324,30 @@ class Rsx_Prod_Seal
     }
 
     /**
-     * Best-effort current git commit; null when git is unavailable / not a repo.
+     * The commit checked out in the repository holding $dir, or null when there is none to
+     * read (no git, no repository, a repository git refuses to read as this user).
+     *
+     * @param string $dir
+     * @return string|null A full lowercase hex object name
      */
-    protected static function _git_commit(): ?string
+    public static function git_head(string $dir): ?string
     {
-        $cwd = base_path();
-        $output = @shell_exec('bash -c ' . escapeshellarg('cd ' . escapeshellarg($cwd) . ' && git rev-parse HEAD 2>/dev/null'));
-        if (!is_string($output)) {
-            return null;
-        }
-        $commit = trim($output);
+        $output = [];
+        $exit = 0;
+        exec_safe('git -C ' . escapeshellarg($dir) . ' rev-parse --verify --quiet HEAD 2>/dev/null', $output, $exit);
 
-        return $commit === '' ? null : $commit;
+        $head = strtolower(trim(implode("\n", $output)));
+
+        return ($exit === 0 && self::is_revision($head)) ? $head : null;
+    }
+
+    /**
+     * Is $value spelled as a git object name (7 to 64 hex digits, abbreviated or full)? What
+     * rsx:build accepts for --commit and --framework-revision.
+     */
+    public static function is_revision(string $value): bool
+    {
+        return preg_match('/\A[0-9a-f]{7,64}\z/', $value) === 1;
     }
 
     /**

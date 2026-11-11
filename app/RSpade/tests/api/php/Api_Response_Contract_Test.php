@@ -25,6 +25,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   - every object answer carries _duration_ms (int) and _completed_at (ISO, UTC) at the top
  *     level - a success, a 422, a 404, a 401, a 500 - and a recorded writer's answer and its
  *     replay carry the same, originally recorded values;
+ *   - a DOCUMENT (Rsx_Api::document()) is the one JSON object sent exactly as written: no
+ *     timing fields, no echoed _request_ref;
  *   - a path its own version does not serve but another does is 410 api_version_retired
  *     naming the versions that serve it; a path no version serves, and any path under a
  *     version above every declared one, is 404.
@@ -86,6 +88,20 @@ class Api_Response_Contract_Test extends Rsx_Test_Abstract
         $download = static::__api_raw($key, 'GET', '/api/v1/test-probe/contract/download');
         static::__assert_equals(200, $download->getStatusCode());
         static::__assert_equals("a,b\n1,2\n", $download->getContent(), 'a download is never stamped');
+    }
+
+    public static function test_a_document_is_sent_exactly_as_written()
+    {
+        $key = static::__api_key();
+
+        $answer = static::__api_raw($key, 'GET', '/api/v1/test-probe/contract/document?_request_ref=doc-ref');
+        static::__assert_equals(200, $answer->getStatusCode(), (string) $answer->getContent());
+        static::__assert_contains('application/json', (string) $answer->headers->get('Content-Type'));
+        static::__assert_equals(
+            ['openapi' => '3.1.0', 'x-probe' => true],
+            json_decode((string) $answer->getContent(), true),
+            'no _duration_ms, _completed_at or echoed _request_ref'
+        );
     }
 
     // =========================================================================

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Testing;
 
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Process\Process_Identity;
 
 /**
  * Containment of DETACHED processes started under a test run.
@@ -36,7 +37,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  * diagnose, and the answer is to give that command an end (or to terminate it here,
  * deliberately and for that command), never to cap the wait.
  *
- * Identity is (pid, kernel start time) read from /proc, so a pid the kernel reused for an
+ * Identity is (pid, kernel start time) - Process_Identity - so a pid the kernel reused for an
  * unrelated process after ours exited is never mistaken for ours; an exited process that
  * nobody has reaped yet (a zombie) counts as exited.
  */
@@ -57,7 +58,7 @@ class Rsx_Test_Detached_Processes
      */
     public static function register(int $pid): void
     {
-        $start_time = self::__start_time($pid);
+        $start_time = Process_Identity::start_time($pid);
 
         if ($start_time === null) {
             return;
@@ -94,7 +95,7 @@ class Rsx_Test_Detached_Processes
             }
 
             foreach ($entries as [$pid, $start_time]) {
-                while (self::__is_running($pid, $start_time)) {
+                while (Process_Identity::is_running($pid, $start_time)) {
                     usleep(self::POLL_INTERVAL_US);
                 }
             }
@@ -104,7 +105,7 @@ class Rsx_Test_Detached_Processes
     /**
      * Read every registered entry and empty the registry, under its lock.
      *
-     * @return array<int, array{0: int, 1: string}>
+     * @return array<int, array{0: int, 1: int}>
      */
     private static function __take_entries(): array
     {
@@ -134,65 +135,11 @@ class Rsx_Test_Detached_Processes
         foreach (explode("\n", (string) $contents) as $line) {
             $parts = explode(' ', trim($line));
 
-            if (count($parts) === 2 && ctype_digit($parts[0])) {
-                $entries[] = [(int) $parts[0], $parts[1]];
+            if (count($parts) === 2 && ctype_digit($parts[0]) && ctype_digit($parts[1])) {
+                $entries[] = [(int) $parts[0], (int) $parts[1]];
             }
         }
 
         return $entries;
-    }
-
-    /**
-     * Is the process with this pid AND this start time still running?
-     */
-    private static function __is_running(int $pid, string $start_time): bool
-    {
-        $stat = self::__stat_fields($pid);
-
-        if ($stat === null) {
-            return false;
-        }
-
-        // A zombie (Z) or a dead entry (X) has exited; only its reaping is outstanding.
-        if ($stat[0] === 'Z' || $stat[0] === 'X') {
-            return false;
-        }
-
-        return $stat[19] === $start_time;
-    }
-
-    /**
-     * The kernel start time of a process, or null when there is no such process.
-     */
-    private static function __start_time(int $pid): ?string
-    {
-        $stat = self::__stat_fields($pid);
-
-        return $stat === null ? null : $stat[19];
-    }
-
-    /**
-     * The fields of /proc/<pid>/stat AFTER the command name: index 0 is the state (field 3),
-     * index 19 the start time (field 22). The command name is parenthesised and may itself
-     * contain spaces and parentheses, so the split starts after its LAST closing parenthesis.
-     *
-     * @return array<int, string>|null Null when the process does not exist
-     */
-    private static function __stat_fields(int $pid): ?array
-    {
-        $raw = @file_get_contents('/proc/' . $pid . '/stat');
-
-        if ($raw === false || $raw === '') {
-            return null;
-        }
-
-        $close = strrpos($raw, ')');
-        if ($close === false) {
-            return null;
-        }
-
-        $fields = explode(' ', trim(substr($raw, $close + 2)));
-
-        return count($fields) > 19 ? $fields : null;
     }
 }

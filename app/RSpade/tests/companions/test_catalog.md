@@ -71,6 +71,7 @@ the live dev server and the template's `hello` companion.
 | D-ELECTION | single_instance is elected through rsx-lockd and fails over | php | two daemons, kill -9 the winner | other runs | implemented | 2026-11-02 |
 | D-SUPERVISOR | supervisorctl stop waits out the grace; the shipped program's shape | php | scratch supervisord, 3 s stop | >= 3 s, child gone | implemented | 2026-11-02 |
 | D-PAUSE-POLICY | the build marker pauses a `pause` companion | php | marker file | paused, resumed | planned | 2026-11-02 |
+| D-BUILD-MARKER | a build is in progress only while the marker's `<pid> <start time>` is still the builder (`Companion_Build_Marker_Test`) | php | scratch markers: the live builder; its pid with another start time; a dead pid; a bare pid; none | true; false; false; false; false | implemented | 2026-11-10 |
 | PROBE-RESERVED | the SDK's probe name cannot be declared, and the SDK probes that name | php | endpoint named rsx_sdk_contract_probe | FATAL; SDK constant equal | implemented | 2026-11-02 |
 | PROBE-NOT-ERROR | the probe's authenticated 404 is logged with no code and counted with no error; another unknown endpoint still is one | php | signed probe | 404, code null, calls +1, errors +0 | implemented | 2026-11-02 |
 | EVENT-PAYLOAD | companion.error reaches a handler with the six keys, as the companion, on the install site; severity and context default | php | event verb, handler stand-in | name, instance_id, code, message, severity, context | implemented | 2026-11-02 |

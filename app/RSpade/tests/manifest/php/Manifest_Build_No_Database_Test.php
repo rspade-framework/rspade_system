@@ -148,10 +148,10 @@ class Manifest_Build_No_Database_Test extends Rsx_Test_Abstract
 
     public static function test_a_deferred_morph_map_is_registered_before_the_first_statement()
     {
-        $original = Relation::morphMap();
-
-        // A registry with at least one row to register, in a transaction this test rolls
-        // back: the migrated baseline may hold no type ref at all.
+        // A registry with at least one row to register: the migrated baseline may hold no
+        // type ref at all. The registration commits on the registry's side connection, so it
+        // outlives the rollback below - which is why the map is REBUILT from the database
+        // afterwards, never restored from a snapshot taken before the row existed.
         DB::beginTransaction();
 
         try {
@@ -173,8 +173,7 @@ class Manifest_Build_No_Database_Test extends Rsx_Test_Abstract
             );
         } finally {
             DB::rollBack();
-            Type_Ref_Registry::_reset_cached_state();
-            Relation::morphMap($original, false);
+            Type_Ref_Registry::_reload_for_database_swap();
         }
     }
 }

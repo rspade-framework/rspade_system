@@ -45,6 +45,7 @@
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { poll_until } = require('../../_lib/playwright/sys_page.js');
 
 const BASE_URL = 'http://localhost';
 const ROUTE = '/_sys';
@@ -55,17 +56,14 @@ function fail(msg) {
     process.exitCode = 1;
 }
 
-/** Wait for the SPA action's full lifecycle on the page. */
+/**
+ * Wait for the SPA action's full lifecycle on the page. Polled, because the first visit may
+ * load a second document (the timezone cookie's one-time ?_rsx_tz=1 round trip), and an
+ * evaluate spanning a document load dies with it.
+ */
 async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
-        }
-    }));
-
+    await poll_until(page, 'the SPA action exists', () => typeof Spa !== 'undefined' && !!Spa.action());
+    await page.evaluate(async () => { await Spa.action().ready(); });
 }
 
 /**

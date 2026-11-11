@@ -22,6 +22,7 @@ use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -425,7 +426,8 @@ class Manifest
     }
 
     /**
-     * Write or remove the build-in-progress marker. Development only: a sealed build never
+     * Write or remove the build-in-progress marker, `<pid> <start time>` of the building
+     * process (Process_Identity). Development only: a sealed build never
      * rebuilds at run time, and rsx:build runs inside a window nothing acts on. A marker that
      * cannot be written is reported and the build goes on: it serves a best-effort pause.
      */
@@ -447,7 +449,10 @@ class Manifest
 
         ensure_directory(dirname($marker));
 
-        if (file_put_contents($marker, (string) getmypid()) === false) {
+        // The builder's pid AND its kernel start time: a builder killed outright never removes
+        // the marker, and once its pid is reused only the pair still says the build is over.
+        $pid = getmypid();
+        if (file_put_contents($marker, $pid . ' ' . Process_Identity::start_time($pid)) === false) {
             console_debug('MANIFEST', 'Could not write the build marker', $marker);
         }
     }
@@ -2553,7 +2558,7 @@ class Manifest
                 0,
                 false
             );
-        } catch (\RuntimeException $e) {
+        } catch (\App\RSpade\Core\Locks\Lock_Timeout_Exception $e) {
             console_debug('MANIFEST', 'Derived cache sweep stood down: another process holds the bundle build lock');
 
             return;

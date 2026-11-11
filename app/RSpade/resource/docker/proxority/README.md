@@ -329,8 +329,10 @@ proxority open
   deadline. While closed, such a request is answered `503` with `Retry-After: 30` and a body
   naming the reason; loopback callers (rsx:debug, a test harness's browser, companions) and
   the files nginx serves from disk are untouched. `--holder-pid` names the process the closure
-  belongs to: while closed, a request that would be refused first checks that process, and
-  reopens the proxy when it is gone - so a closer that died never leaves the site closed. The
+  belongs to, and its kernel start time (`/proc/<pid>/stat` field 22) is read at close and kept
+  with it: while closed, a request that would be refused first checks that the pid is still
+  that process, and reopens the proxy when it is gone or the pid now names another process -
+  so a closer that died never leaves the site closed. The
   state is in memory, so a restart always comes up open. `status` shows it.
 - `open` - admit everyone again.
 

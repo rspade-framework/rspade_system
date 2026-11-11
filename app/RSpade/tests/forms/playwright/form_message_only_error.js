@@ -10,7 +10,7 @@
  * downstream field report, 2026-10-08). The form contract says a failed submit is never
  * silent; this is the path where it was.
  *
- * Three cases, each a real submit() through a scripted Ajax.call:
+ * Three cases, each a real submit() through a scripted Ajax.call_detailed:
  *
  *   a. a message with no field errors is rendered in <Form_Errors />;
  *   b. a message WITH a field error still renders the message once (the path that always
@@ -24,6 +24,7 @@
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { poll_until } = require('../../_lib/playwright/sys_page.js');
 
 const BASE_URL = 'http://localhost';
 const ROUTE = '/_sys';
@@ -34,17 +35,14 @@ function fail(msg) {
     process.exitCode = 1;
 }
 
-/** Wait for the SPA action's full lifecycle on the page. */
+/**
+ * Wait for the SPA action's full lifecycle on the page. Polled, because the first visit may
+ * load a second document (the timezone cookie's one-time ?_rsx_tz=1 round trip), and an
+ * evaluate spanning a document load dies with it.
+ */
 async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
-        }
-    }));
-
+    await poll_until(page, 'the SPA action exists', () => typeof Spa !== 'undefined' && !!Spa.action());
+    await page.evaluate(async () => { await Spa.action().ready(); });
 }
 
 async function run() {
@@ -107,9 +105,9 @@ async function run() {
             $('#rsx_msg_only_input_temp').component('_Sys_Text_Input', { name: 'code', max_length: -1 });
             await sleep(300);
 
-            const original = Ajax.call;
+            const original = Ajax.call_detailed;
             const reject_with = (metadata) => {
-                Ajax.call = function () {
+                Ajax.call_detailed = function () {
                     const error = new Error(metadata._message);
                     error.code = Ajax.ERROR_VALIDATION;
                     error.metadata = metadata;
@@ -131,7 +129,7 @@ async function run() {
             out.b_stale = count('That code is not valid.');
 
             // c. a before_submit hook that throws an Error
-            Ajax.call = original;
+            Ajax.call_detailed = original;
             form.before_submit = function () { throw new Error('The hook refused this.'); };
             out.c_result = await form.submit();
             out.c_count = count('The hook refused this.');

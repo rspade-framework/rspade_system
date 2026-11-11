@@ -7,6 +7,9 @@
 
 namespace App\RSpade\Core\Mail;
 
+use Symfony\Component\Mime\Address;
+use Symfony\Component\Mime\Exception\RfcComplianceException;
+use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Queue_Model;
 
@@ -85,6 +88,9 @@ abstract class Rsx_Email_Abstract
 
     /** @var array{address: string, name: ?string}|null */
     protected ?array $_reply_to = null;
+
+    /** @var array{address: string, name: ?string}|null Null = the configured sender. */
+    protected ?array $_from = null;
 
     /**
      * Pending attachment specs, in declaration order. Each is
@@ -221,6 +227,41 @@ abstract class Rsx_Email_Abstract
     public function reply_to($recipient, ?string $name = null): static
     {
         $this->_reply_to = static::_resolve_recipient($recipient, $name, 'reply_to');
+
+        return $this;
+    }
+
+    /**
+     * Send this message From an address other than the configured sender
+     * (mail.from.address). A later from() REPLACES the earlier one.
+     *
+     * Frozen onto the queue row at send(), as reply_to() is: the drain sends what the row
+     * says, so changing the application setting the address came from does not rewrite a
+     * message already queued. With no name given (and none resolvable from an object), the
+     * configured display name is used - mail.from.name, else rsx.name.
+     *
+     * The address must parse as an RFC 5322 mailbox; a malformed one THROWS here rather
+     * than failing every message of this kind later in the drain. WHETHER THE TRANSPORT
+     * MAY SEND AS IT is not checked - only the provider knows (SPF/DKIM/DMARC for the
+     * domain, an SMTP relay's sender rules, an API mailbox's send-as rights). A refusal is
+     * recorded on the row like any other server reply; an accepted but unauthorised From
+     * is spam-foldered. The address is also the envelope sender, so bounces return to it.
+     *
+     * @param object|string $sender An address, or anything exposing ->email.
+     */
+    public function from($sender, ?string $name = null): static
+    {
+        $resolved = static::_resolve_recipient($sender, $name, 'from');
+
+        try {
+            new Address($resolved['address']);
+        } catch (RfcComplianceException $e) {
+            throw new \InvalidArgumentException(
+                static::class . "::from() was given '{$resolved['address']}', which is not a valid email address."
+            );
+        }
+
+        $this->_from = $resolved;
 
         return $this;
     }
@@ -364,6 +405,7 @@ abstract class Rsx_Email_Abstract
             'cc' => $this->_cc,
             'bcc' => $this->_bcc,
             'reply_to' => $this->_reply_to,
+            'from' => $this->_from,
             'attachments' => $this->_attachments,
             'dedupe_key' => $this->_dedupe_key,
             'send_at' => $this->_send_at,

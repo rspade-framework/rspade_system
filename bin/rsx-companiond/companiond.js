@@ -547,14 +547,21 @@ function path_exists(file) {
 }
 
 /**
- * A manifest build in progress. The marker holds the builder's pid, because a builder killed
- * outright never removes it and a pause must still end.
+ * A manifest build in progress. The marker holds the builder's pid and its kernel start time
+ * (`<pid> <start time>`), because a builder killed outright never removes it and a pause must
+ * still end: once the builder is gone its pid may name an unrelated process, which the start
+ * time tells apart.
  */
 async function read_build_marker(file) {
-    const pid = await fs.promises.readFile(file, 'utf8').catch(() => null);
-    if (pid === null) return false;
+    const text = await fs.promises.readFile(file, 'utf8').catch(() => null);
+    if (text === null) return false;
 
-    return fs.promises.access('/proc/' + pid.trim()).then(() => true, () => false);
+    const [pid, start_time] = text.trim().split(' ');
+    if (!/^\d+$/.test(pid || '') || !/^\d+$/.test(start_time || '')) return false;
+
+    const stat = children_file.proc_stat(pid);
+
+    return stat !== null && stat.state !== 'Z' && stat.state !== 'X' && stat.start_time === start_time;
 }
 
 function parse_options(argv) {
@@ -607,4 +614,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { Daemon, parse_options };
+module.exports = { Daemon, parse_options, read_build_marker };

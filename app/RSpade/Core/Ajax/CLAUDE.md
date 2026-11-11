@@ -42,9 +42,11 @@ endpoint, and every caller goes through it:
    `_request_ref` - the reference and the envelope outcome `{_success: true,
    _ajax_return_value}` (status 200). A reference this actor already used on this site is
    answered from the history before the endpoint runs: a replay (`_replayed: true`, the
-   original `_duration_ms` / `_completed_at`), or `request_ref_reused` /
+   original `_duration_ms` / `_completed_at`), or `request_ref_reused` (on the same endpoint
+   metadata `{completed_at, original}` - the stored `_ajax_return_value` while kept) /
    `request_response_expired` - thrown as `Request_History_Answer`, so nothing is written,
-   and rendered by `call_envelope()`. `_request_ref` never reaches `$params`.
+   and rendered by `call_envelope()`. `_request_ref` never reaches `$params`. Browser senders:
+   `Rsx_Form` (every submission) and `Ajax.action()`.
 
 It returns the raw result (a value or an `Rsx_Response_Abstract`) or throws.
 
@@ -135,7 +137,13 @@ envelope: the sign-in rotated the browser's tokens, and the client swaps
   sentence and an `error_id` otherwise. `Ajax::is_coded_failure($e)` is the coded/fault
   test (the ORM fetch uses it too).
 
-Every envelope is HTTP 200. Pending flash alerts are read once, after the last call, and
+Every envelope is HTTP 200. **The one exception is an infrastructure outage**
+(`Exceptions/Infrastructure_Outage::is_outage()`: the lock daemon or the database connection
+gone): `call_envelope()` rethrows it instead of answering the call, so no later call of the
+batch runs; the front controller reports it once and `Ajax_Exception_Handler` answers the
+whole request HTTP 500 through `Ajax::outage_response()` - the fatal fields with NO side
+channels, because those read the session and the database. The client rejects every call
+with `server_error`. Pending flash alerts are read once, after the last call, and
 ride on the LAST call's envelope; console messages ride on the call that produced them.
 
 ## Whole-request refusals answer every call

@@ -29,8 +29,9 @@
  * submit() returns a promise resolving with the server result on success and false on
  * any failure (client validation, server validation, transport). The pipeline:
  * re-entrancy guard -> clear errors -> client _validate() pass -> serialize ->
- * before_submit hook -> spinner -> Ajax -> success (clear dirty/parked, fire
- * 'submitted', honor result.redirect via Rsx.navigate() with result.redirect_via as its
+ * before_submit hook -> spinner -> Ajax, with the form's _request_ref -> success (clear
+ * dirty/parked, keep or replace the reference, fire 'submitted' (and 'replayed' for an answer
+ * from the request history), honor result.redirect via Rsx.navigate() with result.redirect_via as its
  * {via}, resolve result) or failure (render errors, fire
  * 'submit_error', resolve false). Buttons of type="submit" inside the form are
  * auto-wired, the form's own submit event is bound so Enter in a text input submits
@@ -122,6 +123,43 @@
  *
  * Contract of record, including the recommended question shapes: rsx:man form_conventions.
  *
+ * ── Resubmitting: the request reference ──────────────────────────────────────────────
+ *
+ * Every call submit() makes carries a _request_ref (rsx:man request_history), so a
+ * submission whose answer never arrived - a dropped connection, a 5xx, an answer missing the
+ * call - is answered from the request history when the user presses Save again, instead of
+ * writing twice. Endpoints and forms write nothing for it; the endpoint must be a writer.
+ *
+ * THE REFERENCE belongs to the form's IDENTITY on the browser HISTORY ENTRY: the identity is
+ * the parking key (controller|method|record id or 'new'), and it is kept in the entry's state
+ * (Rsx_Navigation._entry_value()), so the form a user reaches again by Back - a new instance
+ * - or by reloading that entry sends the SAME reference. A form inside a dialog (<dialog>,
+ * role="dialog") is bound to its INSTANCE instead: reopening a dialog is a new act. So is the
+ * second live form claiming an identity another live form on the page already holds.
+ *
+ *   kept         while submissions fail: a transport failure, a validation error, a question
+ *                (the latter two record nothing, so the corrected resend simply runs)
+ *   marked used  on a success that navigates away (result.redirect): coming Back to the entry
+ *                and submitting again is answered from the history, not run a second time
+ *   replaced     on a success that leaves the form on screen: the next submission is new
+ *
+ * WHAT THE USER SEES. A replayed success IS a success - the success path runs with the stored
+ * result (redirect followed), 'replayed' ({result, completed_at}) fires, and the application's
+ * replay notice is called. A request_ref_reused refusal (the entry's form already succeeded and
+ * the values changed) or request_response_expired goes to the application's RESUBMIT HANDLER,
+ * which answers 'new' (a fresh reference, the current values submitted) or
+ * Rsx_Form.CANCELLED (stop, form left open). Both are registered once per application:
+ *
+ *     Rsx_Form.set_replay_notice((result, context) => ...);        // {form, completed_at}
+ *     Rsx_Form.set_resubmit_handler(async (context) => 'new' | Rsx_Form.CANCELLED);
+ *     //   context: {form, completed_at, original, expired}
+ *
+ * Neither is required: with no notice a replay is a silent success; with no resubmit handler
+ * the refusal renders as the form's error, saying the form was already submitted, and the
+ * reference is replaced so that submitting again saves it as new. already_submitted() is true
+ * once this entry's reference has succeeded. Contract of record: rsx:man form_conventions,
+ * RESUBMITTING.
+ *
  * ── Unsaved changes: dirty() and the 'dirty' event ───────────────────────────────────
  *
  * dirty() is true when any input holds a value the USER changed from what the form was
@@ -188,6 +226,24 @@ class Rsx_Form extends Component {
     /** The application's question handler. Registered once - see set_question_handler(). */
     static _question_handler = null;
 
+    /** The application's replay notice. Registered once - see set_replay_notice(). */
+    static _replay_notice = null;
+
+    /** The application's resubmit handler. Registered once - see set_resubmit_handler(). */
+    static _resubmit_handler = null;
+
+    /** The resubmit handler's answer that submits the current values as a new submission. */
+    static RESUBMIT_AS_NEW = 'new';
+
+    /**
+     * The per-entry state key under which forms keep their references
+     * (Rsx_Navigation._entry_value()): {identity: {ref, used}}.
+     */
+    static ENTRY_STATE_KEY = 'rsx_form_refs';
+
+    /** identity => the live form whose reference is the history entry's (see __bind_ref()). */
+    static _entry_bound_forms = new Map();
+
     /**
      * Register the application's question handler.
      *
@@ -204,6 +260,46 @@ class Rsx_Form extends Component {
      */
     static set_question_handler(fn) {
         Rsx_Form._question_handler = fn;
+    }
+
+    /**
+     * Register the application's replay notice: called when a submission was answered from
+     * the request history (the user resubmitted something that had already been saved), after
+     * the success path ran and before any redirect is followed. Presentation only - a flash, a
+     * toast - and NOT awaited: the success path does not wait for it.
+     *
+     * Once per application, from a static on_app_modules_define(). A form may override it
+     * ($replay_notice=, or form.replay_notice = fn). With none anywhere a replay is a silent
+     * success.
+     *
+     * @param {Function} fn (result, {form, completed_at}) => void
+     */
+    static set_replay_notice(fn) {
+        Rsx_Form._replay_notice = fn;
+    }
+
+    /**
+     * Register the application's resubmit handler: called when a submission is refused
+     * because this form, on this history entry, already succeeded - with different values
+     * (request_ref_reused), or so long ago that its answer is no longer kept
+     * (request_response_expired, context.expired true). It returns:
+     *
+     *     Rsx_Form.RESUBMIT_AS_NEW ('new')   submit the current values under a fresh reference
+     *     Rsx_Form.CANCELLED                 stop; the form stays open with its values, nothing
+     *                                        rendered. A handler that navigates to the original
+     *                                        itself ("View it") returns this.
+     *
+     * Once per application, from a static on_app_modules_define(). A form may override it
+     * ($resubmit_handler=, or form.resubmit_handler = fn). With none anywhere the refusal
+     * renders as the form's error and the reference is replaced, so submitting again saves the
+     * values as new - never a silent skip.
+     *
+     * @param {Function} fn async (context) => 'new' | Rsx_Form.CANCELLED
+     *        context: {form, completed_at, original, expired}. original is the earlier
+     *        submission's result while the server still keeps it (its redirect, its id), else null
+     */
+    static set_resubmit_handler(fn) {
+        Rsx_Form._resubmit_handler = fn;
     }
 
     /**
@@ -271,6 +367,19 @@ class Rsx_Form extends Component {
          * Same signature as the global handler: (question, context) => answer.
          */
         this.question_handler = this.args.question_handler || null;
+
+        /**
+         * Optional per-form replay notice and resubmit handler, overriding the application's
+         * ($replay_notice=, $resubmit_handler=, or assigned by a host). Same signatures as
+         * set_replay_notice() / set_resubmit_handler().
+         */
+        this.replay_notice = this.args.replay_notice || null;
+        this.resubmit_handler = this.args.resubmit_handler || null;
+
+        // This form's request reference {ref, used}, bound at first need (__bind_ref()), and
+        // whether it is the history entry's or this instance's alone.
+        this._ref = null;
+        this._ref_on_entry = false;
 
         // Parse the $data seed (object, or JSON string when passed through Blade)
         let data = this.args.data;
@@ -385,6 +494,14 @@ class Rsx_Form extends Component {
         });
 
         this.__announce_dirty();
+    }
+
+    on_stop() {
+        // The identity is free for the next form that claims it (the successor of a re-render,
+        // the form reached again by Back).
+        if (Rsx_Form._entry_bound_forms.get(this._parking_key) === this) {
+            Rsx_Form._entry_bound_forms.delete(this._parking_key);
+        }
     }
 
     /**
@@ -652,23 +769,81 @@ class Rsx_Form extends Component {
 
         try {
             let result = null;
+            let detail = null;
 
             // The question loop. One pass per call to the endpoint: normally exactly one,
-            // and one more for each question the server asks and the user answers.
+            // one more for each question the server asks and the user answers, and one more
+            // when the user resubmits a refused submission as new.
             while (true) {
                 const payload = Object.assign({}, values, edit_state);
                 if (asked > 0) {
                     payload._answers = Object.assign({}, answers);
                 }
+                payload._request_ref = this.__bind_ref().ref;
                 let question = null;
+                let refusal = null;
 
                 try {
-                    result = await Ajax.call(url, payload);
+                    detail = await Ajax.call_detailed(url, payload);
+                    result = detail.value;
                 } catch (error) {
-                    if (!error || error.code !== Ajax.ERROR_QUESTION) {
+                    if (error && error.code === Ajax.ERROR_QUESTION) {
+                        question = error.metadata || {};
+                    } else if (Rsx_Form.__is_resubmit_refusal(error)) {
+                        refusal = error;
+                    } else {
                         throw error;
                     }
-                    question = error.metadata || {};
+                }
+
+                if (refusal !== null) {
+                    this._set_submitting($submit_btns, false);
+                    if (this.is_stopped()) return false;
+
+                    const metadata = refusal.metadata || {};
+                    const handler = typeof this.resubmit_handler === 'function'
+                        ? this.resubmit_handler
+                        : Rsx_Form._resubmit_handler;
+
+                    if (typeof handler !== 'function') {
+                        // No handler: say so in the form and make the next submit a new one.
+                        // Left as it was, every later submit on this entry - a reload of it
+                        // included - would be refused the same way.
+                        this.__mint_ref();
+                        await this.render_error({
+                            code: refusal.code,
+                            message: Rsx_Form.__already_submitted_message(metadata.completed_at),
+                            metadata: {},
+                        });
+                        if (this.is_stopped()) return false;
+                        this.trigger('submit_error', refusal);
+                        return false;
+                    }
+
+                    const answer = await handler({
+                        form: this,
+                        completed_at: metadata.completed_at || null,
+                        original: metadata.original === undefined ? null : metadata.original,
+                        expired: refusal.code === Ajax.ERROR_REQUEST_RESPONSE_EXPIRED,
+                    });
+
+                    if (Rsx_Form.is_cancelled(answer)) {
+                        return false;
+                    }
+
+                    if (answer !== Rsx_Form.RESUBMIT_AS_NEW) {
+                        const misanswered = new Error(
+                            `Rsx_Form: the resubmit handler answered ${json_encode(answer)}. It returns ` +
+                            "Rsx_Form.RESUBMIT_AS_NEW ('new') or Rsx_Form.CANCELLED. See rsx:man form_conventions (RESUBMITTING)."
+                        );
+                        misanswered.rsx_form_configuration_error = true;
+                        throw misanswered;
+                    }
+
+                    if (this.is_stopped()) return false;
+                    this.__mint_ref();
+                    this._set_submitting($submit_btns, true);
+                    continue;
                 }
 
                 if (question === null) {
@@ -719,6 +894,16 @@ class Rsx_Form extends Component {
             this._touched = {};
             this._clear_parking();
 
+            // The reference: a success that navigates away leaves it on the entry, used, so
+            // coming Back and submitting again is answered from the history; a form that
+            // stays on screen gets a new one, because its next submission is a new act.
+            if (result && result.redirect) {
+                this._ref.used = true;
+                this.__store_ref();
+            } else {
+                this.__mint_ref();
+            }
+
             // A form stopped during the round trip (its dialog closed, the page left) still
             // resolves with the server's result for its caller; only the steps that act on
             // the form and its inputs, and the redirect, are skipped.
@@ -737,6 +922,11 @@ class Rsx_Form extends Component {
 
             this.trigger('submitted', result);
 
+            if (detail.replayed) {
+                this.trigger('replayed', { result: result, completed_at: detail.completed_at });
+                this.__notify_replay(result, detail.completed_at);
+            }
+
             if (result && result.redirect) {
                 // Navigating away - the spinner deliberately stays until the page goes.
                 // Through the one door, so a breadcrumb origin survives the move whether it
@@ -751,8 +941,9 @@ class Rsx_Form extends Component {
         } catch (error) {
             this._set_submitting($submit_btns, false);
 
-            // A missing question handler is a configuration fault, not a failed submit.
-            // It escapes rather than being rendered - see Rsx_Form.ask().
+            // A missing question handler, or a resubmit handler giving an answer the protocol
+            // does not have, is a configuration fault, not a failed submit. It escapes rather
+            // than being rendered - see Rsx_Form.ask().
             if (error && error.rsx_form_configuration_error) {
                 throw error;
             }
@@ -765,6 +956,125 @@ class Rsx_Form extends Component {
         } finally {
             this._submitting = false;
         }
+    }
+
+    // =========================================================================
+    // The request reference (see the class docblock, Resubmitting)
+    // =========================================================================
+
+    /**
+     * Has this form's reference already succeeded - typically a create form reached again by
+     * Back after it saved? A host may show a notice before the user types ("You already
+     * saved this form - submitting it again will not create another record").
+     *
+     * @returns {boolean}
+     */
+    already_submitted() {
+        return this.__bind_ref().used;
+    }
+
+    /**
+     * This form's reference {ref, used}, bound at first need: the one its history entry holds
+     * for this identity, else a new one written there. Bound late, not in on_create(), so the
+     * form is in the document and its dialog ancestry can be seen.
+     */
+    __bind_ref() {
+        if (this._ref !== null) {
+            return this._ref;
+        }
+
+        this._ref_on_entry = this.__claims_entry();
+
+        if (this._ref_on_entry) {
+            const refs = Rsx_Navigation._entry_value(Rsx_Form.ENTRY_STATE_KEY) || {};
+            const kept = refs[this._parking_key];
+
+            if (kept && typeof kept.ref === 'string') {
+                this._ref = { ref: kept.ref, used: kept.used === true };
+                return this._ref;
+            }
+        }
+
+        this.__mint_ref();
+        return this._ref;
+    }
+
+    /**
+     * Is this form's reference the history entry's? Not inside a dialog (reopening one is a
+     * new act), and not while another live form on the page already holds this identity -
+     * two simultaneous forms with one identity cannot be told apart on Back, so the first to
+     * claim it keeps it and the other is bound to its instance.
+     */
+    __claims_entry() {
+        if (this.$.closest('dialog, [role="dialog"], [role="alertdialog"]').exists()) {
+            return false;
+        }
+
+        const holder = Rsx_Form._entry_bound_forms.get(this._parking_key);
+
+        if (holder && holder !== this && !holder.is_stopped()) {
+            console_debug('FORMS', 'request reference bound to the instance: another live form holds '
+                + this._parking_key);
+            return false;
+        }
+
+        Rsx_Form._entry_bound_forms.set(this._parking_key, this);
+        return true;
+    }
+
+    /** A fresh reference, not yet used, written to the entry when the form is bound to it. */
+    __mint_ref() {
+        this._ref = { ref: Ajax.request_ref(), used: false };
+        this.__store_ref();
+    }
+
+    /**
+     * Write this form's reference to its history entry. Skipped once the form is stopped: the
+     * browser may be on another entry by then, and the entry the form was on already holds
+     * the reference it sent.
+     */
+    __store_ref() {
+        if (!this._ref_on_entry || this.is_stopped()) {
+            return;
+        }
+
+        const refs = Object.assign({}, Rsx_Navigation._entry_value(Rsx_Form.ENTRY_STATE_KEY) || {});
+        refs[this._parking_key] = { ref: this._ref.ref, used: this._ref.used };
+        Rsx_Navigation._set_entry_value(Rsx_Form.ENTRY_STATE_KEY, refs);
+    }
+
+    /** Call the replay notice (per-form, else the application's), not awaited. */
+    __notify_replay(result, completed_at) {
+        const notice = typeof this.replay_notice === 'function' ? this.replay_notice : Rsx_Form._replay_notice;
+
+        if (typeof notice === 'function') {
+            notice(result, { form: this, completed_at: completed_at });
+        }
+    }
+
+    /**
+     * Is this Ajax error a resubmit refusal - this form's reference already succeeded? A
+     * request_ref_reused refusal carries completed_at only when it was refused on the SAME
+     * endpoint; on another endpoint it is a client defect and renders as an error.
+     */
+    static __is_resubmit_refusal(error) {
+        if (!error) {
+            return false;
+        }
+
+        if (error.code === Ajax.ERROR_REQUEST_RESPONSE_EXPIRED) {
+            return true;
+        }
+
+        return error.code === Ajax.ERROR_REQUEST_REF_REUSED && !!(error.metadata && error.metadata.completed_at);
+    }
+
+    /** The form's own message for a refused resubmission when the application registered no handler. */
+    static __already_submitted_message(completed_at) {
+        const when = completed_at ? ' on ' + Rsx_Time.format_timestamp(completed_at) : '';
+
+        return `This form was already submitted${when}, so nothing was saved this time. `
+            + 'Submit it again to save it as a new submission.';
     }
 
     /**

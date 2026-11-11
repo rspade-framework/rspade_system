@@ -15,6 +15,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Locks\Site_Lock;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Concurrency;
@@ -449,7 +450,8 @@ class Task_Runner
     }
 
     /**
-     * The fields that mark a row RUNNING in THIS process: started now, here, by this pid. A
+     * The fields that mark a row RUNNING in THIS process: started now, here, by this pid and
+     * its kernel start time (the pair names this process even after the pid is reused). A
      * pool worker adds its pool identity (worker_id, worker_generation).
      */
     public static function running_fields(): array
@@ -460,6 +462,7 @@ class Task_Runner
             'status_id' => Task_Run_Model::STATUS_RUNNING,
             'started_at' => $now,
             'worker_pid' => getmypid(),
+            'worker_pid_start_time' => Process_Identity::start_time(getmypid()),
             'worker_host' => Task_Pool::host(),
             'updated_at' => $now,
         ];

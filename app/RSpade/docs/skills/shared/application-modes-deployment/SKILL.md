@@ -122,7 +122,9 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 
 ## The seal
 
-`build/prod_seal.json` pins: **build_key, mode, git commit, and a per-asset sha256** (the manifest index, `build_key`, every file under `bundles/`, `bundle_models/` and `bundle_outputs/`). A migration changes none of them. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
+`build/prod_seal.json` pins: **build_key, mode, the build identity (commit, framework_revision, built_at), and a per-asset sha256** (the manifest index, `build_key`, every file under `bundles/`, `bundle_models/` and `bundle_outputs/`). A migration changes none of them. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
+
+**The build identity** is what `Rsx::build_info()` (and the OpenAPI `x-build`) reports. `rsx:build` reads both revisions from git; on a host deployed WITHOUT `.git` (rsync, an archive) the deploy step passes them: `rsx:build --force --commit=<sha> --framework-revision=<sha>` (a development build refuses both). Never run git at request time for it - each part is null when unknown (a development box, a seal of another build key). `rsx:man prod`, BUILD IDENTITY.
 
 `rsx:prod:verify` is the cluster/CI tool: it recomputes the sha256 of every sealed asset and checks the on-disk build_key against the seal, and reports OPcache posture (advisory). Table out, **exit 0 when the build matches, 1 otherwise** - put it in the deploy health check next to `rsx:health`.
 

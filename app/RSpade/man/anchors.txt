@@ -58,6 +58,13 @@ THE RESERVED HASH KEY
     pasted URL keeps working:
 
         /docs/chapter#installation   ->  {at: 'installation'}
+
+    A second reserved key, `_scroll` (Rsx.HASH_SCROLL_KEY), carries a
+    ONE-TIME position (_scroll=<y> or <x>,<y>) for a link that lands where a
+    page was left - a breadcrumb returning to a list. The SPA removes it from
+    the URL before the history entry is written and applies it as a
+    restoration (case 2 below the anchor, above the top). See
+    rsx:man breadcrumb_origins, RETURNING TO THE STATE YOU LEFT.
         /docs/chapter#at=installation ->  {at: 'installation'}
 
     Why normalize rather than read the bare fragment directly

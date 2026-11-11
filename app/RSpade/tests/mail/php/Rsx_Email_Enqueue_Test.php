@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
+use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Attachment_Model;
@@ -226,6 +227,58 @@ class Rsx_Email_Enqueue_Test extends Rsx_Test_Abstract
 
         static::__assert_equals('support@example.com', $record->reply_to, 'the reply address is on the row');
         static::__assert_equals('Support Desk', $record->reply_to_name, 'and its display name');
+    }
+
+    /**
+     * from() is frozen onto the row like reply_to(): the drain sends what the row says,
+     * so the application setting the address came from may change without rewriting a
+     * message already queued.
+     */
+    public static function test_from_is_recorded_as_an_address_and_a_name()
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        $record = static::__with_dev_whitelist(function () {
+            return (new Mail_Notification_Fixture_Email())
+                ->to(static::__address('from'))
+                ->from('first@example.com')
+                ->from('Billing@Example.com', 'Billing Office')
+                ->send();
+        });
+
+        static::__assert_equals('billing@example.com', $record->from_address, 'the later from() replaced the earlier one, normalised');
+        static::__assert_equals('Billing Office', $record->from_name, 'and its display name is on the row');
+    }
+
+    /**
+     * No from() means no sender on the row: the configured one is read when the message
+     * is built, exactly as before the column existed.
+     */
+    public static function test_a_send_without_from_records_no_sender()
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        $record = static::__with_dev_whitelist(
+            fn () => (new Mail_Notification_Fixture_Email())->to(static::__address('no_from'))->send()
+        );
+
+        static::__assert_null($record->from_address, 'no sender override on the row');
+        static::__assert_null($record->from_name, 'and no display name');
+    }
+
+    /**
+     * A malformed From would fail every message of its kind in the drain; it fails once,
+     * at the call that named it.
+     */
+    public static function test_a_malformed_from_throws_at_the_call()
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        static::__assert_throws(
+            \InvalidArgumentException::class,
+            fn () => (new Mail_Notification_Fixture_Email())->from('billing at example dot com'),
+            'not a valid email address'
+        );
     }
 
     /**
@@ -630,6 +683,77 @@ class Rsx_Email_Enqueue_Test extends Rsx_Test_Abstract
         } finally {
             @unlink($path);
         }
+    }
+
+    /**
+     * A stored File_Attachment_Model is attached by REUSING its blob: the queue's
+     * attachment row points at the very storage row the upload already has, under the
+     * upload's own name and type.
+     */
+    public static function test_attach_reuses_a_stored_files_blob()
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        $stored = File_Attachment_Model::create_from_string(
+            'stored-' . uniqid(),
+            'statement.txt',
+            ['site_id' => self::SITE_ID]
+        );
+
+        $record = static::__with_dev_whitelist(
+            fn () => (new Mail_Notification_Fixture_Email())
+                ->to(static::__address('stored_attach'))
+                ->attach($stored)
+                ->send()
+        );
+
+        $attachments = Email_Attachment_Model::where('email_queue_id', $record->id)->get();
+
+        static::__assert_count(1, $attachments, 'one attachment row was written');
+        static::__assert_equals(
+            (int) $stored->file_storage_id,
+            (int) $attachments[0]->file_storage_id,
+            'it points at the stored file\'s own blob - nothing was copied'
+        );
+        static::__assert_equals('statement.txt', $attachments[0]->file_name, 'under the stored file\'s name');
+        static::__assert_equals(
+            Email_Attachment_Model::DISPOSITION_ATTACHMENT,
+            (int) $attachments[0]->disposition_id,
+            'as an attachment'
+        );
+    }
+
+    public static function test_embed_reuses_a_stored_files_blob()
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        $stored = File_Attachment_Model::create_from_string(
+            base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+            'pixel_' . uniqid() . '.png',
+            ['site_id' => self::SITE_ID]
+        );
+
+        $record = static::__with_dev_whitelist(
+            fn () => (new Mail_Notification_Fixture_Email('Notice', true))
+                ->to(static::__address('stored_embed'))
+                ->embed('fixture_image', $stored)
+                ->send()
+        );
+
+        $attachment = Email_Attachment_Model::where('email_queue_id', $record->id)->first();
+
+        static::__assert_not_null($attachment, 'the inline attachment row was written');
+        static::__assert_equals(
+            (int) $stored->file_storage_id,
+            (int) $attachment->file_storage_id,
+            'it points at the stored image\'s own blob'
+        );
+        static::__assert_equals(
+            Email_Attachment_Model::DISPOSITION_INLINE,
+            (int) $attachment->disposition_id,
+            'as an inline part'
+        );
+        static::__assert_equals('fixture_image', $attachment->cid, 'under the content id the template uses');
     }
 
     public static function test_attaching_a_file_that_does_not_exist_throws()

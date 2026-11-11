@@ -46,7 +46,13 @@ use JsonSerializable;
  * row - fingerprint, payload, timing - but never its reference: a failed answer is not one a
  * retry should be handed back, and the corrected request reuses the reference. Readers record
  * nothing. page routes and companion endpoints have their writer row (the eager mint) and
- * carry no references.
+ * carry no references. A request whose transaction committed is a success even when an
+ * after-commit callback then throws (reported, never answered: Rsx_DatabaseTransactionsManager), so
+ * what was recorded and what was answered agree.
+ *
+ * BROWSER CALLERS. Rsx_Form sends a reference on every submission, bound to the browser history
+ * entry and the form's identity; Ajax.action() keeps one per user action and endpoint
+ * (rsx:man form_conventions, RESUBMITTING). Plain Ajax.call() sends none.
  *
  * THE REFERENCE. `_request_ref` (REF_PARAM) is a system parameter on every Ajax and external
  * API endpoint: a string of 1 to REF_MAX_LENGTH characters, anything else refused as a
@@ -65,7 +71,9 @@ use JsonSerializable;
  *       status and body with _replayed: true and the ORIGINAL _duration_ms / _completed_at;
  *   found, same endpoint, same fingerprint, response pruned  -> 410 request_response_expired
  *       naming the original completed_at;
- *   found with a different fingerprint, or on a different endpoint -> 409 request_ref_reused;
+ *   found on the same endpoint with a different fingerprint -> 409 request_ref_reused naming
+ *       the original completed_at and, while it is kept, the original answer (`original`);
+ *   found on a different endpoint -> 409 request_ref_reused, nothing more (a client defect);
  *   not found -> the request runs, and is recorded at commit as above.
  *
  * A refusal and a replay are thrown as a Request_History_Answer from inside the boundary, so

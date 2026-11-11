@@ -47,8 +47,13 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
      *
      * sites excludes site 0, the Default site - an infrastructure FK target for
      * sessionless writes, never a tenant (Site_Model_Abstract::booted()).
+     *
+     * #[Manual_Lock]: every count is install-wide and reads no one site's data, so the
+     * site's read lock bought nothing. live_workers is read from rsx-lockd itself, so while
+     * the lock daemon is down this endpoint still fails, naming that.
      */
     #[Ajax_Endpoint]
+    #[Manual_Lock]
     public static function summary(Request $request, array $params = [])
     {
         return [
@@ -70,8 +75,13 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
     /**
      * The health report, exactly as rsx:health --json would describe this box's mode:
      * {mode, rows[{label, status, detail, remediation}], skipped[]}.
+     *
+     * #[Manual_Lock]: the report reads no site's data, and it must answer while rsx-lockd is
+     * down - the site lock every reader takes comes from that daemon, and the report is
+     * where its "Lock Server" and "Supervised Services" FAIL rows are read.
      */
     #[Ajax_Endpoint]
+    #[Manual_Lock]
     public static function health(Request $request, array $params = [])
     {
         return Health_Check_Runner::report();

@@ -61,6 +61,8 @@ class Mail_Show_Command extends Command
             'to_address' => $record->to_address,
             'to_name' => $record->to_name,
             'dev_original_to' => $record->dev_original_to,
+            'from_address' => $record->from_address,
+            'from_name' => $record->from_name,
             'reply_to' => $record->reply_to,
             'reply_to_name' => $record->reply_to_name,
             'cc' => $record->cc,
@@ -117,6 +119,8 @@ class Mail_Show_Command extends Command
             'Subject' => $payload['subject'],
             'To' => $this->__address($payload['to_address'], $payload['to_name']),
             'Originally to' => $payload['dev_original_to'],
+            // Only a from() override is on the row; without one the configured sender is used.
+            'From' => $this->__address($payload['from_address'], $payload['from_name']) ?? '(configured sender)',
             'Reply-To' => $this->__address($payload['reply_to'], $payload['reply_to_name']),
             'CC' => $this->__list($payload['cc']),
             'BCC' => $this->__list($payload['bcc']),

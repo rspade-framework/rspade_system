@@ -11,6 +11,7 @@ use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Health\Rsx_Container_Sizing;
 use App\RSpade\Core\Locks\Lockd_Connection;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 
 /**
  * The task worker pools, as accounted by rsx-lockd (the `pool.*` ops, system/app/RSpade/resource/docker/rsx-lockd
@@ -358,9 +359,9 @@ class Task_Pool
 
         try {
             $response = self::$connection->request(['op' => $op] + $fields);
-        } catch (RuntimeException $e) {
+        } catch (Lockd_Unavailable_Exception $e) {
             // The socket is gone, and with it everything the daemon held for it. Bookkeeping
-            // follows the daemon; the exception goes on to the caller untouched.
+            // follows the daemon; the outage goes on to the caller untouched.
             self::__forget();
 
             throw $e;

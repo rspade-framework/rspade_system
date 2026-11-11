@@ -227,14 +227,17 @@ says what is in this DIRECTORY and what must stay true when editing it.
   daemon sockets `Lockd_Connection::open_socket_inodes()` names
   (`RsxLocks::inherited_lock_fds()`); a new spawn path of a long-lived child must use one.
 - **Abandoned-worker recovery is evidence, never age.** A claim writes `worker_id` +
-  `worker_generation`, `worker_host` and `worker_pid` together; wherever they are cleared,
-  all four are. `rsx:task:process` asks the daemon about every RUNNING run with a
+  `worker_generation`, `worker_host` and `worker_pid` + `worker_pid_start_time` together
+  (`Task_Runner::running_fields()`); wherever they are cleared, all of them are. `rsx:task:process` asks the daemon about every RUNNING run with a
   `worker_id` in ONE `members_alive()` per pool, under that pool's lock: the daemon's own
   generation and not alive -> abandoned at once; an older generation (`known: false`) ->
-  this host judges its own runs by pid - the pid must be a task worker of this project
-  (`Task::is_worker_process()`, the command line; never bare pid existence, which a reused
-  pid satisfies) - and leaves other hosts' alone. A run with no
-  `worker_id` (inline) is the local pid probe on its own host. No grace period exists and
+  this host judges its own runs by pid - `Task::is_run_process()`: the pid must still be
+  the process the run recorded (`worker_pid_start_time`, `Core/Process/Process_Identity`)
+  and a task worker of this project (`Task::is_worker_process()`, the command line); never
+  bare pid existence, which a reused pid satisfies - and leaves other hosts' alone. A run
+  with no `worker_id` (inline) is the same pid + start-time probe on its own host, with no
+  command line to hold it to. The kill worker and the /_sys worker evidence ask
+  `is_run_process()` too, so a reused pid is never signalled. No grace period exists and
   none may be added. The silence limit (and a run's own requested timeout) is enforced as a
   force-kill REQUEST for a live local run.
 - **Abandonment is retried; a failure never is.** An abandoned DISPATCHED run goes back to

@@ -11,7 +11,8 @@ SYNOPSIS
         php artisan rsx:mode:set dev|debug|prod
 
     Produce and discard the build:
-        php artisan rsx:build [--force]
+        php artisan rsx:build [--force] [--commit=<sha>]
+                              [--framework-revision=<sha>]
         php artisan rsx:clean [--force]
 
     Inspect the box:
@@ -187,6 +188,42 @@ DESCRIPTION
     code without rebuilding leaves a box serving the old artifact - which is
     why every deployment recipe below ends in a build, and why
     rsx:prod:verify exists.
+
+  BUILD IDENTITY
+    The seal also records WHICH build this is, in the terms a person can match
+    to source - read back at run time by Rsx::build_info():
+
+        commit              the application commit (HEAD of the repository
+                            holding the project root)
+        framework_revision  the framework revision (HEAD of the repository
+                            holding system/ - its own when system/ is a
+                            submodule, else the application's, which then
+                            carries the framework)
+        built_at            when the build was made, ISO 8601 UTC
+        code_key            the build key (Manifest::get_build_key()) - not
+                            recorded, always the code being served
+
+    rsx:build reads the two revisions from git where it runs. A host that
+    carries no git metadata - code deployed by rsync or an archive with .git
+    excluded - is told them by the deploy step, which does know them:
+
+        php artisan rsx:build --force \
+            --commit="$(git rev-parse HEAD)" \
+            --framework-revision="$(git -C system rev-parse HEAD)"
+
+    (the $(...) evaluated on the machine that holds the checkout). A flag wins
+    over git; a value must be a git object name, 7 to 64 lowercase-able hex
+    digits, or the build refuses with nothing changed. A development build
+    seals nothing and refuses both flags. A CI ARTIFACT or CONTAINER IMAGE
+    (BUILD ELSEWHERE) is built where the checkout is, so it records both from
+    git with no flag.
+
+    Rsx::build_info() never runs git. Each recorded part is null when it is
+    not known rather than guessed: on a development box (it serves its working
+    tree, which is not a build), when the seal's build key is not the code
+    being served (a seal of another build - rsx:prod:verify reports the
+    drift), and for a revision the build could neither read nor was given.
+    The OpenAPI document carries it as x-build (rsx:man external_api).
 
   THE BUILD CONTEXT
     Permission to write the build tree is a property of the PROCESS, not of
@@ -493,14 +530,16 @@ THE READ-ONLY POSTURE
     than its parent would stop excluding anything.
 
 ADMINISTRATION
-    rsx:build [--force]
+    rsx:build [--force] [--commit=<sha>] [--framework-revision=<sha>]
         The build. In development: the manifest and every bundle, nothing
         sealed. In a prod mode: preflight, rsx:clean --force, manifest,
         mirror externals, bundles (minified in strict production), optimized
         composer autoloader (classmap-authoritative in strict production),
         Laravel event/view caches (RSX has no route cache), then the seal.
         Refuses without --force when a seal is already present, because
-        rebuilding replaces what the box is serving right now. The composer
+        rebuilding replaces what the box is serving right now. --commit and
+        --framework-revision record the build identity on a host with no git
+        metadata (BUILD IDENTITY). The composer
         dump writes into the tracked system/vendor/composer/; class
         overrides write nothing under system/ - the override map is sealed in build/ and
         is answered ahead of composer, the authoritative classmap included

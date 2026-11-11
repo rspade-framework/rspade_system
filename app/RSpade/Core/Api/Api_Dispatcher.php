@@ -164,9 +164,11 @@ class Api_Dispatcher
      *
      * A writer that recorded itself in the request history answers with exactly the timing
      * it recorded, and a replay's body already carries the original timing. A field the body
-     * already carries is left as it is. Only a JSON OBJECT body is stamped: the one other
-     * kind of answer an endpoint may give is a download (a file or streamed response, a
-     * non-JSON body), which is sent as it is.
+     * already carries is left as it is. Only a JsonResponse whose body is a JSON OBJECT is
+     * stamped - every ordinary answer, refusal and error. Two kinds of answer are sent as
+     * written: a download (a file or streamed response, a non-JSON body), and a DOCUMENT -
+     * a JSON body in a plain Response, which is what Rsx_Api::document() answers - for a
+     * standard-shaped body (an OpenAPI description) where an added field would be invalid.
      *
      * @param Response $response
      * @param Request $request

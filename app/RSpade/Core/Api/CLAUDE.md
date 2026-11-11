@@ -59,7 +59,8 @@ redacted payload and timing on its `_transactions` row inside its transaction, a
 2xx JSON-object response to a request carrying a reference - the reference, status and body.
 A reference this actor already used on this site is answered from the record before the
 method runs: the stored status and body plus `_replayed: true` and the original
-`_duration_ms` / `_completed_at`, or 409 `request_ref_reused` / 410
+`_duration_ms` / `_completed_at`, or 409 `request_ref_reused` (on the same endpoint
+`error.completed_at` and, while kept, `error.original` - the stored body) / 410
 `request_response_expired`. Every response object echoes a sent `_request_ref` at the top
 level - success, refusal, replay, the channel's 500 - through `Api_Dispatcher::stamp_response()`,
 the one point every answer passes, which also adds the timing fields.
@@ -77,7 +78,9 @@ the one point every answer passes, which also adds the timing fields.
   an integration alike. A caller learns that a key does not work, never why.
 - `Api_Endpoint_ManifestSupport.php` — scan-time validation of every declaration (the
   `/api/vN/` prefix, GET/POST only, an `#[Api_Param]` per `:token`, no mixing with
-  `#[Route]`/`#[Ajax_Endpoint]`); a violation fails the manifest build.
+  `#[Route]`/`#[Ajax_Endpoint]`); a violation fails the manifest build. It also expands
+  version ranges (`through:` / `#[Api_Versions(through: N)]`) and followers
+  (`#[Api_Versions(every: true)]`, recorded after everything else) into ordinary rows.
 - `Api_Param_Validator.php` — pure validate-and-coerce over the baked specs: undeclared keys
   rejected, defaults applied, `file` params passed through, text envelopes unwrapped.
 - `Api_Scopes.php` + `Api_Scope_Validation_Exception.php` — the scope language: one bare
@@ -90,17 +93,32 @@ the one point every answer passes, which also adds the timing fields.
 - `Api_Route_Usage.php` — last call per route PATTERN, at most one write a minute: answers
   "is anything still calling v1?".
 - `Api_Catalog.php`, `Api_Openapi.php` — read model over the catalog (version display rule,
-  resource grouping) and its pure projection into OpenAPI 3.1.
+  resource grouping) and its projection into OpenAPI 3.1: `_request_ref` on every writer
+  operation (the lock mode read off the same surface index the dispatcher reads), with 409 /
+  410 among its responses, and `x-build` = `Rsx::build_info()` (the build identity the seal
+  records) at the root. The framework declares NO document route - the application's own
+  routes serve it (the browser one beside the console, a key holder's as an ordinary GET
+  endpoint answering `Rsx_Api::document()`).
 - `Rsx_Api_Docs.php`, `Api_Tester_Key.php` — the `/apidocs` console as one call
   (`Rsx_Api_Docs::page()`): the application owns the route and the gate, the framework owns
-  the rest (UI lives in `Sys/app/apidocs/`). The tester key selects what the LISTING shows and
+  the rest (UI lives in `Sys/app/apidocs/`). The application may hand it content only:
+  `page()`'s `$sections` (`title` + `markdown`), validated and rendered through
+  `Markdown_Rendition::render()` at the call, baked into `rsxapp_data()` as `{slug, title, html}`. The tester key selects what the LISTING shows and
   grants nothing.
 - `Rsx_Api.php` — response helpers (`created()`, `not_found()`, the error family over
-  `Api_Dispatcher::_error()`).
-- `Identity_Api_Controller.php` (`GET /api/v1/me`) and `Files_Api_Controller.php`
-  (`POST /api/v1/files`, `GET /api/v1/files/:key[/text]`) — the framework's own endpoints, a
+  `Api_Dispatcher::_error()`), and `document()`: a JSON object in a plain `Response`, the one
+  object answer `stamp_response()` sends as written (it stamps a `JsonResponse` only) - for a
+  standard-shaped body such as an OpenAPI root, where the timing fields are invalid.
+- `Identity_Api_Controller.php` (`GET /api/vN/me`) and `Files_Api_Controller.php`
+  (`POST /api/vN/files`, `GET /api/vN/files/:key[/text]`) — the framework's own endpoints, a
   stable contract across installs. Attaching a file to a record is application policy, never
-  a framework endpoint.
+  a framework endpoint. Both carry `#[Api_Versions(every: true)]`: declared at v1, the
+  manifest expands them in a SECOND pass to every version the other declarations serve (from
+  the declared version up; v1 alone when nothing else is declared), so they live at the
+  application's supported prefix and leave a version the application retires (410).
+  `Rsx_Api_Bearer::authenticate_file_route()` probes a scoped key against
+  `/api/vN/files/anything` for every version serving `/files/:key`
+  (`Api_Catalog::versions_serving()`), granting on the first.
 - `Api_Cleanup_Service.php` — daily, chunked retention of the request log.
 - `Rsx_Webhook.php` — a stub that only logs events; no delivery exists.
 

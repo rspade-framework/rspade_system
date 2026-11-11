@@ -53,7 +53,7 @@ class Prod_Verify_Command extends Command
             $rows[] = $row;
         }
 
-        $this->info('Sealed ' . $sealed_mode . ' build (' . ($seal['created_at'] ?? 'unknown time') . ')');
+        $this->info('Sealed ' . $sealed_mode . ' build (' . ($seal['built_at'] ?? 'unknown time') . ')');
         $this->line('  Build key: ' . ($seal['build_key'] ?? 'unknown'));
         $this->newLine();
         $this->table(['Check', 'Status', 'Detail'], $rows);

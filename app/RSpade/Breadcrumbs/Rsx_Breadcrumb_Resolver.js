@@ -26,6 +26,11 @@
  * address bar keeps the _via or loses it (history.replaceState, never a new entry).
  * See rsx:man breadcrumb_origins.
  *
+ * Every crumb carries url (its page's identity - matching, caching, the sidebar) and href
+ * (the link to render): for a crumb above the current page, the page in the state the user
+ * left it in when they came through it on this trail (Spa.return_url(), Spa_Journal). The
+ * walk records each page's trail on its journal entry for that rule.
+ *
  * Callbacks receive a meta argument: {grafted, root_url, decider} - whether an origin
  * replaced a parent somewhere in the trail, the URL the trail starts at, and the
  * identity of the page that accepted the URL's first origin (or null).
@@ -59,7 +64,8 @@ class Rsx_Breadcrumb_Resolver {
      * @param {Spa_Action} action - The active action instance
      * @param {string} url - Current URL (pathname + search, no hash)
      * @param {object} callbacks - Callback functions:
-     *   - on_chain(chain, meta): Called when chain structure is ready (may have null labels)
+     *   - on_chain(chain, meta): Called when chain structure is ready (may have null labels);
+     *     each item {url, href, label, is_active, resolved} - render href, compare url
      *   - on_label_update(index, label): Called when individual label resolves
      *   - on_complete(chain, meta): Called when all labels resolved
      *   meta = {grafted: bool, root_url: string, decider: string|null}
@@ -193,6 +199,7 @@ class Rsx_Breadcrumb_Resolver {
         const next = (value === null ? Spa_Via.without(current) : Spa_Via.with_value(current, value)) + window.location.hash;
 
         history.replaceState({ ...(history.state || {}), via_decider: decider }, '', next);
+        Spa_Journal.note_url();
 
         if (Spa._last_committed_url !== null) {
             Spa._last_committed_url = next;
@@ -261,6 +268,24 @@ class Rsx_Breadcrumb_Resolver {
     }
 
     /**
+     * Give every crumb its href: the link a layout renders. For a crumb above the current
+     * page it is Spa.return_url() of the crumb's url - the page in the state the user left it
+     * in, when they came through it on this trail (Spa_Journal), else the url itself. The
+     * active crumb's href is its url. Computed at every emission and never cached: the url is
+     * the page's identity (per page, cached), the href is per journey.
+     *
+     * @param {Array<{url: string, is_active: boolean}>} chain
+     * @returns {Array} the same items, each with href
+     */
+    static _linked(chain) {
+        for (const item of chain) {
+            item.href = item.is_active ? item.url : Spa.return_url(item.url);
+        }
+
+        return chain;
+    }
+
+    /**
      * Main resolution orchestrator
      */
     static async _resolve(action, url, generation, callbacks) {
@@ -285,12 +310,12 @@ class Rsx_Breadcrumb_Resolver {
         if (cached) {
             // Show cached chain immediately
             if (!Rsx_Breadcrumb_Resolver._is_active(generation)) return;
-            callbacks.on_chain(cached_chain.map(item => ({
+            callbacks.on_chain(Rsx_Breadcrumb_Resolver._linked(cached_chain.map(item => ({
                 url: item.url,
                 label: item.label,
                 is_active: item.is_active,
                 resolved: true
-            })), cached.meta);
+            }))), cached.meta);
             showed_cached = true;
         }
 
@@ -304,6 +329,13 @@ class Rsx_Breadcrumb_Resolver {
 
         const chain_structure = walk.chain;
         const meta = Rsx_Breadcrumb_Resolver._meta(walk);
+
+        // The trail this page shows, recorded on its journal entry: a later page's crumb
+        // returns to a page in the state it was left in only while every page between showed
+        // that crumb (Spa_Journal.return_url()).
+        if (Spa._action === action) {
+            Spa_Journal.set_trail(Spa_Journal.current_key(), chain_structure.map(item => item.url));
+        }
 
         // Step 4: Compare to cache and build display chain
         const chain_length_matches = showed_cached && cached_chain.length === chain_structure.length;
@@ -328,12 +360,12 @@ class Rsx_Breadcrumb_Resolver {
         // Only emit if we didn't show cached OR if structure differs
         if (!showed_cached || !chain_length_matches) {
             if (!Rsx_Breadcrumb_Resolver._is_active(generation)) return;
-            callbacks.on_chain(chain.map(item => ({
+            callbacks.on_chain(Rsx_Breadcrumb_Resolver._linked(chain.map(item => ({
                 url: item.url,
                 label: item.label,
                 is_active: item.is_active,
                 resolved: item.label !== null
-            })), meta);
+            }))), meta);
         }
 
         // Step 6: Resolve labels progressively
@@ -373,12 +405,12 @@ class Rsx_Breadcrumb_Resolver {
         // Step 7: Cache the final result and notify completion
         Rsx_Breadcrumb_Resolver._cache_chain(url, chain, meta);
 
-        const final_chain = chain.map(item => ({
+        const final_chain = Rsx_Breadcrumb_Resolver._linked(chain.map(item => ({
             url: item.url,
             label: item.label,
             is_active: item.is_active,
             resolved: true
-        }));
+        })));
 
         callbacks.on_complete(final_chain, meta);
 

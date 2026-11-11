@@ -12,7 +12,10 @@ ask before a page with unsaved changes is left, and **breadcrumb origins** - the
 `Spa.js` `_rewrite_link_via()` / `via()` / `via_push()`, `Breadcrumbs/Rsx_Breadcrumb_Resolver.js`
 `settle_via()` / `_walk_chain_structure()`; test `playwright/breadcrumb_origins.js`) - and the **navigation door**, `Rsx.navigate()` /
 `Rsx.redirect()` (`Core/Js/Rsx_Navigation.js`: validate, classify, carry, one transport, the
-full-load hand-off read once by `Spa._on_spa_init()`; test `playwright/navigate.js`). Everything else in the SPA is either covered elsewhere (decorator transform
+full-load hand-off read once by `Spa._on_spa_init()`; test `playwright/navigate.js`) - and
+**crumbs returning to the state a page was left in** (`Core/SPA/Spa_Journal.js`, `Spa.return_url()`,
+the resolver's chain `href`, the one-time `_scroll` hash key in `Spa._dispatch()`; test
+`playwright/breadcrumb_return_state.js`, the template's half `rsx/tests/playwright/breadcrumb_return_state.js`). Everything else in the SPA is either covered elsewhere (decorator transform
 in `js_transform`, auth gating in `auth_gates`, the dispatcher's auth-rejection surface
 in `dispatch`) or catalogued below as a coverage hole.
 
@@ -81,6 +84,7 @@ node app/RSpade/tests/spa/playwright/history_scroll_and_veto.js
 node app/RSpade/tests/spa/playwright/fragment_popstate.js
 node app/RSpade/tests/spa/playwright/navigate.js
 node app/RSpade/tests/spa/playwright/breadcrumb_origins.js
+node app/RSpade/tests/spa/playwright/breadcrumb_return_state.js
 ```
 
 Run one file at a time. `spa_action_title.js` drives the TEMPLATE app (`/contacts`,

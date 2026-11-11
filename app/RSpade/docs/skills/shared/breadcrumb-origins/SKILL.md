@@ -1,6 +1,6 @@
 ---
 name: breadcrumb-origins
-description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip (across full page loads too), Rsx.navigate()'s {via: 'drop'|'continue'} and a form's redirect_via, new tabs, nesting, the meta {grafted, root_url} a sidebar follows. Use when a page crumbs to the wrong parent after a detour or loses its origin after a create page's Save, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
+description: "Giving an SPA page an alternate breadcrumb parent when it is reached from another record - the reserved _via parameter, Spa.via_push(), static breadcrumb_via + breadcrumb_parent_via(via) verifying the claim, carry and strip (across full page loads too), Rsx.navigate()'s {via: 'drop'|'continue'} and a form's redirect_via, new tabs, nesting, the meta {grafted, root_url} a sidebar follows, and crumbs returning to the state a page was left in (the chain item's href, Spa.return_url(), the _scroll hash key, Spa_Journal). Use when a crumb, Back or Cancel link resets a list's sort, filters, page or scroll, when a page crumbs to the wrong parent after a detour or loses its origin after a create page's Save, when replacing a from= / return_to= / parent_* argument, on SPA-VIA-01, or when _via vanishes from the URL."
 ---
 
 # Breadcrumb Origins
@@ -94,12 +94,37 @@ completes. A grafted page lights the section its TRAIL starts in: the template's
 `Sidebar_Nav.follow_trail(meta)` matches `meta.root_url` first and falls back to the current
 URL. An app with its own sidebar does the same from `on_breadcrumb_complete()`.
 
+## Returning to the state you left
+
+A crumb's `href` (not its `url`) is the link to render. For a crumb above the current page it
+is that page in the state the user LEFT it in - its fragment (a grid's sort, filters, page, a
+tab) plus the one-time scroll key `_scroll=<y>` - when they came through it on this trail:
+the nearest earlier entry of this tab's journey that is that page, reached without passing a
+page whose trail did not show it. Otherwise it is the bare route. The SPA keeps the per-tab
+journal (`Spa_Journal`, session storage) by itself; nothing to declare.
+
+- **A layout renders `crumb.href`**, and compares / caches on `crumb.url`.
+- **A Back / Cancel button or a deleted record's exit** to a page on the trail uses the same
+  answer: `Spa.return_url(Rsx.Route('Clients_Index_Action'))` (synchronous; the URL unchanged
+  when the rule does not hold).
+- **A list's fragment keys must be STABLE** - a name, never a component id - or the grid of
+  the next visit does not read them back (the template grid uses its component name,
+  `$hash_ns` to override).
+- **`_scroll` is reserved**: never write it while scrolling, never use it for page state. The
+  SPA removes it from the address before the entry is written and applies it through the Back
+  restoration (which yields to the user's own scroll).
+- **A component's first load must not move the page** (no scroll-to-self on load), or it
+  undoes the restoration - and Back's too.
+
 ## Checking it
 
 - `rsx:debug '/billing/invoices/123?_via=engagement.156' --user=1`: the trail ends at the
   engagement's Billing tab, and `--eval="return location.search"` still shows the `_via`.
 - With an invoice that does not belong to engagement 156: the plain trail, and `_via` gone
   from the URL.
+- Returning state: sort/filter/scroll a list, open a record, then
+  `--eval="return $('.Breadcrumb_Nav a').first().attr('href')"` shows the list's fragment and
+  `_scroll`; `Rsx_Storage.session_get('spa_journal')` shows the journal.
 - `console_debug` channel `Spa` says why a `_via` was stripped (malformed, nobody accepted
   the first origin, a different decider).
 

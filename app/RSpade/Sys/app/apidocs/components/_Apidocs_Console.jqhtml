@@ -20,11 +20,16 @@ Carries the _Apidocs_Page class so every frame rule in _Apidocs_Page.scss applie
 </div>
 
 <div class="_Apidocs_Page__body">
-    <_Apidocs_Sidebar $sid="sidebar" $version=version $active=this.state.slug />
+    <_Apidocs_Sidebar $sid="sidebar" $version=version $active=this.state.slug $active_section=this.state.section />
 
     <div class="_Apidocs_Page__main" $redrawable $sid="main">
+        <% const section = _Apidocs_Catalog.find_section(this.state.section); %>
         <% const endpoint = _Apidocs_Catalog.find_endpoint(version, this.state.slug); %>
-        <% if (!_Apidocs_Catalog.exists()) { %>
+        <%-- An application section first: it is the application's prose and is shown even
+             where no endpoint is defined or listed. --%>
+        <% if (section) { %>
+            <_Apidocs_Section $section=section />
+        <% } else if (!_Apidocs_Catalog.exists()) { %>
             <div class="_Apidocs_Page__notice">No external API endpoints are defined.</div>
         <% } else if (endpoint) { %>
             <%-- A multipart endpoint gets the card whose tester can actually send one. The

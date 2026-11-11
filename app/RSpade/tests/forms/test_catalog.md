@@ -227,3 +227,25 @@ and the class is called with `window.rsxapp.is_spa` set to each value.
 | forms-blade-ac-04 | a `<select>` is not touched | `<select>` | no attribute | implemented |
 | forms-blade-ac-05 | an SPA page is left alone | the same fields, `is_spa` true | token-less fields carry no attribute; tokens kept | implemented |
 | forms-blade-ac-06 | the page reported no error | - | no `pageerror` / `console.error` | implemented |
+
+## form_request_ref.js (playwright) - the request reference and resubmission
+
+Every call `Rsx_Form.submit()` makes carries a `_request_ref` bound to the form's identity on the
+browser history entry (`rsx:man form_conventions`, RESUBMITTING). Probe forms are built at run
+time inside the `/_sys` SPA action; the endpoint is answered by the script at the network level
+with a request history that follows the server contract (replay on the same fingerprint,
+`request_ref_reused` with `{completed_at, original}` on a changed one, `request_response_expired`
+on demand), counting the rows it "wrote". The server half is `Request_History_Test`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-ref-01 | a lost answer is resent under the same reference | first answer replaced by a 502 after the server recorded it; submit again | same ref twice, stored answer resolved, `'replayed'` `{result, completed_at}` once, replay notice once, one row | implemented |
+| forms-ref-02 | a form that stays on screen gets a new reference | submit again after a success with no redirect | a new ref, a second row | implemented |
+| forms-ref-03 | a validation error and a question keep the reference | blank title, then a question, then the corrected submit | one ref across all three calls; the last runs | implemented |
+| forms-ref-04 | Back finds the used reference | success redirects; Back; a new instance on the entry | `already_submitted()` true, the same ref | implemented |
+| forms-ref-05 | the same values from Back replay | submit the new instance unchanged | the original answer, its redirect followed, no new row | implemented |
+| forms-ref-06 | changed values reach the resubmit handler | Back, change, handler CANCELLED then `'new'` | context `{form, completed_at, original, expired: false}`; CANCELLED renders nothing and keeps values; `'new'` writes under a fresh ref | implemented |
+| forms-ref-07 | an expired answer reaches the handler | `request_response_expired` | `expired: true`, `original` null | implemented |
+| forms-ref-08 | with no resubmit handler the refusal renders and the next submit is new | handlers cleared | `<Form_Errors />` says already submitted; ref replaced; next submit writes | implemented |
+| forms-ref-09 | dialog and duplicate identities are instance-bound | two live forms of one identity; one inside `role="dialog"` | only the first page form's ref is on the entry | implemented |
+| forms-ref-10 | `Ajax.action()` | lost answer then retry; success; another endpoint | retry resends the ref and is `replayed`; success replaces it; each endpoint its own | implemented |

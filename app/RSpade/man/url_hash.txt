@@ -27,9 +27,17 @@ DESCRIPTION
     dropped on the next write - so any component writing hash state silently
     destroyed the anchor. See `php artisan rsx:man anchors`.
 
-    RESERVED KEYS. Application code must not use `at` (the anchor target) for
-    its own values, nor a key a hash-writing component on the same page owns
+    RESERVED KEYS. Application code must not use `at` (the anchor target) or
+    `_scroll` (a one-time scroll position a link carries - rsx:man
+    breadcrumb_origins, RETURNING TO THE STATE YOU LEFT) for its own values,
+    nor a key a hash-writing component on the same page owns
     (DataGrid_Abstract, Tab_Bar, Rsx_Tabs).
+
+    STABLE KEYS. A component's keys must be the same on every visit - a
+    name, never a component id (which depends on mount order) - or a URL
+    holding its state (a bookmark, a reload, a breadcrumb returning to the
+    page as it was left) is not read back by the component of the next
+    visit.
 
     Currently used internally by Tab_Bar, DataGrid_Abstract, and Rsx_Tabs.
     Application

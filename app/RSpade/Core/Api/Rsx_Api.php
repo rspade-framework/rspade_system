@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use App\RSpade\Core\Api\Api_Dispatcher;
 
 /**
@@ -18,6 +19,10 @@ use App\RSpade\Core\Api\Api_Dispatcher;
  *
  * Success payloads serialize through the one shared serializer (Api_Dispatcher::serialize),
  * so a model passed to created() is redacted via toArray() exactly as a bare return would be.
+ *
+ * document() is the one answer the dispatcher sends exactly as written: a JSON object
+ * whose shape a standard fixes (an OpenAPI description, a JSON Schema), which the timing
+ * fields would make invalid.
  */
 class Rsx_Api
 {
@@ -27,6 +32,33 @@ class Rsx_Api
     public static function created($data): JsonResponse
     {
         return response()->json(Api_Dispatcher::serialize($data), 201);
+    }
+
+    /**
+     * 200 with a DOCUMENT: a JSON object answered exactly as given - no _duration_ms,
+     * _completed_at or echoed _request_ref (Api_Dispatcher::stamp_response() stamps a
+     * JsonResponse only, and this is not one). For a body a standard defines down to its top
+     * level, where an extra field is invalid - an OpenAPI document's root admits only its own
+     * fields and x- extensions:
+     *
+     *     return Rsx_Api::document(Rsx_Api_Docs::openapi_document(null, 1));
+     *
+     * Still a JSON object like every API body ($data must be an associative array; a list is
+     * refused). Not for ordinary answers, which carry the timing fields every client reads.
+     *
+     * @param array $data An associative array
+     */
+    public static function document(array $data): Response
+    {
+        if ($data !== [] && array_is_list($data)) {
+            shouldnt_happen('Rsx_Api::document() answers a JSON object; it was given a list.');
+        }
+
+        return new Response(
+            json_encode($data === [] ? new \stdClass() : $data, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            200,
+            ['Content-Type' => 'application/json; charset=utf-8']
+        );
     }
 
     /**

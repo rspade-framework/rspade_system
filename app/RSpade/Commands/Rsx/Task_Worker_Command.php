@@ -11,6 +11,7 @@ use RuntimeException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Daemon;
@@ -165,7 +166,7 @@ class Task_Worker_Command extends Command
 
                 try {
                     Task_Pool::unlock($this->pool);
-                } catch (RuntimeException $e) {
+                } catch (RuntimeException|Lockd_Unavailable_Exception $e) {
                     // The daemon has already dropped this worker - the reaper may treat the
                     // run as abandoned - and the task has not started. Hand the claim back.
                     $this->release_unrun_claim($task_id, $run_lock, $identity, $e->getMessage());
@@ -191,7 +192,7 @@ class Task_Worker_Command extends Command
                 $lost = null;
                 try {
                     Task_Pool::lock($this->pool);
-                } catch (RuntimeException $e) {
+                } catch (RuntimeException|Lockd_Unavailable_Exception $e) {
                     $lost = $e->getMessage();
                 }
                 if ($lost === null && (Task_Pool::wid() !== $identity['wid'] || Task_Pool::generation() !== $identity['generation'])) {
@@ -489,6 +490,7 @@ class Task_Worker_Command extends Command
                 'started_at' => null,
                 'pool_id' => null,
                 'worker_pid' => null,
+                'worker_pid_start_time' => null,
                 'worker_id' => null,
                 'worker_generation' => null,
                 'worker_host' => null,

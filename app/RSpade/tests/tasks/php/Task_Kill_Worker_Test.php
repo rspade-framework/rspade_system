@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Kill_Worker;
@@ -78,6 +79,7 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
     {
         $id = Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', [], Task_Run_Model::ORIGIN_DISPATCHED, array_merge(Task_Runner::running_fields(), [
             'worker_pid' => $pid,
+            'worker_pid_start_time' => Process_Identity::start_time($pid),
             'worker_id' => $worker_id,
             'worker_generation' => $worker_id === null ? null : 7,
             'pool_id' => $worker_id === null ? null : Task_Run_Model::POOL_ON_DEMAND,
@@ -291,6 +293,31 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
             static::__assert_contains('the worker process was already gone', implode("\n", static::__operator_lines($run->id)));
         } finally {
             static::__reap($pid);
+        }
+    }
+
+    /**
+     * A recorded pid now held by ANOTHER task worker or artisan command - the same command
+     * line, a different process (its start time is not the one the run recorded) - is never
+     * signalled, for a pool run and an inline run alike: the run settles KILLED with no signal.
+     */
+    public static function test_a_reused_pid_with_a_different_start_time_is_never_signalled()
+    {
+        foreach ([41, null] as $worker_id) {
+            $pid = Task_Worker_Victim::start_worker();
+            try {
+                $run = static::__running_row($pid, $worker_id, null, [
+                    'worker_pid_start_time' => Process_Identity::start_time($pid) + 1,
+                ]);
+                $request = Task_Kill_Worker::request($run, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, 'reused', 'a tester');
+                $kind = $worker_id === null ? 'inline' : 'pool';
+
+                static::__assert_contains('killed_no_process', static::__carry_out($request), "{$kind}: settled without a signal");
+                static::__assert_true(static::__running($pid), "{$kind}: the process holding the reused pid was not signalled");
+                static::__assert_equals(Task_Run_Model::STATUS_KILLED, (int) Task_Run_Model::find($run->id)->status_id);
+            } finally {
+                static::__reap($pid);
+            }
         }
     }
 }

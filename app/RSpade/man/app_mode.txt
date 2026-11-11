@@ -234,11 +234,12 @@ THE SEAL FILE
     The seal is the on-disk record of a compiled build. It is JSON:
 
         {
-            "schema": 1,
+            "schema": 2,
             "rsx_mode": "production",        // or "debug"
             "build_key": "<manifest hash>",
-            "git_commit": "<HEAD sha or null>",
-            "created_at": "2026-07-15T...",
+            "commit": "<application HEAD sha or null>",
+            "framework_revision": "<system/ HEAD sha or null>",
+            "built_at": "2026-07-15T09:12:44.031Z",
             "assets": [
                 { "file": "build_key", "sha256": "..." },
                 { "file": "bundles/Frontend__app.<hash>.js", "sha256": "..." },
@@ -260,8 +261,13 @@ THE SEAL FILE
     development checkout does not accidentally lock anything - dev is never
     sealed.
 
-    created_at, git_commit, and the seal file as a whole are deliberately
-    NOT part of any hashed build artifact. They carry the non-deterministic
+    commit, framework_revision and built_at are the BUILD IDENTITY
+    Rsx::build_info() reports - read from git by rsx:build, or given as
+    --commit / --framework-revision on a host with no git metadata (rsx:man
+    prod, BUILD IDENTITY).
+
+    built_at, commit, framework_revision and the seal file as a whole are
+    deliberately NOT part of any hashed build artifact. They carry the non-deterministic
     build metadata (a timestamp, a machine's git state) that the build
     artifacts intentionally exclude for byte-stability. The seal describes
     the build; it is not itself an input to the build hash.

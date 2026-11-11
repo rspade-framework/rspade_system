@@ -1159,11 +1159,12 @@ LIFECYCLE CONTROL
            MOOT. The force-stop grace is the window a cooperative task gets to finish
            cleanly; the poll is a condition check, not a deadline;
         3. sends SIGKILL to the worker's pid on this host (the grace period is the polite
-           window, so there is no SIGTERM step) and waits for the process to be gone. A
-           pool run's pid is signalled only while it is still a task worker of this
-           project by its command line: a pid the kernel has since handed to an unrelated
-           process is never signalled, and the run settles KILLED with the worker noted
-           as already gone;
+           window, so there is no SIGTERM step) and waits for the process to be gone. The
+           pid is signalled only while it is still the process the run recorded - the
+           same kernel start time (worker_pid_start_time) - and, for a pool run, a task
+           worker of this project by its command line: a pid the kernel has since handed
+           to another process is never signalled, and the run settles KILLED with the
+           worker noted as already gone;
         4. settles the run KILLED with the explanation as status_reason and an operator
            line; a scheduled run counts as a failure on its schedule.
 
@@ -1563,15 +1564,18 @@ FAILURE AND ABANDONMENT
         the daemon's own generation     not alive -> abandoned, whatever host ran it.
                                         Alive -> running.
         an older generation, THIS host  the daemon restarted since the claim and cannot
-                                        know; the pid decides - it must still be a task
-                                        worker of this project by its command line, so a
-                                        pid the kernel has handed to another process
+                                        know; the pid decides - it must still be the
+                                        process the run recorded (its start time) and a
+                                        task worker of this project by its command line,
+                                        so a pid the kernel has handed to another process
                                         since (a reboot) does not keep a dead run alive.
         an older generation, ANOTHER    left alone for that host's own tick; rsx:health's
         host                            Task Worker Pools row WARNs while any remains.
-        no worker_id (inline)           the pid on its own host decides (pid existence:
-                                        an inline run's process may be a web server
-                                        worker or any command).
+        no worker_id (inline)           the pid on its own host decides, held to the
+                                        start time the run recorded (an inline run's
+                                        process may be a web server worker or any
+                                        command, so there is no command line to hold it
+                                        to): a live process at a reused pid is gone.
 
     Settling an abandoned run:
 
@@ -1817,8 +1821,10 @@ DATABASE SCHEMA
         scheduled_for, started_at, completed_at, stop_requested_at, abandon_count, timeout,
         status_text, progress_percent, progress_done, progress_total, eta_at,
         last_heartbeat_at, last_report_at,
-        worker_pid, worker_id, worker_generation, worker_host  (written together by a claim,
-            cleared together wherever a run is handed back),
+        worker_pid, worker_pid_start_time, worker_id, worker_generation, worker_host
+            (written together by a claim, cleared together wherever a run is handed back;
+            worker_pid_start_time is the kernel start time of worker_pid, field 22 of
+            /proc/<pid>/stat, so the pair still names one process after the pid is reused),
         output_truncated_at, created_at, updated_at
     _task_reports      (task_id, kind_id) unique: state JSON, state list, summary
     _task_output       one row per line; stream_id 1 stdout, 2 stderr, 3 operator

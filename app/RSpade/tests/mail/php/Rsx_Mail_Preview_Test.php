@@ -258,6 +258,29 @@ class Rsx_Mail_Preview_Test extends Rsx_Test_Abstract
         );
     }
 
+    /**
+     * A preview names the sender the send would use: the email's from() when it declared
+     * one, else the configured sender.
+     */
+    public static function test_a_preview_names_the_sender_the_send_would_use()
+    {
+        $default = Rsx_Mail::preview(Rsx_Mail_Test_Email::sample());
+
+        static::__assert_equals(
+            ['address' => Rsx_Mail_Transport::from_address(), 'name' => Rsx_Mail_Transport::from_name()],
+            $default['from'],
+            'no from(): the configured sender'
+        );
+
+        $overridden = Rsx_Mail::preview(Rsx_Mail_Test_Email::sample()->from('billing@example.com', 'Billing Office'));
+
+        static::__assert_equals(
+            ['address' => 'billing@example.com', 'name' => 'Billing Office'],
+            $overridden['from'],
+            'from(): the declared sender'
+        );
+    }
+
     // =========================================================================
     // NOTHING IS PERSISTED, NOTHING IS REQUIRED
     // =========================================================================

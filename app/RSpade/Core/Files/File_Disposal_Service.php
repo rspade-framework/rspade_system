@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Files;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Throwable;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Blob_References;
@@ -677,6 +678,9 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         try {
             Rsx::trigger_action('file.attachment.destroyed', $attachment);
         } catch (Throwable $e) {
+            // An infrastructure outage ends the run; it is no listener's failure.
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             // A throwing listener ABORTS this attachment's destruction (fail-loud, not
             // half-done): leave it un-stamped and retry next run.
             $task->stderr('file.attachment.destroyed listener threw for attachment ' . $attachment->id . '; deferring: ' . $e->getMessage());

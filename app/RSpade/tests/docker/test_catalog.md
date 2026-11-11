@@ -77,4 +77,24 @@ With a checkout mounted, the live request path through the image's Proxority (th
 | DOCKER-PID-05 | the runner's own pid is never the service, though its command line names it | php | pidfile holding the checking process's pid, pattern matching it | removed, "is this wrapper" | implemented | 2026-11-10 |
 | DOCKER-PID-06 | `--exec` becomes the command | php | `--exec <label> bash -c 'echo ran; exit 7'` | output `ran`, exit 7 | implemented | 2026-11-10 |
 | DOCKER-PID-07 | every service that keeps such a file has a table entry; nginx's matches nginx.conf; mysql and dockerd start through `--exec` | php | the shipped runner, nginx.conf, mysql.conf, dockerd-run.sh | entries and command lines present | implemented | 2026-11-10 |
+| DOCKER-PID-08 | the rsx-lockd entry is the DAEMON's identity: `lockd.js run` and `lockd.js --config=<f> run` keep the file, a `lockd.js exec ...` client and `lockd.js dump` do not | php | the pattern read from the shipped table; live node processes with each command line | kept / removed as stated; every process alive | implemented | 2026-11-10 |
+
+## Retry_Run_Service_State_Test (php) - a failing service is visible; the container health check
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-SVC-01 | five consecutive exits mark a service `failing` in its state file; one `[ERROR] [<label>] failing: N consecutive exits (last status S) since T` line at 5 and at each doubling, never per attempt; a stop signal writes `stopped` | php | a runner for `exit 3` (no wait) on a scratch `--state-dir` | status failing, last status 3, UTC streak_since; ERROR lines at 5, 10, 20, ...; stopped, no pid | implemented | 2026-11-10 |
+| DOCKER-SVC-02 | a run that lasts MAX_DELAY ends the streak while it is still running | php | six failures then a long run, MAX_DELAY 2 | failing during the young run, then running with 0 failures and no streak_since | implemented | 2026-11-10 |
+| DOCKER-SVC-03 | the health check reports a failing service while its runner lives and ignores a stopped one and a file whose runner is gone | php | the runner of DOCKER-SVC-01; a `failing` file naming a dead runner pid | exit 1 naming the label; absent after the stop; ghost absent | implemented | 2026-11-10 |
+| DOCKER-SVC-04 | the health check: a supervisor program FATAL is unhealthy, STOPPED is not, supervisorctl not answering is unhealthy, a lock daemon not answering a ping is unhealthy, everything RUNNING is healthy and silent | php | a stand-in `supervisorctl` first on PATH; `LOCK_SERVER_PORT` a dead port | the `[ERROR]` lines; exit 0 and no output | implemented | 2026-11-10 |
+| DOCKER-SVC-05 | maintenance mode (the flag under `RSX_STORAGE_PATH`) and a missing checkout are healthy with one note, whatever else is wrong | php | flag in a scratch storage root; `--project-root` with no system/ | exit 0, `[INFO]` line | implemented | 2026-11-10 |
+| DOCKER-SVC-06 | the image installs the health check in the base stage and declares it as the HEALTHCHECK | php | the Dockerfile | the COPY and HEALTHCHECK lines before `FROM base AS dev` | implemented | 2026-11-10 |
+| DOCKER-SVC-07 | the built image reports `healthy` under `docker inspect` with a checkout, and `unhealthy` with a service failing | manual | the image started; a service broken by hand | `.State.Health.Status` | NOT verified: needs an image rebuild | 2026-11-10 |
+
+## Supervised_Service_Health_Test (php) - the rsx:health "Supervised Services" row
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-SVC-10 | OK counting the services up; a failing file whose runner is gone ignored; FAIL naming a failing service with its count, last status and since; a stopped service is no failure | php | real runners on a scratch state directory; a ghost file | the row's status and detail | implemented | 2026-11-10 |
+| DOCKER-SVC-11 | no state directory is INFO | php | an absent directory | INFO | implemented | 2026-11-10 |
 

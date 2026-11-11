@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Pool;
@@ -120,11 +121,12 @@ class Task_Health_Checks
         $over = [];
         $generation = null;
         foreach (Task_Pool::POOLS as $pool) {
-            // The probe's expected failure is the finding itself: Task_Pool throws for an
-            // unreachable daemon and for a refused pool.stats alike.
+            // The probe's expected failure is the finding itself: Task_Pool throws the outage
+            // for an unreachable daemon and a RuntimeException for a refused pool.stats. A
+            // health check's job is to report the daemon DOWN, so it catches both.
             try {
                 $stats = Task_Pool::stats($pool);
-            } catch (\RuntimeException $e) {
+            } catch (\RuntimeException|Lockd_Unavailable_Exception $e) {
                 return [
                     'status' => 'FAIL',
                     'detail' => "cannot read the {$pool} task worker pool from rsx-lockd: " . $e->getMessage(),

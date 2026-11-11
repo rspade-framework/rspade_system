@@ -274,6 +274,52 @@ class _Apidocs_Catalog {
     }
 
     /**
+     * The application's own sections, in the order it gave them: [{slug, title, html}].
+     *
+     * Supplied to Rsx_Api_Docs::page() and rendered there - html is the Markdown already
+     * through Markdown_Rendition::render(), so it is safe to place unescaped. Version-free:
+     * a section documents the API as a whole.
+     */
+    static sections() {
+        const cat = _Apidocs_Catalog.raw();
+
+        return cat?.sections || [];
+    }
+
+    /**
+     * One section by slug, or null when the slug names nothing.
+     */
+    static find_section(slug) {
+        if (!slug) {
+            return null;
+        }
+
+        for (const section of _Apidocs_Catalog.sections()) {
+            if (section.slug === slug) {
+                return section;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The console's page for one section. The selected version rides along, as on an
+     * endpoint URL, so leaving the section returns to the version being read.
+     */
+    static section_url(version, section) {
+        const resolved = _Apidocs_Catalog.resolve_version(version);
+        const base = _Apidocs_Catalog.base_path();
+        const parts = ['section=' + encodeURIComponent(section.slug)];
+
+        if (resolved !== null && resolved !== _Apidocs_Catalog.newest_version()) {
+            parts.push('version=' + encodeURIComponent(resolved));
+        }
+
+        return base + '?' + parts.join('&');
+    }
+
+    /**
      * The console's page for one endpoint.
      */
     static endpoint_url(version, ep) {

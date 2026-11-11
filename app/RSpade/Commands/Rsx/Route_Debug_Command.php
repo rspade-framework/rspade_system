@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Health\Playwright_Stack;
@@ -199,7 +200,7 @@ class Route_Debug_Command extends Command
     {
         try {
             $lock_token = RsxLocks::system_lock(self::DEBUG_LOCK_NAME, 0);
-        } catch (\RuntimeException $e) {
+        } catch (Lock_Timeout_Exception $e) {
             fwrite(STDERR, "[rsx:debug] Waiting for another rsx:debug to finish...\n");
             $lock_token = RsxLocks::system_lock(self::DEBUG_LOCK_NAME);
         }

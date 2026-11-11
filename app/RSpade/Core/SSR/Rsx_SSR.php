@@ -276,14 +276,44 @@ class Rsx_SSR
             }
         }
 
-        // Kill process by PID if still running
+        // Kill the process the pidfile names - only while it is still THIS project's server.
+        // The pidfile outlives the server (a crash, a container restart), and the kernel reuses
+        // pids, so a pid that merely exists may be any process at all: that one is left alone
+        // and only the stale pidfile goes.
         if (file_exists($pid_file)) {
             $pid = (int) trim(file_get_contents($pid_file));
-            if ($pid > 0 && posix_kill($pid, 0)) {
+            if (self::_is_this_server($pid, $socket_path)) {
                 posix_kill($pid, SIGTERM);
             }
             @unlink($pid_file);
         }
+    }
+
+    /**
+     * Whether $pid is the SSR server listening on $socket_path: its command line (the one
+     * _start_server() execs) names ssr-server.js and `--socket=<this project's socket>`. An
+     * exited process nobody has reaped yet has an empty command line, and is not.
+     */
+    private static function _is_this_server(int $pid, string $socket_path): bool
+    {
+        if ($pid <= 0) {
+            return false;
+        }
+
+        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+        if ($cmdline === false || $cmdline === '') {
+            return false;
+        }
+
+        $argv = explode("\0", rtrim($cmdline, "\0"));
+        $names_script = false;
+        foreach ($argv as $arg) {
+            if (basename($arg) === basename(self::SERVER_SCRIPT)) {
+                $names_script = true;
+            }
+        }
+
+        return $names_script && in_array('--socket=' . $socket_path, $argv, true);
     }
 
     /**

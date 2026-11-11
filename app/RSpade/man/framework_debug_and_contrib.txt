@@ -1579,10 +1579,11 @@ SUBSYSTEM PRIMERS
     refusal names the cycle.
 
     If the daemon restarts while a lock is held, everything it held is gone.
-    The client discovers it only at release time, when the release reports
-    the lock was not held - the framework then LOGS LOUDLY that mutual
-    exclusion was not in force. Release never throws; a transport failure is
-    the answer. ALWAYS RELEASE IN A FINALLY.
+    The connection that held it died with the old daemon, so the next call
+    on it - often the release - throws the OUTAGE (Lockd_Unavailable_Exception),
+    and the request ends as a 500 like a lost database connection; a release
+    that reaches a daemon which no longer has the lock returns false and LOGS
+    LOUDLY that mutual exclusion was not in force. ALWAYS RELEASE IN A FINALLY.
 
     Rsx_Artisan IS THE ONLY SANCTIONED WAY TO SPAWN php artisan:
 

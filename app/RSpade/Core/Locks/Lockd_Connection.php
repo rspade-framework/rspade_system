@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Locks;
 
 use RuntimeException;
+use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 
 /**
  * ONE socket to rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd): dial with retry, the HMAC hello, newline
@@ -27,6 +28,11 @@ use RuntimeException;
  * blocks for as long as the daemon takes - a month, if that is how long the thing ahead of
  * it is held. There is NO read timeout anywhere here: reads block on stream_select() with a
  * NULL timeout, and only a frame or the socket dying ends the wait.
+ *
+ * A CONNECTION THAT GIVES UP THROWS Lockd_Unavailable_Exception - no connect attempt
+ * succeeded, the hello was refused, or an open socket died. The daemon is infrastructure
+ * like mysqld: that exception ends the whole request as a 500 (Infrastructure_Outage), and
+ * nothing in the framework treats it as contention.
  *
  * Responses can arrive OUT OF ORDER (a parked acquire is answered long after a later ping),
  * so every request carries an `id` and the reader correlates on it, parking any frame that
@@ -166,7 +172,7 @@ class Lockd_Connection
     /**
      * Dial and say hello if not already connected.
      *
-     * @throws RuntimeException on connect failure or a rejected hello.
+     * @throws Lockd_Unavailable_Exception on connect failure or a rejected hello.
      */
     public function ensure_connected(): void
     {
@@ -181,7 +187,8 @@ class Lockd_Connection
      * Connects (and says hello) on first use. Blocks for as long as the daemon takes to
      * answer - which for a parked acquire is "until it is granted".
      *
-     * @throws RuntimeException on connect failure, socket death, or a protocol violation.
+     * @throws Lockd_Unavailable_Exception on connect failure, a rejected hello, socket death,
+     *                                     or a protocol violation (the socket is dropped).
      */
     public function request(array $frame): array
     {
@@ -257,7 +264,7 @@ class Lockd_Connection
         }
 
         if ($socket === false) {
-            throw new RuntimeException(
+            throw new Lockd_Unavailable_Exception(
                 "Cannot reach rsx-lockd at {$endpoint['host']}:{$endpoint['port']} after {$attempts} attempts"
                 . ($errstr !== '' ? " ({$errstr})" : '')
                 . ' - is the rsx-lockd supervisor program running?'
@@ -314,7 +321,7 @@ class Lockd_Connection
             $message = $response['message'] ?? 'unknown reason';
             @fclose($this->socket);
             $this->socket = null;
-            throw new RuntimeException("rsx-lockd rejected the hello handshake: {$message}");
+            throw new Lockd_Unavailable_Exception("rsx-lockd rejected the hello handshake: {$message}");
         }
     }
 
@@ -403,8 +410,8 @@ class Lockd_Connection
 
     /**
      * The socket is unusable. Drop it (a later request redials a FRESH connection, which by
-     * the model holds nothing) and throw - the owner must never carry on believing it holds
-     * something that no longer exists anywhere.
+     * the model holds nothing) and throw the outage - the owner must never carry on believing
+     * it holds something that no longer exists anywhere.
      */
     private function __socket_died(string $reason): never
     {
@@ -412,7 +419,7 @@ class Lockd_Connection
 
         $endpoint = $this->endpoint();
 
-        throw new RuntimeException(
+        throw new Lockd_Unavailable_Exception(
             "Lost the connection to rsx-lockd at {$endpoint['host']}:{$endpoint['port']} ({$reason})"
             . ' - ' . $this->death_consequence
         );

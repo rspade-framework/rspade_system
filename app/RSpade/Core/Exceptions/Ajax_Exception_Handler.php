@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Throwable;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
 
 /**
@@ -21,10 +22,17 @@ use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
  * A failure on a request Rsx_Request_Channel classified as Ajax - one raised outside any
  * endpoint call (the transport, the realm preamble), or an endpoint failure the transport
  * did not already turn into its envelope - is answered with the Ajax envelope, never an
- * HTML page, at HTTP 200. The envelope is Ajax::error_envelope(): the same mapping the
- * direct and batch transports apply to a call's own failure, so a coded failure keeps its
- * code (unauthorized, not_found, validation, ...) and anything else is 'fatal', with the
- * detail only for a caller Rsx_Diagnostics admits and an error_id for everybody else.
+ * HTML page, at HTTP 200 (an outage aside, below). The envelope is Ajax::error_envelope():
+ * the same mapping the direct and batch transports apply to a call's own failure, so a
+ * coded failure keeps its code (unauthorized, not_found, validation, ...) and anything else
+ * is 'fatal', with the detail only for a caller Rsx_Diagnostics admits and an error_id for
+ * everybody else.
+ *
+ * AN INFRASTRUCTURE OUTAGE (Infrastructure_Outage: the lock daemon or the database connection
+ * gone) is answered HTTP 500 instead (Ajax::outage_response()): the whole request failed,
+ * exactly as a page or an API request does, and the client rejects every call of it with
+ * server_error. Ajax::call_envelope() lets an outage through to here rather than answering
+ * one call.
  */
 class Ajax_Exception_Handler extends Rsx_Exception_Handler_Abstract
 {
@@ -49,6 +57,12 @@ class Ajax_Exception_Handler extends Rsx_Exception_Handler_Abstract
     {
         if (Rsx_Request_Channel::current() !== Rsx_Request_Channel::AJAX) {
             return null;
+        }
+
+        // An outage is the request's failure, not a refusal: HTTP 500, built from nothing
+        // that needs the database or the lock daemon.
+        if (Infrastructure_Outage::is_outage($e)) {
+            return Ajax::outage_response($e);
         }
 
         // A fault outside any call refuses the whole request: a batch gets the envelope

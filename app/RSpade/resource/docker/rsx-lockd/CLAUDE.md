@@ -259,9 +259,17 @@ accommodated by teaching the detector about pools.
   work without the key. Everything else requires the handshake.
 - **Unix socket bind probes before unlinking.** A stale file is removed; a live one is
   refused, so a second daemon can never steal a running instance's path.
-- **The pidfile blocks only a running rsx-lockd** (`is_lockd()`: alive AND `/proc/<pid>/cmdline`
-  names `lockd.js`). `run` replaces a pidfile naming anything else, logging what the pid was;
-  `start` treats it as not running; `stop` removes it and NEVER signals that pid. Pids in a
+- **The pidfile blocks only a running rsx-lockd DAEMON** (`is_lockd()` over
+  `is_lockd_argv()`: alive, and `/proc/<pid>/cmdline` is node - argv[0] `node`/`nodejs` or
+  this node's own basename - running a script named `lockd.js` whose first non-flag argument
+  is `run`; `--x`/`--x=y` flags may precede it). The script's own clients (`exec`, which can
+  hold a lock for hours, `dump`, `log`) and anything else naming the file are NOT the
+  daemon. `run` replaces a pidfile naming anything else, logging what the pid was; `start`
+  treats it as not running and acknowledges only once the pidfile names the daemon; `stop`
+  removes it and NEVER signals that pid - its wait treats "no longer lockd" as stopped, and it
+  checks again immediately before the SIGKILL, so a pid reused during the 10 s wait is left
+  alone. retry-run.sh's `rsx-lockd` entry matches the same identity
+  (`lockd\.js( --[^ ]+)* run( |$)`). Pids in a
   container restart from 1, so after a host reboot a surviving pidfile usually names some
   unrelated live process - a liveness-only check kept the daemon down for hours on a live
   deployment, and `stop` would have killed the stranger. The real single-instance guarantee

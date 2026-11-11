@@ -25,8 +25,14 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * _type_refs row is inserted for a class name that no file declares, inside the per-test
  * transaction. The registry's cached views (memory + Redis) are dropped around every test
  * through the _reset_cached_state() seam, so the rolled-back row never outlives the test,
- * and the morph map is snapshotted and restored (Relation::morphMap is global process state
- * and the poison alias would otherwise leak into the rest of the suite).
+ * and the morph map is rebuilt from the database when the class ends (Relation::morphMap is
+ * global process state and the poison alias would otherwise leak into the rest of the
+ * suite). REBUILT, never restored from a snapshot: a type ref this class registers along
+ * the way (Site_Model, on a database that had none) commits on the registry's side
+ * connection and outlives the class, and a snapshot taken before it would drop that live
+ * alias while the registry still answers its id - so the next class that morphs to it on
+ * the same worker reads a raw integer, and `new 26` throws "Class name must be a valid
+ * object or a string".
  *
  * Fixtures reuse Portal_Notification_Model (subject_type/subject_id) over Site_Model, the
  * same pair Polymorphic_Morph_Relations_Test uses.
@@ -38,19 +44,18 @@ class Polymorphic_Retired_Type_Ref_Test extends Rsx_Test_Abstract
     /** A class name no file in the codebase declares. */
     private const RETIRED_CLASS = 'Retired_Poly_Test_Model';
 
-    /** The morph map as it stood before this class ran. */
-    private static ?array $morph_map_snapshot = null;
-
     public static function setup(): void
     {
         static::__acting_as_site(self::SITE_ID);
-        self::$morph_map_snapshot = Relation::morphMap();
     }
 
+    /**
+     * Runs after the last test's transaction rolled back, so the database holds every
+     * committed type ref and no retired row: the map is evicted and re-registered from it.
+     */
     public static function teardown(): void
     {
-        Relation::morphMap(self::$morph_map_snapshot ?? [], false);
-        Type_Ref_Registry::_reset_cached_state();
+        Type_Ref_Registry::_reload_for_database_swap();
     }
 
     /**

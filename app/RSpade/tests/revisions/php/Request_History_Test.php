@@ -119,6 +119,38 @@ class Request_History_Test extends Rsx_Test_Abstract
         static::__assert_false(Email_Blocked_Address_Model::where('email', $other)->exists(), 'nothing was written');
     }
 
+    public static function test_ajax_a_same_endpoint_reuse_names_the_original_completion_and_answer()
+    {
+        static::__begin();
+
+        $ref = static::__ref();
+        $first = static::__ajax('block', ['email' => static::__email(), '_request_ref' => $ref]);
+
+        $answer = static::__ajax('block', ['email' => static::__email(), '_request_ref' => $ref]);
+
+        static::__assert_equals(Ajax::ERROR_REQUEST_REF_REUSED, $answer['error_code'] ?? null, json_encode($answer));
+        static::__assert_equals($first['_completed_at'], $answer['metadata']['completed_at'] ?? null, 'the original completion');
+        static::__assert_equals($first['_ajax_return_value'], $answer['metadata']['original'] ?? null, 'the original answer, as the call returned it');
+
+        // The stored answer is sent as stored: an empty object stays {}.
+        $raw = static::__call_raw('block', ['email' => static::__email(), '_request_ref' => $ref]);
+        static::__assert_contains('"empty":{}', $raw, 'an empty object in the original answer is sent as {}');
+    }
+
+    public static function test_ajax_a_same_endpoint_reuse_after_pruning_names_only_the_completion()
+    {
+        static::__begin();
+
+        $ref = static::__ref();
+        $first = static::__ajax('block', ['email' => static::__email(), '_request_ref' => $ref]);
+        DB::table('_transactions')->where('request_ref', $ref)->update(['response_body' => null, 'response_status' => null, 'request_payload' => null]);
+
+        $answer = static::__ajax('block', ['email' => static::__email(), '_request_ref' => $ref]);
+
+        static::__assert_equals(Ajax::ERROR_REQUEST_REF_REUSED, $answer['error_code'] ?? null, json_encode($answer));
+        static::__assert_equals(['completed_at' => $first['_completed_at']], $answer['metadata'], 'the completion and nothing else');
+    }
+
     public static function test_ajax_the_same_ref_on_a_different_endpoint_is_refused()
     {
         static::__begin();
@@ -130,7 +162,25 @@ class Request_History_Test extends Rsx_Test_Abstract
         $answer = static::__ajax('block_elsewhere', ['email' => $email, '_request_ref' => $ref]);
 
         static::__assert_equals(Ajax::ERROR_REQUEST_REF_REUSED, $answer['error_code'] ?? null, json_encode($answer));
+        static::__assert_equals([], $answer['metadata'], 'a reuse on another endpoint names nothing of the original');
         static::__assert_false(isset(Request_History_Fixture_Controller::$runs['block_elsewhere']), 'nothing ran');
+    }
+
+    public static function test_a_signed_out_caller_s_ref_is_echoed_and_never_honoured()
+    {
+        static::__begin();
+        static::__reset_session();
+        static::__acting_as_site(1);
+
+        $ref = static::__ref();
+        $first = static::__ajax('writes_nothing', ['_request_ref' => $ref]);
+        $second = static::__ajax('writes_nothing', ['_request_ref' => $ref]);
+
+        static::__assert_true($first['_success'] && $second['_success'], json_encode([$first, $second]));
+        static::__assert_equals($ref, $second['_request_ref'], 'the reference is echoed');
+        static::__assert_false(isset($second['_replayed']), 'never answered from the history');
+        static::__assert_equals(2, Request_History_Fixture_Controller::$runs['writes_nothing'], 'the endpoint ran both times');
+        static::__assert_false(DB::table('_transactions')->where('request_ref', $ref)->exists(), 'no reference is kept');
     }
 
     public static function test_another_actor_with_the_same_ref_executes()
@@ -349,9 +399,13 @@ class Request_History_Test extends Rsx_Test_Abstract
         static::__assert_equals(409, $changed['status']);
         static::__assert_equals('request_ref_reused', $changed['body']['error']['code'] ?? null);
         static::__assert_equals($ref, $changed['body']['_request_ref'], 'an error echoes the reference');
+        static::__assert_equals($first['body']['_completed_at'], $changed['body']['error']['completed_at'] ?? null, 'naming the original completion');
+        static::__assert_equals($first['body']['run'], $changed['body']['error']['original']['run'] ?? null, 'and the stored body');
 
         $elsewhere = static::__api($key, 'POST', '/api/v1/test-probe/history/block-elsewhere', ['email' => $email, '_request_ref' => $ref]);
         static::__assert_equals(409, $elsewhere['status']);
+        static::__assert_false(isset($elsewhere['body']['error']['completed_at']), 'another endpoint names nothing of the original');
+        static::__assert_false(isset($elsewhere['body']['error']['original']));
         static::__assert_false(isset(Request_History_Fixture_Api_Controller::$runs['block_elsewhere']), 'nothing ran');
     }
 

@@ -118,12 +118,16 @@ class Rsx_Mail_Builder
      * The HTML returned still carries cid: references; `parts` holds the bytes behind
      * each (cid => {bytes, mime_type}). Rsx_Mail::preview() turns them into data: URIs.
      *
-     * @return array{subject: string, html: string, text: string, parts: array<string, array{bytes: string, mime_type: string}>}
+     * `from` is the sender the send would use - the email's from() when it declared one,
+     * else the configured sender - resolved by sender(), the one rule build() uses.
+     *
+     * @return array{subject: string, from: array{address: string, name: string}, html: string, text: string, parts: array<string, array{bytes: string, mime_type: string}>}
      */
     public static function compose_preview(Rsx_Email_Abstract $email): array
     {
         $category_id = $email::category();
         $subject = $email->subject();
+        $declared_from = $email->_envelope()['from'];
 
         $composed = static::compose(
             $email::view_id(),
@@ -160,6 +164,7 @@ class Rsx_Mail_Builder
 
         return [
             'subject' => $subject,
+            'from' => static::sender($declared_from['address'] ?? null, $declared_from['name'] ?? null),
             'html' => $html,
             'text' => $composed['text'],
             'parts' => $parts,
@@ -703,7 +708,9 @@ class Rsx_Mail_Builder
      */
     private static function _apply_envelope(Email $message, Email_Queue_Model $row): void
     {
-        $message->from(new Address(Rsx_Mail_Transport::from_address(), Rsx_Mail_Transport::from_name()));
+        $from = static::sender($row->from_address, $row->from_name);
+
+        $message->from(static::_address($from['address'], $from['name']));
         $message->to(static::_address($row->to_address, $row->to_name));
         $message->subject((string) $row->subject);
 
@@ -718,6 +725,27 @@ class Rsx_Mail_Builder
         if ($row->reply_to) {
             $message->replyTo(static::_address($row->reply_to, $row->reply_to_name));
         }
+    }
+
+    /**
+     * The From a message carries: the address frozen on the row (Rsx_Email_Abstract::from())
+     * when there is one, else the configured sender, read at build time. A row that names
+     * an address but no display name takes the configured name - the address changed, the
+     * organisation sending it did not.
+     *
+     * Shared by build() and compose_preview(), so a preview names the sender a send uses.
+     *
+     * @return array{address: string, name: string}
+     */
+    public static function sender(?string $address, ?string $name): array
+    {
+        $address = $address !== null ? trim($address) : '';
+        $name = $name !== null ? trim($name) : '';
+
+        return [
+            'address' => $address !== '' ? $address : Rsx_Mail_Transport::from_address(),
+            'name' => $name !== '' ? $name : Rsx_Mail_Transport::from_name(),
+        ];
     }
 
     /**

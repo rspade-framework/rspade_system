@@ -160,11 +160,19 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
 
     /**
      * Exhausts a small memory limit - a FATAL error that ends the process mid-run.
+     *
+     * The limit is set RELATIVE to what the process already uses. PHP refuses to lower
+     * memory_limit below current usage, and refuses with a WARNING - which a task raises as
+     * an ErrorException, so the run would fail with "Failed to set memory limit" instead of
+     * the fatal. A fixed figure is below current usage whenever the child's boot happened to
+     * cost more (a manifest rebuilt in the child, a larger index), so it held only by luck.
+     * The allocation is far past the headroom, so the limit check refuses it outright and
+     * nothing is actually allocated.
      */
     #[Task('exec fixture that dies of a fatal error')]
     public static function dies_of_a_fatal_error(Task_Instance $task, array $params = [])
     {
-        ini_set('memory_limit', '64M');
+        ini_set('memory_limit', (string) (memory_get_usage(true) + 16 * 1024 * 1024));
         $hog = str_repeat('x', 256 * 1024 * 1024);
 
         return strlen($hog);

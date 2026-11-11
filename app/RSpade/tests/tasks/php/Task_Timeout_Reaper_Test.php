@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Kill_Worker;
 use App\RSpade\Core\Task\Task_Pool;
@@ -87,6 +88,7 @@ class Task_Timeout_Reaper_Test extends Rsx_Test_Abstract
 
         return Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', [], Task_Run_Model::ORIGIN_DISPATCHED, array_merge(Task_Runner::running_fields(), [
             'worker_pid' => $pid,
+            'worker_pid_start_time' => Process_Identity::start_time($pid),
             'worker_id' => 61,
             'worker_generation' => $current === 1 ? 2 : $current - 1,
             'pool_id' => Task_Run_Model::POOL_ON_DEMAND,
@@ -159,6 +161,7 @@ class Task_Timeout_Reaper_Test extends Rsx_Test_Abstract
             // 60-second cap.
             $id = Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', [], Task_Run_Model::ORIGIN_INLINE, array_merge(Task_Runner::running_fields(), [
                 'worker_pid' => $pid,
+                'worker_pid_start_time' => Process_Identity::start_time($pid),
                 'timeout' => 60,
                 'started_at' => date('Y-m-d H:i:s', time() - 3600) . '.000',
             ]));

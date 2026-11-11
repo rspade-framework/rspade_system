@@ -12,7 +12,7 @@
  *
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S: the page is the control panel at /_sys and the
  * form is the panel's own site-rename form, mounted at runtime with a made-up site. Each
- * submit answers through a stubbed Ajax.call, so nothing is renamed.
+ * submit answers through a stubbed Ajax.call_detailed, so nothing is renamed.
  *
  * Exit 0 on pass, 1 on any failure. Prints PASS:/FAIL: lines.
  */
@@ -101,8 +101,8 @@ async function run() {
 
             const sent = [];
             let answer = {};
-            const real_call = Ajax.call;
-            Ajax.call = async (url, payload) => { sent.push(payload); return answer; };
+            const real_call = Ajax.call_detailed;
+            Ajax.call_detailed = async (url, payload) => { sent.push(payload); return { value: answer, replayed: false, completed_at: null, duration_ms: null }; };
 
             const name = form.input('name');
             const slug = form.input('slug');
@@ -142,7 +142,7 @@ async function run() {
             await form.submit();
             out.d_hook = sent.length > fresh && last()._changed.includes('extra_value');
 
-            Ajax.call = real_call;
+            Ajax.call_detailed = real_call;
             $('#rsx_edit_state_mount_temp').remove();
             return out;
         });

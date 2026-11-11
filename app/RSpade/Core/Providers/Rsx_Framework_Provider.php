@@ -105,6 +105,11 @@ class Rsx_Framework_Provider extends ServiceProvider
         // The system/.env must be a symlink to ../.env for proper configuration sharing
         // $this->check_env_symlink();
 
+        // The database transactions manager: an after-commit callback that throws is reported
+        // and never fails the commit or cancels the callbacks after it. Bound before any
+        // connection is made - each connection takes the manager when it is created.
+        $this->app->singleton('db.transactions', fn () => new \App\RSpade\Core\Database\Rsx_DatabaseTransactionsManager());
+
         // Merge framework config defaults
         $package_config = base_path('config/rsx.php');
         $this->mergeConfigFrom($package_config, 'rsx');

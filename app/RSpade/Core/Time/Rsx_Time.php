@@ -669,7 +669,8 @@ class Rsx_Time
 
     /**
      * The first-visit page: no content, one nonce'd script that writes the cookie exactly as
-     * Rsx_Timezone_Cookie.js does and replaces the location with the marked URL.
+     * Rsx_Timezone_Cookie.js does and replaces the location with the marked URL, keeping the
+     * address's fragment.
      */
     private static function __timezone_interstitial(\Illuminate\Http\Request $request): \Symfony\Component\HttpFoundation\Response
     {
@@ -704,7 +705,9 @@ class Rsx_Time
     document.cookie = c.name + '=' + encodeURIComponent(ok ? zone : c.error)
         + '; Path=/; Max-Age=' + (ok ? c.max_age : c.error_max_age) + '; SameSite=Lax'
         + (location.protocol === 'https:' ? '; Secure' : '');
-    location.replace(c.url);
+    // The fragment never reaches the server, so the marked URL carries it from here: a
+    // first visit to a deep link (#at=..., a grid's state) lands on it.
+    location.replace(c.url + location.hash);
 })({$config});
 </script>
 </head><body></body></html>

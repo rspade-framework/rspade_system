@@ -381,6 +381,8 @@ RSX_BREADCRUMB_RESOLVER
                 url       - Current URL (pathname + search)
                 callbacks - Object with callback functions:
                     on_chain(chain, meta)     - Chain structure ready
+                                                (each item: url, href, label,
+                                                is_active, resolved)
                     on_label_update(idx, lbl) - Individual label resolved
                     on_complete(chain, meta)  - All labels resolved
 
@@ -393,6 +395,14 @@ RSX_BREADCRUMB_RESOLVER
                                or null
 
             Returns: Cancel function
+
+            A chain item's url is the page's identity (match, cache and
+            compare on it); its href is the link to RENDER - for a crumb
+            above the current page, the page in the state the user left it
+            in when they came through it on this trail (Spa.return_url(),
+            rsx:man breadcrumb_origins, RETURNING TO THE STATE YOU LEFT).
+            The walk also records each page's trail on its history entry's
+            journal record, which that rule reads.
 
             On completion every layout in the chain also receives
             Spa_Layout.on_breadcrumb_complete(chain, meta), whichever layout
@@ -429,7 +439,8 @@ RSX_BREADCRUMB_RESOLVER
         Uses Rsx_Storage.session_set/get() with key prefix 'breadcrumb_chain:'
         Cached data: { chain: [{ url, label, is_active }, ...], meta }
         Keyed by the full URL, so a grafted (_via) and a plain chain for the
-        same page never share an entry.
+        same page never share an entry. The href is never cached: it is
+        computed at every emission, per journey.
 
 LAYOUT INTEGRATION
     The layout handles header rendering and breadcrumb streaming.
@@ -486,18 +497,22 @@ BREADCRUMB_NAV COMPONENT
     Location: /rsx/theme/components/page/breadcrumb_nav.jqhtml
 
     Props:
-        $crumbs - Array of { label, url, is_active, resolved }
+        $crumbs - Array of { label, url, href, is_active, resolved } - the
+                  resolver's chain items
                   label: string or null (shows placeholder if null)
-                  url: string or null (no link if null or is_active)
+                  href: the link (none if null, or for the last item)
+                  url: the page's identity (not rendered)
                   is_active: boolean (current page, no link)
                   resolved: boolean (false shows loading state)
 
     Usage:
         $breadcrumbs.component('Breadcrumb_Nav', {
             crumbs: [
-                { label: 'Contacts', url: '/contacts', is_active: false },
-                { label: 'John Smith', url: '/contacts/view/1', is_active: false },
-                { label: 'Edit Contact', url: null, is_active: true }
+                { label: 'Contacts', url: '/contacts',
+                  href: '/contacts#Contacts_DataGrid_page=2&_scroll=640', is_active: false },
+                { label: 'John Smith', url: '/contacts/view/1',
+                  href: '/contacts/view/1', is_active: false },
+                { label: 'Edit Contact', url: '/contacts/edit/1', href: '/contacts/edit/1', is_active: true }
             ]
         });
 

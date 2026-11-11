@@ -107,6 +107,18 @@ class Rsx {
      */
     static HASH_ANCHOR_KEY = 'at';
 
+    /**
+     * Framework-reserved hash key carrying a ONE-TIME scroll position: `_scroll=<y>` or
+     * `_scroll=<x>,<y>`. Never written by scrolling - only placed on a link (a breadcrumb or
+     * Spa.return_url() returning to the position a page was left at, or an application link
+     * that wants to land there). The SPA applies it after the dispatch through its scroll
+     * restoration and removes it from the address bar at once, so a copied URL or a reload
+     * does not jump again. An application must not use it for its own state.
+     *
+     * See: php artisan rsx:man breadcrumb_origins (RETURNING TO THE STATE YOU LEFT)
+     */
+    static HASH_SCROLL_KEY = '_scroll';
+
     // Initialize event handlers storage
     static _init_events() {
         if (typeof Rsx._event_handlers === 'undefined') {
@@ -1447,6 +1459,9 @@ class Rsx {
         const new_hash = Rsx._serialize_hash(state);
         const url = window.location.pathname + window.location.search + new_hash;
         history.replaceState(history.state, '', url);
+
+        // The SPA's journal follows the entry's address (a breadcrumb returns to it).
+        Spa_Journal.note_url();
     }
 
     /**
@@ -1479,6 +1494,9 @@ class Rsx {
         const new_hash = Rsx._serialize_hash(state);
         const url = window.location.pathname + window.location.search + new_hash;
         history.replaceState(history.state, '', url);
+
+        // The SPA's journal follows the entry's address (a breadcrumb returns to it).
+        Spa_Journal.note_url();
     }
 
     /**

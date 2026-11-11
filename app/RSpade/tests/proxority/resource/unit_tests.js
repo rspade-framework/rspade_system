@@ -1,6 +1,6 @@
 /**
- * Unit tests of Proxority's pure modules: the scheduler, the classifier, the event ring and
- * the pool-file parser.
+ * Unit tests of Proxority's pure modules: the scheduler, the classifier, the event ring, the
+ * pool-file parser and the closure holder's identity (pid + start time).
  *
  *     node unit_tests.js
  *
@@ -14,9 +14,9 @@ const path = require('path');
 const lib = path.resolve(__dirname, '../../../resource/docker/proxority/lib');
 const { Pool_Ledger, caps_for } = require(path.join(lib, 'scheduler.js'));
 const classify = require(path.join(lib, 'classify.js'));
-const { Event_Log, EVENT_LIMIT } = require(path.join(lib, 'event_log.js'));
+const { Event_Log, EVENT_LIMIT, format_event } = require(path.join(lib, 'event_log.js'));
 const { parse_max_children } = require(path.join(lib, 'pool_capacity.js'));
-const { forwarded_request_headers } = require(path.join(lib, '..', 'proxority.js'));
+const { forwarded_request_headers, process_start_time, process_is_alive, Proxority } = require(path.join(lib, '..', 'proxority.js'));
 
 const tests = [];
 function test(name, body) { tests.push({ name, body }); }
@@ -433,6 +433,37 @@ test('pm.max_children is read from a pool file', () => {
     assert.strictEqual(parse_max_children('[www]\n; pm.max_children = 99\npm = dynamic\npm.max_children = 7\n', 'www.conf'), 7);
     assert.throws(() => parse_max_children('[www]\npm = dynamic\n', 'www.conf'), /sets no pm.max_children/);
     assert.throws(() => parse_max_children('pm.max_children = 0\n', 'www.conf'), /at least 1/);
+});
+
+// -----------------------------------------------------------------------------------------
+// The closure holder's identity
+// -----------------------------------------------------------------------------------------
+
+test('a holder is its pid AND its start time', () => {
+    const mine = process_start_time(process.pid);
+    assert.match(String(mine), /^\d+$/);
+    assert.ok(process_is_alive(process.pid, mine), 'this process, as recorded');
+    assert.ok(!process_is_alive(process.pid, String(Number(mine) + 1)), 'the same live pid with another start time is a reused pid');
+    assert.ok(!process_is_alive(process.pid, null), 'no recorded start time matches nothing');
+    assert.strictEqual(process_start_time(2147480000), null, 'no process at the pid');
+});
+
+test('a closure whose holder pid was reused reopens on the next external request', () => {
+    // The instance's close/open state only: no listener, no whitelist refresh.
+    const proxy = Object.create(Proxority.prototype);
+    proxy.active = new Set();
+    proxy.drain_waiters = [];
+    proxy.event_log = new Event_Log({ echo: () => {} });
+    const external = { ip: '203.0.113.1', loopback: false };
+
+    proxy.close('held', process.pid);
+    assert.strictEqual(proxy.closed.holder_start_time, process_start_time(process.pid), 'the start time is kept with the pid');
+    assert.ok(proxy._refuses_while_closed(external), 'a live holder keeps it closed');
+
+    proxy.closed.holder_start_time = String(Number(proxy.closed.holder_start_time) + 1);
+    assert.ok(!proxy._refuses_while_closed(external), 'a reused pid is not the holder');
+    assert.strictEqual(proxy.closed, null, 'reopened');
+    assert.ok(proxy.event_log.entries().some((e) => /is gone; reopened/.test(format_event(e))), 'the reopening is logged');
 });
 
 // -----------------------------------------------------------------------------------------

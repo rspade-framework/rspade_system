@@ -29,6 +29,20 @@ controller under `rsx/`. A FRAMEWORK VIEW waives both coverage checks
 (`Rsx_Bundle_Abstract::__validate_path_coverage()`, :880 and :897-900), and that
 waiver is the whole reason a framework-side bundle is legal on an app route.
 
+## Application sections - content in, never markup
+
+`Rsx_Api_Docs::page()`'s `$sections` is the one thing an application hands the
+console: a list of `['title' => ..., 'markdown' => ...]`. `page()` validates it
+and renders each through `Markdown_Rendition::render()` (raw HTML discarded, the
+GFM element allowlist on the output), so what reaches `page_data.api_catalog.sections`
+is `{slug, title, html}` already safe to place unescaped - and `_Apidocs_Section`
+is the one place on this page that does. `_Apidocs_Catalog.sections()` /
+`find_section()` / `section_url()` read it; the sidebar lists them under "Guides"
+ahead of the resources, and the console shows one at `?section=<slug>` through the
+same pushState/redraw path an endpoint uses (a section wins over `?endpoint=` and is
+shown even when no endpoint is defined). `_Apidocs_Section.scss` styles exactly the
+element set the renderer can produce, from the `--rsx-*` tokens.
+
 ## Why it is standalone
 
 No sidebar, no `_Sys_Layout`, no `/_sys` route. `_Apidocs_Console` owns the

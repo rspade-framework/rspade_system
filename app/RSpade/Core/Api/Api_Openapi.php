@@ -3,6 +3,10 @@
 namespace App\RSpade\Core\Api;
 
 use App\RSpade\Core\Api\Api_Catalog;
+use App\RSpade\Core\Locks\Site_Lock;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
+use App\RSpade\Core\Revisions\Request_History;
+use App\RSpade\Core\Rsx;
 
 /**
  * Api_Openapi - projects the manifest's API catalog into an OpenAPI 3.1 document.
@@ -35,6 +39,15 @@ use App\RSpade\Core\Api\Api_Catalog;
  *                          note appended to the description.
  *   @api-hidden            omitted entirely - there is nothing to say about an endpoint the
  *                          catalog does not publish.
+ *   _request_ref           the one system parameter, documented on every WRITER operation
+ *                          (#[Writer], or #[Manual_Lock], which may take a write lock) - the
+ *                          operations whose request the history records and replays - as a
+ *                          body property (a query parameter on a GET), with 409
+ *                          request_ref_reused and 410 request_response_expired among its
+ *                          responses. A reader accepts and echoes one but never honours it,
+ *                          so it is not documented there.
+ *   x-build                the build that answered (Rsx::build_info()): commit, built_at,
+ *                          framework_revision, code_key. info.version stays the API version.
  *
  * Param types are scalar (string/int/float/bool), which is a strict subset of JSON Schema, so
  * every type maps exactly - plus 'file', which is a multipart part rather than a value: an
@@ -112,6 +125,7 @@ class Api_Openapi
             'components' => static::__components(),
             'tags' => static::__tags($endpoints),
             'paths' => static::__paths($endpoints),
+            'x-build' => Rsx::build_info(),
         ];
     }
 
@@ -168,6 +182,19 @@ class Api_Openapi
                             ],
                         ],
                     ],
+                ],
+                'RequestRef' => [
+                    'type' => 'string',
+                    'minLength' => 1,
+                    'maxLength' => Request_History::REF_MAX_LENGTH,
+                    'description' => 'A name the client gives this request, unique per request it '
+                        . 'means to make, so a retry after a lost answer is safe. A request already '
+                        . 'answered under this reference is not run again: the original status and body '
+                        . 'come back with _replayed: true and the original _duration_ms / _completed_at. '
+                        . 'The same reference with different parameters, or on another endpoint, is '
+                        . '409 ' . Request_History::CODE_REF_REUSED . '; one whose stored answer has '
+                        . 'been pruned is 410 ' . Request_History::CODE_RESPONSE_EXPIRED . '. Echoed '
+                        . 'at the top level of every answer.',
                 ],
             ],
         ];
@@ -238,10 +265,11 @@ class Api_Openapi
         $path_names = static::__path_param_names($ep['pattern']);
 
         $summary = trim((string) $ep['description']);
+        $is_writer = static::__is_writer($ep);
         $operation = [
             'operationId' => static::__operation_id($ep, $verb),
             'tags' => [static::__tag_for($ep)],
-            'responses' => static::__responses($ep),
+            'responses' => static::__responses($ep, $is_writer),
         ];
 
         if ($summary !== '') {
@@ -281,6 +309,21 @@ class Api_Openapi
             }
             if (!empty($param['required'])) {
                 $body_required[] = $param['name'];
+            }
+        }
+
+        if ($is_writer) {
+            $ref = ['$ref' => '#/components/schemas/RequestRef'];
+
+            if ($verb === 'GET') {
+                $parameters[] = [
+                    'name' => Request_History::REF_PARAM,
+                    'in' => 'query',
+                    'required' => false,
+                    'schema' => $ref,
+                ];
+            } else {
+                $body_props[Request_History::REF_PARAM] = $ref;
             }
         }
 
@@ -352,10 +395,23 @@ class Api_Openapi
     }
 
     /**
-     * Responses. 200 carries the endpoint's documented example when it parses as JSON; the
-     * error family is the same shape everywhere, so it is a $ref rather than four copies.
+     * Does the request history record this endpoint's requests - an automatic writer, or a
+     * #[Manual_Lock] that may take a write lock (Request_History_Call::is_writer())? Read off
+     * the same surface index the dispatcher reads the lock mode from.
      */
-    private static function __responses(array $ep): array
+    private static function __is_writer(array $ep): bool
+    {
+        $mode = Site_Lock::_surface_mode($ep['class'] . '::' . $ep['method']);
+
+        return $mode === Site_Lock_Directives::WRITER || $mode === Site_Lock_Directives::MANUAL;
+    }
+
+    /**
+     * Responses. 200 carries the endpoint's documented example when it parses as JSON; the
+     * error family is the same shape everywhere, so it is a $ref rather than four copies. A
+     * writer adds the two request-reference refusals.
+     */
+    private static function __responses(array $ep, bool $is_writer): array
     {
         $ok = ['description' => 'Success'];
 
@@ -369,13 +425,23 @@ class Api_Openapi
             'content' => ['application/json' => ['schema' => ['$ref' => '#/components/schemas/Error']]],
         ];
 
-        return [
+        $responses = [
             '200' => $ok,
             '401' => $error('Missing, malformed, revoked or expired API key.'),
             '403' => $error('The key\'s user does not pass this endpoint\'s permission gates.'),
             '404' => $error('Unknown endpoint, or the record does not exist in this site.'),
             '422' => $error('Parameter validation failed; error.fields carries per-field messages.'),
         ];
+
+        if ($is_writer) {
+            $responses['409'] = $error(Request_History::CODE_REF_REUSED . ': the _request_ref names a different '
+                . 'request (other parameters, or another endpoint). On the same endpoint error.completed_at '
+                . 'names when the original ran and, while it is kept, error.original carries its answer.');
+            $responses['410'] = $error(Request_History::CODE_RESPONSE_EXPIRED . ': the request named by '
+                . '_request_ref ran, but its stored answer has been pruned.');
+        }
+
+        return $responses;
     }
 
     /**

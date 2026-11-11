@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Api\Php;
 
 use Illuminate\Http\Request;
+use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
 use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 
@@ -15,7 +16,7 @@ use App\RSpade\Core\Models\Email_Blocked_Address_Model;
  * API endpoints answering every shape the response contract rules on, for
  * Api_Response_Contract_Test: the non-object answers the dispatcher refuses (null, a list,
  * an empty array, a scalar, a collection, a JSON list response), the object it accepts, a
- * non-JSON download it passes through, a fault, a declared param to provoke a 422, a path
+ * non-JSON download it passes through, a document it sends as written, a fault, a declared param to provoke a 422, a path
  * introduced in v2, and a writer to record and replay. Present only while the suite runs (the test tree enters the
  * manifest then).
  */
@@ -103,6 +104,15 @@ class Api_Response_Contract_Fixture_Api_Controller extends Rsx_Api_Controller_Ab
     public static function download(Request $request, array $params = [])
     {
         return response("a,b\n1,2\n", 200, ['Content-Type' => 'text/csv']);
+    }
+
+    /**
+     * Answer a document (Rsx_Api::document()): sent exactly as given, never stamped.
+     */
+    #[Api_Endpoint('/api/v1/test-probe/contract/document', methods: ['GET'])]
+    public static function document(Request $request, array $params = [])
+    {
+        return Rsx_Api::document(['openapi' => '3.1.0', 'x-probe' => true]);
     }
 
     /**

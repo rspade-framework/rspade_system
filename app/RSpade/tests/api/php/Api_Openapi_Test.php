@@ -9,6 +9,10 @@ namespace App\RSpade\Tests\Api\Php;
 
 use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Openapi;
+use App\RSpade\Core\Locks\Site_Lock;
+use App\RSpade\Core\Locks\Site_Lock_Directives;
+use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -17,7 +21,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Reads the FINALIZED real manifest (the template app's v1 endpoints), so these assert
  * the TRANSLATION DECISIONS rather than exact counts: :token becomes {token}, a path
  * param is in:path and required, GET params are in:query while POST params become a
- * requestBody, and the document carries the bearer scheme plus the shared error schema.
+ * requestBody, and the document carries the bearer scheme plus the shared error schema,
+ * the build that answered (x-build), and _request_ref on exactly the writer operations.
  * The catalog cannot be mocked without rebuilding the manifest.
  */
 class Api_Openapi_Test extends Rsx_Test_Abstract
@@ -373,5 +378,96 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
         }
 
         static::__assert_equals($published, count(static::__operations($doc)));
+    }
+
+    // -------------------------------------------------------------------------
+    // The root, the build stamp and the system parameter
+    // -------------------------------------------------------------------------
+
+    /**
+     * An OpenAPI 3.1 root admits only its own fields and x- extensions - what a strict
+     * validator rejects first.
+     */
+    public static function test_the_root_carries_only_openapi_fields_and_extensions()
+    {
+        $allowed = ['openapi', 'info', 'jsonSchemaDialect', 'servers', 'paths', 'webhooks', 'components', 'security', 'tags', 'externalDocs'];
+
+        foreach ([Api_Openapi::document(), Api_Openapi::document(null, Api_Catalog::get_versions()[0])] as $doc) {
+            foreach (array_keys($doc) as $key) {
+                static::__assert_true(
+                    in_array($key, $allowed, true) || str_starts_with($key, 'x-'),
+                    "root field '{$key}' is an OpenAPI field or an x- extension"
+                );
+            }
+        }
+    }
+
+    public static function test_x_build_is_the_build_identity()
+    {
+        $doc = Api_Openapi::document();
+
+        static::__assert_equals(['commit', 'built_at', 'framework_revision', 'code_key'], array_keys($doc['x-build']));
+        static::__assert_equals(Rsx::build_info(), $doc['x-build']);
+        static::__assert_equals(Manifest::get_build_key(), $doc['x-build']['code_key']);
+        static::__assert_true(str_starts_with($doc['info']['version'], 'v'), 'info.version stays the API version');
+    }
+
+    /**
+     * Every writer operation (the request history records it) documents _request_ref and
+     * the two refusals; no reader does.
+     */
+    public static function test_request_ref_is_documented_on_exactly_the_writer_operations()
+    {
+        $doc = Api_Openapi::document();
+
+        static::__assert_equals(128, $doc['components']['schemas']['RequestRef']['maxLength']);
+        static::__assert_contains('request_ref_reused', $doc['components']['schemas']['RequestRef']['description']);
+
+        // operationId -> is it a writer, from the same surface index the dispatcher reads.
+        $writers = [];
+        foreach (Api_Catalog::get_endpoint_list(false) as $ep) {
+            $mode = Site_Lock::_surface_mode($ep['class'] . '::' . $ep['method']);
+            foreach ($ep['methods'] as $verb) {
+                $id = strtolower($verb) . '_v' . $ep['version'] . '_' . $ep['class'] . '_' . $ep['method'];
+                $writers[$id] = $mode === Site_Lock_Directives::WRITER || $mode === Site_Lock_Directives::MANUAL;
+            }
+        }
+
+        $writer_count = 0;
+        $reader_count = 0;
+        foreach (static::__operations($doc) as $entry) {
+            $op = $entry['op'];
+            $label = strtoupper($entry['verb']) . ' ' . $entry['url'];
+
+            $in_body = false;
+            foreach ($op['requestBody']['content'] ?? [] as $media) {
+                $in_body = $in_body || isset($media['schema']['properties']['_request_ref']);
+            }
+            $in_query = in_array('_request_ref', array_column($op['parameters'] ?? [], 'name'), true);
+            $documented = $in_body || $in_query;
+
+            static::__assert_array_has_key($op['operationId'], $writers, "{$label} is a catalog endpoint");
+
+            if ($writers[$op['operationId']]) {
+                $writer_count++;
+                static::__assert_true($documented, "{$label} (a writer) documents _request_ref");
+                static::__assert_true($entry['verb'] === 'get' ? $in_query : $in_body, "{$label}: in the body, or the query on a GET");
+                static::__assert_array_has_key('409', $op['responses'], "{$label} documents request_ref_reused");
+                static::__assert_array_has_key('410', $op['responses'], "{$label} documents request_response_expired");
+                foreach ($op['requestBody']['content'] ?? [] as $media) {
+                    static::__assert_false(
+                        in_array('_request_ref', $media['schema']['required'] ?? [], true),
+                        "{$label}: _request_ref is optional"
+                    );
+                }
+            } else {
+                $reader_count++;
+                static::__assert_false($documented, "{$label} (a reader) does not document _request_ref");
+                static::__assert_false(isset($op['responses']['409']), "{$label} carries no 409");
+            }
+        }
+
+        static::__assert_greater_than(0, $writer_count, 'the template app ships writer endpoints');
+        static::__assert_greater_than(0, $reader_count, 'the template app ships reader endpoints');
     }
 }

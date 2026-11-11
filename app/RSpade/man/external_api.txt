@@ -24,10 +24,13 @@ SYNOPSIS
         return Rsx_Api::created($model);          // 201
         return Rsx_Api::not_found('No such row'); // 404
         return Rsx_Api::validation_error(['email' => 'Invalid']); // 422
+        return Rsx_Api::document($openapi);       // 200, sent exactly as given
 
     Docs / tester - the APPLICATION routes to it and gates it:
-        Rsx_Api_Docs::page([$restrict_to_key])    renders the whole page, bundle
-                                                  and all - the app adds nothing
+        Rsx_Api_Docs::page([$restrict_to_key], [$sections])
+                                                  renders the whole page, bundle
+                                                  and all - the app adds only
+                                                  content (APPLICATION SECTIONS)
         Rsx_Api_Docs::openapi_document(): array   (the app builds the response)
 
     Provisioning a key from a script (see COMMAND LINE, under API KEYS):
@@ -191,7 +194,9 @@ DECLARING ENDPOINTS
           expands to (VERSIONING)
         - a version range (through: / #[Api_Versions]) ending below the
           pattern's own version; a non-integer through:; #[Api_Versions] or
-          #[Api_Resource] declared twice or without its argument
+          #[Api_Resource] declared twice or without its argument;
+          #[Api_Versions] with both through: and every:, or every: anything
+          but true
         - API-GET-PURE-01: a write call in a GET handler's body, or a GET
           handler whose body cannot be located (see KEY SCOPES)
       The converse guard lives in Route_ManifestSupport: a NON-API #[Route] (or
@@ -291,6 +296,8 @@ RESPONSE CONTRACT
                                 redacted)
         JsonResponse         -> passed through (the Rsx_Api helpers); its body
                                 must be an object
+        Rsx_Api::document()  -> a DOCUMENT: a JSON object sent exactly as
+                                given, never stamped (below)
         a file / streamed    -> sent as it is (a download is exempt)
         response, or any
         non-JSON body
@@ -326,6 +333,15 @@ RESPONSE CONTRACT
     recorded values, a replay with the originals (rsx:man request_history).
     A sent _request_ref is echoed at the top level of every object answer.
 
+    A DOCUMENT IS SENT AS WRITTEN. Only a JsonResponse is stamped. A body a
+    standard defines down to its top level - an OpenAPI description, whose
+    root admits only its own fields and x- extensions - would be made invalid
+    by the timing fields, so it is answered with Rsx_Api::document($array): a
+    200 plain Response, application/json, the object exactly as given (no
+    _duration_ms, _completed_at or echoed _request_ref). The body is still a
+    JSON object - a list is refused. It is for such documents only; every
+    ordinary answer carries the fields a client reads.
+
     THE ERROR SHAPE is the standard for every error the API answers, built in
     one place (Api_Dispatcher::_error()):
 
@@ -342,6 +358,8 @@ RESPONSE CONTRACT
         Rsx_Api::forbidden(?$message)           403  code forbidden
         Rsx_Api::validation_error($fields, ?$message)  422  code validation
         Rsx_Api::error($code, $message, $status, ?$fields)   arbitrary status
+        Rsx_Api::document($array)               200 plain Response, unstamped
+                                                (A DOCUMENT IS SENT AS WRITTEN)
 
     WRITERS. An endpoint is a READER of its site unless it declares #[Writer]
     (POST only: a #[Writer] GET is refused by API-GET-PURE-01). A writer runs
@@ -465,12 +483,21 @@ AUTHENTICATION
     identity has a real site_id, so the claim succeeds. See FILE ENDPOINTS below
     and rsx:man file_upload.
 
-THE IDENTITY ENDPOINT - GET /api/v1/me
+THE IDENTITY ENDPOINT - GET /api/vN/me
     One of the four endpoints every RSpade API has, shipped by the framework
     rather than written per app (Identity_Api_Controller; the other three are
     the file endpoints below). A client hits it FIRST and OFTEN:
     to check a key at setup, to fail fast on a revoked one, to show "connected
     as" in a UI.
+
+    SERVED AT EVERY VERSION THE APPLICATION SERVES. The four framework
+    endpoints carry #[Api_Versions(every: true)] (see VERSIONING): they are
+    declared at v1 and answer at /api/vN/... for every N the application's own
+    endpoints are served at - same handler, params, gates and payload at each.
+    A client that knows one supported prefix reaches identity, upload,
+    metadata and text there; a version the application stops serving stops
+    serving them too (410 api_version_retired, like any retired address); an
+    application with no API endpoints of its own still has them at v1.
 
         curl https://host/api/v1/me -H "Authorization: Bearer rsx_live_..."
 
@@ -505,9 +532,14 @@ FILE ENDPOINTS
     The framework ships THREE file endpoints. They move bytes and report on
     them; they deliberately do NOT attach a file to a record.
 
-        POST /api/v1/files              upload; returns 201 + the attachment key
-        GET  /api/v1/files/:key         metadata, URLs, preview/text status
-        GET  /api/v1/files/:key/text    extracted text
+        POST /api/vN/files              upload; returns 201 + the attachment key
+        GET  /api/vN/files/:key         metadata, URLs, preview/text status
+        GET  /api/vN/files/:key/text    extracted text
+
+    Served at every version the application serves, like GET /api/vN/me
+    above. An attachment key is not versioned: a key uploaded through one
+    version is read through any other. The returned urls (/_download/...,
+    /_inline/...) sit outside /api/vN at every version.
 
     UPLOAD is multipart/form-data with a part named by the endpoint's 'file'
     param:
@@ -552,7 +584,7 @@ FILE ENDPOINTS
         system/app/RSpade/resource/reference_app/app/api/v1/clients_api_controller.php
         system/app/RSpade/resource/reference_app/app/api/v1/tasks_api_controller.php
 
-    STATUS VOCABULARY. GET /api/v1/files/:key adds preview_status and
+    STATUS VOCABULARY. GET /api/vN/files/:key adds preview_status and
     text_status, each one of:
 
         pending      not converted / not extracted YET - poll
@@ -561,7 +593,7 @@ FILE ENDPOINTS
         unsupported  nothing to convert, or no extractor for this type
 
     Rendering and extraction are ASYNC, so a document uploaded a second ago is
-    normally 'pending'. GET /api/v1/files/:key/text returns 409 with code
+    normally 'pending'. GET /api/vN/files/:key/text returns 409 with code
     text_pending / text_error / text_unsupported when the text is not available,
     and {key, text, text_status} when it is.
 
@@ -579,7 +611,7 @@ FILE ENDPOINTS
     file's CURRENT bytes whatever v says; a request whose v is still current is
     answered cacheable for a year, and one with no v (a URL assembled from the
     key) or an outdated v is answered Cache-Control: no-store. Read urls again
-    from GET /api/v1/files/:key rather than keeping one. An application endpoint
+    from GET /api/vN/files/:key rather than keeping one. An application endpoint
     that returns file URLs builds them with the model's builders - get_url(),
     get_download_url(), get_thumbnail_url(), get_preview_url() - never from the
     key (rsx:man file_upload, FILE ACCESS).
@@ -600,7 +632,7 @@ FILE ENDPOINTS
     Read authorization runs the file.thumbnail.authorize and (for bytes)
     file.download.authorize gates; a denial and a missing file are both 404.
     Both gates are MANDATORY: with no handler registered for either, every
-    file read - these routes and GET /api/v1/files/:key(/text) - throws a 5xx
+    file read - these routes and GET /api/vN/files/:key(/text) - throws a 5xx
     naming the missing gate (rsx:man file_upload, SECURITY HOOKS).
 
 API KEYS
@@ -1023,11 +1055,14 @@ KEY SCOPES
     THE WEB BEARER ROUTES ARE CLAMPED TOO. The file-serving web routes
     (/_file/..., /_thumbnail/..., /_download_zip/..., /_preview/pdf/... - see
     FILE ENDPOINTS) accept a Bearer key on a URL that carries no /api/vN/ path
-    for a scope to match, and they serve the very bytes GET /api/v1/files/:key
+    for a scope to match, and they serve the very bytes GET /api/vN/files/:key
     describes. So Rsx_Api_Bearer::authenticate_file_route() evaluates a scoped
-    key against a SYNTHETIC path inside the files subtree - "does any scope
-    reach the files subtree" - and answers the same insufficient_scope 403 when
-    it does not. Without this the scope would be advisory: a key scoped away
+    key against a SYNTHETIC path inside the files subtree of EVERY VERSION
+    that serves the file routes (/api/vN/files/anything for each N) - "does
+    any scope reach the files subtree at any served version" - and answers
+    the same insufficient_scope 403 when none does. A key scoped
+    /api/v3/files/* downloads what GET /api/v3/files/:key describes, exactly
+    as one scoped /api/v1/files/* or /api/?/files/* does. Without this the scope would be advisory: a key scoped away
     from files would be refused by the API and handed the same file on
     /_download. That 403 names no 'required' target, because the synthetic path
     is not an endpoint anybody could call.
@@ -1302,6 +1337,32 @@ VERSIONING
     versions). A method may also carry several #[Api_Endpoint] attributes; each
     is expanded on its own.
 
+    FOLLOWING THE APPLICATION'S VERSIONS. An endpoint that belongs to no
+    versioned resource - the framework's GET /me and file endpoints, or an
+    application utility of the same kind - declares #[Api_Versions(every: true)]
+    on its controller instead of a range:
+
+        #[Api_Versions(every: true)]
+        class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
+        {
+            #[Api_Endpoint('/api/v1/me', methods: ['GET'])]
+            public static function me(...)    // /api/vN/me for every served N
+        }
+
+    The manifest expands such a FOLLOWER after every other declaration, to every
+    version those declarations serve, from the version in its pattern up - no
+    config, no number to keep in step. When the application adds v3, the
+    follower answers at /api/v3/...; when the application stops serving v1
+    (no declaration of its own is served there), the follower stops too and
+    /api/v1/... answers 410 api_version_retired like every other retired
+    address. Gaps stay gaps. With nothing else served at or above its version,
+    a follower is served at its own version alone, so an application with no
+    API endpoints still has GET /api/v1/me. Followers never count towards the
+    versions they follow. #[Api_Versions] takes exactly one of through: N or
+    every: true; an endpoint's own through: still overrides it. An
+    application declaration at an address a follower expands to (its own
+    /api/v2/me, say) is the "Duplicate route definition" build failure.
+
     A V2 CONTROLLER NEEDS ITS OWN CLASS NAME. Class names are unique per file
     type across the whole tree and NAMESPACES ARE NOT CONSULTED, so a V1\ / V2\
     namespace split of one Contacts_Api_Controller is a build failure ("Duplicate
@@ -1404,8 +1465,9 @@ DOCS AND TESTER PAGE
     route - the view, the components, the styles and _Apidocs_Bundle - ships with
     the framework, so the integration is one call with the simplicity of
     phpinfo(). An application declares no bundle, forwards no hook, styles
-    nothing and keeps no copy of anything; there is no supported way to customize
-    the console, and nothing to re-adopt when the framework changes it.
+    nothing and keeps no copy of anything; there is no supported way to restyle
+    or extend the console, and nothing to re-adopt when the framework changes it.
+    The one thing an application hands it is CONTENT (APPLICATION SECTIONS below).
 
     IT LIVES IN THE FRAMEWORK'S OWN APPLICATION TREE, at
     system/app/RSpade/Sys/app/apidocs/, beside the /_sys control panel and
@@ -1445,6 +1507,38 @@ DOCS AND TESTER PAGE
     ADVERTISING surfaces a caller cannot use; it is NOT access control, and
     Api_Dispatcher gates every call regardless of what the page showed.
 
+    APPLICATION SECTIONS. page()'s second argument is the application's own
+    prose - what holds for the whole API and no single endpoint's docblock can
+    say: its error codes and what a client does about each, its conventions.
+
+        return Rsx_Api_Docs::page(restrict_to_key: false, sections: [
+            ['title' => 'Conventions', 'markdown' => $conventions_md],
+            ['title' => 'Errors',      'markdown' => $error_table_md],
+        ]);
+
+    Each section is exactly a 'title' and a 'markdown' string. They are listed
+    in the order given under "Guides" at the top of the sidebar (matched by the
+    filter like any endpoint), and each is a page of its own at
+    <mount>?section=<slug>, the slug the title lowercased with every run of
+    other characters a hyphen ('Error Codes' -> error-codes). A section is
+    version-free and is shown whatever key is adopted or listing chosen.
+
+    The Markdown is GitHub-flavoured - a table is a GFM table, so an inventory
+    kept as data (a constant of codes) is written out as one - and goes through
+    Markdown_Rendition::render(): raw HTML in it is DISCARDED and the output is
+    held to the GFM element allowlist, so a section can never put markup of its
+    own on the page. The framework owns every pixel of how it looks.
+
+    Refused at the call, with InvalidArgumentException: a $sections that is not
+    a list, an entry that is not an array, any key but 'title' and 'markdown'
+    (a 'content' typo would otherwise publish an empty page), a blank or
+    non-string title or markdown, a title with no letter or digit, and two
+    titles that slug alike (one would be unreachable).
+
+    The sections are the console's, not the OpenAPI document's: an application
+    that also wants an inventory in the document adds its own x- extension to
+    the array before it builds the response.
+
     HOW THE FILTER KNOWS. Auth checks are parameterless and evaluate against the
     current session, so the only way to ask "would this gate pass for the key's
     user" is to become that user for the duration of the question.
@@ -1480,10 +1574,11 @@ DOCS AND TESTER PAGE
                            DOM-level, not a re-render, so the focused input is
                            never rebuilt mid-keystroke
         _Apidocs_Home      the landing pane, and the key gate when restricted
+        _Apidocs_Section   one application section, its sanitized Markdown
         _Apidocs_Catalog   synchronous reader over the baked catalog - there is
                            no loading state anywhere in the UI because there is
                            nothing to wait for
-        _Apidocs_Key_Bar        paste a key; VALIDATED against /api/v1/me before it is
+        _Apidocs_Key_Bar        paste a key; VALIDATED against /api/vN/me before it is
                            accepted, so a bad key fails here rather than later on
                            some unrelated endpoint. Held in session storage, never
                            persisted. With a key set the input is replaced by the
@@ -1578,6 +1673,24 @@ DOCS AND TESTER PAGE
         @api-hidden         omitted entirely.
         tags                one per resource - the docs page's own grouping
                             (Api_Catalog::resource_name()).
+        _request_ref        on every WRITER operation (#[Writer], or
+                            #[Manual_Lock], which may take a write lock) - the
+                            requests the history records and replays - as an
+                            optional body property (a query parameter on a
+                            GET), its schema components.schemas.RequestRef
+                            describing the replay, plus 409
+                            request_ref_reused and 410 request_response_expired
+                            among that operation's responses. A reader accepts
+                            and echoes one but never honours it, so it is not
+                            documented there.
+        x-build             the build that answered, at the root -
+                            Rsx::build_info(): {commit, built_at,
+                            framework_revision, code_key}. info.version stays
+                            the API version. Each of the first three is null
+                            when unknown: on a development box (it serves its
+                            working tree, not a build), and for anything the
+                            build could not record (rsx:man prod, BUILD
+                            IDENTITY).
 
     Every version is listed unless the document is narrowed to one
     (openapi_document($targets, $version), rsx:api:openapi --api-version=N), in
@@ -1593,6 +1706,25 @@ DOCS AND TESTER PAGE
 
     /_compiled/ and /_vendor/ deliberately do NOT fall through - a miss there is
     a build problem, and a route scan would turn a loud failure into a 404.
+
+    THE DOCUMENT OVER THE API. An integration holding only a key reads the
+    document from an ordinary GET endpoint of the application's own - the
+    framework declares no document route, exactly as it declares none for the
+    console. The reference app's (rsx/app/api/v1/openapi_api_controller.php):
+
+        #[Auth('is_logged_in', 'can_use_api')]
+        class Openapi_Api_Controller extends Rsx_Api_Controller_Abstract
+        {
+            #[Api_Endpoint('/api/v1/openapi.json', methods: ['GET'])]
+            public static function document(Request $request, array $params = [])
+            {
+                return Rsx_Api::document(Rsx_Api_Docs::openapi_document(null, 1));
+            }
+        }
+
+    Rsx_Api::document() is what keeps the timing fields off the root (A
+    DOCUMENT IS SENT AS WRITTEN, under RESPONSE CONTRACT). A scoped key reaches
+    it only when a scope grants its path.
 
 REQUEST LOGGING
     EVERY API request - success and every failure path - writes one
@@ -1615,7 +1747,7 @@ REQUEST LOGGING
 
     THE BODY IS NEVER STORED FOR AN UPLOAD. The test is the REQUEST - files
     present, or a multipart/form-data content type - not the endpoint name, so it
-    holds for POST /api/v1/files and for any upload endpoint written later
+    holds for POST /api/vN/files and for any upload endpoint written later
     without either knowing about the other. It is also null when there was no
     body, which is every GET.
 
@@ -1746,7 +1878,7 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     for auth.
 
 TEMPLATE ENDPOINTS
-    The starter template ships three reference API controllers
+    The starter template ships four reference API controllers
     (rsx/app/api/v1/) as the working pattern to copy:
 
         GET  /api/v1/contacts            list (page, per_page, search) -> {items, meta}
@@ -1764,6 +1896,11 @@ TEMPLATE ENDPOINTS
         POST /api/v1/clients/:id/attachments/:attachment_id/delete
         ... and the same three for /api/v1/tasks (which also has list, one,
         create and present-only update - no delete)
+
+    And the API's own description, for a key holder:
+
+        GET  /api/v1/openapi.json        the v1 OpenAPI document, unstamped
+                                         (THE DOCUMENT OVER THE API)
 
     Clients attach into the SAME category the staff Documents tab reads, so a
     file uploaded over the API shows up in the UI; removing one revokes its
@@ -1871,8 +2008,9 @@ TROUBLESHOOTING
 
     A file URL (/_file/, /_thumbnail/, /_download_zip/) 403s for a scoped key
         Those routes are clamped against a synthetic path inside the files
-        subtree - a key with no scope reaching it is refused there exactly as it
-        is on the API. Add /api/v1/files/* to the key.
+        subtree of each served version - a key with no scope reaching any of
+        them is refused there exactly as it is on the API. Add
+        /api/vN/files/* (any served N) or /api/?/files/* to the key.
 
     The manifest build fails with API-GET-PURE-01
         A GET #[Api_Endpoint] handler's own body contains a write call, and the

@@ -15,6 +15,7 @@ use Throwable;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Models\Site_Scoped;
+use App\RSpade\Core\Database\Rsx_DatabaseTransactionsManager;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
@@ -123,6 +124,15 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * And: the site is never changed while a site lock is held or a bypass is open
  * (_assert_site_change_permitted(), called by the Session / Portal_Session setters).
+ *
+ * AFTER THE COMMIT. Once a writer's (or a write section's, or a #[Manual_Lock] request's)
+ * transaction has committed, nothing that throws afterwards fails it or claims a rollback: the
+ * after-commit callbacks are contained by Rsx_DatabaseTransactionsManager, and a throw that still
+ * reaches _commit() / __close_manual_transaction() with the level below the transaction's is
+ * reported and the request answers what it returned. The one exception is an infrastructure
+ * outage (Rsx_DatabaseTransactionsManager::_is_contained()): it ends the request, still without
+ * claiming a rollback. A commit that itself fails leaves the level where it was: rolled back,
+ * and the request fails.
  *
  * HOLD-TIME WARNINGS. Releasing a lock held longer than rsx.locks.warn_write_hold_seconds /
  * warn_read_hold_seconds logs a WARNING naming the site, the holder, the time held and the
@@ -604,7 +614,23 @@ class Site_Lock
             );
         }
 
-        DB::commit();
+        try {
+            DB::commit();
+        } catch (Throwable $e) {
+            // At or above the section's level the commit itself failed: nothing committed, and
+            // _release() rolls it back (rule 3). Below it the data COMMITTED (Laravel decrements
+            // the level only after PDO::commit() returned) and what threw ran after the commit.
+            if (DB::transactionLevel() >= $level) {
+                throw $e;
+            }
+
+            self::$held['transaction_level'] = null;
+            self::$owned_transactions--;
+
+            static::__after_commit_failure($e, $held['label']);
+
+            return;
+        }
 
         self::$held['transaction_level'] = null;
         self::$owned_transactions--;
@@ -613,18 +639,24 @@ class Site_Lock
     /**
      * Roll back the write lock's transaction, and any the work opened inside it. On a throw,
      * before the release.
+     *
+     * @return bool Whether a rollback ran (false: the transaction was already closed by code
+     *              that did not open it)
      */
-    public static function _rollback(string $token): void
+    public static function _rollback(string $token): bool
     {
         $held = static::__require_open_transaction($token, '_rollback');
         $level = $held['transaction_level'];
+        $rolled_back = DB::transactionLevel() >= $level;
 
-        if (DB::transactionLevel() >= $level) {
+        if ($rolled_back) {
             DB::rollBack($level - 1);
         }
 
         self::$held['transaction_level'] = null;
         self::$owned_transactions--;
+
+        return $rolled_back;
     }
 
     /**
@@ -635,10 +667,7 @@ class Site_Lock
     {
         $held = static::__require_held($token, '_release');
         $open_transaction = $held['transaction_level'] !== null;
-
-        if ($open_transaction) {
-            static::_rollback($token);
-        }
+        $rolled_back = $open_transaction && static::_rollback($token);
 
         $held_seconds = (hrtime(true) - $held['granted_at']) / 1e9;
         self::$held = null;
@@ -650,8 +679,11 @@ class Site_Lock
         if ($open_transaction) {
             throw new RuntimeException(
                 'Site lock rule 3: the WRITE lock on site ' . $held['site_id'] . ' (' . $held['label'] . ') was released '
-                . 'with its transaction still open. It was rolled back. Call Site_Lock::_commit() or _rollback() '
-                . 'before _release().'
+                . 'with its transaction still open. '
+                . ($rolled_back
+                    ? 'It was rolled back. '
+                    : 'Nothing was rolled back here: code that did not open the transaction had already closed it. ')
+                . 'Call Site_Lock::_commit() or _rollback() before _release().'
             );
         }
     }
@@ -1722,7 +1754,36 @@ class Site_Lock
             );
         }
 
-        DB::commit();
+        try {
+            DB::commit();
+        } catch (Throwable $e) {
+            // The commit itself failed (the level did not move): nothing committed. Hand the
+            // transaction back to __run_manual()'s finally, which rolls it back.
+            if (DB::transactionLevel() >= $level) {
+                self::$manual_request['transaction_level'] = $level;
+
+                throw $e;
+            }
+
+            // It committed; what threw ran after the commit.
+            static::__after_commit_failure($e, $request['label']);
+        }
+    }
+
+    /**
+     * A throw met after a write lock's transaction COMMITTED (an after-commit callback the
+     * transactions manager did not contain, or a TransactionCommitted listener): the write
+     * stands and nothing claims a rollback. Reported, and the request answers what it returned -
+     * except an infrastructure outage (Rsx_DatabaseTransactionsManager::_is_contained()), which still
+     * ends the request.
+     */
+    private static function __after_commit_failure(Throwable $e, string $label): void
+    {
+        if (!Rsx_DatabaseTransactionsManager::_is_contained($e)) {
+            throw $e;
+        }
+
+        Rsx_DatabaseTransactionsManager::_report_after_commit_failure($e, "{$label}'s commit");
     }
 
     private static function __section_label(string $section, ?string $description): string

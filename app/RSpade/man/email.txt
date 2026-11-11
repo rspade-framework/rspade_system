@@ -18,7 +18,7 @@ SYNOPSIS
 
     (new Welcome_Email($user, $url))->to($user)->send();     // -> Email_Queue_Model
 
-    Rsx_Mail::preview(Welcome_Email::sample());              // {subject, html, text}, sends nothing
+    Rsx_Mail::preview(Welcome_Email::sample());              // {subject, from, html, text}, sends nothing
     Rsx_Mail::catalogue();                                   // every email class, by view id
 
     php artisan rsx:mail:test you@example.com
@@ -188,6 +188,7 @@ SENDING
             ->cc($manager)                        // repeated calls ACCUMULATE
             ->bcc('archive@example.com')
             ->reply_to($staff_user)               // a later call REPLACES the earlier one
+            ->from($billing_address, 'Billing')   // default: MAIL_FROM_ADDRESS; REPLACES
             ->attach($file_attachment)            // File_Attachment_Model or absolute path
             ->attach_bytes($csv, 'lines.csv', 'text/csv')
             ->embed('chart', $chart_attachment)   // template: <img src="cid:chart">
@@ -201,6 +202,27 @@ SENDING
     get_printed_name() when the method exists, else a trimmed first_name/last_name pair,
     else nothing. Anything else throws: a silently dropped recipient is an email nobody
     notices never arrived. send() with no to() throws too.
+
+    from() sends THIS message from another address - a billing address for invoices
+    while everything else keeps the configured sender. It takes the same arguments as
+    reply_to(), a later call replaces the earlier one, and it is FROZEN onto the row
+    (from_address, from_name) at send(): the drain sends what the row says, so changing
+    the application setting the address came from does not rewrite a message already
+    queued, and a resend sends the same From. With no name (and none resolvable from an
+    object) the configured display name is used - MAIL_FROM_NAME, else rsx.name. Without
+    from() the row carries nothing and the configured sender is read when the message is
+    built. A malformed address THROWS at the from() call.
+
+    THE FRAMEWORK DOES NOT CHECK THAT THE TRANSPORT MAY SEND AS THE ADDRESS - only the
+    provider knows. Choose an address the configured transport is authorised to send for:
+    its domain publishes SPF/DKIM/DMARC covering this transport (the "Mail sender domain"
+    health row checks only MAIL_FROM_ADDRESS's domain), an SMTP relay or SES accepts it as a
+    verified sender, an API mailbox (Microsoft Graph, say) holds send-as rights for it. A
+    provider that refuses the sender answers that message, which retries and then FAILS
+    with the provider's reply in last_error (THE DRAIN AND THE FAILURE POLICY); one that
+    accepts an unauthorised From delivers to spam folders or is rejected downstream by the
+    recipient's server - nothing this box can see. The From is also the envelope sender
+    (MAIL FROM / Return-Path), so bounces return to it.
 
     dedupe_key is UNIQUE per site. When the key has been used before, send() returns THAT
     row in whatever state it reached and enqueues nothing - a replayed webhook or a re-run
@@ -389,13 +411,14 @@ DISPLAYING A STORED MESSAGE
 
 PREVIEWING AN EMAIL THAT HAS NOT BEEN SENT
 
-    Rsx_Mail::preview(Rsx_Email_Abstract $email): array{subject, html, text}
+    Rsx_Mail::preview(Rsx_Email_Abstract $email): array{subject, from, html, text}
 
     Renders an email INSTANCE - normally Some_Email::sample() - exactly as a send renders
     it, and makes it displayable, without sending, queueing or storing anything:
 
         $preview = Rsx_Mail::preview(Invoice_Email::sample());
         $preview['subject'];    // the email's subject()
+        $preview['from'];       // ['address' => ..., 'name' => ...] the send would use
         $preview['html'];       // the body as a recipient receives it, images as data: URIs
         $preview['text'];       // the plain-text part the send would carry
 
@@ -544,6 +567,7 @@ THE QUEUE AND ITS STATUSES
     class's tag() for that send, null when it declares none), attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
     last_error, message_id_header, transport, transport_response, dedupe_key (unique per
     site), dev_original_to, rendered_html, rendered_text, headers, cc, bcc, reply_to,
+    from_address/from_name (a from() override; null = the configured sender),
     related_type/related_id, block_cause_id (Blocked rows only), withheld_recipients (the
     cc/bcc entries removed before sending, each with its field and reason).
 
@@ -908,7 +932,7 @@ MAIL TRANSPORTS
         MAIL_PASSWORD        (none)
         MAIL_EHLO_DOMAIN     the APP_URL host
         MAIL_SENDMAIL_PATH   /usr/sbin/sendmail -bs -i
-        MAIL_FROM_ADDRESS    noreply@example.com      every queued email's From
+        MAIL_FROM_ADDRESS    noreply@example.com      a queued email's From, unless from()
         MAIL_FROM_NAME       '' (= rsx.name)
 
     SMTP TLS: 'smtps' is TLS from the first byte; otherwise STARTTLS is negotiated

@@ -168,7 +168,10 @@ endpoints (`Request_History_Fixture_Controller`, `Request_History_Fixture_Api_Co
 | RH-01 | the same reference resent is answered from the record | php | Ajax writer x2, same ref + params | `_replayed`, same value, original `_duration_ms` / `_completed_at`, one run, one write, `{}` kept | implemented | 2026-11-06 |
 | RH-02 | the record sits on the writer's `_transactions` row | php | Ajax writer with ref + a password param | ref, site, actor, status 200, envelope outcome body, fingerprint, redacted payload, timing | implemented | 2026-11-06 |
 | RH-03 | a different body under the same reference is refused | php | same ref, other params | `request_ref_reused`, nothing ran or written, ref echoed | implemented | 2026-11-06 |
-| RH-04 | the same reference on another endpoint is refused | php | same ref, other writer | `request_ref_reused`, nothing ran | implemented | 2026-11-06 |
+| RH-04 | the same reference on another endpoint is refused | php | same ref, other writer | `request_ref_reused` with empty metadata, nothing ran | implemented | 2026-11-10 |
+| RH-21 | a same-endpoint reuse names the original | php | same ref, other params | metadata `{completed_at, original}`: the first call's `_completed_at` and `_ajax_return_value`, `{}` kept | implemented | 2026-11-10 |
+| RH-22 | a same-endpoint reuse after pruning names only the completion | php | body nulled, other params | metadata exactly `{completed_at}` | implemented | 2026-11-10 |
+| RH-23 | a signed-out caller's reference is echoed, never honoured | php | no actor, no-op writer x2, same ref | both run, echoed, no `_replayed`, no ref row | implemented | 2026-11-10 |
 | RH-05 | another actor's reference is its own | php | second user, same ref | executes; two records | implemented | 2026-11-06 |
 | RH-06 | a reader with a reference runs every time and records nothing | php | reader x2 with ref | two runs, echo, no `_transactions` row, endpoint never sees the ref | implemented | 2026-11-06 |
 | RH-07 | a pruned record answers expired | php | record, age it, prune, resend | `request_response_expired` naming completed_at, nothing ran | implemented | 2026-11-06 |
@@ -179,7 +182,7 @@ endpoints (`Request_History_Fixture_Controller`, `Request_History_Fixture_Api_Co
 | RH-12 | the eager mint: a writer that saves nothing has its row, a reader none; its retry replays | php | reader, then no-op writer with ref x2 | row with endpoint; replay | implemented | 2026-11-06 |
 | RH-13 | a `#[Manual_Lock]` request that took a write lock is recorded and replays | php | manual writer x2 | replay, one run, one write | implemented | 2026-11-06 |
 | RH-14 | a `#[Manual_Lock]` request that took no write lock records nothing | php | manual reader x2 with ref | two runs, no row | implemented | 2026-11-06 |
-| RH-15 | API: replay, changed body 409, other endpoint 409 | php | fixture API writer | 200 + `_replayed` + original timing, one write; 409 `request_ref_reused` with echo | implemented | 2026-11-06 |
+| RH-15 | API: replay, changed body 409, other endpoint 409 | php | fixture API writer | 200 + `_replayed` + original timing, one write; 409 `request_ref_reused` with echo, `error.completed_at` + `error.original` on the same endpoint and neither on another | implemented | 2026-11-10 |
 | RH-16 | API: pruned record is 410 naming the original completion | php | nulled response | 410 `request_response_expired`, `completed_at` | implemented | 2026-11-06 |
 | RH-17 | API: echo on a reader, a 422, a 401; none when not sent; endpoint never sees the ref | php | GET with query ref, empty ref, bad key | echoes as sent; reader runs every time | implemented | 2026-11-06 |
 | RH-18 | two simultaneous identical writer requests run once | php | two processes, same site + actor + ref | second waits on the write lock, then is a replay; one record | implemented | 2026-11-06 |

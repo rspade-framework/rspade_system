@@ -16,8 +16,8 @@ use App\RSpade\Core\Session\Session;
  * Files_Api_Controller - the framework's file surface on the external REST API.
  *
  * THREE ENDPOINTS, AND DELIBERATELY NOT A FOURTH. The framework owns getting bytes IN
- * (POST /api/v1/files), telling a client what became of them (GET /api/v1/files/:key) and
- * handing back what was read out of them (GET /api/v1/files/:key/text). It does NOT own
+ * (POST /api/vN/files), telling a client what became of them (GET /api/vN/files/:key) and
+ * handing back what was read out of them (GET /api/vN/files/:key/text). It does NOT own
  * "attach this file to that record": which record, which category and who may do it are
  * APPLICATION policy, and an app writes its own endpoint for it using the key returned here
  * plus File_Attachment_Model::find_by_key() / can_user_assign_this_file() / attach_to().
@@ -30,10 +30,17 @@ use App\RSpade\Core\Session\Session;
  *
  * UPLOAD SHARES THE BROWSER'S INGEST PATH VERBATIM. Rsx_File_Upload carries the mandatory
  * file.upload.authorize gate, the size ceiling, the server-derived site_id and the fileable_*
- * strip; POST /_upload and POST /api/v1/files are two transports over one sequence, so an
+ * strip; POST /_upload and POST /api/vN/files are two transports over one sequence, so an
  * app's upload gate protects both with no extra work.
+ *
+ * SERVED AT EVERY VERSION THE APPLICATION SERVES. #[Api_Versions(every: true)]: declared at
+ * v1, expanded by the manifest to /api/vN/files... for every N the application's own
+ * endpoints are served at, so a client that knows one supported prefix finds the file
+ * surface there, and a version the application retires stops serving it too. One handler
+ * per route at every version - same params, gates and payloads.
  */
 #[Auth('is_logged_in')]
+#[Api_Versions(every: true)]
 class Files_Api_Controller extends Rsx_Api_Controller_Abstract
 {
     // The four-value status vocabulary both status fields speak. One vocabulary, so a client
@@ -60,7 +67,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      * payload was built. The routes always serve the file's CURRENT bytes whatever `v` says; a
      * request whose `v` is still current is answered cacheable for a year, and one with no
      * `v` (a URL assembled from the key) or an outdated one is answered `Cache-Control:
-     * no-store`. Read `urls` again from GET /api/v1/files/{key} rather than keeping one.
+     * no-store`. Read `urls` again from GET /api/vN/files/{key} rather than keeping one.
      *
      *
      *   GET /_download/{key}
@@ -87,7 +94,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *     instead; the `preview` URL below already names the right one for the file.
      *
      * WHICH OF THOSE ARE WORTH REQUESTING is what the two status fields on
-     * GET /api/v1/files/{key} tell you, and they are the reason to poll that endpoint after
+     * GET /api/vN/files/{key} tell you, and they are the reason to poll that endpoint after
      * an upload rather than to retry a URL:
      *
      *   preview_status  'pending'     the rendition is still being produced; /_preview/pdf and
@@ -96,7 +103,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *                   'error'       conversion failed and is never retried automatically.
      *                   'unsupported' this file has no preview at all.
      *   text_status     'pending' | 'available' | 'error' | 'unsupported', the same way, for
-     *                                 GET /api/v1/files/{key}/text.
+     *                                 GET /api/vN/files/{key}/text.
      *
      * Both start at 'pending' for an Office document: extraction and rendering happen in one
      * background pass a few seconds after the upload, never during it. /_download is
@@ -164,7 +171,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
     /**
      * Metadata for one uploaded file, plus the preview and text pipeline states.
      *
-     * Poll this after an upload to learn when GET /api/v1/files/{key}/text, /_preview/pdf and
+     * Poll this after an upload to learn when GET /api/vN/files/{key}/text, /_preview/pdf and
      * /_thumbnail/* become worth requesting: both `preview_status` and `text_status` speak the
      * same four-value vocabulary - `pending` (ask again), `available` (fetch it), `error`
      * (failed, never retried), `unsupported` (this file will never have one). See the upload
@@ -196,7 +203,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      * }
      */
     #[Api_Endpoint('/api/v1/files/:key', methods: ['GET'])]
-    #[Api_Param('key', type: 'string', required: true, description: 'The attachment key returned by POST /api/v1/files.')]
+    #[Api_Param('key', type: 'string', required: true, description: 'The attachment key returned by the upload endpoint (POST /api/vN/files, any version).')]
     public static function info(Request $request, array $params = [])
     {
         $attachment = static::__readable_attachment($params['key']);
@@ -238,7 +245,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      * }
      */
     #[Api_Endpoint('/api/v1/files/:key/text', methods: ['GET'])]
-    #[Api_Param('key', type: 'string', required: true, description: 'The attachment key returned by POST /api/v1/files.')]
+    #[Api_Param('key', type: 'string', required: true, description: 'The attachment key returned by the upload endpoint (POST /api/vN/files, any version).')]
     public static function text(Request $request, array $params = [])
     {
         // The bytes' CONTENT is what this returns, so it clears the download gate as well as

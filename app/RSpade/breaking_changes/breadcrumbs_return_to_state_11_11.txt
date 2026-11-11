@@ -1,0 +1,69 @@
+A BREADCRUMB RETURNS TO THE STATE THE USER LEFT A PAGE IN
+Date: 2026-11-11
+
+IF YOU DO NOTHING: your breadcrumbs, Back and Cancel buttons keep linking to the bare route, so a user who sorted, filtered, paged or scrolled a list, opened a record and came back by a crumb still finds the list reset - the framework now computes the stateful link, and your layout never renders it.
+
+SUMMARY
+    Category 3: a requested feature whose implementation includes a template UI.
+
+    A crumb now leads to the page the user actually came through, in the state they left
+    it in - its URL fragment (a grid's sort, filters and page, a tab) and its scroll
+    position - and only when they really came through it on the trail now on screen.
+    Reached any other way (a dashboard, a new tab, an email link) it stays the bare route.
+
+WHAT YOU ALREADY HAVE
+    Arrived in system/, nothing to do:
+
+    - Spa_Journal: a per-tab journal (session storage) of the history entries the user
+      moved through - each entry's URL with its fragment, the scroll it was left at, the
+      entry it came from, and the trail it showed. Kept by the SPA by itself.
+    - Every chain item Rsx_Breadcrumb_Resolver emits (on_chain, on_complete,
+      on_breadcrumb_complete) carries href beside url: url is the page's identity, href
+      the link to render.
+    - Spa.return_url(url): the same answer for any other link back (synchronous; url
+      unchanged when the user did not come through that page).
+    - The reserved one-time hash key _scroll (Rsx.HASH_SCROLL_KEY): a link carrying
+      _scroll=<y> lands at that position through the SPA's scroll restoration, and the key
+      leaves the address bar at once.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    - Your layout renders crumb.url. It must render crumb.href.
+    - Your Back / Cancel buttons and delete exits link to a bare Rsx.Route(...). They take
+      Spa.return_url(Rsx.Route(...)) to return to the list as it was left.
+    - If your grid keys its URL-hash state by a component id (the template's grid did:
+      `that._cid + '_page'`), the state is not read back on the next visit - a component
+      id depends on mount order. It needs a stable namespace.
+    - If your grid scrolls itself on its first load (the template's did:
+      scroll_to_top_if_needed() after every load_page()), it undoes the restoration - and
+      Back's too.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    theme/components/page/breadcrumb_nav.jqhtml        links each crumb to crumb.href
+    theme/components/page/record_page_actions.jqhtml   Back = Spa.return_url($back_href)
+    theme/components/datagrid/datagrid_abstract.js     hash keys under hash_ns (the
+                                                       component name, $hash_ns to override),
+                                                       _claim_hash_ns() refusing two live
+                                                       grids on one namespace, and the first
+                                                       load_page(page, {scroll: false})
+    app/frontend/*/edit/*_Edit_Action.jqhtml           Cancel = Spa.return_url(Rsx.Route(...))
+    app/frontend/clients/view/clients_view_sidebar.js  delete exit through Spa.return_url()
+    app/frontend/tasks/view/Tasks_View_Action.js       (same)
+    app/frontend/party/view/Party_View_Action.js       (same)
+    tests/playwright/breadcrumb_return_state.js        the round trip on the client list
+
+PORTING IT
+    In the layout that renders your breadcrumbs, render each crumb's href instead of its
+    url; keep comparing and caching on url. Wrap the Back / Cancel / after-delete targets
+    that point at a page on the trail in Spa.return_url(). Give your list components
+    stable URL-hash keys (a name, never a component id) and make sure nothing scrolls the
+    page on a list's first load. Which buttons qualify is your navigation's decision; the
+    journal decides per click whether there is state to return to.
+
+VERIFICATION
+    Sort, filter, page and scroll a list; open a record; open its edit page and save. The
+    crumb back to the list (and Back / Cancel) links to the list's fragment plus _scroll=<y>;
+    following it shows the list as it was, at the same position, and the address bar ends
+    without _scroll. Open the same record in a new tab: its crumb is the bare route.
+    rsx:man breadcrumb_origins, RETURNING TO THE STATE YOU LEFT.

@@ -18,6 +18,12 @@ use App\RSpade\Core\Time\Rsx_Time;
  * running: a REPLAY of the stored response, or a refusal (409 request_ref_reused, 410
  * request_response_expired).
  *
+ * A same-endpoint request_ref_reused refusal carries what a client needs to offer the user the
+ * earlier submission: completed_at, and original - the stored answer while it is still kept
+ * (Ajax: its _ajax_return_value; API: the stored body). It is this actor's own earlier answer
+ * on this endpoint, so there is nothing to withhold. A reuse on another endpoint carries
+ * neither: that is a client defect, not a user's act.
+ *
  * Thrown by Request_History_Call::open() from INSIDE the site lock boundary, so a writer's
  * transaction (and the _transactions row its eager mint wrote) rolls back: nothing is
  * written. It is an answer, never a fault - the dispatchers catch it before their fault
@@ -35,7 +41,8 @@ class Request_History_Answer extends RuntimeException
      * @param string $kind REPLAY | REUSED | EXPIRED
      * @param string $message The refusal's human-readable message (REUSED / EXPIRED)
      * @param int|null $status The stored response status (REPLAY)
-     * @param string|null $body The stored response body, JSON of an object (REPLAY)
+     * @param string|null $body The stored response body, JSON of an object (REPLAY; REUSED on
+     *        the same endpoint while it is kept)
      * @param int|null $duration_ms The original request's duration
      * @param string|null $completed_at The original request's completion, ISO UTC
      */
@@ -97,8 +104,36 @@ class Request_History_Answer extends RuntimeException
             $this->getMessage(),
             $this->kind === self::EXPIRED ? 410 : 409,
             null,
-            $this->kind === self::EXPIRED ? ['completed_at' => $this->completed_at] : []
+            $this->__refusal_details(false)
         );
+    }
+
+    /**
+     * What a refusal tells the client beside its code and message: EXPIRED names the original
+     * completed_at; a same-endpoint REUSED names it too, plus `original` - the stored answer
+     * while it is kept (Ajax: its _ajax_return_value; API: the whole stored body). A reuse on
+     * another endpoint carries nothing.
+     *
+     * Decoded as objects below the top level, so an empty object in the stored answer is sent
+     * as {} again, never as [].
+     *
+     * @param bool $ajax Is this for an Ajax envelope (else an API error object)
+     * @return array
+     */
+    private function __refusal_details(bool $ajax): array
+    {
+        if ($this->completed_at === null) {
+            return [];
+        }
+
+        $details = ['completed_at' => $this->completed_at];
+
+        if ($this->kind === self::REUSED && $this->body !== null) {
+            $stored = json_decode($this->body, false, 512, JSON_THROW_ON_ERROR);
+            $details['original'] = $ajax ? ($stored->_ajax_return_value ?? null) : $stored;
+        }
+
+        return $details;
     }
 
     /**
@@ -122,7 +157,7 @@ class Request_History_Answer extends RuntimeException
             '_success' => false,
             'error_code' => $this->error_code(),
             'reason' => $this->getMessage(),
-            'metadata' => $this->kind === self::EXPIRED ? ['completed_at' => $this->completed_at] : [],
+            'metadata' => $this->__refusal_details(true),
         ];
     }
 
@@ -146,18 +181,35 @@ class Request_History_Answer extends RuntimeException
     }
 
     /**
-     * The refusal for a reference that names a different request.
+     * The refusal for a reference already used on this endpoint with different parameters:
+     * the user submitted again after changing what they submitted.
      *
-     * @param bool $other_endpoint The reference was used on a different endpoint
+     * @param string $completed_at The original completion, ISO UTC
+     * @param string|null $body The stored response body, or null once pruned
      * @return self
      */
-    public static function reused(bool $other_endpoint): self
+    public static function reused(string $completed_at, ?string $body): self
     {
         return new self(
             self::REUSED,
-            $other_endpoint
-                ? 'This _request_ref was already used for a request to a different endpoint. Nothing was run; send a new reference for a new request.'
-                : 'This _request_ref was already used for a request with different parameters. Nothing was run; send a new reference for a new request.'
+            'This _request_ref was already used for a request with different parameters. Nothing was run; send a new reference for a new request.',
+            null,
+            $body,
+            null,
+            $completed_at
+        );
+    }
+
+    /**
+     * The refusal for a reference already used on a different endpoint - a client defect.
+     *
+     * @return self
+     */
+    public static function reused_elsewhere(): self
+    {
+        return new self(
+            self::REUSED,
+            'This _request_ref was already used for a request to a different endpoint. Nothing was run; send a new reference for a new request.'
         );
     }
 

@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Api;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
+use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api;
@@ -38,10 +39,16 @@ use App\RSpade\Core\Session\Session;
 class Rsx_Api_Bearer
 {
     /**
-     * The representative path the file-serving web routes are scope-checked against - one
-     * concrete member of the /api/v1/files subtree. See authenticate_file_route().
+     * The file metadata route's path key: the versions serving it are the versions whose
+     * files subtree a scoped key is probed against. See authenticate_file_route().
      */
-    private const FILES_SUBTREE_PROBE = '/api/v1/files/anything';
+    private const FILES_ROUTE_PATH_KEY = '/files/:key';
+
+    /**
+     * The representative path inside one version's files subtree, '%d' the version - one
+     * concrete member of /api/vN/files. See authenticate_file_route().
+     */
+    private const FILES_SUBTREE_PROBE = '/api/v%d/files/anything';
 
     /**
      * The raw key from an Authorization: Bearer header, or null when there is no such header.
@@ -160,13 +167,16 @@ class Rsx_Api_Bearer
      *     handed whatever an anonymous visitor may see.
      *
      * A SCOPED key is clamped here too, and it must be: these routes serve the very bytes
-     * GET /api/v1/files/:key describes, on a URL that carries no /api/vN/ path for a scope to
+     * GET /api/vN/files/:key describes, on a URL that carries no /api/vN/ path for a scope to
      * match. Without this check a key scoped away from files would be refused by the API and
      * then handed the same file on /_download - the scope would be advisory. So a scoped key
-     * is evaluated against a SYNTHETIC path inside the files subtree: the question asked is
-     * "does any scope reach the files subtree", and the representative single-segment path
-     * below is how decide() is asked it. A key with no such scope gets the same
-     * insufficient_scope 403 the dispatcher returns.
+     * is evaluated against a SYNTHETIC path inside the files subtree OF EACH VERSION THAT
+     * SERVES THE FILE ROUTES (they follow every version the application serves): the question
+     * asked is "does any scope reach the files subtree at any served version", and the
+     * representative single-segment path /api/vN/files/anything is how decide() is asked it,
+     * granting on the first version that answers yes. A key scoped /api/v3/files/* downloads
+     * the file GET /api/v3/files/:key described; a key with no scope reaching any version's
+     * files subtree gets the same insufficient_scope 403 the dispatcher returns.
      *
      * The 403 body names no 'required' target, unlike the dispatcher's: the synthetic path is
      * not an endpoint the caller could ever call, and printing it would advertise a URL that
@@ -200,7 +210,7 @@ class Rsx_Api_Bearer
             return Rsx_Api::error($auth['error'][0], $auth['error'][1], 401);
         }
 
-        if (!Api_Scopes::decide($auth['key']->scopes, self::FILES_SUBTREE_PROBE, (int) $auth['key']->id)) {
+        if (!static::_scopes_reach_files($auth['key'])) {
             return Rsx_Api::error(
                 'insufficient_scope',
                 'This API key is not scoped for this endpoint',
@@ -209,6 +219,29 @@ class Rsx_Api_Bearer
         }
 
         return null;
+    }
+
+    /**
+     * Does the key's scope set reach the files subtree at any version that serves the file
+     * routes? Unrestricted keys answer true at once. A malformed stored scope is warned about
+     * once (the first probe carries the key id), not once per version.
+     */
+    private static function _scopes_reach_files(Api_Key_Model $key): bool
+    {
+        if (Api_Scopes::is_unrestricted($key->scopes)) {
+            return true;
+        }
+
+        $warn_as = (int) $key->id;
+
+        foreach (Api_Catalog::versions_serving(self::FILES_ROUTE_PATH_KEY) as $version) {
+            if (Api_Scopes::decide($key->scopes, sprintf(self::FILES_SUBTREE_PROBE, $version), $warn_as)) {
+                return true;
+            }
+            $warn_as = null;
+        }
+
+        return false;
     }
 
     /**

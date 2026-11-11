@@ -538,6 +538,131 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         );
     }
 
+    // -------------------------------------------------------------------------
+    // #[Api_Versions(every: true)] - endpoints that follow the application's versions
+    // -------------------------------------------------------------------------
+
+    // Real source for the follower: the framework's own identity endpoint, whose pure GET
+    // body the API-GET-PURE-01 reader checks. Relative to base_path().
+    private const FOLLOWER_FILE = 'app/RSpade/Core/Api/Identity_Api_Controller.php';
+
+    /**
+     * A synthetic manifest with an application controller (Foo_Api_Controller::list, whose
+     * #[Api_Endpoint] instances are $app_endpoints) beside a follower controller
+     * (Identity_Api_Controller::me declaring $follower_endpoints, class attributes
+     * $follower_class_attrs).
+     */
+    private static function __follower_manifest(
+        array $app_endpoints,
+        array $follower_endpoints = [[0 => '/api/v1/me', 1 => ['GET']]],
+        array $follower_class_attrs = ['Api_Versions' => [['every' => true]]]
+    ): array {
+        $manifest = static::__manifest(empty($app_endpoints) ? [] : ['Api_Endpoint' => $app_endpoints]);
+
+        $manifest['data']['files'][self::FOLLOWER_FILE] = [
+            'fqcn' => 'App\RSpade\Core\Api\Identity_Api_Controller',
+            'class' => 'Identity_Api_Controller',
+            'extends_fqcn' => self::BASE,
+            'attributes' => $follower_class_attrs,
+            'public_static_methods' => [
+                'me' => ['attributes' => ['Api_Endpoint' => $follower_endpoints]],
+            ],
+        ];
+        $manifest['data']['php_subclass_index']['Rsx_Api_Controller_Abstract'][] = 'Identity_Api_Controller';
+
+        return $manifest;
+    }
+
+    /** The versions a path key is catalogued at, ascending. */
+    private static function __versions_of(array $manifest, string $path_key): array
+    {
+        $versions = [];
+        foreach ($manifest['data']['api_endpoints'] as $row) {
+            if ($row['path_key'] === $path_key) {
+                $versions[] = $row['version'];
+            }
+        }
+        sort($versions);
+
+        return $versions;
+    }
+
+    /**
+     * api-follow-01 - a follower is served at every version the other declarations serve, one
+     * handler throughout; a version they no longer serve (v1 here) is not served by it either,
+     * and gaps stay gaps.
+     */
+    public static function test_a_follower_is_served_at_every_version_the_application_serves()
+    {
+        $manifest = static::__follower_manifest([[0 => '/api/v2/contacts', 1 => ['GET'], 'through' => 3]]);
+        static::__process($manifest);
+
+        static::__assert_equals([2, 3], static::__versions_of($manifest, '/me'), 'v2 and v3, as the application');
+        static::__assert_false(isset($manifest['data']['routes']['/api/v1/me']), 'no v1 row once the application serves no v1');
+        foreach ([2, 3] as $version) {
+            $row = $manifest['data']['routes']["/api/v{$version}/me"];
+            static::__assert_equals('Identity_Api_Controller::me', $row['surface'], "one handler at v{$version}");
+            static::__assert_equals('/api/v1/me', $manifest['data']['api_endpoints']["/api/v{$version}/me"]['declared_pattern']);
+        }
+
+        $manifest = static::__follower_manifest([
+            [0 => '/api/v1/contacts', 1 => ['GET']],
+            [0 => '/api/v3/contacts', 1 => ['GET']],
+        ]);
+        static::__process($manifest);
+        static::__assert_equals([1, 3], static::__versions_of($manifest, '/me'), 'a version nothing serves stays unserved');
+    }
+
+    /**
+     * api-follow-02 - with nothing else declared a follower is served at its own version, and
+     * a follower declared at a later version is not served below it.
+     */
+    public static function test_a_follower_alone_keeps_its_own_version_and_never_goes_below_it()
+    {
+        $manifest = static::__follower_manifest([]);
+        static::__process($manifest);
+        static::__assert_equals([1], static::__versions_of($manifest, '/me'), 'an application with no API still has v1');
+
+        $manifest = static::__follower_manifest(
+            [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 3]],
+            [[0 => '/api/v2/ping', 1 => ['GET']]]
+        );
+        static::__process($manifest);
+        static::__assert_equals([2, 3], static::__versions_of($manifest, '/ping'), 'from its declared version up');
+    }
+
+    /**
+     * api-follow-03 - an endpoint's own through: overrides the controller's every: true.
+     */
+    public static function test_an_endpoint_through_overrides_every()
+    {
+        $manifest = static::__follower_manifest(
+            [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 3]],
+            [[0 => '/api/v1/me', 1 => ['GET'], 'through' => 1]]
+        );
+        static::__process($manifest);
+        static::__assert_equals([1], static::__versions_of($manifest, '/me'));
+    }
+
+    /**
+     * api-follow-04 - an application declaration at an address a follower expands to is the
+     * duplicate-route failure, naming the follower; a malformed #[Api_Versions] fails.
+     */
+    public static function test_a_follower_collision_and_a_malformed_every_throw()
+    {
+        static::__assert_scan_throws(
+            static::__follower_manifest([[0 => '/api/v2/me', 1 => ['GET']]]),
+            "#[Api_Versions(every: true)]"
+        );
+
+        foreach ([['every' => false], ['every' => true, 'through' => 2], ['every' => 1]] as $args) {
+            static::__assert_scan_throws(
+                static::__follower_manifest([], [[0 => '/api/v1/me', 1 => ['GET']]], ['Api_Versions' => [$args]]),
+                'Invalid #[Api_Versions]'
+            );
+        }
+    }
+
     /**
      * api-resource-01 - #[Api_Resource] is stored on every catalog row the controller
      * declares; without it the row carries null; an empty name is a build failure.

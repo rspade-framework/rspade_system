@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Dispatcher;
+use App\RSpade\Core\Api\Api_Endpoint_ManifestSupport;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Openapi;
 use App\RSpade\Core\Api\Api_Route_Usage;
@@ -165,6 +166,123 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
         $usage = Api_Route_Usage::last_called_for_version(2);
         static::__assert_equals([$url], array_column($usage, 'pattern'), 'the pattern is recorded under v2');
         static::__assert_equals([], Api_Route_Usage::last_called_for_version(7), 'an unused version has no rows');
+    }
+
+    /** The framework's four endpoints, by verb and path key. */
+    private const FRAMEWORK_ROUTES = [
+        'get /me' => 'Identity_Api_Controller::me',
+        'post /files' => 'Files_Api_Controller::upload',
+        'get /files/{key}' => 'Files_Api_Controller::info',
+        'get /files/{key}/text' => 'Files_Api_Controller::text',
+    ];
+
+    /**
+     * Dispatch one GET as the holder of a fresh unrestricted key, with Api_Main_Hook_Probe
+     * standing in as the application's Main for that dispatch (see api-ver-04).
+     */
+    private static function __get_as_key_holder(string $url)
+    {
+        $user = User_Model::without_site_scope(fn () => User_Model::find(1));
+        $user->is_api_access_enabled = 1;
+        $user->save();
+        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid())['key'];
+
+        $request = Request::create($url, 'GET', [], [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . $key,
+            'REMOTE_ADDR' => '127.0.0.1',
+        ]);
+
+        $index = &Manifest::$data['data']['php_subclass_index'];
+        $original = $index['Main_Abstract'] ?? null;
+        $index['Main_Abstract'] = ['Api_Main_Hook_Probe'];
+        Api_Main_Hook_Probe::$refuse_with = null;
+        try {
+            return Api_Dispatcher::dispatch($url, 'GET', [], $request);
+        } finally {
+            if ($original === null) {
+                unset($index['Main_Abstract']);
+            } else {
+                $index['Main_Abstract'] = $original;
+            }
+        }
+    }
+
+    /**
+     * api-ver-06 - the framework's identity and file endpoints follow the application to v2
+     * (#[Api_Versions(every: true)]; the suite's fixture makes v2 a served version): the v2
+     * OpenAPI document lists all four at /api/v2/... and none at /api/v1/..., each by the same
+     * handler, and GET /api/v2/me answers as GET /api/v1/me does.
+     */
+    public static function test_the_framework_endpoints_are_served_at_every_version()
+    {
+        $paths = Api_Openapi::document(null, 2)['paths'];
+
+        foreach (self::FRAMEWORK_ROUTES as $route => $handler) {
+            [$verb, $path_key] = explode(' ', $route);
+            $operation = $paths['/api/v2' . $path_key][$verb] ?? null;
+            static::__assert_not_null($operation, "{$route} is in the v2 document at /api/v2");
+            static::__assert_false(isset($paths['/api/v1' . $path_key]), "{$route} is not in the v2 document at /api/v1");
+            static::__assert_false($operation['deprecated'] ?? false, "{$route} at v2 is not deprecated");
+
+            foreach ([1, 2] as $version) {
+                $pattern = '/api/v' . $version . str_replace('{key}', ':key', $path_key);
+                $row = Manifest::get_routes()[$pattern] ?? null;
+                static::__assert_not_null($row, "{$pattern} routes");
+                static::__assert_equals($handler, $row['surface'], "{$pattern} is one handler");
+            }
+        }
+
+        $v1 = static::__get_as_key_holder('/api/v1/me');
+        $v2 = static::__get_as_key_holder('/api/v2/me');
+        static::__assert_equals(200, $v2->getStatusCode(), (string) $v2->getContent());
+        $strip = fn ($response) => array_diff_key(json_decode((string) $response->getContent(), true), array_flip(['_duration_ms', '_completed_at', 'key']));
+        static::__assert_equals($strip($v1), $strip($v2), 'the same identity payload at v1 and v2');
+    }
+
+    /**
+     * api-ver-07 - an application that serves only v2 retires the framework endpoints' v1
+     * address too: the real manifest support rebuilt over the real Identity controller beside
+     * the v2 fixture serves /api/v2/me alone, and the dispatcher answers /api/v1/me 410
+     * api_version_retired naming v2.
+     */
+    public static function test_a_version_the_application_retires_retires_the_framework_endpoints()
+    {
+        $files = [];
+        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
+            if (in_array($metadata['class'] ?? null, ['Identity_Api_Controller', 'Api_Versioning_Fixture_V2_Api_Controller'], true)) {
+                $files[$file] = $metadata;
+            }
+        }
+        static::__assert_count(2, $files, 'both controllers are in the manifest');
+
+        $synthetic = ['data' => [
+            'files' => $files,
+            'routes' => Manifest::$data['data']['routes'],
+            'api_endpoints' => [],
+            'php_subclass_index' => Manifest::$data['data']['php_subclass_index'],
+        ]];
+        Api_Endpoint_ManifestSupport::process($synthetic, array_keys($files), []);
+
+        static::__assert_array_has_key('/api/v2/me', $synthetic['data']['api_endpoints']);
+        static::__assert_false(isset($synthetic['data']['api_endpoints']['/api/v1/me']), 'no v1 row');
+
+        $original_routes = Manifest::$data['data']['routes'];
+        $original_endpoints = Manifest::$data['data']['api_endpoints'];
+        Manifest::$data['data']['routes'] = $synthetic['data']['routes'];
+        Manifest::$data['data']['api_endpoints'] = $synthetic['data']['api_endpoints'];
+        try {
+            $retired = static::__get_as_key_holder('/api/v1/me');
+            $served = static::__get_as_key_holder('/api/v2/me');
+        } finally {
+            Manifest::$data['data']['routes'] = $original_routes;
+            Manifest::$data['data']['api_endpoints'] = $original_endpoints;
+        }
+
+        static::__assert_equals(410, $retired->getStatusCode(), (string) $retired->getContent());
+        $error = json_decode((string) $retired->getContent(), true)['error'];
+        static::__assert_equals('api_version_retired', $error['code']);
+        static::__assert_equals(['v2'], $error['versions']);
+        static::__assert_equals(200, $served->getStatusCode(), (string) $served->getContent());
     }
 
     /**

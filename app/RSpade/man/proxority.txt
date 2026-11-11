@@ -243,7 +243,9 @@ OPERATING IT
         already admitted have finished (no deadline). A non-loopback client is
         then answered 503, Retry-After: 30, with the reason; loopback callers
         and files nginx serves from disk pass. With --holder-pid the proxy
-        reopens by itself once that process is gone. A restart comes up open.
+        reopens by itself once that process is gone - the pid together with
+        its start time, read at close, so a pid the kernel later hands to
+        another process does not hold the closure. A restart comes up open.
         A sequential rsx:test run does this for itself (rsx:man testing).
 
     proxority open

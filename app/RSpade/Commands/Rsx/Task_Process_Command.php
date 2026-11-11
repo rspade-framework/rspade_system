@@ -125,15 +125,17 @@ class Task_Process_Command extends Command
      *      - an older generation (known: false - the daemon restarted since the claim, and a
      *        restart ends every membership while the workers keep running): only the host
      *        that ran the worker can tell, by its pid. On this host the pid must still be a
-     *        TASK WORKER of this project (Task::is_worker_process(): its command line, never
-     *        bare pid existence - after a reboot the kernel hands old pids to unrelated
+     *        TASK WORKER of this project, the very process the run recorded
+     *        (Task::is_run_process(): the pid's start time and its command line, never bare
+     *        pid existence - after a reboot the kernel hands old pids to unrelated
      *        processes): one that is not is abandoned, one that is is left to record its own
      *        outcome; a run from another host is left alone for that host's own tick.
      *
      *    A run with NO worker_id ran inline (Task::internal(), rsx:task:run, --once), which is
-     *    no pool member: the verdict is the local pid probe, taken only on the run's own host.
+     *    no pool member: the verdict is the local probe, taken only on the run's own host.
      *    An inline run's process may be a php-fpm worker or any artisan command, so there is
-     *    no command line to hold it to - the probe is pid existence.
+     *    no command line to hold it to - the probe is the pid AND its recorded start time
+     *    (Task::is_run_process()): a live process at a reused pid is not the run's.
      *
      * 2. SILENT, OR PAST A REQUESTED TIMEOUT - a POOL worker is alive AND runs on this host,
      *    and its run has shown no sign of life for rsx.tasks.silent_timeout seconds, or - for a
@@ -182,12 +184,12 @@ class Task_Process_Command extends Command
                             // host's pid evidence can settle it.
                             continue;
                         }
-                        if (Task::is_worker_process((int) $task->worker_pid)) {
+                        if (Task::is_run_process($task)) {
                             $live[] = $task;
                             continue;
                         }
                         $reason = "worker {$task->worker_id} of a previous rsx-lockd generation is no longer"
-                            . " running (PID {$task->worker_pid} is not a task worker on {$this_host})";
+                            . " running (PID {$task->worker_pid} is no longer that task worker on {$this_host})";
                     }
 
                     $this->settle_abandoned($task, $reason);
@@ -202,7 +204,7 @@ class Task_Process_Command extends Command
             }
         }
 
-        // Inline runs: no pool, judged by their pid on their own host.
+        // Inline runs: no pool, judged by their pid and its start time on their own host.
         $inline = DB::table('_tasks')
             ->where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->whereNull('worker_id')
@@ -211,7 +213,7 @@ class Task_Process_Command extends Command
             if ($task->worker_host !== null && $task->worker_host !== $this_host) {
                 continue;
             }
-            if ($this->pid_alive((int) $task->worker_pid)) {
+            if (Task::is_run_process($task)) {
                 $live[] = $task;
                 continue;
             }
@@ -273,6 +275,7 @@ class Task_Process_Command extends Command
                     'started_at' => null,
                     'pool_id' => null,
                     'worker_pid' => null,
+                    'worker_pid_start_time' => null,
                     'worker_id' => null,
                     'worker_generation' => null,
                     'worker_host' => null,

@@ -303,6 +303,7 @@ RUN chown -R root:root /opt/rspade/rsx-lockd \
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
+COPY healthcheck.sh    /usr/local/bin/rspade-healthcheck
 COPY sizing.sh         /usr/local/bin/rspade-sizing
 COPY trusted-proxies.sh /usr/local/bin/rspade-trusted-proxies
 COPY security-update.sh /usr/local/bin/rspade-security-update
@@ -334,6 +335,7 @@ COPY npm-shim.sh       /usr/local/bin/npm
 RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-realtime-run \
               /usr/local/bin/rspade-retry-run \
+              /usr/local/bin/rspade-healthcheck \
               /usr/local/bin/rspade-sizing \
               /usr/local/bin/rspade-trusted-proxies \
               /usr/local/bin/rspade-security-update \
@@ -382,6 +384,13 @@ RUN git config --global --add safe.directory '*'
 
 WORKDIR /var/www/html
 EXPOSE 80 8000
+
+# Unhealthy when any supervised service is failing: a runner reporting five or more
+# consecutive exits, a supervisor program FATAL / BACKOFF / EXITED / UNKNOWN, or rsx-lockd
+# not answering a ping. Healthy under maintenance mode and with no checkout mounted. The
+# script's header holds the reasoning. Docker's own interval, timeout and retries apply.
+# It only reports: nothing restarts an unhealthy container.
+HEALTHCHECK CMD ["bash", "/usr/local/bin/rspade-healthcheck"]
 
 # bash explicitly, never the exec bit: downstream checkouts carry unreliable
 # permission bits and a bare path dies with "Permission denied".

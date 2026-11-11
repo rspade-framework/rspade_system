@@ -9,9 +9,11 @@ namespace App\RSpade\Tests\SysPanel\Php;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -203,6 +205,22 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
     }
 
     /** RP-TASKS-07 - system_state says whether the task system is on, and when it is off who turned it off, when, why, and the command that turns it back on */
+    /**
+     * An inline run's worker evidence holds its pid to the start time the run recorded: the
+     * same live pid with another start time (the kernel reused it) is gone, never alive.
+     */
+    public static function test_worker_state_holds_an_inline_pid_to_its_start_time()
+    {
+        $pid = getmypid();
+        $start_time = Process_Identity::start_time($pid);
+
+        $same = static::__plant(Task_Run_Model::STATUS_RUNNING, ['worker_pid' => $pid, 'worker_pid_start_time' => $start_time, 'worker_host' => Task_Pool::host()]);
+        $reused = static::__plant(Task_Run_Model::STATUS_RUNNING, ['worker_pid' => $pid, 'worker_pid_start_time' => $start_time + 1, 'worker_host' => Task_Pool::host()]);
+
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_ALIVE, _Sys_Tasks_Controller::worker_state(Task_Run_Model::find($same)));
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, _Sys_Tasks_Controller::worker_state(Task_Run_Model::find($reused)), 'a live pid with another start time is not the run\'s process');
+    }
+
     public static function test_system_state()
     {
         static::__assert_equals(

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
@@ -29,9 +30,10 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * A KILL WORKER claims one request, then re-reads the run every POLL_SECONDS until the
  * request is due: a run that ended (stopped on its own, completed, failed) or whose worker is
  * no longer the one the request names makes the request MOOT. When it is due, the worker's
- * process is SIGKILLed - on this host only, and only while that pid is still a task worker of
- * this project (Task::is_worker_process(); a reused pid is never signalled) - and the run
- * settles KILLED with the explanation and an operator line. Kill workers never take a task pool's lock beyond their own claim.
+ * process is SIGKILLed - on this host only, and only while that pid is still the process the
+ * run recorded (Task::is_run_process(): its start time, and for a pool run a task worker of
+ * this project; a reused pid is never signalled) - and the run settles KILLED with the
+ * explanation and an operator line. Kill workers never take a task pool's lock beyond their own claim.
  *
  * An inline run inside a WEB REQUEST is never signalled: its pid is a php-fpm worker serving
  * other requests. Its kill request is settled moot, naming that only a graceful stop applies.
@@ -155,7 +157,7 @@ class Task_Kill_Worker
         $request = Task_Kill_Request_Model::find($request_id);
 
         while (true) {
-            $task = DB::table('_tasks')->where('id', $request->task_id)->first(['id', 'status_id', 'worker_pid', 'worker_id', 'worker_host', 'schedule_id']);
+            $task = DB::table('_tasks')->where('id', $request->task_id)->first(['id', 'status_id', 'worker_pid', 'worker_pid_start_time', 'worker_id', 'worker_host', 'schedule_id']);
 
             if ($task === null || (int) $task->status_id !== Task_Run_Model::STATUS_RUNNING || (int) $task->worker_pid !== (int) $request->target_pid) {
                 return static::__finish($request, Task_Kill_Request_Model::STATUS_MOOT, 'the run ended before it was due');
@@ -169,18 +171,19 @@ class Task_Kill_Worker
         }
 
         $pid = (int) $request->target_pid;
+        $start_time = $task->worker_pid_start_time !== null ? (int) $task->worker_pid_start_time : null;
 
-        if ($task->worker_id === null && !static::__is_cli_process($pid)) {
+        // Only the process the request means is ever signalled: the pid must still be the
+        // process the run recorded (its start time), and a pool run's a task worker of this
+        // project (its command line). A pid the kernel has since handed to another process is
+        // not the run's, which is then simply gone.
+        $is_target = Task::is_run_process($task);
+
+        if ($is_target && $task->worker_id === null && !static::__is_cli_process($pid)) {
             Task_Instance::record_operator_line((int) $task->id, "Kill not carried out: the run is inside a web request (PID {$pid}), which is never signalled. Only a graceful stop applies.");
 
             return static::__finish($request, Task_Kill_Request_Model::STATUS_MOOT, 'inline run inside a web request; not signalled');
         }
-
-        // Only the process the request means is ever signalled. A pool run's pid must still
-        // be a task worker of this project (its command line): a pid the kernel has since
-        // handed to an unrelated process is not the worker, which is then simply gone. An
-        // inline run's pid was held to an artisan command line just above.
-        $is_target = $task->worker_id !== null ? Task::is_worker_process($pid) : static::__process_exists($pid);
 
         $signalled = false;
         if ($is_target) {
@@ -189,7 +192,7 @@ class Task_Kill_Worker
 
             // SIGKILL cannot be refused: wait for the process to be gone, re-reading at a short
             // interval (a poll of a certain outcome, not a deadline).
-            while (static::__process_exists($pid)) {
+            while (Process_Identity::is_running($pid, $start_time)) {
                 usleep(100000);
             }
         }
@@ -290,21 +293,6 @@ class Task_Kill_Worker
         $request->save();
 
         return "Kill request {$request->id} for task {$request->task_id}: {$outcome}";
-    }
-
-    /**
-     * Whether $pid is a running process on this host. A zombie (exited, not yet reaped) has an
-     * empty command line and counts as gone.
-     */
-    private static function __process_exists(int $pid): bool
-    {
-        if ($pid <= 0) {
-            return false;
-        }
-
-        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
-
-        return $cmdline !== false && $cmdline !== '';
     }
 
     /** Whether $pid is an artisan command of this project (rsx:task:run, a #[Command], --once). */

@@ -26,6 +26,22 @@
  * EVERY CALL IS SETTLED. A call resolves with its endpoint's value or rejects with an
  * Error carrying .code (an Ajax.ERROR_* constant) and .metadata - including when the
  * request fails as a whole, and when an answer arrives without the call in it.
+ *
+ * REQUEST REFERENCES (rsx:man request_history). A writer call carrying `_request_ref` is
+ * answered from the request history when the same reference comes again: the stored answer
+ * with _replayed (nothing runs), or a refusal - ERROR_REQUEST_REF_REUSED (the parameters
+ * changed; metadata {completed_at, original} on the same endpoint) or
+ * ERROR_REQUEST_RESPONSE_EXPIRED (metadata {completed_at}). Plain Ajax.call() sends no
+ * reference and resolves the value alone. Three things build on it:
+ *
+ *   Ajax.call_detailed(url, params)  resolves {value, replayed, completed_at, duration_ms},
+ *                                    so a caller can tell a replay from a fresh run
+ *   Ajax.action()                    one reference per USER ACTION and endpoint, kept across
+ *                                    that action's retries (Ajax_Action)
+ *   Ajax.request_ref()               a fresh reference: a random UUID
+ *
+ * Rsx_Form sends a reference on every submission itself (rsx:man form_conventions,
+ * RESUBMITTING).
  */
 class Ajax {
     // Error code constants (must match server-side Ajax::ERROR_* constants)
@@ -53,7 +69,7 @@ class Ajax {
      * Called automatically when class is loaded
      */
     static _on_framework_core_init() {
-        // Calls made this turn, not yet sent: [{call_id, controller, action, params, hydrate, resolve, reject}]
+        // Calls made this turn, not yet sent: [{call_id, controller, action, params, hydrate, detailed, resolve, reject}]
         Ajax._queue = [];
         Ajax._flush_scheduled = false;
         Ajax._call_counter = 0;
@@ -100,7 +116,65 @@ class Ajax {
      * @returns {Promise} - Resolves with the return value, rejects with error
      */
     static call(url, params = {}) {
-        return Ajax._enqueue(url, params, true);
+        return Ajax._enqueue(url, params, true, false);
+    }
+
+    /**
+     * Ajax.call(), resolving what the envelope says about the answer beside the value:
+     *
+     *     {
+     *         value,          // exactly what Ajax.call() resolves
+     *         replayed,       // true when the request history answered (nothing ran)
+     *         completed_at,   // ISO UTC; for a replay, the ORIGINAL completion
+     *         duration_ms,    // for a replay, the ORIGINAL duration
+     *     }
+     *
+     * Rejects exactly as Ajax.call() does. Only a call carrying a _request_ref can be a replay.
+     *
+     * @param {string|object|function} url - As Ajax.call()
+     * @param {object} params
+     * @returns {Promise<{value: *, replayed: boolean, completed_at: (string|null), duration_ms: (number|null)}>}
+     */
+    static call_detailed(url, params = {}) {
+        return Ajax._enqueue(url, params, true, true);
+    }
+
+    /**
+     * A fresh request reference: a random version 4 UUID.
+     *
+     * Unique for this actor on this site across page loads, which is what a reference must
+     * be - the request history keeps it with its _transactions row for good, so a counter
+     * or a component id would collide with an earlier page's and be replayed or refused.
+     * crypto.getRandomValues(), not crypto.randomUUID(): the latter exists only in a secure
+     * context, and a development box may be served over plain http.
+     *
+     * @returns {string}
+     */
+    static request_ref() {
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+        return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-'
+            + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+
+    /**
+     * One USER ACTION's writer calls, each sent with a request reference that survives the
+     * action's retries - for a writer called straight from a stub (a status chip, a kanban
+     * drop, a Complete button), which has the same lost-answer problem a form has.
+     *
+     *     on_create() { this.complete_action = Ajax.action(); }
+     *     ...
+     *     await this.complete_action.call(Tasks_Controller.complete, { id });
+     *
+     * See Ajax_Action.
+     *
+     * @returns {Ajax_Action}
+     */
+    static action() {
+        return new Ajax_Action();
     }
 
     /**
@@ -113,14 +187,14 @@ class Ajax {
      * @returns {Promise<*>}
      */
     static _call_unhydrated(url, params = {}) {
-        return Ajax._enqueue(url, params, false);
+        return Ajax._enqueue(url, params, false, false);
     }
 
     /**
      * Queue one call for this turn's request and schedule the flush.
      * @private
      */
-    static _enqueue(url, params, hydrate) {
+    static _enqueue(url, params, hydrate, detailed) {
         return new Promise((resolve, reject) => {
             // URL errors reach the caller as a rejection, never a synchronous throw - every
             // caller holds a promise, in every case.
@@ -142,6 +216,7 @@ class Ajax {
                 action: action,
                 params: params,
                 hydrate: hydrate,
+                detailed: detailed,
                 priority: url !== null && (typeof url === 'object' || typeof url === 'function') && url.priority === true,
                 resolve: resolve,
                 reject: reject,
@@ -260,8 +335,14 @@ class Ajax {
 
                 if (envelope._success === true) {
                     // @JS-AJAX-02-EXCEPTION - the transport unwraps _ajax_return_value
-                    const value = envelope._ajax_return_value;
-                    call.resolve(call.hydrate ? Rsx_Js_Model._instantiate_models_recursive(value) : value);
+                    const raw = envelope._ajax_return_value;
+                    const value = call.hydrate ? Rsx_Js_Model._instantiate_models_recursive(raw) : raw;
+                    call.resolve(call.detailed ? {
+                        value: value,
+                        replayed: envelope._replayed === true,
+                        completed_at: envelope._completed_at ?? null,
+                        duration_ms: envelope._duration_ms ?? null,
+                    } : value);
                 } else {
                     call.reject(Ajax._envelope_error(envelope, endpoint));
                 }

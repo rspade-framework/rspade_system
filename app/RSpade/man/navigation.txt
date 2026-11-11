@@ -146,13 +146,17 @@ THE PIPELINE
         navigation replaces an earlier one.
 
     5. The full-load hand-off
-        Before a full load to this site whose target carries a _via, the
-        door writes one session-storage entry (rsx_navigation_handoff): the
-        target's path and query, how its _via arrived, and the decider of
-        the page being left. The next SPA document reads it once at boot
+        Before a full load to this site whose target carries a _via, or
+        that leaves an SPA page, the door writes one session-storage entry
+        (rsx_navigation_handoff): the target's path and query, how its _via
+        arrived, the decider of the page being left, and the journal entry
+        the new page comes from (rsx:man breadcrumb_origins, RETURNING TO
+        THE STATE YOU LEFT - a crumb on the next document can still return
+        to a page of this one). The next SPA document reads it once at boot
         and deletes it whatever it says; it is used only when it names the
         URL that booted. A document reached any other way (a reload, a
-        pasted URL, a new tab) judges its _via as explicit, as before.
+        pasted URL, a new tab) judges its _via as explicit, and its first
+        entry comes from nowhere.
 
     With the SPA disabled (Spa.disable()), an intercepted link click still
     goes through the door and becomes a full load with the hand-off - which

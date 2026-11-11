@@ -59,6 +59,7 @@ for anything else), and the record. The body tabs keep the hash key "body".
                 <_Sys_Detail_Item $label="Blocked by" $value=_e.block_cause />
                 <_Sys_Detail_Item $label="To" $value=(_address(_e.to_address, _e.to_name)) />
                 <_Sys_Detail_Item $label="Originally to" $value=_e.dev_original_to />
+                <_Sys_Detail_Item $label="From" $value=(_e.from_address ? _address(_e.from_address, _e.from_name) : 'Configured sender') />
                 <_Sys_Detail_Item $label="Reply-To" $value=(_address(_e.reply_to, _e.reply_to_name)) />
                 <_Sys_Detail_Item $label="CC" $value=_list(_e.cc) />
                 <_Sys_Detail_Item $label="BCC" $value=_list(_e.bcc) />

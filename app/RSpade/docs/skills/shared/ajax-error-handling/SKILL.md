@@ -1,13 +1,13 @@
 ---
 name: ajax-error-handling
-description: "Handling Ajax errors - the {_success, _ajax_return_value} envelope, the Ajax::ERROR_* codes, response_error() / response_form_error(), client-side error display, Form_Utils. Use when implementing error handling for Ajax calls, returning per-field validation errors, deciding whether to try/catch or let it bubble, or debugging an Ajax failure from the CLI with rsx:ajax."
+description: "Handling Ajax errors - the {_success, _ajax_return_value} envelope, the Ajax::ERROR_* codes, response_error() / response_form_error(), client-side error display, Form_Utils, Ajax.call_detailed() and Ajax.action() for request references. Use when implementing error handling for Ajax calls, returning per-field validation errors, deciding whether to try/catch or let it bubble, making a button's writer call safe to retry, handling request_ref_reused / request_response_expired, or debugging an Ajax failure from the CLI with rsx:ajax."
 ---
 
 # RSX Ajax Error Handling
 
 ## Response Architecture
 
-RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/failure is encoded in the response body via `_success` field.
+RSX returns **HTTP 200 for every Ajax response** (success and errors). Success/failure is encoded in the response body via `_success` field. **The one exception is an infrastructure OUTAGE** - the lock daemon or the database connection gone: it is no call's failure, so it is never a `fatal` envelope at 200. The whole request fails with **HTTP 500**, no later call of the batch runs, and the client rejects every call with `server_error`. Never catch or name it (`rsx:man error_handling`, INFRASTRUCTURE OUTAGE).
 
 ```javascript
 // Success response
@@ -25,7 +25,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 }
 ```
 
-**Rationale**: Batch requests need uniform status codes. Always get parseable response body. Non-200 only means "couldn't reach PHP at all" (or a malformed batch, refused 400).
+**Rationale**: Batch requests need uniform status codes. Always get parseable response body. Non-200 means the request failed as a whole: PHP was not reached, the platform under it is down (500), or a malformed batch (400).
 
 ---
 
@@ -36,6 +36,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 - **No merging.** Two identical calls are two calls - every call is a POST, and the transport cannot know an endpoint is a read. Read coalescing lives in the ORM fetch (overlapping `fetch()` of one model+id share a lookup; each caller still gets its own instance) and jqhtml's load coordinator.
 - **Every call is settled.** An answer missing the call rejects it with `server_error`; an HTTP 5xx rejects every call in the request with `server_error`, status 0 with `network_error`, anything else `generic`; a hydration failure rejects only that call. A CSRF failure or a fault outside any call is answered under every `call_id` the batch named.
 - **Checked per call, in order**: session lifetime (once one call gets `session_expired`, so does every later call in the request), staff site membership (`auth_required`), then the realm's `Main::pre_dispatch` ONCE PER CALL (`$params['controller']`/`['action']`, `_route` `/_ajax/:controller/:action`) - non-null refuses that call: a coded result keeps its code and reason (`response_unauthorized('Account suspended')`), anything else is `unauthorized` "This request was refused.", never a page. Then the gates: a denial is `auth_required` when nobody is signed in in the realm, `unauthorized` when somebody is.
+- **Replays.** `Ajax.call()` resolves the value alone. `Ajax.call_detailed(url, params)` resolves `{value, replayed, completed_at, duration_ms}` - `replayed` when the request history answered a resent `_request_ref` (nothing ran; the timing is the original run's). No call carries a reference unless asked: `Rsx_Form` sends its own on every submission (`rsx:man form_conventions`, RESUBMITTING); for a writer called from a button, `const act = Ajax.action()` once per control, then `await act.call(Controller.method, params)` - one reference per endpoint, kept across failed attempts, replaced on success (`act.replayed`). `Ajax.request_ref()` mints one.
 - **`request()` and the `Request` facade answer the call's own request** while it runs, never the batch's.
 - **An endpoint never returns an HTTP response.** `redirect()`, `view()`, a download - from the action or the controller's `pre_dispatch` - is a FAULT (`fatal`), never a success. A controller `pre_dispatch` that redirects pages returns null for an Ajax call.
 - **An endpoint never leaves a DB transaction open.** It is rolled back (its writes are gone) and the call answers a fault naming the endpoint.
@@ -55,6 +56,8 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_GENERIC` | A general failure with no more specific code (`generic`, default message "An error has occurred"): `response_error(Ajax::ERROR_GENERIC, $message)` for a refusal that is none of the above, and the code an uncaught HTTP exception whose status has no mapping (not 401/403/404/429) answers with (an empty message reads as the status text). An in-process caller sees it as a plain `Exception` |
 | `Ajax::ERROR_TOO_MANY_REQUESTS` | A rate limit refused the call: any uncaught HTTP 429 exception (`Auth_Throttled_Exception`, Symfony `TooManyRequestsHttpException`). The same exception is a real 429 on a page or API call; catch it to answer your own 200 form error instead |
 | `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits (`metadata.cause` `length`/`idle`), or the call carried the session token a sign-in or sign-out just rotated away (`rotated`); announced once per page to `Rsx.set_session_expired_handler()` |
+| `Ajax::ERROR_REQUEST_REF_REUSED` | A writer call's `_request_ref` was already used by this actor: with different parameters (`metadata {completed_at, original}` - original is the stored `_ajax_return_value` while kept) or on another endpoint (`metadata {}`). Nothing ran. A form hands it to its resubmit handler; a direct caller (`Ajax.action()`) gets an ordinary error. `rsx:man request_history` |
+| `Ajax::ERROR_REQUEST_RESPONSE_EXPIRED` | The reference's request already ran and its stored answer was pruned (`metadata {completed_at}`). Nothing ran |
 | `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 
 Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`). The client raises three of its own: `Ajax.ERROR_SERVER` (`server_error`), `Ajax.ERROR_NETWORK` (`network_error`), and `Ajax.ERROR_PHP_EXCEPTION` (`php_exception` - a fatal carrying file/line, for a developer caller).

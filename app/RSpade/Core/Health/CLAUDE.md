@@ -43,6 +43,10 @@ check a command also needs (`Playwright_Stack`) lives here.
 - `Security_Update_Health_Checks.php`, `Resource_Sizing_Health_Checks.php` +
   `Rsx_Container_Sizing.php` — what the RSpade container's updater and `rspade-sizing`
   recorded at start (`resource/docker/`).
+- `Supervised_Service_Health_Checks.php` — "Supervised Services": the retry runners' state
+  files (`/run/rspade-services/<label>.state`, format in `resource/docker/retry-run.sh`), FAIL
+  naming each service `failing` (five or more consecutive exits) whose runner is still live.
+  The container's Docker health check (`resource/docker/healthcheck.sh`) reads the same files.
 - `Playwright_Health_Checks.php` + `Playwright_Stack.php` — the node -> playwright -> chromium
   probe `rsx:debug`'s preflight reads too, so both print the same install command. Probe only.
 - `Class_Override_Drift_Health_Checks.php` — the operator view of `CLASS-OVERRIDE-DRIFT-01`.
@@ -65,4 +69,5 @@ quietly repairing a broken install is a silent fallback, which the fail-loud man
 
 `rsx:man health` · skill `rspade:application-modes-deployment` (the sealed-box rows) ·
 siblings `Core/Database/Schema_Contract_Health_Checks.php` (the Schema Contract rows),
-`Core/Manifest/` (`Class_Override_Drift`), `resource/docker/` (sizing, security updates).
+`Core/Manifest/` (`Class_Override_Drift`), `resource/docker/` (sizing, security updates,
+service state and the container health check).

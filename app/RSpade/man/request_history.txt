@@ -23,6 +23,12 @@ SYNOPSIS
     // Ajax: the same system parameter, beside the endpoint's own.
     const result = await Clients_Controller.save({name: 'Acme', _request_ref: ref});
 
+    // A form sends one on every submission by itself; a writer called from a
+    // button keeps one per user action across that action's retries.
+    <Rsx_Form $controller="Clients_Controller" $method="save"> ... </Rsx_Form>
+    this.save_action = Ajax.action();
+    await this.save_action.call(Clients_Controller.archive, {id});
+
 DESCRIPTION
     A network failure leaves a client not knowing whether its write happened. A
     retry that writes twice is a duplicate invoice. The request history answers
@@ -77,6 +83,11 @@ WHAT IS RECORDED
     back, nothing recorded. Either way the corrected request may reuse the
     same reference.
 
+    A request whose transaction COMMITTED is a success even if an after-commit
+    callback then throws (reported, never answered - rsx:man site_locks, AFTER
+    THE COMMIT): it is answered as it returned and its record stands, so the
+    history and the answer agree and a resend under its reference replays.
+
 THE REFERENCE
     _request_ref is a SYSTEM PARAMETER on every Ajax and external API endpoint;
     any caller may send it. It is a string of 1 to 128 characters; anything else
@@ -99,6 +110,24 @@ THE REFERENCE
     Make references unique per logical write (a UUID, or an import's row key)
     and reuse one only to retry that write.
 
+BROWSER CALLERS
+    Rsx_Form sends a reference on every call submit() makes, kept while
+    submissions fail and bound to the browser history entry and the form's
+    identity, so a lost answer resent - or a create form reached again by Back
+    after it saved - is answered here instead of writing twice. What the user
+    sees, and the application's two registrations: rsx:man form_conventions,
+    RESUBMITTING.
+
+    Ajax.action() keeps one reference per user action and endpoint for a writer
+    called from a stub (a status chip, a Complete button): kept across that
+    action's failed attempts, replaced once that endpoint succeeds. Plain
+    Ajax.call() sends none. Ajax.request_ref() mints one (a random UUID).
+
+    Ajax.call_detailed(url, params) resolves {value, replayed, completed_at,
+    duration_ms}: how a browser caller tells a replay from a fresh run.
+    Ajax.call() resolves the value alone, as always. rsx:man
+    ajax_error_handling, TRANSPORT.
+
 THE ORDER OF WORK
     A writer request carrying a reference, under its site write lock (a
     #[Manual_Lock] request also holds a named lock on site + actor + reference
@@ -112,9 +141,14 @@ THE ORDER OF WORK
         3. found, same endpoint, same fingerprint, response pruned
                -> 410 request_response_expired, naming the original
                   completed_at. Nothing runs
-        4. found with a different fingerprint, or on another endpoint
-               -> 409 request_ref_reused. Nothing runs
-        5. not found
+        4. found on the same endpoint with a different fingerprint
+               -> 409 request_ref_reused, naming the original
+                  completed_at and, while the stored answer is kept,
+                  the original answer. Nothing runs
+        5. found on another endpoint
+               -> 409 request_ref_reused, nothing more (a client
+                  defect, not a user's act). Nothing runs
+        6. not found
                -> the request runs and is recorded at commit, as above
 
     Answering from the history writes nothing: the refusal or replay is thrown
@@ -130,17 +164,22 @@ THE ANSWERS
         409 request_ref_reused
             "This _request_ref was already used for a request with different
              parameters. Nothing was run; send a new reference for a new
-             request."  (or "... to a different endpoint ...")
+             request."  On the same endpoint error.completed_at names the
+             original completion and error.original carries the stored body
+             while it is kept (it is this actor's own earlier answer, so
+             nothing is withheld). On another endpoint: "... to a different
+             endpoint ..." and neither field.
         410 request_response_expired
             "This request already ran (completed <time>); its stored response
              is no longer kept, so it cannot be answered again. Nothing was
              run."  error.completed_at carries the time.
 
     Ajax: the same refusals as coded envelopes, error_code
-    Ajax::ERROR_REQUEST_REF_REUSED ('request_ref_reused') and
-    Ajax::ERROR_REQUEST_RESPONSE_EXPIRED ('request_response_expired', metadata
-    {completed_at}); Ajax.ERROR_* in JS. A replay is an ordinary success
-    envelope with _replayed: true.
+    Ajax::ERROR_REQUEST_REF_REUSED ('request_ref_reused'; on the same
+    endpoint metadata {completed_at, original}, original being the stored
+    _ajax_return_value while kept) and Ajax::ERROR_REQUEST_RESPONSE_EXPIRED
+    ('request_response_expired', metadata {completed_at}); Ajax.ERROR_* in
+    JS. A replay is an ordinary success envelope with _replayed: true.
 
 TIMING FIELDS
     Every Ajax call envelope and every external API response object carries:
@@ -171,7 +210,10 @@ TROUBLESHOOTING
 
     A retry ran twice
         Nobody was signed in (no actor: echoed, never honoured), the endpoint
-        is a reader, or the first attempt failed (success only).
+        is a reader or a #[Manual_Lock] endpoint that took no write lock, or
+        the first attempt failed (success only). From a browser: the call was
+        a plain Ajax.call() (no reference), or the form sat in a dialog that
+        was closed and reopened (a new act - rsx:man form_conventions).
 
     410 request_response_expired
         The original succeeded longer ago than the retention window. Treat the
@@ -182,6 +224,8 @@ SEE ALSO
     rsx:man revisions - the _transactions row
     rsx:man external_api - response contract, timing fields, error shape
     rsx:man ajax_error_handling - the Ajax envelope and error codes
+    rsx:man form_conventions - RESUBMITTING: what a form does with a replay
+                               or a refusal
     skill rspade:external-api - building API endpoints
 
 REQUEST_HISTORY(1)                RSpade Manual                REQUEST_HISTORY(1)

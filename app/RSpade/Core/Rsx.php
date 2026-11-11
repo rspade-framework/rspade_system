@@ -17,6 +17,7 @@ use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 
 /**
  * Core RSX framework utility class
@@ -619,6 +620,46 @@ class Rsx
     public static function is_rspade_dev_container(): bool
     {
         return is_file('/.rspade_container_dev');
+    }
+
+    /**
+     * Which build is answering: the identity a person can match to source.
+     *
+     *   commit              the application commit the build was made from
+     *   built_at            when the build was made (ISO, UTC)
+     *   framework_revision  the framework revision the build was made from
+     *   code_key            the manifest's build key (Manifest::get_build_key()) - always
+     *                       present, identifying the code being served
+     *
+     * The first three are RECORDED BY THE BUILD, in the seal rsx:build writes for a debug or
+     * production box (Rsx_Prod_Seal::write(): read from git, or passed by the deploy step as
+     * --commit / --framework-revision), so a deployed box with no git metadata still knows
+     * them, and nothing here runs git. Each is null when genuinely unknown, never guessed:
+     *
+     *   - a development box has no build - it serves its working tree, which is not a
+     *     commit - so all three are null;
+     *   - a seal whose build key is not the code being served describes some other build,
+     *     so it is not believed (rsx:prod:verify reports that drift);
+     *   - a part the build could not read (no git where it ran, and no flag) is null.
+     *
+     * @return array{commit: ?string, built_at: ?string, framework_revision: ?string, code_key: string}
+     */
+    public static function build_info(): array
+    {
+        $code_key = Manifest::get_build_key();
+
+        $seal = Rsx_Prod_Seal::is_sealed() ? Rsx_Prod_Seal::read() : null;
+
+        if ($seal !== null && ($seal['build_key'] ?? null) !== $code_key) {
+            $seal = null;
+        }
+
+        return [
+            'commit' => $seal['commit'] ?? null,
+            'built_at' => $seal['built_at'] ?? null,
+            'framework_revision' => $seal['framework_revision'] ?? null,
+            'code_key' => $code_key,
+        ];
     }
 
     /**

@@ -55,6 +55,21 @@ today is the type registry (`TypeRefs/CLAUDE.md`, "Registration commits on its o
 - `Migrate_Dump_Rollback`'s migrate lock opens a connection of its own the same way, held for a
   whole run rather than one call.
 
+## After-commit callbacks (framework internal)
+
+`Rsx_DatabaseTransactionsManager` is bound as `db.transactions` (`Rsx_Framework_Provider::register()`,
+before any connection exists). Its `commit()` restates Laravel's with one change: each
+`DB::afterCommit()` callback runs on its own - a throw is reported
+(`_report_after_commit_failure()`, naming the closure's file:line) and the rest run, so
+`commit()` returns, `TransactionCommitted` fires (`File_Blob_Locks` releases on it) and the
+committing code finishes its bookkeeping. `_is_contained()` is the one predicate for what is
+NOT contained - an infrastructure outage (`Exceptions/Infrastructure_Outage::is_outage()`: the
+lock daemon or the database connection gone), rethrown after every callback ran and answered
+as the request's 500;
+`Site_Lock` uses the same pair when a throw reaches its own commit with the level already
+decremented. Re-read `commit()` against the parent on a Laravel upgrade. Callbacks run
+inline (no transaction open) and rollback callbacks are untouched.
+
 ## Naming Conventions
 
 - **Primary keys**: All tables must have `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` (the `_sessions` table included)

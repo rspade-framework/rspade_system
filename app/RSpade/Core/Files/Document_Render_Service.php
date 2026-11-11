@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Files;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
@@ -972,6 +973,10 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 Search_Index_Service::extract_storage($storage, $rendition_path);
             }
         } catch (\Throwable $e) {
+            // An infrastructure outage is not this document's failure: recording it FAILED
+            // would leave the blob unrendered for good. It ends the run instead.
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             $storage->render_status_id = File_Storage_Model::RENDER_STATUS_FAILED;
             $storage->render_error = $e->getMessage();
             $storage->rendered_at = null;

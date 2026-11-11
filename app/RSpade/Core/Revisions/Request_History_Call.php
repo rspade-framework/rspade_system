@@ -145,11 +145,11 @@ class Request_History_Call
         }
 
         if ($found->endpoint !== Revision::_current_endpoint()) {
-            throw Request_History_Answer::reused(true);
+            throw Request_History_Answer::reused_elsewhere();
         }
 
         if ($found->request_fingerprint !== $this->fingerprint) {
-            throw Request_History_Answer::reused(false);
+            throw Request_History_Answer::reused((string) Rsx_Time::to_iso($found->completed_at), $found->response_body);
         }
 
         if ($found->response_body === null) {

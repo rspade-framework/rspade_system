@@ -44,6 +44,11 @@ use App\RSpade\Core\Env\Rsx_LoadEnvironmentVariables;
  * unsealed, and an unsealed production box refuses to run (Manifest::init()) rather than
  * serving half a build.
  *
+ * The seal also records the BUILD IDENTITY (Rsx::build_info()): the application commit and
+ * the framework revision, read from git, or given as --commit / --framework-revision by a
+ * deploy step building on a host that carries no git metadata. Development seals nothing,
+ * so it refuses both flags rather than accepting a value it would not record.
+ *
  * THIS PROCESS IS THE BUILD CONTEXT (Rsx_Build_Context), recognised from argv so it holds
  * from the first line of boot, and carried to every subprocess as an internal flag. It is
  * the only thing that may write under build/ in a production-like mode.
@@ -51,7 +56,9 @@ use App\RSpade\Core\Env\Rsx_LoadEnvironmentVariables;
 class Build_Command extends Command
 {
     protected $signature = 'rsx:build
-                            {--force : Rebuild even though a sealed build is already present}';
+                            {--force : Rebuild even though a sealed build is already present}
+                            {--commit= : The application commit this build is made from, recorded in the seal (default: read from git)}
+                            {--framework-revision= : The framework revision this build is made from, recorded in the seal (default: read from git)}';
 
     protected $description = 'Build everything the site serves (manifest, bundles, caches; seals in a production-like mode)';
 
@@ -60,11 +67,57 @@ class Build_Command extends Command
         // Belt on the argv recognition: a build driven any other way is still a build.
         Rsx_Build_Context::begin();
 
+        $identity = $this->_identity_options();
+        if ($identity === null) {
+            return 1;
+        }
+
         if (!Rsx::is_production()) {
+            if ($identity !== [null, null]) {
+                $this->error('--commit and --framework-revision are recorded in the seal, and a development build seals nothing.');
+                $this->line('  Nothing was built. Pass them to the build of a debug or production box.');
+
+                return 1;
+            }
+
             return $this->_development_build();
         }
 
-        return $this->_production_build();
+        return $this->_production_build($identity[0], $identity[1]);
+    }
+
+    /**
+     * The --commit / --framework-revision values, lowercased: [commit, framework_revision],
+     * each null when not passed. Null (after printing why) when one is not a git object
+     * name - refused before anything is touched.
+     *
+     * @return array{0: ?string, 1: ?string}|null
+     */
+    private function _identity_options(): ?array
+    {
+        $values = [];
+
+        foreach (['commit', 'framework-revision'] as $name) {
+            $raw = $this->option($name);
+
+            if ($raw === null) {
+                $values[] = null;
+                continue;
+            }
+
+            $value = strtolower(trim((string) $raw));
+
+            if (!Rsx_Prod_Seal::is_revision($value)) {
+                $this->error("--{$name} must be a git commit (7 to 64 hex digits), got '{$raw}'.");
+                $this->line('  Nothing was built.');
+
+                return null;
+            }
+
+            $values[] = $value;
+        }
+
+        return $values;
     }
 
     // -------------------------------------------------------------------------
@@ -106,7 +159,7 @@ class Build_Command extends Command
     // Debug / production
     // -------------------------------------------------------------------------
 
-    private function _production_build(): int
+    private function _production_build(?string $commit, ?string $framework_revision): int
     {
         $mode = Rsx::get_mode();
 
@@ -232,7 +285,7 @@ class Build_Command extends Command
         // Step 7: the seal. LAST, and only here: it is the record that everything above
         // completed.
         $this->line('[7/7] Sealing the build...');
-        $seal = Rsx_Prod_Seal::write($mode);
+        $seal = Rsx_Prod_Seal::write($mode, $commit, $framework_revision);
 
         $elapsed = round(microtime(true) - $start_time, 2);
 
@@ -445,8 +498,9 @@ class Build_Command extends Command
         $this->info('[OK] Sealed ' . $seal['rsx_mode'] . " build ({$elapsed}s)");
         $this->line('     Build key:  ' . $seal['build_key']);
         $this->line('     Assets:     ' . count($seal['assets']) . ' files, ' . bytes_to_human($total_bytes));
-        $this->line('     Git commit: ' . ($seal['git_commit'] ?? 'unknown'));
-        $this->line('     Sealed at:  ' . $seal['created_at']);
+        $this->line('     Commit:     ' . ($seal['commit'] ?? 'unknown'));
+        $this->line('     Framework:  ' . ($seal['framework_revision'] ?? 'unknown'));
+        $this->line('     Built at:   ' . $seal['built_at']);
         $this->newLine();
         $this->line('Verify at any time:    php artisan rsx:prod:verify');
         $this->line('Rebuild the assets:    php artisan rsx:build --force');

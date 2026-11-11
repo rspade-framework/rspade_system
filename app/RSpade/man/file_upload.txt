@@ -956,9 +956,9 @@ HTTP ENDPOINTS
 
     And the external REST API adds three of its own (Files_Api_Controller):
 
-        POST /api/v1/files              Upload -> 201 + the attachment key
-        GET  /api/v1/files/:key         Metadata, URLs, preview/text status
-        GET  /api/v1/files/:key/text    Extracted text (409 while pending)
+        POST /api/vN/files              Upload -> 201 + the attachment key
+        GET  /api/vN/files/:key         Metadata, URLs, preview/text status
+        GET  /api/vN/files/:key/text    Extracted text (409 while pending)
 
     Those three cover getting bytes IN and reporting on them. Attaching a file to
     a RECORD is deliberately not among them - see THE CLAIM WINDOW and

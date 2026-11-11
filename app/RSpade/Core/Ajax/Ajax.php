@@ -27,6 +27,7 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
+use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
@@ -80,6 +81,12 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  * raised by the endpoint is mapped by error_envelope(); a failure that refuses the whole
  * REQUEST (CSRF, a fault outside any call) is answered by request_refusal(), which gives a
  * batch one envelope per call_id - so every call a client sent is always answered.
+ *
+ * EVERY ANSWER IS HTTP 200 - except an INFRASTRUCTURE OUTAGE (Infrastructure_Outage: the lock
+ * daemon or the database connection gone). That is no call's failure: call_envelope() lets it
+ * through, no later call of the batch runs, and Ajax_Exception_Handler fails the whole HTTP
+ * request with status 500 (outage_response(); the client rejects every call of it with
+ * server_error).
  *
  * The browser transport is the AJAX channel of Rsx_Request_Channel: a POST to /_ajax/...
  * in its realm. Dispatcher routes it here after the realm preamble (CSRF, dev-auth, the
@@ -556,6 +563,9 @@ class Ajax
     /**
      * One call, answered as the envelope both transports send.
      *
+     * An infrastructure outage (Infrastructure_Outage) is not answered here: it propagates
+     * and fails the whole request with HTTP 500.
+     *
      * @param string $controller_name
      * @param string $action_name
      * @param array $params
@@ -575,6 +585,12 @@ class Ajax
             // Answered from the request history: a replay, or a refusal. Never a fault.
             return static::__side_channels($answer->ajax_fields(), $console_mark);
         } catch (Throwable $e) {
+            // An infrastructure outage is no call's failure: it ends the whole request as a
+            // 500 (Ajax_Exception_Handler), reported once by the front controller, and no
+            // later call of the batch runs - every one of them needs the same lock daemon
+            // and database.
+            Infrastructure_Outage::rethrow_if_outage($e);
+
             // A fault is reported exactly as the front controller reports one that escapes
             // dispatch; a coded failure is an answer, not a fault.
             if (static::__coded_failure($e) === null) {
@@ -655,6 +671,50 @@ class Ajax
             return static::__side_channels(['_success' => false] + $coded, $console_mark);
         }
 
+        [$reason, $error] = static::__fault_detail($e);
+
+        return static::__side_channels([
+            '_success' => false,
+            'error_code' => self::ERROR_FATAL,
+            'reason' => $reason,
+            'metadata' => [],
+            'error' => $error,
+        ], $console_mark);
+    }
+
+    /**
+     * The answer to an INFRASTRUCTURE OUTAGE (Infrastructure_Outage: the lock daemon or the
+     * database connection gone) anywhere in an Ajax request: the whole request fails with
+     * HTTP 500, and the client rejects every call of it with server_error. The body is the
+     * fatal envelope's fields with no side channels - it reads nothing from the session, the
+     * database or the lock daemon, because one of them is what failed.
+     *
+     * @param Throwable $e
+     * @return \Illuminate\Http\JsonResponse HTTP 500
+     */
+    public static function outage_response(Throwable $e): \Illuminate\Http\JsonResponse
+    {
+        [$reason, $error] = static::__fault_detail($e);
+
+        return response()->json([
+            '_success' => false,
+            'error_code' => self::ERROR_FATAL,
+            'reason' => $reason,
+            'metadata' => [],
+            'error' => $error,
+        ], 500);
+    }
+
+    /**
+     * A fault's reason and error object: the detail (file, line, message, backtrace) for a
+     * caller Rsx_Diagnostics admits, a generic sentence and an error_id (the detail logged
+     * under it) for everybody else.
+     *
+     * @param Throwable $e
+     * @return array [string $reason, array $error]
+     */
+    private static function __fault_detail(Throwable $e): array
+    {
         if (Rsx_Diagnostics::caller_sees_detail()) {
             $error = [
                 'file' => str_replace(base_path() . '/', '', $e->getFile()),
@@ -683,13 +743,7 @@ class Ajax
             $reason = $error['error'];
         }
 
-        return static::__side_channels([
-            '_success' => false,
-            'error_code' => self::ERROR_FATAL,
-            'reason' => $reason,
-            'metadata' => [],
-            'error' => $error,
-        ], $console_mark);
+        return [$reason, $error];
     }
 
     /**

@@ -22,8 +22,8 @@
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S. The page is the control panel at /_sys and
  * the mounted components are Rsx_Form and Form_Errors; the probe form is built at runtime
  * in the browser, so no application screen, modal or bundle is involved and it runs in any
- * install. Ajax.call is replaced by a scripted fake for the duration and restored
- * afterwards: what is under test is the LOOP, not any endpoint.
+ * install. Ajax.call_detailed (the call Rsx_Form makes) is replaced by a scripted fake for
+ * the duration and restored afterwards: what is under test is the LOOP, not any endpoint.
  *
  * The probe carries its own per-form question_handler, which takes precedence over
  * whatever global handler the install has registered (the reference application registers
@@ -37,6 +37,7 @@
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { poll_until } = require('../../_lib/playwright/sys_page.js');
 
 const BASE_URL = 'http://localhost';
 const ROUTE = '/_sys';
@@ -51,17 +52,14 @@ function pass(msg) {
     console.log('PASS: ' + msg);
 }
 
-/** Wait for the SPA action's full lifecycle on the page. */
+/**
+ * Wait for the SPA action's full lifecycle on the page. Polled, because the first visit may
+ * load a second document (the timezone cookie's one-time ?_rsx_tz=1 round trip), and an
+ * evaluate spanning a document load dies with it.
+ */
 async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
-        }
-    }));
-
+    await poll_until(page, 'the SPA action exists', () => typeof Spa !== 'undefined' && !!Spa.action());
+    await page.evaluate(async () => { await Spa.action().ready(); });
 }
 
 /**
@@ -98,8 +96,8 @@ async function build_probe(page) {
         // The scripted fake. window.__q_script is a list of outcomes, one per call:
         // {question: {key, question}} rejects as a pending question, anything else resolves.
         window.__q_calls = [];
-        window.__q_original_ajax_call = Ajax.call;
-        Ajax.call = function (url, body) {
+        window.__q_original_ajax_call = Ajax.call_detailed;
+        Ajax.call_detailed = function (url, body) {
             window.__q_calls.push({ url: url, body: JSON.parse(JSON.stringify(body || {})) });
 
             const index = window.__q_calls.length - 1;
@@ -114,7 +112,7 @@ async function build_probe(page) {
                 return Promise.reject(error);
             }
 
-            return Promise.resolve(step.resolve);
+            return Promise.resolve({ value: step.resolve, replayed: false, completed_at: null, duration_ms: null });
         };
 
         // The per-form handler delegates to a swappable page-level function, so each case
@@ -323,7 +321,7 @@ async function run() {
         }
 
         await page.evaluate(() => {
-            Ajax.call = window.__q_original_ajax_call;
+            Ajax.call_detailed = window.__q_original_ajax_call;
             $('#rsx_question_mount_temp').remove();
         });
     } catch (e) {

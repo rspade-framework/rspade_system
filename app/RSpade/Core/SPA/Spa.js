@@ -194,11 +194,23 @@ class Spa {
             return;
         }
 
+        // How this document's _via arrived, and which journal entry it came from. The first
+        // page of a document is 'explicit' (a reload, a pasted URL, a new tab) - unless
+        // Rsx.navigate() brought it here by a full load and left the hand-off naming this URL:
+        // then it arrived exactly as an SPA navigation would have, and is judged against the
+        // decider of the page left. The hand-off is read once and deleted whatever it says.
+        const handoff = Rsx_Navigation._take_handoff();
+
         // The entry this page loaded on is the first one the SPA knows about. A reload
         // or a return from another document finds its stamp still there - and the
         // position it was left at, which this load returns to exactly as Back/Forward
-        // between SPA pages does.
+        // between SPA pages does - and its journal record (Spa_Journal) with it.
         Spa._adopt_current_entry();
+        Spa_Journal.arrived(
+            Spa_Journal.current_key(),
+            window.location.pathname + window.location.search + window.location.hash,
+            handoff ? handoff.from : null
+        );
 
         const initial_url = window.location.pathname + window.location.search + window.location.hash;
         const navigation = performance.getEntriesByType('navigation')[0];
@@ -209,13 +221,7 @@ class Spa {
             options.scroll = history.state?.scroll || null;
         }
 
-        // How this document's _via arrived. The first page of a document is 'explicit' (a
-        // reload, a pasted URL, a new tab) - unless Rsx.navigate() brought it here by a full
-        // load and left the hand-off naming this URL: then it arrived exactly as an SPA
-        // navigation would have, and is judged against the decider of the page left. The
-        // hand-off is read once and deleted whatever it says.
-        const handoff = Rsx_Navigation._take_handoff();
-        if (handoff) {
+        if (handoff !== null && handoff.arrival !== null) {
             options.arrival = handoff.arrival;
             options.previous = handoff.previous_decider;
         } else {
@@ -403,10 +409,18 @@ class Spa {
     static _rewrite_entry(url, history_mode) {
         if (history_mode === 'replace') {
             history.replaceState(history.state, '', url);
+            Spa_Journal.note_url();
         } else {
             Spa._save_scroll_to_current_entry();
+            const from_key = Spa_Journal.current_key();
+            const from_url = window.location.pathname + window.location.search + window.location.hash;
+            const scroll = Spa._read_scroll();
             Spa._history_index = Spa._history_index + 1;
             history.pushState({ ...(history.state || {}), spa_index: Spa._history_index }, '', url);
+
+            // A new entry for the same page: it comes from the entry left, with its trail.
+            Spa_Journal.forward(from_key, from_url, scroll, Spa_Journal.current_key(),
+                window.location.pathname + window.location.search + window.location.hash, true);
         }
 
         Spa._last_committed_url = window.location.pathname + window.location.search + window.location.hash;
@@ -569,6 +583,11 @@ class Spa {
         window.addEventListener('pagehide', () => {
             if (!Spa.is_dispatching) {
                 Spa._save_scroll_to_current_entry();
+                Spa_Journal.left(
+                    Spa_Journal.current_key(),
+                    window.location.pathname + window.location.search + window.location.hash,
+                    Spa._read_scroll()
+                );
             }
         });
 
@@ -599,7 +618,23 @@ class Spa {
             if (Spa._last_committed_url !== null && Spa._is_fragment_only_move(Spa._last_committed_url, url)) {
                 console_debug('Spa', 'Fragment-only popstate, firing spa_hash_change: ' + url);
                 Spa._last_committed_url = url;
+
+                // The journal: the entry left keeps its address (followed as it was rewritten)
+                // and records its scroll. An entry the SPA never stamped is a NEW one - a
+                // fragment link or a fragment move through the door - so it comes from the
+                // entry left and shows the same page's trail; a stamped one is an entry
+                // returned to.
+                const left_key = Spa_Journal.current_key();
+                const left_scroll = Spa._read_scroll();
+                const is_new_entry = !e.state?.spa_run;
                 Spa._adopt_current_entry();
+                if (is_new_entry) {
+                    Spa_Journal.forward(left_key, null, left_scroll, Spa_Journal.current_key(), url, true);
+                } else {
+                    Spa_Journal.left(left_key, null, left_scroll);
+                    Spa_Journal.arrived(Spa_Journal.current_key(), url, null);
+                }
+
                 Spa._scroll_to_hash_anchor();
                 Rsx.trigger('spa_hash_change', { url: url, hash: window.location.hash });
                 return;
@@ -623,7 +658,12 @@ class Spa {
             // already moved off its entry, so its position cannot be written there
             // any more. Remember it exactly, for when this entry is returned to.
             if (Spa._history_index !== null) {
-                Spa._left_scroll[Spa._history_run + ':' + Spa._history_index] = Spa._read_scroll();
+                const left_scroll = Spa._read_scroll();
+                Spa._left_scroll[Spa._history_run + ':' + Spa._history_index] = left_scroll;
+
+                // The journal keeps the address it followed (the browser has already moved
+                // off it) and the position.
+                Spa_Journal.left(Spa_Journal.current_key(), null, left_scroll);
             }
 
             // Where the page being RETURNED TO was scrolled when it was left: the exact
@@ -848,6 +888,67 @@ class Spa {
     }
 
     /**
+     * The URL that returns to `url` in the state the user LEFT it in - its fragment (a grid's
+     * sort, filters and page, a tab) and its scroll position - when the user came through that
+     * page on the trail now on screen: the nearest earlier entry of this tab's journey that is
+     * `url`'s page, reached without passing through a page whose breadcrumb trail did not show
+     * it. Otherwise `url` unchanged. Breadcrumb hrefs are built with it; a Back or Cancel link
+     * to a page on the trail uses it too:
+     *
+     *     back_href: Spa.return_url(Rsx.Route('Clients_Index_Action'))
+     *
+     * Synchronous, and per tab (Spa_Journal; session storage unavailable = always `url`).
+     * See rsx:man breadcrumb_origins, RETURNING TO THE STATE YOU LEFT.
+     *
+     * @param {string} url - path + query (a fragment it carries is replaced)
+     * @returns {string}
+     */
+    static return_url(url) {
+        return Spa_Journal.return_url(url);
+    }
+
+    /**
+     * Take the one-time scroll key (Rsx.HASH_SCROLL_KEY) out of a parsed URL's fragment.
+     * Returns the position it named, or null when it names none. A malformed value is removed
+     * and ignored - a URL is user input.
+     *
+     * @param {{hash: string}} parsed - Spa.parse_url()'s result; its hash is rewritten
+     * @returns {{x: number, y: number}|null}
+     */
+    static _take_scroll_key(parsed) {
+        if (!parsed.hash || parsed.hash === '#') {
+            return null;
+        }
+
+        let position = null;
+        let found = false;
+
+        const kept = parsed.hash.substring(1).split('&').filter((pair) => {
+            const equals = pair.indexOf('=');
+            if (equals < 0 || decodeURIComponent(pair.substring(0, equals)) !== Rsx.HASH_SCROLL_KEY) {
+                return true;
+            }
+
+            found = true;
+            const match = /^(\d+)(?:,(\d+))?$/.exec(decodeURIComponent(pair.substring(equals + 1)));
+            if (match) {
+                position = match[2] === undefined
+                    ? { x: 0, y: int(match[1]) }
+                    : { x: int(match[1]), y: int(match[2]) };
+            }
+            return false;
+        });
+
+        if (!found) {
+            return null;
+        }
+
+        parsed.hash = kept.length ? '#' + kept.join('&') : '';
+
+        return position && (position.x || position.y) ? position : null;
+    }
+
+    /**
      * True when a history move keeps the path and the query - the two parts that route
      * an action - so at most the fragment changed.
      *
@@ -895,6 +996,7 @@ class Spa {
         // entry, so that entry is now where the page sits in the stack.
         if (options._is_popstate) {
             Spa._adopt_current_entry();
+            Spa_Journal.arrived(Spa_Journal.current_key(), url, null);
         }
 
         if (Spa.is_dispatching) {
@@ -982,6 +1084,23 @@ class Spa {
             // (spa_run, spa_index) and where ITS OWN page is scrolled - so a push first
             // records the departing page's position on the entry being left, and the
             // new entry starts with none.
+            // THE ONE-TIME SCROLL KEY (Rsx.HASH_SCROLL_KEY): a link landing at a position - a
+            // breadcrumb returning to where a page was left. It is taken out of the URL before
+            // the entry is written (or, for an address already showing it, rewritten in place
+            // now), so no entry, no copied URL and no reload ever carries it again, and it makes
+            // this dispatch a scroll restoration unless a recorded position already does.
+            const scroll_key = Spa._take_scroll_key(parsed);
+            if (scroll_key) {
+                url = parsed.path + parsed.search + parsed.hash;
+                if (opts.history === 'none') {
+                    history.replaceState(history.state, '', url);
+                    Spa_Journal.note_url();
+                }
+                if (!opts.scroll) {
+                    opts.scroll = scroll_key;
+                }
+            }
+
             if (opts.history !== 'none') {
                 // Construct full URL with hash (hash is preserved in browser URL bar)
                 const new_url = parsed.path + parsed.search + (parsed.hash || '');
@@ -989,13 +1108,22 @@ class Spa {
                 if (opts.history === 'push') {
                     console_debug('Spa', 'Pushing history state');
                     Spa._save_scroll_to_current_entry();
+                    const from_key = Spa_Journal.current_key();
+                    const from_url = window.location.pathname + window.location.search + window.location.hash;
+                    const scroll = Spa._read_scroll();
                     Spa._history_index = Spa._history_index + 1;
                     history.pushState(Spa._entry_state(null), '', new_url);
+
+                    // The journal: the entry left (its address and position), and the new
+                    // entry coming from it.
+                    Spa_Journal.forward(from_key, from_url, scroll, Spa_Journal.current_key(), new_url, false);
                 } else {
                     // The entry is overwritten in place: same position in the stack,
-                    // and the page it described is gone, so there is nothing to save.
+                    // and the page it described is gone, so there is nothing to save. Its
+                    // journal record keeps only where the replaced page came from.
                     console_debug('Spa', 'Replacing history state');
                     history.replaceState(Spa._entry_state(null), '', new_url);
+                    Spa_Journal.replaced(Spa_Journal.current_key(), new_url);
                 }
             }
 

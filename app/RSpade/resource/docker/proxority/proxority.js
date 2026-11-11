@@ -49,14 +49,29 @@ const { read_capacity } = require('./lib/pool_capacity.js');
 const { Whitelist } = require('./lib/whitelist.js');
 const { is_loopback: is_loopback_address } = require('./lib/classify.js');
 
-/** Whether a process exists. EPERM means it exists and belongs to someone else. */
-function process_is_alive(pid) {
+/**
+ * The kernel start time of a running process (field 22 of /proc/<pid>/stat, as a string), or
+ * null when there is none - an exited process nobody has reaped yet (a zombie) included. A pid
+ * alone names no process once it is reused; pid + start time does. The command name (field 2)
+ * may hold spaces and parentheses, so the fields proper start after its LAST ')'.
+ */
+function process_start_time(pid) {
+    let text;
     try {
-        process.kill(pid, 0);
-        return true;
+        text = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
     } catch (error) {
-        return error.code === 'EPERM';
+        return null;
     }
+
+    const fields = text.slice(text.lastIndexOf(')') + 2).split(' ');
+    if (fields.length <= 19 || fields[0] === 'Z' || fields[0] === 'X') return null;
+
+    return fields[19];
+}
+
+/** Whether pid is still the process that had start_time; a null start time matches nothing. */
+function process_is_alive(pid, start_time) {
+    return start_time !== null && process_start_time(pid) === start_time;
 }
 
 /**
@@ -247,7 +262,8 @@ class Proxority {
         this.shutting_down = false;
 
         // CLOSED TO EXTERNAL TRAFFIC (the `close` / `open` verbs). Null while open; otherwise
-        // {reason, since, holder_pid}. In memory only, so a restart always comes up OPEN.
+        // {reason, since, holder_pid, holder_start_time}. In memory only, so a restart always
+        // comes up OPEN.
         this.closed = null;
 
         // `close` callers waiting for the admitted external requests to finish.
@@ -355,15 +371,17 @@ class Proxority {
      * the external requests already admitted (queued or running) have finished. Loopback
      * callers (a test harness's browser, rsx:debug, companions) are untouched.
      *
-     * holder_pid names the process that asked. While closed, every refused request first checks
-     * that it is alive, and reopens the proxy when it is gone - so a closer that died without
-     * calling `open` cannot leave a site refusing its visitors.
+     * holder_pid names the process that asked; its kernel start time is read here and kept with
+     * it. While closed, every refused request first checks that the pid is still THAT process
+     * (the same start time: a pid the kernel has since reused is not the holder), and reopens
+     * the proxy when it is gone - so a closer that died without calling `open` cannot leave a
+     * site refusing its visitors. A holder already gone when it closes is gone at once.
      */
     close(reason, holder_pid) {
         const text = String(reason || '').trim() || 'closed for maintenance';
         const pid = Number.isInteger(holder_pid) && holder_pid > 0 ? holder_pid : null;
 
-        this.closed = { reason: text, since: new Date().toISOString(), holder_pid: pid };
+        this.closed = { reason: text, since: new Date().toISOString(), holder_pid: pid, holder_start_time: pid ? process_start_time(pid) : null };
         this.event_log.log('closed', text + (pid ? ' (held by pid ' + pid + ')' : '') + '; '
             + this._external_in_flight() + ' external request(s) to finish');
 
@@ -384,7 +402,7 @@ class Proxority {
     _refuses_while_closed(info) {
         if (!this.closed || info.loopback || is_loopback_address(info.ip)) return false;
 
-        if (this.closed.holder_pid && !process_is_alive(this.closed.holder_pid)) {
+        if (this.closed.holder_pid && !process_is_alive(this.closed.holder_pid, this.closed.holder_start_time)) {
             this.open('the holder, pid ' + this.closed.holder_pid + ', is gone; reopened');
             return false;
         }
@@ -882,4 +900,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { Proxority, format_status, forwarded_request_headers, parse_command, CONNECT_TIMEOUT_MS, RESPONSE_HEAD_TIMEOUT_MS, RESPONSE_BUFFER_BYTES };
+module.exports = { Proxority, process_start_time, process_is_alive, format_status, forwarded_request_headers, parse_command, CONNECT_TIMEOUT_MS, RESPONSE_HEAD_TIMEOUT_MS, RESPONSE_BUFFER_BYTES };

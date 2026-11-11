@@ -43,9 +43,6 @@ class Api_Catalog
     }
 
     /**
-     * Distinct version numbers present across all endpoints, sorted descending.
-     */
-    /**
      * The #[Api_Param] declarations for one endpoint pattern.
      *
      * The runtime validator's source. They are baked once, onto the catalog row, rather than
@@ -72,6 +69,33 @@ class Api_Catalog
         return (bool) (Manifest::$data['data']['api_endpoints'][$pattern]['hidden'] ?? true);
     }
 
+    /**
+     * The versions that serve a path key (any verb, hidden rows included), ascending - e.g.
+     * '/files/:key' -> [1, 2, 3] when the file metadata route is served at v1 through v3.
+     * Read from the hot index, so it is cheap enough for a per-request check.
+     *
+     * @return array<int>
+     */
+    public static function versions_serving(string $path_key): array
+    {
+        Manifest::init();
+
+        $versions = [];
+        foreach ((Manifest::$data['data']['api_endpoints'] ?? []) as $endpoint) {
+            if ($endpoint['path_key'] === $path_key) {
+                $versions[(int) $endpoint['version']] = true;
+            }
+        }
+
+        $versions = array_keys($versions);
+        sort($versions);
+
+        return $versions;
+    }
+
+    /**
+     * Distinct version numbers present across all endpoints, sorted descending.
+     */
     public static function get_versions(): array
     {
         $versions = [];

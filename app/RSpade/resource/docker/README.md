@@ -133,8 +133,8 @@ All under supervisor; `supervisorctl status` lists them.
 
 **A service that stops is started again, forever.** Every long-running program runs under the
 retry runner (`retry-run.sh`, installed as `rspade-retry-run`): it waits 2 s before the first
-restart, doubling to a minute across consecutive failures (a run that lasted a minute or more
-starts the count over), and never gives up. Supervisor alone cannot wait before a restart and
+restart, doubling to a minute across consecutive failures (a run that has lasted a minute
+starts the count over, the moment it has), and never gives up. Supervisor alone cannot wait before a restart and
 parks a program that keeps failing in FATAL. The runner passes every signal supervisor sends
 on to the service and waits for it to exit, so a graceful stop and `stopwaitsecs` work as if
 the service were the program itself. Two exceptions: `mysql` relies on supervisor's own
@@ -152,6 +152,27 @@ every start, the next attempt recovers from inside the running container. `mysql
 `dockerd` start through the runner's `--exec` mode: the same check, then the runner becomes
 the program, with no loop. `retry-run.sh --clear-stale-pidfile <file> <pattern>` is the check
 for one file. A service added to the image that keeps such a file gets an entry in the table.
+
+**A failing service is visible, though supervisor shows it RUNNING.** Supervisor's process is
+the runner, so a service that exits again and again still reads RUNNING there. The runner
+records each service in `/run/rspade-services/<label>.state` (status `running` / `starting` /
+`failing` / `stopped`, the streak's consecutive exits, last exit status and start; the
+format is in `retry-run.sh`'s header) and marks it `failing` after five consecutive exits,
+until a run lasts a minute. It logs one `[ERROR] [<label>] failing: N consecutive exits (last
+status S) since T` line at 5 exits and at each doubling (10, 20, 40, ...), beside the
+per-attempt line. `--exec` programs (mysql, dockerd) write no state; supervisor's own covers
+them.
+
+**Health check.** `rspade-healthcheck` (`healthcheck.sh`) is the image's Docker `HEALTHCHECK`
+(Docker's default interval, timeout and retries). It exits 1, printing one `[ERROR]` line per
+problem, when any runner state file says `failing`, when a supervisor program is FATAL,
+BACKOFF, EXITED or UNKNOWN (STOPPED is deliberate and is not), or when supervisor has an
+`rsx-lockd` program and the daemon does not answer a ping on `LOCK_SERVER_HOST:PORT`. It is
+healthy, with one `[INFO]` line, under maintenance mode (the flag in `<storage>/state`,
+`RSX_STORAGE_PATH` honoured) and when no checkout is mounted. It only reports - nothing
+restarts an unhealthy container - and `docker inspect --format '{{json .State.Health}}'` shows
+its last lines. The `rsx:health` row "Supervised Services" reads the same state files. A host
+that defines its own container points its health check at `bash /usr/local/bin/rspade-healthcheck`.
 
 | Service | What it does |
 |---|---|

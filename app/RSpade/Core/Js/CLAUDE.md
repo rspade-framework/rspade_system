@@ -32,18 +32,27 @@ handler, the error-screen components - because the first SPA page draws before `
 
 ## What is here
 
-- `Rsx.js` — the core: the boot above, `Rsx.Route()`, `url_hash_get()` and friends,
+- `Rsx.js` — the core: the boot above, `Rsx.Route()`, `url_hash_get()` and friends (the
+  setters tell `Spa_Journal` the entry's address moved; reserved hash keys `HASH_ANCHOR_KEY`
+  `at` and `HASH_SCROLL_KEY` `_scroll`),
   `load_external()`, `set_default_spinner()`, `set_session_expired_handler()`, the
   navigation guard, unhandled-exception routing to `Exception_Handler.js`.
 - `Rsx_Navigation.js` — the one navigation door behind `Rsx.navigate()` / `Rsx.redirect()`:
   option validation, target classification, `_via` carrying, the single transport that writes
-  `location` / `history`, and the full-load hand-off `Spa._on_spa_init()` reads once.
+  `location` / `history`, and the full-load hand-off `Spa._on_spa_init()` reads once (it also
+  carries the `Spa_Journal` entry the next document's first entry comes from). Also
+  per-entry state (`_entry_value()` / `_set_entry_value()`): a value kept on the current
+  history entry's state beside the SPA's keys, read back on Back/Forward or a reload of that
+  entry - where `Rsx_Form` keeps its request references (`rsx_form_refs`).
 - `Manifest.js` — the browser class registry (names, inheritance) the boot walks.
 - `Ajax.js` — the ONE transport: every `Controller.method()` call goes to `/_ajax/_batch`
   (batched per synchronous turn when `rsx.ajax.batching` is on; a `#[Priority]` call goes
   alone to `/_ajax/_priority`), resolving or rejecting on the `{_success,
   _ajax_return_value}` envelope. `$.ajax()` to a local URL throws. `Ajax.upload()` is the
-  multipart path. `Form_Utils.js` renders per-field errors.
+  multipart path. `Ajax.call_detailed()` also resolves whether the request history answered
+  (`replayed`, the original `completed_at`); `Ajax.action()` (`Ajax_Action.js`) keeps a
+  `_request_ref` per user action and endpoint across retries; `Ajax.request_ref()` mints one.
+  `Form_Utils.js` renders per-field errors.
 - `Rsx_Js_Model.js` — the base of every generated model stub (`Base_<Model>.js`, written by
   `Core/Database/Model_Stub_ManifestSupport`): `fetch()`, `fetch_or_null()`, lazy
   relationships, enum helpers, `field_length()` (fed by the bundle's field-length script).

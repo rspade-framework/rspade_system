@@ -293,6 +293,25 @@
         text-overflow: ellipsis;
     }
 
+    // An application section's title in the Guides group: prose, not a path, so the body
+    // face rather than the monospace one.
+    &__nav-section {
+        font-size: 13px;
+        color: var(--rsx-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    &__nav-link:hover &__nav-section,
+    &__nav-link--active &__nav-section {
+        color: var(--rsx-text);
+    }
+
+    &__nav-link--active &__nav-section {
+        font-weight: 600;
+    }
+
     &__nav-link:hover &__nav-path {
         color: var(--rsx-text);
     }
