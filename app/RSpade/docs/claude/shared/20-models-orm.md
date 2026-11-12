@@ -12,6 +12,8 @@
 
 **Declared TEXT types**: `public static $text_types = ['col' => Rich_Text::class]` makes a TEXT column a value object (`Rsx_Text_Abstract`), filtered on every write and travelling as a `{__TEXT, raw, empty}` envelope. **A bare string assigned to it is PLAIN TEXT** (escaped) - so code composing markup RETURNS THE TYPE (`Type::from_untrusted_encoded()`), never a string, the one silent mistake; **test emptiness with `is_empty()`, never `=== ''`**; side effects go in the type's `after_model_saved()`. Undeclared columns are ordinary strings. Skill `rspade:text-types`.
 
+**Fact groups**: one fact edited as one thing but stored in several columns (an activity's date-or-datetime "when", a type/id pair picked as one parent) is `public static $fact_groups = ['when' => ['label' => 'Date and time', 'columns' => [...]]]` - a save of ANY column of it is a conflict for every field stored in any of them (`Form_Edit`); **undeclared, a stale save whose fact the other editor changed in a column the form never names overwrites it silently**. Checked against the table at first use. `rsx:man model`, FACT GROUPS.
+
 **Revision history** is `public static $revisions = true;` (one transaction per unit of work; an import declares one per record with `Revision::unit_of_work()`; `REVISION-01` is a build FATAL; **`Revision::transaction_id()` MINTS a transaction** - call it only to store the id). **There is no restore and no automatic activity text; both are the application's job.** Skill `rspade:revisions`.
 
 **Detail tables** (class-table inheritance, `$detail_tables`, `$party->party_person->first_name`) throw on wrong-type access. Skill `rspade:detail-tables`.

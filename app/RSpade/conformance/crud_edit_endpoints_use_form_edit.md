@@ -28,5 +28,7 @@ For each form with a `$data` seed, or one `populate()` fills from a record, open
 - A `$record->field = ...` inside the callback for a submitted column, which writes it whether or not it changed. A value derived by the server is the exception.
 - A pivot or detail-table field written without `$edit->changed()`.
 - An edit seed built by hand without `updated_at`, which fails only when the form is first saved.
+- A form field stored under a different column name, or across several columns, or in a column that also stores other fields, with no `fields:` entry (or coupled map entry) saying so: another editor's change to that column matches no submitted field and is overwritten with no question.
+- A model whose columns hold one fact edited as one thing (a date-or-datetime pair, a type/id pair picked as one parent, quantity x rate = amount) without a `$fact_groups` declaration (`rsx:man model`, FACT GROUPS).
 
 A form over settings that one person owns (their own profile, a site's settings) may be exempt: say so beside the endpoint.

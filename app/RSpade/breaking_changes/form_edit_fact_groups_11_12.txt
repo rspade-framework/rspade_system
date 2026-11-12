@@ -1,0 +1,117 @@
+ONE FACT IN SEVERAL COLUMNS: FACT GROUPS AND THE fields: MAP FOR FORM_EDIT
+Date: 2026-11-12
+
+IF YOU DO NOTHING: a stale task save overwrites another user's change of the task's parent with no question, and so does every edit endpoint of yours whose form names a field differently from the column it is stored in - a 200, nothing logged.
+
+SUMMARY
+    Category 1: the template's task edit changes, because without the change it does
+    not have the conflict protection Form_Edit documents. Your own edit endpoints have
+    the same gap wherever a form field and its column differ; the AUDIT below finds
+    them.
+
+    Form_Edit asks before overwriting a field another editor changed. It matches the
+    other editor's revisions (which name COLUMNS) to the submission (which names FORM
+    FIELDS) by identical name. The task form sends its parent as one field, taskable,
+    stored in taskable_type and taskable_id - no column is named taskable, so a
+    re-parent saved while the form was open was never matched, and the stale save put
+    the old parent back. The same holds for any field stored under another name, split
+    across columns, or stored in a column that also depends on other columns.
+
+    Two additions close it:
+
+    - run(..., fields: [column => field]) maps the record's own columns to the form's
+      field names - renamed ('entry_date' => 'activity_date'), several columns to one
+      field ('taskable_type' => 'taskable', 'taskable_id' => 'taskable'), or one column
+      to several fields ('time_start' => ['activity_time', 'activity_date']). Coupled
+      maps take the same three forms.
+    - public static $fact_groups on a model names columns that hold ONE fact (an
+      activity's date-or-datetime "when", a polymorphic pair). A change saved to any
+      column of a group is a change to every field stored in any of its columns, and is
+      always asked about; the question names the group by its label.
+
+    Nothing changes for a model with no groups and a call with no fields:.
+
+    Read first: rsx:man model (FACT GROUPS), rsx:man form_conventions (EDITING A
+    RECORD: COLUMNS AND FIELDS, FACT GROUPS), skills rspade:models and
+    rspade:form-engine.
+
+AFFECTED FILES
+    /rsx/models/task_model.php
+    /rsx/app/frontend/tasks/tasks_controller.php
+    /rsx/app/api/v1/tasks_api_controller.php
+
+CHANGES REQUIRED
+
+    File: /rsx/models/task_model.php
+    -------------------------------------------------------------------------
+    Beside $text_types, declare the parent pair one fact, and the map from its
+    columns to the one field the staff form and the API both send:
+
+        /**
+         * FACT GROUPS - the parent is one fact stored in two columns: a change saved to
+         * either is a change to the parent, so Form_Edit asks before a stale save puts
+         * an old parent back (rsx:man model, FACT GROUPS).
+         */
+        public static $fact_groups = [
+            'parent' => ['label' => 'Parent', 'columns' => ['taskable_type', 'taskable_id']],
+        ];
+
+        /**
+         * The columns a task edit names differently: both halves of the parent pair are
+         * the one field `taskable` = {type, id}. Passed to Form_Edit::run() as fields:
+         * by every endpoint that edits a task.
+         */
+        public const EDIT_FIELDS = ['taskable_type' => 'taskable', 'taskable_id' => 'taskable'];
+
+    File: /rsx/app/frontend/tasks/tasks_controller.php
+    -------------------------------------------------------------------------
+    In save(), pass the map to Form_Edit::run() - the last argument:
+
+        }, $task->exists ? Rsx::Route('Tasks_View_Action', $task->id) : null, fields: Task_Model::EDIT_FIELDS);
+
+    File: /rsx/app/api/v1/tasks_api_controller.php
+    -------------------------------------------------------------------------
+    The same in create() and update():
+
+        Form_Edit::run($task, $values, function (Form_Edit $edit) use ($task, $values) {
+            ...
+        }, fields: Task_Model::EDIT_FIELDS);
+
+        $result = Form_Edit::run($task, $values, function (Form_Edit $edit) use ($task, $values) {
+            ...
+        }, fields: Task_Model::EDIT_FIELDS);
+
+AUDIT (your own code)
+
+    1. Every model: find each fact stored in several columns and declare it in
+       $fact_groups - a date-or-datetime pair (a day column for all-day records, start
+       and end instants for timed ones), a polymorphic type/id pair edited as one
+       field, a value derived from several inputs (quantity x rate = amount: group all
+       three), a value kept in a column beside others it depends on. Columns are
+       checked against the table the first time the model is edited; a typo throws
+       naming the model.
+
+    2. Every Form_Edit::run() call: list the form's fields and the columns each is
+       stored in. Pass fields: for any field stored under a different name, or in
+       several columns, or in a column that also stores other fields. Do the same in
+       each coupled: map, where a column may now feed several fields as a list. A
+       set('field', ...) for a renamed field now writes the mapped column; a field the
+       map stores in several columns, or in a shared column, is written by the callback
+       behind $edit->changed('field') (set() throws for it).
+
+    3. A field_conflict question handler: rows may now carry groups (labels) and each
+       changes[] entry its record, column, group, from and to. A structured row still
+       carries null loaded/current/yours; show the group label rather than "(updated)"
+       if you like. The template's Modal._field_conflict_body() in
+       system/app/RSpade/resource/reference_app/lib/modal/modal.js does.
+
+    4. Add a test per declared group and per mapped field: save one column of the
+       group (or the mapped column) as another editor, then submit a stale edit sending
+       a field stored in ANOTHER column of it, and assert the field_conflict question.
+       The template's is rsx/tests/Task_Parent_Conflict_Test.php.
+
+VERIFICATION
+    Open a task's edit page in two windows. Change the parent in one and save; change
+    the parent in the other and save: the second save asks before overwriting the
+    first, naming "Parent". Saving a different field in the second window (the title)
+    asks nothing and keeps the first window's parent.

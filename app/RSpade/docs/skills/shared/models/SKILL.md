@@ -1,6 +1,6 @@
 ---
 name: models
-description: "Writing a model class - explicit assignment (MassAssignmentException), no eager loading, secrets in public static $neverExport (MODEL-NEVER-EXPORT-01), derived properties via $appends + a delegating accessor, Model::field_length() / Model.field_length(), bulk ->update() / ->delete() vs ->raw_bulk() vs DB::table(), $record->refresh(). Use when writing a model, adding a computed field JS must see, storing a token or password, or on 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
+description: "Writing a model class - explicit assignment (MassAssignmentException), no eager loading, secrets in public static $neverExport (MODEL-NEVER-EXPORT-01), one fact stored in several columns in public static $fact_groups, derived properties via $appends + a delegating accessor, Model::field_length() / Model.field_length(), bulk ->update() / ->delete() vs ->raw_bulk() vs DB::table(), $record->refresh(). Use when writing a model, adding a computed field JS must see, storing a token or password, storing one edited value across several columns (a date-or-datetime, a type/id pair, a derived amount), or on a \"Model::$fact_groups ...\" LogicException, 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
 ---
 
 # Writing a model
@@ -34,6 +34,23 @@ public static $neverExport = ['api_token', 'client_secret'];
 ```
 
 `toArray()` - the ONE serializer behind `fetch()`, relationship and list payloads, `window.rsxapp.user` and the external API - unsets every listed column AFTER Laravel builds the array, so nothing can put one back. The effective list is the UNION up the inheritance chain (`Model::never_exported_columns()`): an override only ADDS. **Laravel's `$hidden` is not a security control** - `makeVisible()` undoes it; it is for tidiness. `rsx:check` flags a `password`/`token`/`secret` column (or one ending `_password`/`_token`/`_secret`) missing from the list (`MODEL-NEVER-EXPORT-01`); a column exported on purpose is declared `// @MODEL-NEVER-EXPORT-01-EXCEPTION <column> - <reason>`. On a `$revisions` model a never-exported column is recorded with both sides `Revision::REDACTED`. It is STATIC: a non-static redeclaration fails at class load.
+
+## One fact, several columns: `public static $fact_groups`
+
+Some value a person edits as ONE thing is stored across several columns, and which column holds it can depend on the record's shape. The worked case: an activity's "when" - an all-day one keeps its day in `date_start`/`date_end` with the times null, a timed one keeps it inside `time_start`/`time_end` - shown as one Date box either way. Others: a polymorphic type/id pair picked as one parent, an amount derived from quantity x rate, a value kept inside a JSON column beside others.
+
+**The trap**: `Form_Edit` finds conflicts per COLUMN. When the other editor's re-date landed in `time_start` and the stale submission's Date field is stored in `date_start`, nothing matches - the stale save moves the activity back to the old day, a 200, no question.
+
+```php
+public static $fact_groups = [
+    'when' => ['label' => 'Date and time', 'columns' => ['date_start', 'date_end', 'time_start', 'time_end']],
+];
+```
+
+- A change saved to ANY column of a group is a change to every form field stored in ANY of its columns - on the record and on each coupled record through its map - always asked about, the question naming the group by its `label` and giving each changed column's before and after (`rsx:man form_conventions`, EDITING A RECORD, FACT GROUPS).
+- Column terms, because it is a fact about the model whichever screen edits it; the endpoint's `fields:` / coupled map says which form field each column stores.
+- Declare one whenever two or more columns are edited as one thing. There is no "is this a conflict?" callback, on purpose: one answering "no" by mistake silently loses an edit.
+- `Model::fact_groups()` reads it, checked against the table's live columns the first time in a process: an unknown column, a column in two groups, a group under two columns or without a label throws a `LogicException` naming the model. The build does not see the database, so a group earns a test: save one column of it, then a stale submission of a field stored in another column is asked about.
 
 ## Derived properties: `$appends` + a delegating accessor
 

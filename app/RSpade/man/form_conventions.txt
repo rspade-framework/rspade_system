@@ -426,17 +426,23 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
                         once, in the order of their first change: {type, id}, or
                         null for a write nobody signed in made (a task, a script)
             fields      one row per field this submission would overwrite:
-                field     the column, named as the input is
+                field     the form field, named as the input is
                 kind      value | enum | reference | formatted_text | structured |
                           secret - what the values below can be
                 record    {type, id}: the record the field is stored on - the
                           record being saved, or a coupled record (EDITING A
                           RECORD, COUPLED RECORDS)
+                groups    the labels of the fact groups the changes came
+                          through, [] for none (EDITING A RECORD, FACT GROUPS)
                 loaded    the value the form was opened with
                 current   the value saved now, which saving overwrites
                 yours     the value this submission writes
-                changes   [{by, at, from, to}], every save of the field since the
-                          form loaded, oldest first; by as in editors, at ISO 8601
+                changes   [{by, at, record, column, group, from, to}], every
+                          save since the form loaded that changed the field,
+                          oldest first, one per column it changed: by as in
+                          editors, at ISO 8601, record {type, id} and column
+                          where it was saved, group that column's fact group
+                          label or null, from/to that COLUMN's values
 
             A reference is {type, id}: type is the actor's class name, whatever the
             stamp matrix named - a site's User_Model, a Portal_User_Model, a
@@ -448,7 +454,10 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
             Values are display text by kind: an enum's label, a referenced record's
             name, a formatted text's plain text, the value itself; a secret and a
             structured value (an array, a JSON document) carry null - say only that it
-            changed. form.label_for(field) names a field as the form does.
+            changed. A field stored in several columns, or changed through another
+            column of its fact group, is structured: loaded, current and yours are
+            null, and each change's from/to show the column it names.
+            form.label_for(field) names a field as the form does.
 
             THE EXPECTED DIALOG lists the rows saving overwrites, each with the value
             it overwrites and the one it writes, and confirms. One editor is named in
@@ -674,7 +683,7 @@ EDITING A RECORD
             return ['id' => $client->id, 'redirect' => Rsx::Route('Clients_View_Action', $client->id)];
         }, $client->exists ? Rsx::Route('Clients_View_Action', $client->id) : null);
 
-    Form_Edit::run($record, $params, $write, $view_url = null, $coupled = [])
+    Form_Edit::run($record, $params, $write, $view_url = null, $coupled = [], $fields = [])
         Opens a transaction, takes a row lock, refreshes $record, settles any conflict,
         then calls $write. A throw rolls everything back. It adds updated_at to an array
         result. A new record has no conflict to settle and writes every set().
@@ -685,7 +694,10 @@ EDITING A RECORD
     $edit->set($field, $value)
         Assigns the value if this submission writes that field. Same explicit, one
         field at a time assignment as `$record->field = $value`, so a transformed value
-        goes straight in.
+        goes straight in. The column is the one fields: stores the field in, else the
+        column of the field's name. A field fields: stores in several columns, or in a
+        column shared with other fields, throws: the callback composes those columns
+        itself, guarded by changed().
 
     $edit->changed($field)
         Is this submission writing $field? For what set() cannot do: a pivot, a
@@ -725,6 +737,43 @@ EDITING A RECORD
     COVERS the record's own columns, and the columns of every COUPLED record. A pivot or
     detail-table field is written only when changed, but is not checked for a conflict.
 
+    COLUMNS AND FIELDS. Revisions name COLUMNS; a submission names FORM FIELDS. A record's
+    own column is the form field of the same name, unless fields: maps it:
+
+        Form_Edit::run($entry, $params, $write, $view_url, fields: [
+            'entry_date' => 'activity_date',                    // the form names it otherwise
+            'parent_type' => 'parent', 'parent_id' => 'parent', // several columns, one field
+            'starts_at' => ['start_time', 'start_day'],         // one column, several fields
+        ]);
+
+    A column stored from one field under another name is matched through the map; a field
+    stored in several columns (a polymorphic pair edited as one picker) conflicts with a
+    change to any of them and is always asked about - there is no one value to compare; a
+    column that feeds several fields is a change to each. An unmapped column keeps its own
+    name. A field a map places (here or in a coupled map) is never also the record's own
+    column of that name. The same three forms work in a coupled record's map.
+
+    WITHOUT the map a renamed or split field matches no column: another editor's change to
+    it is overwritten with no question. Check every run() call for a field the form names
+    differently from its column.
+
+    FACT GROUPS. A model declares the columns that hold one fact (rsx:man model, FACT
+    GROUPS):
+
+        public static $fact_groups = [
+            'when' => ['label' => 'Date and time', 'columns' => ['date_start', 'date_end', 'time_start', 'time_end']],
+        ];
+
+    A revision that changed ANY column of a group is a change to every form field stored in
+    ANY column of it - on the record, and on each coupled record through that record's map
+    and its own model's declaration. So a form that sends the day as a field stored in
+    date_start conflicts with another editor's re-date saved in time_start. Such a change is
+    always asked about (one submitted value cannot be compared with the group): the row is
+    structured, its groups name the group by label, and each change carries the column it
+    changed with that column's before and after. A field stored in one column and changed
+    only in that column is compared as any other field. A model with no groups and a call
+    with no fields: behave as they always did.
+
     COUPLED RECORDS. Some edits write two records as one: the form belongs to one, but
     some of its fields are stored on another (an entry edited together with its
     activity). A save of the other record through its own screen moves neither the
@@ -761,12 +810,12 @@ EDITING A RECORD
 
     - A coupled record's revisions are read through its map: a change to a mapped
       column is a change to its form field, and conflicts like any other field. A
-      column outside the map is never a conflict, nor is a mapped field this
-      submission does not send. Several columns may map to one field (the two halves
-      of a polymorphic pair): a change to either is a change to the field, always
-      asked about, with kind structured - there is no one value to show. A form field
-      the map gives to a coupled record is that record's alone; a column of the same
-      name on the record itself is not compared with it.
+      column outside the map (and outside the fact group of a mapped column) is never
+      a conflict, nor is a mapped field this submission does not send. The map takes
+      the forms fields: does (COLUMNS AND FIELDS). A form field the map gives to a
+      coupled record is never the record's own column of the same name; a field
+      stored on both (fields: on the record and a coupled map) is stored in several
+      columns.
 
     - Each question row names the record its field is stored on (fields[].record).
 
@@ -788,7 +837,9 @@ EDITING A RECORD
 
     See system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
     (one record), projects/projects_controller.php (pivots) and party/party_controller.php
-    (detail tables). Tests: rsx:test --framework Form_Edit_Test Form_Edit_Coupled_Test.
+    (detail tables). tasks/tasks_controller.php maps the task's parent picker onto its
+    taskable pair, which Task_Model declares a fact group. Tests: rsx:test --framework
+    Form_Edit_Test Form_Edit_Coupled_Test Form_Edit_Fact_Groups_Test.
 
 HIDDEN FIELDS OUTSIDE THE FORM
 

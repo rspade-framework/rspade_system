@@ -59,6 +59,17 @@ use App\RSpade\Lib\Revisions\Revision_Model;
  * COVERS the record's own columns. A pivot or a detail-table field is guarded by
  * changed() - it is written only when it changed - but is not checked for a conflict.
  *
+ * COLUMNS AND FIELDS. A revision names columns; a submission names form fields. A record's
+ * own column is the field of the same name unless run(..., fields: [column => field]) says
+ * otherwise - a field the form names differently ('entry_date' => 'activity_date'), several
+ * columns stored from one field (a polymorphic pair), or one column feeding several fields
+ * ('time_start' => ['activity_time', 'activity_date']).
+ *
+ * FACT GROUPS. A model's $fact_groups names columns that hold ONE fact (an activity's date
+ * and times). A change saved to any column of a group is a change to every field stored in
+ * any column of it, on the record and on each coupled record through its map; such a field
+ * is always asked about, since one submitted value cannot be compared with a group.
+ *
  * COUPLED RECORDS. An edit that stores some of its form's fields on ANOTHER record (an entry
  * married to its activity) names that record with its column-to-field map
  * (run(..., coupled: [[$activity, ['time_start' => 'activity_time']]])). The record and its
@@ -93,9 +104,17 @@ class Form_Edit
      * The records this edit also writes, each with the map from its columns to the form's
      * field names.
      *
-     * @var array<int, array{record: Rsx_Model_Abstract, map: array<string, string>}>
+     * @var array<int, array{record: Rsx_Model_Abstract, map: array<string, array<int, string>>}>
      */
     private array $coupled = [];
+
+    /**
+     * The record's own columns the form names otherwise: column => the fields stored in it.
+     * An unmapped column is the field of the same name.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $fields = [];
 
     /** The kinds of field a question row can be: how its values may be shown. */
     public const FIELD_VALUE = 'value';
@@ -118,15 +137,19 @@ class Form_Edit
      * @param array $params The endpoint's $params
      * @param callable $write fn(Form_Edit $edit) - set() the fields, save the record, do the
      *     rest of the work, return the endpoint's result. A throw rolls everything back.
-     * @param array<int, array{0: Rsx_Model_Abstract, 1: array<string, string>}> $coupled
+     * @param array<int, array{0: Rsx_Model_Abstract, 1: array<string, string|array<int, string>>}> $coupled
      *     Records this edit also writes, each as [$record, [column => form field]]: the
      *     columns of it the form edits, named as the form names them. Several columns may
-     *     map to one field (a polymorphic pair). Row-locked after $record, in this order.
+     *     map to one field (a polymorphic pair), and one column to several fields (a list).
+     *     Row-locked after $record, in this order.
+     * @param array<string, string|array<int, string>> $fields The record's own columns the
+     *     form names otherwise, as [column => form field] with the same many-to-one and
+     *     one-to-many forms. An unmapped column is the field of the same name.
      * @return mixed The callback's result, with `updated_at` added when it is an array (the
      *     composite version_of() when there are coupled records), or the response asking the
      *     question or reporting a record gone
      */
-    public static function run(Rsx_Model_Abstract $record, array $params, callable $write, ?string $view_url = null, array $coupled = [])
+    public static function run(Rsx_Model_Abstract $record, array $params, callable $write, ?string $view_url = null, array $coupled = [], array $fields = [])
     {
         $class = get_class($record);
 
@@ -138,11 +161,13 @@ class Form_Edit
         }
 
         $coupled = static::__coupled($coupled);
+        $fields = static::__map($fields, 'fields');
 
-        return DB::transaction(function () use ($class, $record, $params, $write, $view_url, $coupled) {
+        return DB::transaction(function () use ($class, $record, $params, $write, $view_url, $coupled, $fields) {
             if (!$record->exists) {
                 $edit = new static($record, null);
                 $edit->coupled = $coupled;
+                $edit->fields = $fields;
 
                 return static::__finish($edit, $write($edit));
             }
@@ -180,6 +205,7 @@ class Form_Edit
             $edit = new static($record, array_values(array_filter($changed, 'is_string')));
             $edit->view_url = $view_url;
             $edit->coupled = $coupled;
+            $edit->fields = $fields;
             $question = $edit->__resolve_conflicts(Rsx_Time::to_database($loaded), $params);
 
             return $question ?? static::__finish($edit, $write($edit));
@@ -219,7 +245,7 @@ class Form_Edit
      * Check and normalize run()'s $coupled: each entry a saved record of a model with revision
      * history, and a non-empty map of its column names to form field names.
      *
-     * @return array<int, array{record: Rsx_Model_Abstract, map: array<string, string>}>
+     * @return array<int, array{record: Rsx_Model_Abstract, map: array<string, array<int, string>>}>
      */
     private static function __coupled(array $coupled): array
     {
@@ -235,11 +261,7 @@ class Form_Edit
                 );
             }
 
-            foreach ($map as $column => $field) {
-                if (!is_string($column) || !is_string($field) || $column === '' || $field === '') {
-                    throw new RuntimeException("Form_Edit: coupled entry {$index} maps column names to form field names, both strings.");
-                }
-            }
+            $map = static::__map($map, "coupled entry {$index}");
 
             if (!get_class($other)::$revisions) {
                 throw new RuntimeException(
@@ -258,7 +280,38 @@ class Form_Edit
         return $normalized;
     }
 
-    /** The records this edit writes, each with its map: null for the record itself (column = field). */
+    /**
+     * Check and normalize a column-to-field map: column => one field name, or a list of them.
+     *
+     * @param array $map As given to run()
+     * @param string $where What the map is, for the message
+     * @return array<string, array<int, string>> column => the fields stored in it
+     */
+    private static function __map(array $map, string $where): array
+    {
+        $normalized = [];
+
+        foreach ($map as $column => $fields) {
+            $fields = is_array($fields) ? $fields : [$fields];
+
+            $valid = is_string($column) && $column !== '' && $fields !== [] && array_is_list($fields);
+            foreach ($fields as $field) {
+                $valid = $valid && is_string($field) && $field !== '';
+            }
+
+            if (!$valid) {
+                throw new RuntimeException(
+                    "Form_Edit: {$where} maps column names to form field names - a field name, or a list of them."
+                );
+            }
+
+            $normalized[$column] = array_values(array_unique($fields));
+        }
+
+        return $normalized;
+    }
+
+    /** The records this edit writes, each with its map: null for the record itself. */
     private function __sources(): array
     {
         $sources = [['record' => $this->record, 'map' => null]];
@@ -270,14 +323,19 @@ class Form_Edit
         return $sources;
     }
 
-    /** Every form field a coupled record stores. */
-    private function __coupled_fields(): array
+    /**
+     * Every form field a map places: the record's own fields: map and each coupled record's.
+     * A record's own column of one of these names is not that field.
+     */
+    private function __placed_fields(): array
     {
         $fields = [];
 
-        foreach ($this->coupled as $entry) {
-            foreach ($entry['map'] as $field) {
-                $fields[$field] = true;
+        foreach ([$this->fields, ...array_column($this->coupled, 'map')] as $map) {
+            foreach ($map as $column_fields) {
+                foreach ($column_fields as $field) {
+                    $fields[$field] = true;
+                }
             }
         }
 
@@ -285,15 +343,103 @@ class Form_Edit
     }
 
     /**
-     * Assign a value to a field of the record, if this submission is writing that field.
+     * The form fields stored in one column of a source: through its map, or - for the
+     * record's own unmapped column - the field of the same name, unless a map places that
+     * field elsewhere.
      *
-     * @param string $field The column, named as the form's input is
+     * @param array<string, array<int, string>>|null $map Null for the record itself
+     * @return array<int, string>
+     */
+    private function __fields_in(?array $map, string $column): array
+    {
+        if ($map !== null) {
+            return $map[$column] ?? [];
+        }
+
+        if (isset($this->fields[$column])) {
+            return $this->fields[$column];
+        }
+
+        return in_array($column, $this->__placed_fields(), true) ? [] : [$column];
+    }
+
+    /**
+     * Where a form field is stored: every [record, column] holding it. The record's own
+     * column of the same name when no map places it.
+     *
+     * @return array<int, array{0: Rsx_Model_Abstract, 1: string}>
+     */
+    private function __homes(string $field): array
+    {
+        $homes = [];
+
+        foreach ($this->fields as $column => $fields) {
+            if (in_array($field, $fields, true)) {
+                $homes[] = [$this->record, $column];
+            }
+        }
+
+        foreach ($this->coupled as $entry) {
+            foreach ($entry['map'] as $column => $fields) {
+                if (in_array($field, $fields, true)) {
+                    $homes[] = [$entry['record'], $column];
+                }
+            }
+        }
+
+        if ($homes === [] && !in_array($field, $this->__placed_fields(), true)) {
+            $homes[] = [$this->record, $field];
+        }
+
+        return $homes;
+    }
+
+    /**
+     * A model's fact groups by column: column => ['columns' => every column of its group,
+     * 'label' => the group's label].
+     *
+     * @return array<string, array{columns: array<int, string>, label: string}>
+     */
+    private static function __groups_by_column(Rsx_Model_Abstract $model): array
+    {
+        $by_column = [];
+
+        foreach (get_class($model)::fact_groups() as $group) {
+            foreach ($group['columns'] as $column) {
+                $by_column[$column] = $group;
+            }
+        }
+
+        return $by_column;
+    }
+
+    /**
+     * Assign a value to a field of the record, if this submission is writing that field.
+     * The column is the one run()'s fields: map stores the field in, else the field's own
+     * name. A field stored in several columns, or in a column that also holds other fields,
+     * is composed by the callback itself, guarded by changed().
+     *
+     * @param string $field The field, named as the form's input is
      * @param mixed $value The value, after whatever normalising the endpoint does
      */
     public function set(string $field, $value): self
     {
+        $columns = [];
+        foreach ($this->fields as $column => $fields) {
+            if (in_array($field, $fields, true)) {
+                $columns[] = $column;
+            }
+        }
+
+        if (count($columns) > 1 || count($columns) === 1 && count($this->fields[$columns[0]]) > 1) {
+            throw new RuntimeException(
+                "Form_Edit::set('{$field}'): the fields: map stores it in a column shared with other fields, or in several columns. "
+                . "Write those columns in the callback, guarded by \$edit->changed('{$field}')."
+            );
+        }
+
         if ($this->changed($field)) {
-            $this->record->{$field} = $value;
+            $this->record->{$columns[0] ?? $field} = $value;
         }
 
         return $this;
@@ -342,10 +488,8 @@ class Form_Edit
             return null;
         }
 
-        $coupled_fields = $this->__coupled_fields();
         $unattributed = false;
         $changes = [];
-        $columns = [];
         $newest = 0;
 
         foreach ($this->__sources() as $source) {
@@ -356,6 +500,8 @@ class Form_Edit
             if (Rsx_Time::to_database($model->updated_at) <= $loaded) {
                 continue;
             }
+
+            $groups = static::__groups_by_column($model);
 
             $revisions = Revision_Model::where('record_type', class_basename($model))
                 ->where('record_id', (int) $model->getKey())
@@ -370,17 +516,31 @@ class Form_Edit
                 $newest = max($newest, (int) $revision->id);
 
                 foreach ($revision->diff() as $column => $values) {
-                    // The record's own columns are its fields - except a field a coupled
-                    // record stores, which is that record's to answer for.
-                    $field = $map === null
-                        ? (in_array($column, $coupled_fields, true) ? null : $column)
-                        : ($map[$column] ?? null);
+                    // A column of a fact group changes the whole group: every field stored in
+                    // any of its columns.
+                    $group = $groups[$column] ?? null;
+                    $fields = [];
 
-                    if ($field === null || !in_array($field, $this->changed, true)) {
-                        continue;
+                    foreach ($group['columns'] ?? [$column] as $each) {
+                        foreach ($this->__fields_in($map, $each) as $field) {
+                            $fields[$field] = true;
+                        }
                     }
 
-                    $changes[$field][] = ['revision' => $revision, 'from' => $values[0] ?? null, 'to' => $values[1] ?? null];
+                    foreach (array_keys($fields) as $field) {
+                        if (!in_array($field, $this->changed, true)) {
+                            continue;
+                        }
+
+                        $changes[$field][] = [
+                            'revision' => $revision,
+                            'record' => $model,
+                            'column' => $column,
+                            'group' => $group['label'] ?? null,
+                            'from' => $values[0] ?? null,
+                            'to' => $values[1] ?? null,
+                        ];
+                    }
                 }
             }
 
@@ -395,17 +555,29 @@ class Form_Edit
         }
 
         // A field this submission sets to the value the other editor already saved overwrites
-        // nothing, so it is not asked about. A field stored in several columns cannot be
-        // compared with one submitted value, so a change to it is always asked about.
+        // nothing, so it is not asked about. That comparison needs one column holding the
+        // field and every change made to that column: a field stored in several columns, or
+        // changed through another column of its fact group, is always asked about.
         $conflicts = array_filter(
             $changes,
-            function ($field) use ($params) {
-                [$model, $column] = $this->__home($field);
+            function ($field_changes, $field) use ($params) {
+                $home = $this->__single_home($field);
 
-                return $column === null
-                    || !$this->__same_value($model, $column, $model->{$column}, $params[$field] ?? null);
+                if ($home === null) {
+                    return true;
+                }
+
+                [$model, $column] = $home;
+
+                foreach ($field_changes as $change) {
+                    if ($change['record'] !== $model || $change['column'] !== $column) {
+                        return true;
+                    }
+                }
+
+                return !$this->__same_value($model, $column, $model->{$column}, $params[$field] ?? null);
             },
-            ARRAY_FILTER_USE_KEY
+            ARRAY_FILTER_USE_BOTH
         );
 
         if (empty($conflicts)) {
@@ -472,21 +644,38 @@ class Form_Edit
         $fields = [];
 
         foreach ($conflicts as $field => $field_changes) {
-            [$model, $column] = $this->__home($field);
+            // One value to show only for a field stored in one column, every change made to
+            // that column. Otherwise (several columns, a change through another column of its
+            // fact group) the row is structured and its changes say what each column held.
+            $home = $this->__single_home($field);
+            foreach ($field_changes as $change) {
+                if ($home !== null && ($change['record'] !== $home[0] || $change['column'] !== $home[1])) {
+                    $home = null;
+                }
+            }
 
-            // A field stored in several columns has no one value to show.
+            [$model, $column] = $home ?? [$field_changes[0]['record'], null];
             $kind = $column === null ? self::FIELD_STRUCTURED : $this->__kind($model, $column);
             $rows = [];
+            $groups = [];
 
             foreach ($field_changes as $change) {
                 $by = $this->__editor($change['revision']);
                 $editors[$by === null ? 'null' : $by['type'] . ':' . $by['id']] = $by;
+                $changed_kind = $this->__kind($change['record'], $change['column']);
+
+                if ($change['group'] !== null) {
+                    $groups[$change['group']] = true;
+                }
 
                 $rows[] = [
                     'by' => $by,
                     'at' => Rsx_Time::to_iso($change['revision']->created_at),
-                    'from' => $this->__shown($kind, $model, $column, $change['from']),
-                    'to' => $this->__shown($kind, $model, $column, $change['to']),
+                    'record' => ['type' => class_basename($change['record']), 'id' => (int) $change['record']->getKey()],
+                    'column' => $change['column'],
+                    'group' => $change['group'],
+                    'from' => $this->__shown($changed_kind, $change['record'], $change['column'], $change['from']),
+                    'to' => $this->__shown($changed_kind, $change['record'], $change['column'], $change['to']),
                 ];
             }
 
@@ -494,9 +683,10 @@ class Form_Edit
                 'field' => $field,
                 'kind' => $kind,
                 'record' => ['type' => class_basename($model), 'id' => (int) $model->getKey()],
-                'loaded' => $rows[0]['from'],
+                'groups' => array_keys($groups),
+                'loaded' => $column === null ? null : $rows[0]['from'],
                 'current' => $column === null ? null : $this->__shown($kind, $model, $column, $model->{$column}),
-                'yours' => $this->__shown($kind, $model, $column, $params[$field] ?? null),
+                'yours' => $column === null ? null : $this->__shown($kind, $model, $column, $params[$field] ?? null),
                 'changes' => $rows,
             ];
         }
@@ -529,22 +719,16 @@ class Form_Edit
     }
 
     /**
-     * Where a form field is stored: [record, column]. The column is null for a field a
-     * coupled record stores in several columns.
+     * The one [record, column] a form field is stored in, or null when it is stored in
+     * several.
      *
-     * @return array{0: Rsx_Model_Abstract, 1: ?string}
+     * @return array{0: Rsx_Model_Abstract, 1: string}|null
      */
-    private function __home(string $field): array
+    private function __single_home(string $field): ?array
     {
-        foreach ($this->coupled as $entry) {
-            $columns = array_keys($entry['map'], $field, true);
+        $homes = $this->__homes($field);
 
-            if ($columns !== []) {
-                return [$entry['record'], count($columns) === 1 ? $columns[0] : null];
-            }
-        }
-
-        return [$this->record, $field];
+        return count($homes) === 1 ? $homes[0] : null;
     }
 
     /**

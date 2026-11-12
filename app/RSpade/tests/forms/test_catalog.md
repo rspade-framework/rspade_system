@@ -202,6 +202,26 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | FE-24 | a coupled record that moved with no revision asks the plain confirm | raw update of the coupled row's updated_at | `confirm` | implemented |
 | FE-25 | every record is row-locked, record first; a coupled model without revision history is refused | query log; a plain fixture as the coupled record | two FOR UPDATE reads in order; RuntimeException naming the model | implemented |
 
+## Form_Edit_Fact_Groups_Test.php (php) - one fact in several columns, and the fields: map
+
+`Form_Edit_Grouped_Fixture_Model` declares the fact group `when` (all_day_date, starts_at, ends_at,
+label "Date and time"); its runtime table is created in setup() and the schema told
+(`Rsx_Schema::forget()`), since the declaration is checked against live columns.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| FE-26 | a save of one column of a group conflicts with a field stored in another | all_day_date saved; submission sends starts_at | `field_conflict` on starts_at, kind structured, `groups` ["Date and time"], each change carrying record, column, group and that column's from/to; nothing written | implemented |
+| FE-27 | the comparison is not by the field's own column | only ends_at saved; submission sets starts_at to its stored value | asked anyway, the change naming ends_at | implemented |
+| FE-28 | a field outside the group is not a conflict | all_day_date saved; submission sends title | no question; both stand | implemented |
+| FE-29 | a grouped field changed only in its own column, to the same value, asks nothing | starts_at saved; submission sends the same starts_at | no question | implemented |
+| FE-30 | fields: maps an own column to a differently named field; set() writes the mapped column | billing_text saved; submission sends description with `fields: ['billing_text' => 'description']` | conflict on description, kind value, loaded/current/yours; Overwrite writes billing_text | implemented |
+| FE-31 | without the map a renamed field matches nothing | the same, no fields: | no question | implemented |
+| FE-32 | a column mapped to two fields conflicts with a submission sending either | stamp saved; `'stamp' => ['stamp_day', 'stamp_hour']` | conflict on the field sent | implemented |
+| FE-33 | set() refuses a field stored in a shared column | set('stamp_day') with the two-field map | RuntimeException | implemented |
+| FE-34 | a coupled record's group applies through its map | coupled all_day_date saved; submission sends activity_time mapped to starts_at | conflict on activity_time naming the coupled record and the group | implemented |
+| FE-35 | the declaration is read normalized; undeclared is none | fact_groups() on both fixtures | the normalized group; [] | implemented |
+| FE-36 | a malformed declaration fails loud | unknown column, a column in two groups, one (or a repeated) column, no label, an extra key, an unnamed group, no table | LogicException naming the problem | implemented |
+
 ## form_edit_state.js (playwright) - what a form tells an endpoint about an edit
 
 | ID | Purpose | Input | Expected | Status |

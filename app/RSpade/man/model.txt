@@ -8,6 +8,7 @@ All RSX models must extend Rsx_Model_Abstract, which provides:
 - Ajax ORM fetch() system
 - Automatic boolean casting for TINYINT(1) columns
 - Relationship management via #[Relationship] attribute
+- Fact groups: columns that hold one fact, for edit conflict detection
 
 ENUM SYSTEM
 
@@ -78,6 +79,48 @@ readers the encoding needs, and a JavaScript class of the
 same name naming the PRINTER and EDITOR components. The contract, two worked
 types and the security design are rsx:man text_types; the how-to is skill
 rspade:text-types.
+
+FACT GROUPS
+
+One fact a person edits as one thing is sometimes stored across several
+columns, and which column holds it can depend on the record's shape. The
+worked case is an activity's "when": an all-day activity keeps its day in
+date_start / date_end with the times null, a timed one keeps its day inside
+time_start / time_end with date_start null, and its form shows one Date box
+either way. Other shapes: a polymorphic type/id pair edited as one field, an
+amount derived from quantity x rate.
+
+THE TRAP. Form_Edit finds a conflict per column: another editor's save is a
+conflict only with a submission of a field stored in the column that save
+changed. When their re-date landed in time_start and the stale submission
+sends a Date field stored in date_start, nothing matches - the stale save
+moves the activity back to the old day, a 200, no question, no log line.
+
+Declare the columns that are one fact:
+
+    public static $fact_groups = [
+        'when' => ['label' => 'Date and time', 'columns' => ['date_start', 'date_end', 'time_start', 'time_end']],
+    ];
+
+A change saved to ANY column of a group is a change to the whole group:
+Form_Edit treats it as a change to every form field stored in any column of
+the group, on the record and on each coupled record, and always asks about it
+(rsx:man form_conventions, EDITING A RECORD). The label names the group in the
+conflict question. The declaration is in COLUMN terms because it is a fact
+about the model, true whichever screen edits it; the endpoint's column-to-field
+map says which form field each column stores.
+
+Declare one whenever two or more columns are edited as one thing. There is no
+per-model "is this a conflict?" callback, deliberately: a callback that answers
+"no" by mistake silently loses an edit, and a declaration is applied the same
+way everywhere and can be tested.
+
+Model::fact_groups() reads it, checked the first time it is read against the
+table's live columns - every column exists, belongs to one group only, a group
+has a label and at least two columns - and throws naming the model otherwise.
+The manifest holds code facts only, so a column's existence is checked at first
+use, not at build: give every group a test (a save of one column, then a stale
+submission of a field stored in another, is asked about).
 
 MASS ASSIGNMENT PREVENTION
 
@@ -862,4 +905,5 @@ rsx:man model_normalization - Database normalization process
 rsx:man enums - Complete enum system documentation
 rsx:man migrations - Migration system and safety
 rsx:man revisions - Per-model revision history
+rsx:man form_conventions - EDITING A RECORD: how Form_Edit applies fact groups
 rsx:man conformance_audits - the unbounded-query audit (unbounded_queries)

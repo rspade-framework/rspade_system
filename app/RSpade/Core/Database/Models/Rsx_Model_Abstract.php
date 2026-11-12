@@ -654,6 +654,24 @@ abstract class Rsx_Model_Abstract extends Model
     public static $text_types = [];
 
     /**
+     * FACT GROUPS - one fact a person edits as one thing, stored across several columns
+     * (see rsx:man model, FACT GROUPS).
+     *
+     * public static $fact_groups = [
+     *     'when' => ['label' => 'Date and time', 'columns' => ['date_start', 'date_end', 'time_start', 'time_end']],
+     * ];
+     *
+     * A change saved to ANY column of a group is a change to the whole group. Form_Edit reads
+     * the declaration: a later save of one column of the group conflicts with a stale
+     * submission of a field stored in any other (rsx:man form_conventions, EDITING A RECORD).
+     * Stated in column terms because it is a fact about the model, true whichever screen
+     * edits it. Read through fact_groups(), which checks it the first time it is read.
+     *
+     * @var array<string, array{label: string, columns: array<int, string>}>
+     */
+    public static $fact_groups = [];
+
+    /**
      * Class-Table Inheritance (CTI) detail-table map (see man detail_tables).
      *
      * Declares, per discriminator value, the detail model holding that type's
@@ -796,6 +814,119 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         return $type;
+    }
+
+    /**
+     * This model's fact groups (see $fact_groups): name => ['label' => ..., 'columns' => [...]].
+     *
+     * The declaration is checked the first time it is read in a process, against the live
+     * columns of the model's table, and throws naming the model for anything malformed: a
+     * group that is not ['label' => text, 'columns' => [...]], fewer than two columns, a
+     * column in two groups, a column the table does not have. The manifest holds code facts
+     * only, so whether a column exists is a question for the database, at first use.
+     *
+     * @return array<string, array{label: string, columns: array<int, string>}>
+     */
+    public static function fact_groups(): array
+    {
+        $declaration = static::$fact_groups;
+
+        if ($declaration === []) {
+            return [];
+        }
+
+        $memo_key = 'fact_groups|' . static::class;
+        $checked = Rsx_Schema::derived($memo_key);
+
+        if ($checked !== null) {
+            return $checked;
+        }
+
+        $checked = static::_check_fact_groups(
+            class_basename(static::class),
+            $declaration,
+            Rsx_Schema::model_columns(class_basename(static::class))
+        );
+        Rsx_Schema::remember_derived($memo_key, $checked);
+
+        return $checked;
+    }
+
+    /**
+     * Check a $fact_groups declaration against a table's columns, answering it normalized.
+     * Throws a LogicException naming the model and what is wrong.
+     *
+     * @param string $model The model's class name, for the message
+     * @param mixed $declaration The declared $fact_groups
+     * @param array<string, mixed>|null $columns The table's column map (Rsx_Schema), null when
+     *     the table is not in the connected database
+     * @return array<string, array{label: string, columns: array<int, string>}>
+     */
+    public static function _check_fact_groups(string $model, mixed $declaration, ?array $columns): array
+    {
+        $fail = function (string $problem) use ($model): never {
+            throw new LogicException(
+                "{$model}::\$fact_groups {$problem}. A group is "
+                . "'name' => ['label' => 'Shown name', 'columns' => ['column_a', 'column_b', ...]]. "
+                . 'See: php artisan rsx:man model (FACT GROUPS)'
+            );
+        };
+
+        if (!is_array($declaration)) {
+            $fail('is not an array');
+        }
+
+        if ($columns === null) {
+            $fail("cannot be checked: the model's table is not in the connected database");
+        }
+
+        $normalized = [];
+        $owner = [];
+
+        foreach ($declaration as $name => $group) {
+            if (!is_string($name) || $name === '') {
+                $fail('has a group with no name: groups are keyed by name');
+            }
+
+            if (!is_array($group) || array_diff(array_keys($group), ['label', 'columns']) !== []) {
+                $fail("['{$name}'] must be exactly ['label' => ..., 'columns' => [...]]");
+            }
+
+            $label = $group['label'] ?? null;
+            $group_columns = $group['columns'] ?? null;
+
+            if (!is_string($label) || trim($label) === '') {
+                $fail("['{$name}'] has no label: the conflict question names the group by it");
+            }
+
+            if (!is_array($group_columns) || !array_is_list($group_columns)) {
+                $fail("['{$name}']['columns'] must be a list of column names");
+            }
+
+            if (count(array_unique($group_columns, SORT_REGULAR)) < 2) {
+                $fail("['{$name}'] names fewer than two columns: one column is already one fact");
+            }
+
+            foreach ($group_columns as $column) {
+                if (!is_string($column) || $column === '') {
+                    $fail("['{$name}']['columns'] holds something that is not a column name");
+                }
+
+                if (!array_key_exists($column, $columns)) {
+                    $fail("['{$name}'] names '{$column}', which is not a column of the model's table");
+                }
+
+                if (isset($owner[$column]) && $owner[$column] !== $name) {
+                    $fail("names '{$column}' in both '{$owner[$column]}' and '{$name}': a column belongs to at most one group");
+                }
+
+                $owner[$column] = $name;
+            }
+
+            $normalized[$name] = ['label' => $label, 'columns' => array_values(array_unique($group_columns))];
+        }
+
+        return $normalized;
     }
 
     /**
