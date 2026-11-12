@@ -12,9 +12,11 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
 /**
  * Rsx_Session_Controller - the browser's report that somebody looked at a page.
  *
- * A server-rendered page records its own page view when it renders its bundle. An SPA
- * navigation reaches no page route, so the client reports it here instead
- * (Rsx_Session.js, after every completed dispatch, at most once a minute). Either way
+ * A server-rendered page records its own page view when it renders its bundle. Use of a
+ * page that reaches no page route is reported here by the client instead
+ * (Rsx_Session.report_page_view(), at most once a minute: after every completed SPA
+ * dispatch, on a URL-hash change made in answer to a person's input, and wherever the
+ * application's UI acts on a person's input). Either way
  * the result is the same stamp: the one rsx.sessions.*.max_idle_minutes is measured from,
  * and last_seen on the account.
  *

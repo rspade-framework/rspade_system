@@ -93,7 +93,9 @@ this.args.status = Rsx.url_hash_get('status') || DEFAULT_STATUS;
 **Use for**: filter/tab/view state that should survive refresh.
 **Don't use for**: data scoping (use `$extra_params`), default values (apply on init, don't write), required state (use route params).
 
-Details: `rsx:man url_hash`.
+A write that CHANGES the hash in answer to a person's input (a fresh user activation) counts as a page view for the idle sign-out; a hash code rewrites on its own does not.
+
+Details: `rsx:man url_hash` (IDLE TIME).
 
 ---
 

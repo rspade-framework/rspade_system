@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The browser's side of the session lifetime (SESSION-EXPIRED-01..05, SESSION-PAGEVIEW-01..02).
+ * The browser's side of the session lifetime (SESSION-EXPIRED-01..05, SESSION-PAGEVIEW-01..07).
  *
  *   1. a session_expired envelope calls the registered handler with the server's message
  *   2. further refusals on the same page - session_expired or auth_required - do not
@@ -11,6 +11,14 @@
  *   5. with no handler registered the page reloads
  *   6. a completed SPA dispatch reports a page view, at most once a minute
  *   7. nothing is reported once the sign-in is known to be gone
+ *   8. Rsx_Session.report_page_view() is public: one report a minute however often it is
+ *      called, nothing when signed out; the underscore name is gone
+ *   9. a URL-hash write reports a page view when it changes the hash in answer to a
+ *      person's input (a real click), not when it rewrites the same state, and not when
+ *      code changes the hash on its own (the browser holding no user activation)
+ *
+ * The once-a-minute throttle is driven through Rsx_Session._last_page_view_ms (set a
+ * minute into the past), never by waiting; the report itself is a stub counting calls.
  *
  * The envelopes are fed straight to Ajax's own envelope reader, so what is under test is
  * the client's reaction and not a real expiry (tests/session/http/session_lifetime.sh
@@ -21,6 +29,7 @@
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { poll_until } = require('../../_lib/playwright/sys_page.js');
 
 const BASE_URL = 'http://localhost';
 const START_ROUTE = '/_sys';
@@ -62,11 +71,7 @@ async function open_panel(context) {
     });
 
     await page.goto(BASE_URL + START_ROUTE, { waitUntil: 'commit' });
-    await page.waitForFunction(() => typeof Rsx !== 'undefined');
-    await page.evaluate(() => new Promise((resolve) => {
-        Rsx.on('_debug_ready', () => resolve());
-        setTimeout(resolve, 15000);
-    }));
+    await poll_until(page, 'the panel finished booting', () => '_debug_ready' in Rsx._triggered_events);
     return page;
 }
 
@@ -149,6 +154,96 @@ async function run() {
         check(views.right_after_boot === 0, 'the page load that booted the tab already counted', views);
         check(views.after_a_minute === 1, 'a completed dispatch a minute later reports a page view', views);
         check(views.immediately_again === 1, 'a second dispatch inside the minute reports nothing', views);
+
+        // ---- The public report ---------------------------------------------------------
+        const report = await third.evaluate(() => {
+            let reported = 0;
+            Rsx_Session_Controller.page_view = () => { reported++; return Promise.resolve(true); };
+
+            const out = { old_name: typeof Rsx_Session._report_page_view };
+
+            Rsx_Session._last_page_view_ms = Date.now() - 61000;
+            Rsx_Session.report_page_view();
+            Rsx_Session.report_page_view();
+            Rsx_Session.report_page_view();
+            out.three_calls = reported;
+
+            window.rsxapp.is_auth = false;
+            Rsx_Session._last_page_view_ms = Date.now() - 61000;
+            Rsx_Session.report_page_view();
+            out.signed_out = reported;
+            window.rsxapp.is_auth = true;
+
+            return out;
+        });
+        check(report.three_calls === 1, 'report_page_view() sends one report a minute however often it is called', report);
+        check(report.signed_out === 1, 'report_page_view() sends nothing on a page rendered for nobody', report);
+        check(report.old_name === 'undefined', 'the underscore name is gone', report);
+
+        // ---- Hash writes ---------------------------------------------------------------
+        // A real click (Playwright input, so the browser grants a user activation) runs the
+        // staged write inside its handler. Code running with nobody at the screen is the
+        // browser reporting no activation; Playwright evaluates every script AS a user
+        // gesture, so that state is stated through navigator.userActivation instead.
+        await third.evaluate(() => {
+            window.__hash_writes = {
+                code: () => Rsx.url_hash_set({ pv_probe: 'code' }),
+                set_a: () => Rsx.url_hash_set({ pv_probe: 'a' }),
+                single_b: () => Rsx.url_hash_set_single('pv_probe', 'b'),
+                remove: () => Rsx.url_hash_set_single('pv_probe', null),
+            };
+            window.__hash_reports = 0;
+            Rsx_Session_Controller.page_view = () => { window.__hash_reports++; return Promise.resolve(true); };
+            const probe = document.createElement('div');
+            probe.id = 'hash_probe';
+            probe.style.cssText = 'position:fixed;top:0;left:0;width:40px;height:40px;z-index:2147483647;background:#fff';
+            probe.addEventListener('click', () => window.__hash_probe());
+            document.body.appendChild(probe);
+        });
+
+        // Stage one write, open the throttle, perform it by a click or by code; answer the
+        // number of reports it caused.
+        async function hash_write(how, write) {
+            await third.evaluate((name) => {
+                Rsx_Session._last_page_view_ms = Date.now() - 61000;
+                window.__hash_reports = 0;
+                window.__hash_probe = window.__hash_writes[name];
+            }, write);
+            if (how === 'click') {
+                await third.click('#hash_probe');
+            } else {
+                await third.evaluate(() => {
+                    Object.defineProperty(navigator, 'userActivation', { configurable: true, value: { isActive: false } });
+                    try {
+                        window.__hash_probe();
+                    } finally {
+                        delete navigator.userActivation;
+                    }
+                });
+            }
+            return third.evaluate(() => window.__hash_reports);
+        }
+
+        const by_code = await hash_write('code', 'code');
+        check(by_code === 0, 'a hash changed by code with no user input reports nothing', by_code);
+
+        const set_changed = await hash_write('click', 'set_a');
+        check(set_changed === 1, 'url_hash_set() changing the hash on a click reports a page view', set_changed);
+
+        const set_same = await hash_write('click', 'set_a');
+        check(set_same === 0, 'url_hash_set() writing the same state again reports nothing', set_same);
+
+        const single_changed = await hash_write('click', 'single_b');
+        check(single_changed === 1, 'url_hash_set_single() changing the hash on a click reports a page view', single_changed);
+
+        const single_same = await hash_write('click', 'single_b');
+        check(single_same === 0, 'url_hash_set_single() writing the same value again reports nothing', single_same);
+
+        const removed = await hash_write('click', 'remove');
+        check(removed === 1, 'removing a key on a click is a change and reports a page view', removed);
+
+        const hash_after = await third.evaluate(() => window.location.hash);
+        check(hash_after.indexOf('pv_probe') === -1, 'the probe key left the address', hash_after);
 
         // ---- A page rendered for nobody ------------------------------------------------
         const anonymous = await third.evaluate(() => {

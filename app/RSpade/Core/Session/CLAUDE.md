@@ -58,7 +58,8 @@ session for "who did this, from where".
   a portal on its own host share the staff browser's `_sessions` row for View as Client.
 - `Rsx_Signed_Url.php` — HMAC binding a one-time code to its purpose and host (key derived
   per purpose from `app.key`); not a replay defence - the code is the single-use part.
-- `Rsx_Session_Controller.php` — the SPA's page-view report (`Rsx_Session.js`), which
+- `Rsx_Session_Controller.php` — the browser's page-view report (`Rsx_Session.report_page_view()`:
+  SPA dispatches, hash changes from a person's input, the app's own calls), which
   `max_idle_minutes` is measured from.
 - **Sign-in limits have ONE reader, `Session::get_sign_in_limits($realm)`**: the
   `session.limits` resolve hook (validated, memoized per realm per request or task run -

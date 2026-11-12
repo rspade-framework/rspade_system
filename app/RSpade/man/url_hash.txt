@@ -61,6 +61,28 @@ API REFERENCE
         Merges `new_state` into the current hash. Keys with null/undefined/''
         values are removed. Other keys in the hash are preserved.
 
+IDLE TIME
+    A hash write is a person using the page, so it counts toward keeping the
+    sign-in alive (rsx.sessions.*.max_idle_minutes; rsx:man session, HOW
+    SESSIONS TIME OUT): url_hash_set() and url_hash_set_single() report a page
+    view through Rsx_Session.report_page_view() when BOTH hold -
+
+        - the write CHANGES the hash; writing the state already in the URL
+          reports nothing;
+        - the browser holds a fresh user activation
+          (navigator.userActivation.isActive): a click, tap or key press
+          within the last few seconds.
+
+    A hash written by code on its own - a grid settling its page after a load
+    or a realtime refresh, a component restoring or normalising its state on
+    first render, anything on a timer - reports nothing, so a screen that
+    updates itself never holds an idle sign-in open. A write that follows a
+    click through an Ajax round trip (a grid's sort, page or filter) still
+    counts while the activation is fresh. The report is sent at most once a
+    minute however many writes there are. The SPA's own address-bar
+    bookkeeping (taking out _scroll, keeping or dropping _via) does not use
+    these helpers and never counts.
+
 LINKING TO HASH STATE
     A link that lands on a tab, a filtered grid or any other hash state is
     built with Route()'s third argument, never by appending '#...' by hand:
@@ -140,6 +162,7 @@ FILE LOCATION
     /system/app/RSpade/Core/Js/Rsx.js
 
 SEE ALSO
+    rsx:man session
     rsx:man routing
     rsx:man anchors
     rsx:man storage

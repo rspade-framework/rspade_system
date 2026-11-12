@@ -1477,11 +1477,17 @@ class Rsx {
      * Rsx.url_hash_set_single('dg_page', null); // Remove key
      * ```
      *
+     * A write that CHANGES the hash in answer to a person's input (a click or key press just
+     * now) counts as a page view for the sign-in's idle limit (Rsx_Session.report_page_view(),
+     * at most once a minute); one made by code on its own does not. See rsx:man url_hash,
+     * IDLE TIME.
+     *
      * @param {string} key The key to set
      * @param {string|number|null} value The value (null/empty removes the key)
      */
     static url_hash_set_single(key, value) {
         const state = Rsx._parse_hash();
+        const before = Rsx._serialize_hash(state);
 
         // Update or remove the key
         if (value === null || value === undefined || value === '') {
@@ -1490,14 +1496,7 @@ class Rsx {
             state[key] = String(value);
         }
 
-        // Update URL without adding history. The entry keeps its state object: the SPA
-        // stores its position in the stack and the page's scroll position there.
-        const new_hash = Rsx._serialize_hash(state);
-        const url = window.location.pathname + window.location.search + new_hash;
-        history.replaceState(history.state, '', url);
-
-        // The SPA's journal follows the entry's address (a breadcrumb returns to it).
-        Spa_Journal.note_url();
+        Rsx._write_hash(state, before);
     }
 
     /**
@@ -1511,10 +1510,16 @@ class Rsx {
      * Rsx.url_hash_set({dg_page: null}); // Remove key from hash
      * ```
      *
+     * A write that CHANGES the hash in answer to a person's input (a click or key press just
+     * now) counts as a page view for the sign-in's idle limit (Rsx_Session.report_page_view(),
+     * at most once a minute); one made by code on its own does not. See rsx:man url_hash,
+     * IDLE TIME.
+     *
      * @param {Object} new_state Object with key-value pairs to set (null removes key)
      */
     static url_hash_set(new_state) {
         const state = Rsx._parse_hash();
+        const before = Rsx._serialize_hash(state);
 
         // Merge new state
         for (const key in new_state) {
@@ -1526,13 +1531,41 @@ class Rsx {
             }
         }
 
-        // Update URL without adding history, keeping the entry's state object.
+        Rsx._write_hash(state, before);
+    }
+
+    /**
+     * Write hash state into the address bar - the one path behind url_hash_set() and
+     * url_hash_set_single().
+     *
+     * The entry is replaced, never added, and keeps its state object: the SPA stores its
+     * position in the stack and the page's scroll position there. The SPA's journal follows
+     * the entry's address (a breadcrumb returns to it).
+     *
+     * ACTIVITY. The write is reported as a page view (Rsx_Session.report_page_view()) when
+     * BOTH hold:
+     *   - the state CHANGED - writing the state already in the URL reports nothing;
+     *   - the browser holds a fresh user activation (navigator.userActivation.isActive: a
+     *     click, tap or key press within the last few seconds) - a person did this.
+     * A hash rewritten by code on its own - a grid settling its page after a load or a
+     * realtime refresh, a component restoring or normalising its state, anything on a timer
+     * - is not somebody using the page, and must never hold an idle sign-in open. The SPA's
+     * own address-bar bookkeeping (taking out _scroll, keeping or dropping _via, the
+     * journal) never comes through here at all.
+     *
+     * @param {Object} state The complete hash state to write
+     * @param {string} before The serialized state the URL held before the caller's change
+     */
+    static _write_hash(state, before) {
         const new_hash = Rsx._serialize_hash(state);
         const url = window.location.pathname + window.location.search + new_hash;
         history.replaceState(history.state, '', url);
 
-        // The SPA's journal follows the entry's address (a breadcrumb returns to it).
         Spa_Journal.note_url();
+
+        if (new_hash !== before && navigator.userActivation.isActive) {
+            Rsx_Session.report_page_view();
+        }
     }
 
     /**

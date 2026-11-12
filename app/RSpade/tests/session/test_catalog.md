@@ -338,6 +338,11 @@ Self-seeding. Needs a framework-development box for the `/ssr-test` probe.
 | SESSION-EXPIRED-05 | with no handler registered the page reloads | session_expired | a load event | implemented |
 | SESSION-PAGEVIEW-01 | a completed SPA dispatch reports a page view at most once a minute; the boot load already counted | spa_dispatch_ready x3 | 0, then 1, then still 1 | implemented |
 | SESSION-PAGEVIEW-02 | nothing is reported once the sign-in is known to be gone | dispatch after the announcement | 0 | implemented |
+| SESSION-PAGEVIEW-03 | Rsx_Session.report_page_view() is public: one report a minute however often it is called; the underscore name is gone | three calls with the throttle open | 1; `_report_page_view` undefined | implemented |
+| SESSION-PAGEVIEW-04 | report_page_view() sends nothing on a page rendered for nobody | is_auth false, throttle open | 0 | implemented |
+| SESSION-PAGEVIEW-05 | a hash changed by code with no user activation reports nothing | url_hash_set() with userActivation.isActive false | 0 | implemented |
+| SESSION-PAGEVIEW-06 | url_hash_set() / url_hash_set_single() changing the hash on a real click report a page view (adding, changing and removing a key) | click handler writes | 1 each | implemented |
+| SESSION-PAGEVIEW-07 | writing the state already in the URL reports nothing | the same write clicked twice | 0 | implemented |
 
 ## Session_Cookie_Flags_Test (php, no DB) - the session cookie's name and attributes
 

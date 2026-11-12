@@ -206,8 +206,14 @@ HOW SESSIONS TIME OUT
         portal.*                    the same two, for a portal sign-in
         0                           no limit
 
-    A page view is a rendered page or an SPA navigation - never an Ajax or
-    API call, so a tab that polls does not keep a sign-in alive. The limits
+    A page view is somebody using a page: a rendered page, an SPA navigation,
+    a URL-hash change made in answer to a person's input (IDLE TIME in
+    rsx:man url_hash), or a Rsx_Session.report_page_view() the application
+    calls where its UI acts on a person's input - a dialog opened or closed,
+    an approval, an inline save. Never an Ajax or API call, and never a hash
+    rewritten by code on its own, so a tab that polls or refreshes itself does
+    not keep a sign-in alive. The browser reports at most once a minute. The
+    limits
     are checked on every request: a page navigation past a limit signs out and
     redirects to the sign-in screen saying why; an Ajax call keeps working for
     ajax_grace_minutes (120) past the limit so an open form can still save,
@@ -590,11 +596,25 @@ LIFETIMES, CLEANUP AND DEACTIVATION
     a page. The two realms are judged independently, each on its own requests.
 
     PAGE VIEWS. Session::touch_page_view() / Portal_Session::touch_page_view(),
-    called by a bundle render and by the SPA's navigation report
+    called by a bundle render and by the browser's report
     (Rsx_Session_Controller::page_view), stamp the current user session's
     last_page_view_at at most once a minute, with the account's last_seen
     (not while impersonating). An application whose page renders no bundle may
     call them.
+
+    The browser's report is Rsx_Session.report_page_view(), staff and portal
+    alike. The framework calls it after every completed SPA dispatch and from
+    Rsx.url_hash_set() / url_hash_set_single() when the write changes the hash
+    while the browser holds a fresh user activation (a click, tap or key press
+    within the last few seconds). An application calls it where its UI acts on
+    a person's input - NEVER from a timer, a poll or a realtime handler, which
+    run with nobody at the screen and would hold an abandoned sign-in open.
+    It sends nothing within a minute of the last report or of the page load
+    that booted the tab, nothing while nobody is signed in on the page, and
+    nothing after the page's sign-in was announced as gone. The server judges
+    it like a page navigation: a sign-in already past its limits is ended
+    there, with no Ajax grace, and the session_expired envelope is announced
+    as for any call.
 
     LOOKUP. init() loads the row the cookie names only while it is ACTIVE. A
     row whose last_active is older than unused_session_days is retired there

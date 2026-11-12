@@ -46,6 +46,8 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - Cleanup: `app/RSpade/Core/Session/Session_Cleanup_Service.php` (scheduled task)
 - `app/RSpade/Core/Session/Rsx_Session_Controller.php` (the SPA's page-view report)
 - `app/RSpade/Core/Js/Rsx_Session.js` (page-view reporting, the lost-session announcement)
+- `app/RSpade/Core/Js/Rsx.js` `url_hash_set()` / `url_hash_set_single()` (a hash change on a
+  person's input is a page view)
 
 ## Man page(s)
 
@@ -125,7 +127,10 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   page-view report, last_seen, what does and does not count as a page view, the once-a-minute
   last_active write and the 30-day unused-browser retirement at lookup.
 - playwright (`session_expired.js`): the client announces a lost sign-in once per page to the
-  registered handler (or reloads), and reports SPA page views at most once a minute.
+  registered handler (or reloads), and reports page views at most once a minute - SPA
+  dispatches, the public `Rsx_Session.report_page_view()`, and URL-hash changes made on a
+  person's input (never a hash code rewrites with no user activation, never the same state
+  written again).
 - php (`Session_Cleanup_Test`): only guest browsers (`first_signed_in_at` null) are
   collected; a browser with a sign-in, current or ended, is kept; the hourly sweep signs out
   the current sign-ins past a limit plus the Ajax grace (per realm, the earlier expiry's
