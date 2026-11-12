@@ -111,7 +111,7 @@ DEV-AUTH AUTHENTICATION
     is what every shipped test does). It is a credential lifetime, not a
     timeout: nothing is aborted, the signature just stops verifying.
 
-    (App\RSpade\Core\Debug\Dev_Auth_Token is the one PHP implementation - it
+    (App\RSpade\Lib\Developer\Debug\Dev_Auth_Token is the one PHP implementation - it
     mints for rsx:debug and verifies for both realms, and its docblock states
     the wire format byte for byte.)
 
@@ -437,11 +437,11 @@ FILES
         dev_auth_headers() - the node minter every shipped Playwright test
         uses. Reads the grant, signs, returns the three headers.
 
-    system/app/RSpade/Core/Debug/Dev_Auth_Token.php
+    system/app/RSpade/Lib/Developer/Debug/Dev_Auth_Token.php
         The authoritative wire format, the mint, and the ONE verifier both
         realms call.
 
-    system/app/RSpade/Core/Ide/Ide_Bridge_Token.php
+    system/app/RSpade/Lib/Developer/Ide/Ide_Bridge_Token.php
         The grant store the signing secret comes from (shared with the IDE
         bridge): active_secrets(), ensure_grant_store(), rotation.
 

@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Companions\Php;
 
 use Symfony\Component\Process\Process;
-use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 
 /**
  * rsx-companiond's read_build_marker(): a manifest build is "in progress" only while the

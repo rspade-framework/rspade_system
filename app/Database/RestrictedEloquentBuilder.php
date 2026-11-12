@@ -13,7 +13,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
-use App\RSpade\Core\Revisions\Revision_Parent_Registry;
+use App\RSpade\Lib\Revisions\Revision_Parent_Registry;
 
 /**
  * Custom Eloquent query builder that prevents eager loading and unsafe operations

@@ -6,10 +6,11 @@ $base_params=({portal_user_id: <id>}) - the portal user (required); sent with ev
 
 Server half: _Sys_Portal_User_Signins_DataGrid.php, a page of
 Portal_Login_History::list_page() (each row through present_record(), plus the badge
-`tone`; search on the email given, IP or user agent). Grid key "signins". The table holds
+`tone` and the address's location, ip_address__location, resolved per row of the page and
+never sorted or searched; search on the email given, IP or user agent). Grid key "signins". The table holds
 successful portal sign-ins, refusals after the password (a required password reset) and
 passkey enrollment outcomes for rsx.sessions.login_history_retention_days; sign-in
-failures are never rows. The portal table records no location.
+failures are never rows. The screen hosting it places <Geo_Ip_Credit /> beneath it.
 --%>
 <Define:_Sys_Portal_User_Signins_DataGrid extends="_Sys_DataGrid_Abstract"
     $grid_key="signins"
@@ -37,7 +38,7 @@ failures are never rows. The portal table records no location.
                     <span class="_Sys_Portal_User_Signins_DataGrid__dim"><%= row.failure_reason %></span>
                 <% } %>
             </td>
-            <td class="_Sys_Portal_User_Signins_DataGrid__mono"><%= row.ip_address %></td>
+            <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
             <td><span title="<%= row.user_agent || '' %>"><%= row.user_agent_parsed.summary %></span></td>
             <td><%= row.email %></td>
         </tr>

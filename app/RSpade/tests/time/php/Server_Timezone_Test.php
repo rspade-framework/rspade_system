@@ -9,10 +9,10 @@ namespace App\RSpade\Tests\Time\Php;
 
 use Illuminate\Log\Logger;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Logging\System_Timezone_Log_Tap;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap;
 
 /**
  * The three clocks of an RSpade process:

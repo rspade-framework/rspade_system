@@ -9,14 +9,14 @@ use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Csp\Rsx_Csp;
 use App\RSpade\Core\Database\Field_Length_Script;
-use App\RSpade\Core\Debug\Console_Debug_Override;
-use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Override;
+use App\RSpade\Lib\Developer\Debug\Debugger;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Rsx_Bundle_Abstract - Abstract base class for user-defined bundles
@@ -257,7 +257,7 @@ abstract class Rsx_Bundle_Abstract
         ];
 
         // Dump any console debug messages before bundle output
-        \App\RSpade\Core\Debug\Debugger::dump_console_debug_messages_to_html();
+        \App\RSpade\Lib\Developer\Debug\Debugger::dump_console_debug_messages_to_html();
 
         // In development mode, validate path coverage
         if (Rsx::is_development()) {
@@ -544,7 +544,7 @@ abstract class Rsx_Bundle_Abstract
         }
 
         // Add flash_alerts if any pending for current session
-        $flash_messages = \App\RSpade\Lib\Flash\Flash_Alert::get_pending_messages();
+        $flash_messages = \App\RSpade\Lib\Ui\Flash\Flash_Alert::get_pending_messages();
         if (!empty($flash_messages)) {
             $rsxapp_data['flash_alerts'] = $flash_messages;
         }
@@ -602,8 +602,8 @@ abstract class Rsx_Bundle_Abstract
         // "misconfigured" indistinguishable to the client. site_key() throws when the
         // feature is enabled with either key missing (owner ruling): a half-configured
         // install fails at render, not silently at the first login attempt.
-        if (\App\RSpade\Core\Turnstile\Rsx_Turnstile::is_enabled()) {
-            $rsxapp_data['turnstile'] = \App\RSpade\Core\Turnstile\Rsx_Turnstile::site_key();
+        if (\App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile::is_enabled()) {
+            $rsxapp_data['turnstile'] = \App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile::site_key();
         }
 
         // Federated sign-in providers - CONDITIONAL, exactly like the turnstile key above:
@@ -630,8 +630,8 @@ abstract class Rsx_Bundle_Abstract
         // rsx.sso.portal_enabled is on - so <Sso_Buttons> on a portal login page can never
         // start a staff ceremony, and needs no argument to know which realm it is in.
         $sso_providers = $is_portal
-            ? \App\RSpade\Core\Sso\Rsx_Portal_Sso::enabled_providers()
-            : \App\RSpade\Core\Sso\Rsx_Sso::enabled_providers();
+            ? \App\RSpade\Lib\SignIn\Sso\Rsx_Portal_Sso::enabled_providers()
+            : \App\RSpade\Lib\SignIn\Sso\Rsx_Sso::enabled_providers();
 
         if ($sso_providers !== []) {
             $rsxapp_data['sso'] = ['providers' => $sso_providers];
@@ -681,12 +681,12 @@ abstract class Rsx_Bundle_Abstract
         // null under auto, where only the browser knows. The class names and the app's
         // own attribute vocabulary ride along so the script has no vocabulary of its own.
         $rsxapp_data['theme'] = [
-            'mode' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::get_mode(),
-            'is_dark' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::is_dark(),
-            'dark_class' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::dark_class(),
-            'mode_class_prefix' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::mode_class_prefix(),
-            'dark_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(true),
-            'light_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(false),
+            'mode' => \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::get_mode(),
+            'is_dark' => \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::is_dark(),
+            'dark_class' => \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::dark_class(),
+            'mode_class_prefix' => \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::mode_class_prefix(),
+            'dark_attributes' => (object) \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::attributes_for(true),
+            'light_attributes' => (object) \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::attributes_for(false),
         ];
 
         // Add console_debug config in development AND debug modes (strict production

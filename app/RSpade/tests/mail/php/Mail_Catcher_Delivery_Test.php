@@ -7,12 +7,12 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
-use App\RSpade\Core\Mail\Rsx_Mail_Test_Email;
-use App\RSpade\Core\Mail\Rsx_Mail_Transport;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Mail_Transport_Unavailable_Exception;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Test_Email;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
 
 /**
  * Mail_Catcher_Delivery_Test - the whole chain, with nothing stubbed.

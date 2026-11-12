@@ -21,10 +21,10 @@ use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * File_Attachment_Controller
@@ -486,7 +486,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * browser on the application host carries both identities on one session, and a portal
      * request must never be authorized as its staff side.
      *
-     * @return \App\RSpade\Core\Models\User_Model|\App\RSpade\Core\Models\Portal_User_Model|null
+     * @return \App\RSpade\Core\Models\User_Model|\App\RSpade\Lib\Portal\Portal_User_Model|null
      */
     public static function _gate_user()
     {

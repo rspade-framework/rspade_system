@@ -484,6 +484,17 @@ class Rsx_Project_Paths
         return self::tmp_path('renditions');
     }
 
+    /**
+     * The installed IP geolocation database (DB-IP City Lite, MMDB). A DOWNLOADED cache, not
+     * user data: rsx:clean removes it and Geo_Ip_Service::update - an #[On_Build] task -
+     * downloads it again after the rebuild that follows. The update stages its download in
+     * this file's directory, so the swap into place is one rename. rsx:man geo_ip.
+     */
+    public static function geo_ip_database_file(): string
+    {
+        return self::tmp_path('geo_ip/dbip-city-lite.mmdb');
+    }
+
     // -----------------------------------------------------------------------
     // storage/
     // -----------------------------------------------------------------------

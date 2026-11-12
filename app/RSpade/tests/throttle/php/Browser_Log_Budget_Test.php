@@ -9,9 +9,9 @@ namespace App\RSpade\Tests\Throttle\Php;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use App\RSpade\Core\Debug\Browser_Log_Budget;
-use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Browser_Log_Budget;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 
 /**
  * The browser log sinks are bounded: a per-address quota (stricter for a caller who is not

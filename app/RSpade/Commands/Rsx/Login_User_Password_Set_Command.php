@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Auth\Password_Change;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -31,6 +31,13 @@ use App\RSpade\Core\Session\Session;
  * is application vocabulary (the template's signup applies its own), and an operator setting
  * a password by hand is the one caller trusted to choose it.
  *
+ * A PASSWORD SET HERE CLEARS password_reset_required (the model's own consequence of a new
+ * password) - unless --require-reset is given: then it is a TEMPORARY password, and the
+ * identity is flagged in the SAME save (Login_User_Model::require_password_reset(), which
+ * holds even over an identity that was already flagged), so its next password sign-in asks
+ * for a new one (rsx:man session, FORCED PASSWORD CHANGE AT SIGN-IN). The same model path an
+ * administrator's "Reset Password" takes.
+ *
  * EVERY SIGNED-IN WEB SESSION OF THE IDENTITY ENDS, because a session that outlives the
  * password it was opened with defeats the reset. That is the identity model's own consequence
  * of a password change (Login_User_Model_Abstract::booted(), SIGN_OUT_PASSWORD_CHANGED), not
@@ -43,6 +50,7 @@ class Login_User_Password_Set_Command extends Command
                             {--user= : Login identity id or email address (required)}
                             {--password= : The new password (visible in shell history and the process list - prefer the prompt or --password-stdin)}
                             {--password-stdin : Read the new password from the first line of stdin}
+                            {--require-reset : A TEMPORARY password: also require the user to choose a new one at their next password sign-in}
                             {--json : Output as JSON (requires --password or --password-stdin)}';
 
     protected $description = 'Set a login identity\'s password (prompts unless --password or --password-stdin is given)';
@@ -50,6 +58,7 @@ class Login_User_Password_Set_Command extends Command
     public function handle()
     {
         $as_json = (bool) $this->option('json');
+        $require_reset = (bool) $this->option('require-reset');
 
         try {
             $login_user = Login_User_Cli_Support::resolve_login_user($this->option('user'));
@@ -60,7 +69,12 @@ class Login_User_Password_Set_Command extends Command
 
         $sessions_ended = count(Session::_signed_in_user_session_ids(Session::REALM_STAFF, (int) $login_user->id, null, false));
 
-        $login_user->password = Login_User_Model::hash_password($password);
+        $login_user->set_password($password, Password_Change::CAUSE_CLI);
+
+        if ($require_reset) {
+            $login_user->require_password_reset();
+        }
+
         $login_user->save();
 
         if ($as_json) {
@@ -68,6 +82,7 @@ class Login_User_Password_Set_Command extends Command
                 'action' => 'password_set',
                 'user' => Login_User_Cli_Support::login_user_data($login_user),
                 'sessions_ended' => $sessions_ended,
+                'password_reset_required' => $login_user->is_password_reset_required(),
             ]);
         }
 
@@ -76,6 +91,10 @@ class Login_User_Password_Set_Command extends Command
         Login_User_Cli_Support::print_identity($this, $login_user);
 
         $this->line('  Ended ' . $sessions_ended . ' signed-in session' . ($sessions_ended === 1 ? '' : 's') . '.');
+
+        if ($login_user->is_password_reset_required()) {
+            $this->line('  Temporary: the user chooses a new password at their next password sign-in.');
+        }
 
         $this->newLine();
 

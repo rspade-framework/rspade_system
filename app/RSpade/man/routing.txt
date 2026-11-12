@@ -451,7 +451,7 @@ IN AN EMAIL, Route() IS NOT ENOUGH (EMAIL-TEMPLATE-01)
         {{ rsx_absolute_url(Rsx::Route('Clients_View_Action', ['id' => $id])) }}
 
     EMAIL-TEMPLATE-01 (severity HIGH) enforces it over blades under any /emails/
-    directory and the framework's own /Core/Mail/, alongside its other half - a raw
+    directory and the framework's own /Lib/Messaging/Mail/, alongside its other half - a raw
     *_at / *_date value printed with no Rsx_Time / Rsx_Date formatter. Scope is
     email templates ONLY: both rules would be actively WRONG on an ordinary page,
     where links must stay relative and datetimes are localized in the browser. The

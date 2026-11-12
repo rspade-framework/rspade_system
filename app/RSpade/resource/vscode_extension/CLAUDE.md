@@ -54,8 +54,9 @@ The extension is built with TypeScript and follows VS Code extension best practi
 ## ONE recognizer per construct
 
 `src/rspade_recognizers.ts` holds the pure text analysis for every construct the
-extension both COLOURS and NAVIGATES: auth check names, `.Class_Name` selectors,
-man-page / skill references, and the `.env` gate parser. **It imports nothing from
+extension both COLOURS and NAVIGATES (or describes on hover): auth check names,
+`.Class_Name` selectors, man-page / skill references, framework PHP attributes and
+JS decorators, and the `.env` gate parser. **It imports nothing from
 `vscode`**, which is what makes it testable with plain node, and both sides of
 every feature call the same function for the same ranges - so a token that is
 coloured is exactly a token that can be followed. **Never write a construct's
@@ -63,12 +64,34 @@ pattern twice.** If you are about to add a regex to a provider, it belongs here.
 
 ```bash
 bash build.sh                              # compiles; out/ survives the cleanup
-node ./out/test/run_recognizer_tests.js    # 78 assertions, no editor needed
+node ./out/test/run_recognizer_tests.js    # 149 assertions, no editor needed
 ```
 
 The tests are the specification of the accepted spellings - the negatives
 (`.btn-primary`, `.Client_Card__header`, a reference outside a comment, a topic
 that is not a page) matter as much as the positives.
+
+## Framework vocabulary: ONE list for colour and hover
+
+`src/framework_vocabulary.ts` is the single list of the framework's PHP attributes
+(`PHP_ATTRIBUTES`) and JS decorators (`JS_DECORATORS`), each with its hover text:
+where it applies, its arguments, what it does, and the `rsx:man` / `skill rspade:`
+references to read. `recognize_php_attributes()` and `recognize_js_decorators()`
+emit a token only for a name in it; `php_attribute_provider.ts` and
+`CombinedSemanticTokensProvider` colour those tokens and
+`FrameworkVocabularyHoverProvider` describes them - so adding a name here is the
+whole change. Both recognizers scan CODE only (comments, strings, heredocs and a PHP
+file's inline HTML are skipped); the PHP one reads every name of a grouped
+`#[A('x'), B]`, across lines too, and only the bare or `\Name` spelling; JSDoc tags
+(`@decorator`, `@Instantiatable`, `@param`) are never tokens.
+
+**When the framework gains, renames or retires an attribute or decorator, update
+this map in the same change** - a name the framework reads must be listed, a name
+nothing reads must not be (a coloured name is a promise). A name qualifies when a
+manifest support module, a directive table, a registry or a code-quality rule reads
+it. Each `docs` reference must resolve to a SHIPPED man page or skill - never a
+publish-stripped page (`code_quality`, `manifest_api`, `manifest_build`,
+`ast_sourcecode_parsers`, `vs_code_extension`); the recognizer tests check both.
 
 ## Semantic tokens: ONE legend per language
 

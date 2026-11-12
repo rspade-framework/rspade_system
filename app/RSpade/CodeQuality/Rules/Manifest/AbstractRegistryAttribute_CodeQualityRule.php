@@ -76,6 +76,7 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
         'Schedule',
         'Exclusive',
         'Debounce',
+        'On_Build',
         'Emitter',
         'OnEvent',
         'Health_Check',

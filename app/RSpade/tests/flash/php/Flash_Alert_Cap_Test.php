@@ -10,8 +10,8 @@ namespace App\RSpade\Tests\Flash\Php;
 use ReflectionMethod;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Lib\Flash\Flash_Alert;
-use App\RSpade\Lib\Flash\Flash_Alert_Model;
+use App\RSpade\Lib\Ui\Flash\Flash_Alert;
+use App\RSpade\Lib\Ui\Flash\Flash_Alert_Model;
 
 /**
  * Tests for the per-session flash-alert cap (rsx.flash.max_alerts_per_session).

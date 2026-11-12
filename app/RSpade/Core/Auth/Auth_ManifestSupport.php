@@ -153,7 +153,7 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
 
     // Roots of the two check registries.
     private const STAFF_PERMISSION_BASE = 'App\\RSpade\\Core\\Permission\\Permission_Abstract';
-    private const PORTAL_PERMISSION_BASE = 'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract';
+    private const PORTAL_PERMISSION_BASE = 'App\\RSpade\\Lib\\Portal\\Portal_Permission_Abstract';
 
     /**
      * Manifest-relative directories whose code belongs to the portal realm: the app's
@@ -162,7 +162,7 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
      */
     private const PORTAL_ROOTS = [
         'rsx/portal/',
-        'app/RSpade/Core/Portal/',
+        'app/RSpade/Lib/Portal/',
     ];
 
     public static function get_name(): string

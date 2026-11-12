@@ -8,7 +8,7 @@ description: "Generating a QR code with Rsx_Qr_Code::generate($text) - the {svg,
 `Rsx_Qr_Code::generate($text)` is the one way to make a QR code. **Do not install a QR package and do not call `BaconQrCode` yourself** — the library is a framework-internal dependency, not part of the supported surface.
 
 ```php
-use App\RSpade\Core\Qr\Rsx_Qr_Code;
+use App\RSpade\Lib\Ui\Qr\Rsx_Qr_Code;
 
 $qr = Rsx_Qr_Code::generate(rsx_absolute_url(Rsx::Route('Tickets_View_Action', $ticket->id)));
 
@@ -82,4 +82,4 @@ The sizes are computed per code, because more text means more modules: 4 CSS pix
 - **Never recolour or crop it in CSS.** `fill`, `filter: invert()` or a negative margin on the SVG removes the contrast or the quiet zone scanners depend on.
 - **`<%= %>` prints the markup as text.** The SVG needs `<%!= %>`.
 
-Details: `rsx:man qr_codes`. In use: the authenticator enrollment screen (`system/app/RSpade/Core/TwoFactor/Totp_Enrollment.jqhtml`).
+Details: `rsx:man qr_codes`. In use: the authenticator enrollment screen (`system/app/RSpade/Lib/SignIn/TwoFactor/Totp_Enrollment.jqhtml`).

@@ -7,13 +7,13 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
-use App\RSpade\Core\Mail\Rsx_Email_Abstract;
-use App\RSpade\Core\Mail\Rsx_Mail;
-use App\RSpade\Core\Mail\Rsx_Mail_Test_Email;
-use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Lib\Messaging\Mail\Mail_Transport_Unavailable_Exception;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Email_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Test_Email;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
 use Illuminate\Console\Command;

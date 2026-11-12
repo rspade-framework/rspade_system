@@ -22,13 +22,13 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
+use App\RSpade\Core\RequestHistory\Request_History;
+use App\RSpade\Core\RequestHistory\Request_History_Answer;
+use App\RSpade\Core\RequestHistory\Request_History_Call;
 use App\RSpade\Core\Response\Rollback_Response;
-use App\RSpade\Core\Revisions\Request_History;
-use App\RSpade\Core\Revisions\Request_History_Answer;
-use App\RSpade\Core\Revisions\Request_History_Call;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
 
 /**
  * Api_Dispatcher - request pipeline for external REST API endpoints (/api/vN/...).
@@ -244,7 +244,7 @@ class Api_Dispatcher
         // One API request is one unit of work for revision history. The _api_request_log row
         // does not exist yet (it is written after the endpoint answers), so its id is
         // back-filled onto the transaction by _log().
-        \App\RSpade\Core\Revisions\Revision::_reset_request_state('api', $method . ' ' . $url);
+        \App\RSpade\Lib\Revisions\Revision::_reset_request_state('api', $method . ' ' . $url);
 
         Manifest::init();
 
@@ -1025,7 +1025,7 @@ class Api_Dispatcher
 
         // A revision transaction minted during this request can now name the log row that
         // recorded it - the API's answer to "which call did this".
-        \App\RSpade\Core\Revisions\Revision::_set_api_request_log_id((int) $log->id);
+        \App\RSpade\Lib\Revisions\Revision::_set_api_request_log_id((int) $log->id);
     }
 
     /**

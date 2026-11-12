@@ -9,10 +9,10 @@ namespace App\RSpade\Sys\App\Sys\DebugFlags;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Env;
-use App\RSpade\Core\Debug\Console_Debug_Channels;
-use App\RSpade\Core\Debug\Console_Debug_Override;
-use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Channels;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Override;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**

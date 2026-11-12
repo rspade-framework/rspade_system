@@ -9,18 +9,18 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
-use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\RsxLocks;
-use App\RSpade\Core\Debug\Dev_Auth_Token;
-use App\RSpade\Core\Health\Playwright_Stack;
-use App\RSpade\Core\Ide\Ide_Bridge_Token;
+use App\RSpade\Lib\Developer\Debug\Dev_Auth_Token;
+use App\RSpade\Lib\Operations\Health\Playwright_Stack;
+use App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Portal\Portal_User_Model;
-use App\RSpade\Core\Portal\Portal_Site_Resolver;
-use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Portal_Site_Resolver;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 
 /**

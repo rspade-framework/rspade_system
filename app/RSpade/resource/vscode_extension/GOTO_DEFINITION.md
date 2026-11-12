@@ -81,7 +81,7 @@ that answers the name.
 **The realm is inferred exactly as the manifest infers it** (see the AJAX REALM
 block in `Core/Auth/Auth_ManifestSupport.php`): a class-level
 `#[Auth_Realm('staff'|'portal'|'any')]` if the file declares one, else the portal
-realm when the file lives under `rsx/portal/` or `system/app/RSpade/Core/Portal/`,
+realm when the file lives under `rsx/portal/` or `system/app/RSpade/Lib/Portal/`,
 else staff. Staff and portal are separate registries, so the realm is what decides
 which `Permission` lineage answers; `any` tries staff and then portal.
 

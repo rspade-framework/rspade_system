@@ -258,7 +258,7 @@ class AssetHandler
     {
         $body = 'Not Found';
 
-        if (\App\RSpade\Core\Debug\Rsx_Diagnostics::caller_sees_detail()) {
+        if (\App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics::caller_sees_detail()) {
             $body .= "\n\n" . $reason;
         }
 

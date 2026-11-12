@@ -13,14 +13,14 @@ use Redis;
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
 use App\RSpade\Core\Auth\RsxAuth;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * password_reset_required on the STAFF credential verifier, and the flag's lifecycle on both
@@ -37,7 +37,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *    refuse anyway;
  *  - the framework clears the flag when the password changes, on login_users and on
  *    portal_users, and not when anything else changes; a save that assigns the flag together
- *    with a new password keeps the flag (an operator's temporary password).
+ *    with a new password keeps the flag (an operator's temporary password) - also when the
+ *    identity was ALREADY flagged (require_password_reset() asserts it on the instance).
  *
  * The failure counters are redis keys outside the per-test transaction, so each test uses a
  * unique email and deletes the keys it created (as Rsx_Auth_Verify_Credentials_Test does).
@@ -306,5 +307,49 @@ class Password_Reset_Required_Test extends Rsx_Test_Abstract
         $portal_user->set_password('a-brand-new-password');
         $portal_user->save();
         static::__assert_equals(0, static::__stored_flag('portal_users', (int) $portal_user->id), 'a new password clears it');
+    }
+
+    // -------------------------------------------------------------------------
+    // Re-asserting the flag over an identity that is already flagged
+    // -------------------------------------------------------------------------
+
+    /**
+     * prr-10: require_password_reset() + a new password + save() on an ALREADY-flagged identity
+     * leaves it flagged (assigning 1 over 1 is not dirty), and the assertion belongs to that one
+     * save: the next password change clears the flag as usual.
+     */
+    public static function test_an_already_flagged_identity_stays_flagged_through_a_temporary_password()
+    {
+        $login_user = static::__make_login_user(static::__fresh_email('reflag'), true);
+
+        $login_user->set_password('an-administrators-temporary-password');
+        $login_user->require_password_reset();
+        $login_user->save();
+
+        static::__assert_equals(1, static::__stored_flag('login_users', (int) $login_user->id), 'still flagged');
+
+        $login_user->set_password('the-users-own-password');
+        $login_user->save();
+
+        static::__assert_equals(0, static::__stored_flag('login_users', (int) $login_user->id), 'the next change clears it');
+    }
+
+    /**
+     * prr-11: the same holds for a portal user.
+     */
+    public static function test_an_already_flagged_portal_user_stays_flagged_through_a_temporary_password()
+    {
+        $portal_user = static::__make_portal_user();
+
+        $portal_user->set_password('an-administrators-temporary-password');
+        $portal_user->require_password_reset();
+        $portal_user->save();
+
+        static::__assert_equals(1, static::__stored_flag('portal_users', (int) $portal_user->id), 'still flagged');
+
+        $portal_user->set_password('the-users-own-password');
+        $portal_user->save();
+
+        static::__assert_equals(0, static::__stored_flag('portal_users', (int) $portal_user->id), 'the next change clears it');
     }
 }

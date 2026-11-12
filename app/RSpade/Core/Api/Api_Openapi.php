@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Api;
 use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
-use App\RSpade\Core\Revisions\Request_History;
+use App\RSpade\Core\RequestHistory\Request_History;
 use App\RSpade\Core\Rsx;
 
 /**

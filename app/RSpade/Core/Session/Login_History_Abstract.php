@@ -174,14 +174,6 @@ abstract class Login_History_Abstract
     abstract protected static function __row_columns(int $identity_id): array;
 
     /**
-     * The location a row records, or null.
-     *
-     * @param object $record
-     * @return string|null
-     */
-    abstract protected static function __format_location(object $record): ?string;
-
-    /**
      * What the realm knows of an identity's zone, for the zone a row records:
      * ['explicit' => its own chosen zone or null, 'site' => its site's zone or null].
      * The browser's zone comes from the client context.
@@ -463,7 +455,7 @@ abstract class Login_History_Abstract
 
     /**
      * One history row in the shape get_history_for_user() answers: the attempted email, IP,
-     * raw and parsed user agent, location, status + its label, failure reason, the display
+     * raw and parsed user agent, status + its label, failure reason, the display
      * zone in effect and where it came from (timezone, timezone_source - see
      * Rsx_Time::get_user_timezone_source(); null on a row recorded before zones were) and
      * created_at.
@@ -484,7 +476,6 @@ abstract class Login_History_Abstract
             'ip_address' => Ip_Address::address($record->ip_address_id === null ? null : (int) $record->ip_address_id),
             'user_agent' => $user_agent,
             'user_agent_parsed' => User_Agent::parse($user_agent),
-            'location' => static::__format_location($record),
             'status' => $record->status,
             'status_label' => self::_get_status_label($record->status),
             'failure_reason' => $record->failure_reason,

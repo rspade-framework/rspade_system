@@ -23,7 +23,7 @@ use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
 
 /**
  * Task Worker Command

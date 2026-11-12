@@ -1,0 +1,24 @@
+<%--
+_Sys_Ip_Address - an IP address in the monospace face, with where it is as a muted second
+line when that is known.
+
+$ip_address - the address (null renders the muted em-dash)
+$location   - the server's Rsx_Geo_Ip::label() for it, shipped beside the address as
+              ip_address__location; null shows the address alone
+
+The endpoint resolves the location on every load and never stores it (rsx:man geo_ip). A
+region that shows locations carries one <Geo_Ip_Credit /> - the attribution DB-IP's licence
+requires - never one per row.
+
+    <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
+--%>
+<Define:_Sys_Ip_Address tag="span">
+    <% if (this.args.ip_address) { %>
+        <span class="_Sys_Ip_Address__address"><%= this.args.ip_address %></span>
+        <% if (this.args.location) { %>
+            <span class="_Sys_Ip_Address__location"><%= this.args.location %></span>
+        <% } %>
+    <% } else { %>
+        <span class="_Sys_Ip_Address__empty">&mdash;</span>
+    <% } %>
+</Define:_Sys_Ip_Address>

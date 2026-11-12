@@ -4,7 +4,7 @@
  * A standalone Playwright test drives the running development site as a chosen user by
  * asserting that identity in headers, signed so that only a process with local disk
  * access to this box can make the assertion. This module is the node twin of
- * App\RSpade\Core\Debug\Dev_Auth_Token (PHP), which is what mints for rsx:debug itself
+ * App\RSpade\Lib\Developer\Debug\Dev_Auth_Token (PHP), which is what mints for rsx:debug itself
  * and what verifies both.
  *
  * THE KEY IS THE LOCAL GRANT SECRET, NOT APP_KEY. The framework writes
@@ -48,10 +48,10 @@ const crypto = require('crypto');
 // The volatile-tree roots, resolved exactly as PHP resolves them.
 const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
 
-/** Must match App\RSpade\Core\Debug\Dev_Auth_Token::LIFETIME_SECONDS. */
+/** Must match App\RSpade\Lib\Developer\Debug\Dev_Auth_Token::LIFETIME_SECONDS. */
 const LIFETIME_SECONDS = 60;
 
-/** Must match App\RSpade\Core\Ide\Ide_Bridge_Token::ACTIVE_GRANTS. */
+/** Must match App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token::ACTIVE_GRANTS. */
 const ACTIVE_GRANTS = 2;
 
 /**

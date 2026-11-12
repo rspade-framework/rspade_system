@@ -12,12 +12,12 @@ use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Auth\Portal_Auth;
 use App\RSpade\Core\Auth\RsxAuth;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Equal-time refusal at the password front doors (Password_Verifier).

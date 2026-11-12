@@ -22,8 +22,8 @@ use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 
 /**
 * Manifest - RSX File Discovery and Metadata Management System
@@ -1480,7 +1480,7 @@ class Manifest
             // The build judged the client portal settings (Portal_Url_ManifestSupport) and
             // stamped them; a sealed box never rebuilds, so settings changed since are
             // refused here rather than served unjudged. One string comparison.
-            if ((self::$data['portal_env'] ?? null) !== \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint()) {
+            if ((self::$data['portal_env'] ?? null) !== \App\RSpade\Lib\Portal\Rsx_Portal_Url::fingerprint()) {
                 throw new \RuntimeException(self::PORTAL_ENV_CHANGED_MESSAGE);
             }
 
@@ -1984,9 +1984,9 @@ class Manifest
         self::$_state_key_computations++;
 
         try {
-            $applied = \App\RSpade\Core\Support\Rsx_Fingerprint::applied_migrations();
+            $applied = \App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint::applied_migrations();
         } catch (\Illuminate\Database\QueryException $e) {
-            if (!\App\RSpade\Core\Support\Rsx_Fingerprint::is_connection_failure($e)) {
+            if (!\App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint::is_connection_failure($e)) {
                 throw $e;
             }
 

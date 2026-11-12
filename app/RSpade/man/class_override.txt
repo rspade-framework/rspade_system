@@ -318,8 +318,9 @@ your own, the bundle generates the plain `class User_Model extends
 Base_User_Model {}` as it does for any model. This is not a JS override: the
 framework ships no User_Model.js, and your JS class shadows nothing.
 
-Core_Bundle includes the framework's models (app/RSpade/Core/Models), and
-every bundle includes Core_Bundle - so an override of a core model reaches
+Core_Bundle includes the framework's models (app/RSpade/Core/Models, and the
+feature models it names under app/RSpade/Lib), and every bundle includes
+Core_Bundle - so an override of a core model reaches
 EVERY bundle, the public ones included: a login page, a portal sign-in page,
 an error page, /_sys and /apidocs. A bundle you narrowed to publish no
 application model still ships that override's ORM definition (the generated

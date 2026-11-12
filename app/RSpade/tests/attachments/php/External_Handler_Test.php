@@ -232,7 +232,7 @@ class External_Handler_Test extends Rsx_Test_Abstract
     public static function test_evict_without_handler_throws()
     {
         $p = static::__make_plain('a');
-        static::__assert_throws(\App\RSpade\Core\Debug\Rsx_Caller_Exception::class, function () use ($p) {
+        static::__assert_throws(\App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception::class, function () use ($p) {
             $p->evict_blob();
         }, 'handler');
     }

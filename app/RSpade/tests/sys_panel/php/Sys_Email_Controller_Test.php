@@ -11,11 +11,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Models\Email_Attachment_Model;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Attachment_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
 use App\RSpade\Sys\App\Sys\Email\_Sys_Email_Controller;
 
 /**

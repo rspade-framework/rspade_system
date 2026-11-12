@@ -9,7 +9,7 @@ Template-side counterpart: app skill `portal-app` (ships in `rsx/resource/skills
 
 A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own realm of the one dispatcher, routing table and permission facade. The always-on fragment carries the mandates; this skill is the framework machinery you build against.
 
-**Framework** (`App\RSpade\Core\Portal\`, `App\RSpade\Core\Models\`): `Portal_Session`, `Rsx_Portal` (PHP+JS), `Portal_Main_Abstract`, `Portal_Permission_Abstract`, `Portal_Authorizable`, `Portal_User_Model`, `Portal_Notification_Model`, `#[Portal_Route]` / `@portal_spa` manifest support.
+**Framework** (`App\RSpade\Lib\Portal\`, `App\RSpade\Core\Models\`): `Portal_Session`, `Rsx_Portal` (PHP+JS), `Portal_Main_Abstract`, `Portal_Permission_Abstract`, `Portal_Authorizable`, `Portal_User_Model`, `Portal_Notification_Model`, `#[Portal_Route]` / `@portal_spa` manifest support.
 **Application** (`/rsx/portal/` + `rsx/portal_main.php`, `rsx/portal_permission.php`): the middleware, the SPA bootstrap, the layouts, auth controllers, screens, and every app-specific model - all of it yours, and described by the app skill `portal-app`.
 
 ---
@@ -181,7 +181,7 @@ Declarative, exactly like staff: every portal surface carries `#[Auth(...)]` / `
 
 **The gate vocabulary is just the two inherited built-ins** - `public` and `is_logged_in` (resolving against `Portal_Session`). **Every per-client rule is parameterized and therefore record-layer, not a gate.** There is **no `route_is_exempt()` and no `@portal-auth-exempt`** - both are dead syntax.
 
-Realm resolution: an `#[Ajax_Endpoint]` controller under `rsx/portal/` or `app/RSpade/Core/Portal/` defaults to the portal realm; anywhere else, declare `#[Auth_Realm('portal')]`. See `rspade:auth-gates`.
+Realm resolution: an `#[Ajax_Endpoint]` controller under `rsx/portal/` or `app/RSpade/Lib/Portal/` defaults to the portal realm; anywhere else, declare `#[Auth_Realm('portal')]`. See `rspade:auth-gates`.
 
 ### Portal_Permission
 
@@ -204,7 +204,7 @@ The parameterized helpers are NOT gates (a gate takes no arguments) - they stay 
 ### Record level: portal_fetch() + portal_can_read()
 
 ```php
-use App\RSpade\Core\Portal\Portal_Authorizable;
+use App\RSpade\Lib\Portal\Portal_Authorizable;
 
 class Project_Model extends Rsx_Site_Model_Abstract
 {
@@ -345,7 +345,7 @@ Who may impersonate is the app's call.
 
 ## Part H - Notifications (the framework-core activity primitive)
 
-`App\RSpade\Core\Models\Portal_Notification_Model` is the bus portal features emit into - the dashboard "what's new" feed, announcements, request activity. **One row per recipient**: emitting to N users writes N rows, which is the natural shape for a per-user feed with read state. Site-scoped, and `portal_can_read()` is own-recipient (fail-closed).
+`App\RSpade\Lib\Portal\Portal_Notification_Model` is the bus portal features emit into - the dashboard "what's new" feed, announcements, request activity. **One row per recipient**: emitting to N users writes N rows, which is the natural shape for a per-user feed with read state. Site-scoped, and `portal_can_read()` is own-recipient (fail-closed).
 
 **App-agnostic by design**: there is NO hard FK to application tables. The recipient is core (`portal_users`), and an app-specific subject is referenced **polymorphically** through the type-ref system (`subject_type` + `subject_id`). **Never FK the primitive to an app table.**
 

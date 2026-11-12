@@ -10,9 +10,9 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Files\Rsx_File_Upload;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Fixture_Controller;
 
 /**

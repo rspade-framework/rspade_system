@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Conformance\Php;
 
 use Illuminate\Support\Facades\Artisan;
-use App\RSpade\Core\Conformance\Conformance_Audits;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Conformance\Conformance_Audits;
 
 /**
  * The conformance-audit library: the header is read strictly, an id is unique across the

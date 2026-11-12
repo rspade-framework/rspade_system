@@ -43,7 +43,7 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
     private const MORPHED_BY_MANY = 'morphed' . 'ByMany';
 
     /** A real framework model that declares subject_type in $type_ref_columns. */
-    private const REAL_MODEL = '\\App\\RSpade\\Core\\Models\\Portal_Notification_Model::class';
+    private const REAL_MODEL = '\\App\\RSpade\\Lib\\Portal\\Portal_Notification_Model::class';
 
     // =====================================================================
     // Fixture infrastructure

@@ -9,16 +9,16 @@ namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Portal_Login_History - the client portal's sign-in history store, and its place in the
@@ -94,7 +94,7 @@ class Portal_Login_History_Test extends Rsx_Test_Abstract
         static::__assert_equals(Portal_Login_History::STATUS_FAILED_PASSWORD_RESET_REQUIRED, $history[0]['status'], 'newest first');
         static::__assert_equals('Refused - Password Reset Required', $history[0]['status_label']);
         static::__assert_equals('Success', $history[1]['status_label']);
-        static::__assert_null($history[0]['location'], 'the portal table records no location');
+        static::__assert_false(array_key_exists('location', $history[0]), 'a row carries no stored location');
         static::__assert_equals(0, Portal_Login_History::get_failed_attempts_count($portal_user->email), 'a refusal is never a failure count');
     }
 

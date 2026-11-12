@@ -1,6 +1,6 @@
 # Login_Redirect (intended-URL redirect)
 
-`App\RSpade\Core\Login\Login_Redirect` threads a validated `?redirect=` target through a multi-hop login flow, so a deep-link visitor lands on the page they asked for after authenticating. **It is the ONE redirect sanitizer in the codebase** (logout uses it too). A JS mirror with identical method names handles the client-side / expired-session entry point.
+`App\RSpade\Lib\SignIn\Redirect\Login_Redirect` threads a validated `?redirect=` target through a multi-hop login flow, so a deep-link visitor lands on the page they asked for after authenticating. **It is the ONE redirect sanitizer in the codebase** (logout uses it too). A JS mirror with identical method names handles the client-side / expired-session entry point.
 
 **Never hand-read `$_GET['redirect']`, never hand-build the param string, never write a second validator "just for this hop."** The param name is a private constant on purpose.
 
@@ -52,7 +52,7 @@ Everything is context-aware via `Rsx_Portal::is_portal_request()`: in a portal r
 
 ## Login_Notice (the sentence a sign-in page owes)
 
-A flow that ends on a sign-in page often owes the visitor a sentence ("You have been logged out", "This invitation has expired"). **A session flash is the wrong carrier** - it renders as a floating toast and is lost on a second hop - and **a free-text `?message=` lets a crafted link write on your sign-in page.** So the sentence travels as a fixed CODE beside the redirect, and the page renders it inline. `App\RSpade\Core\Login\Login_Notice` is the contract, staff and portal alike.
+A flow that ends on a sign-in page often owes the visitor a sentence ("You have been logged out", "This invitation has expired"). **A session flash is the wrong carrier** - it renders as a floating toast and is lost on a second hop - and **a free-text `?message=` lets a crafted link write on your sign-in page.** So the sentence travels as a fixed CODE beside the redirect, and the page renders it inline. `App\RSpade\Lib\SignIn\Redirect\Login_Notice` is the contract, staff and portal alike.
 
 The application declares the codes in `rsx/resource/config/rsx.php`:
 

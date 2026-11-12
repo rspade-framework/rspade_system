@@ -15,7 +15,7 @@ contract that the conformance audit `login_redirect_wiring` checks.
 
 ## Source files
 
-- `app/RSpade/Core/Login/Login_Redirect.php` - PHP class: `capture`/`params`/
+- `app/RSpade/Lib/SignIn/Redirect/Login_Redirect.php` - PHP class: `capture`/`params`/
   `hidden_input`/`consume` + the private validator, request classification, and the
   portal context-aware page-path / exclusion rules
 - `app/RSpade/Core/Js/Login_Redirect.js` - identical-API JS mirror (rides Core_Bundle;

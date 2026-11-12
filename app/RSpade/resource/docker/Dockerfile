@@ -111,7 +111,7 @@ RUN apt-get update && apt-get install -y \
 # not. Listing it fails the whole apt-get and breaks the build. It is present:
 # `php -m` reports Zend OPcache without it.
 # The extension list below is the COUNTERPART of
-# App\RSpade\Core\Health\Rsx_Php_Requirements::REQUIRED_EXTENSIONS, which every
+# App\RSpade\Lib\Operations\Health\Rsx_Php_Requirements::REQUIRED_EXTENSIONS, which every
 # request and every artisan run enforces at boot. Adding an extension there means
 # adding its package here (and vice versa is how an image grows dead weight).
 #

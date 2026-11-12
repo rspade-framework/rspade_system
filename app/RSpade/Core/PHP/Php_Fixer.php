@@ -779,7 +779,7 @@ class Php_Fixer
      * rebuild then runs against what survived.
      *
      * That is exactly how this fired twice - 2026-08-05 and again 2026-08-09, both times
-     * stripping `use App\RSpade\Core\Portal\Portal_Authorizable;` out of four app models.
+     * stripping `use App\RSpade\Lib\Portal\Portal_Authorizable;` out of four app models.
      * The damage compounds: the missing trait then fatals EVERY later build, which is the
      * same condition that caused the deletion, so the tree cannot rebuild its way out. Both
      * incidents were recovered by hand with `git restore`.

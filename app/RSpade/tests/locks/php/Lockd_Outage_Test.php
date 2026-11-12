@@ -24,12 +24,12 @@ use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Locks\Lockd_Connection;
 use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Locks\RsxLocks;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Lock;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 use App\RSpade\Tests\Locks\Php\Lockd_Outage_Fixture_Controller;
 
 /**

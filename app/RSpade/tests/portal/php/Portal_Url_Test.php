@@ -12,10 +12,10 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Env\Rsx_App_Url;
 use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * PORTAL_URL: one setting, the derived portal address, its refusals, request

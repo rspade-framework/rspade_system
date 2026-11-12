@@ -15,9 +15,9 @@ use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * File_Preview_Controller

@@ -7,13 +7,13 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Rsx_Mail;
-use App\RSpade\Core\Mail\Rsx_Mail_Test_Email;
-use App\RSpade\Core\Mail\Rsx_Mail_Transport;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Test_Email;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
 use App\RSpade\Tests\Mail\Php\Mail_Marketing_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Security_Fixture_Email;
@@ -415,7 +415,7 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(Rsx_Mail::RESEND_QUEUED, Rsx_Mail::resend(static::__reload($row)), 'resend is not refused by the list');
         static::__assert_false(
-            str_contains(\App\RSpade\Core\Mail\Rsx_Mail_Builder::render_html(static::__reload($row)), '/unsubscribe'),
+            str_contains(\App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Builder::render_html(static::__reload($row)), '/unsubscribe'),
             'no unsubscribe link'
         );
     }

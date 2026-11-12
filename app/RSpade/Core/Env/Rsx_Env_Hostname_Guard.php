@@ -8,9 +8,9 @@ namespace App\RSpade\Core\Env;
 
 use RuntimeException;
 use App\RSpade\Core\Env\Rsx_Tenancy;
-use App\RSpade\Core\Portal\Portal_Site_Resolver;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Portal\Portal_Site_Resolver;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Dev-mode .env hostname tripwire.

@@ -60,7 +60,7 @@ override could answer for them.
 - `app/RSpade/CodeQuality/Rules/Convention/ClassOverrideDrift_CodeQualityRule.php` -
   CLASS-OVERRIDE-DRIFT-01: HIGH, never a manifest-build fatal, `is_incremental() = false`;
   `evaluate_pair()` is the seam.
-- `app/RSpade/Core/Health/Class_Override_Drift_Health_Checks.php` - the WARN-never-FAIL row.
+- `app/RSpade/Lib/Operations/Health/Class_Override_Drift_Health_Checks.php` - the WARN-never-FAIL row.
 - `app/RSpade/Commands/Rsx/Overrides_List_Command.php` - `rsx:overrides:list [--json]`, the
   operator's listing of the map with the PHP drift verdict (`current` / `missing` /
   `extends_base`); `rows()` is the seam.

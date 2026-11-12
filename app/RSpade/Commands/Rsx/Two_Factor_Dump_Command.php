@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
 
 /**
  * rsx:users:2fa:dump - everything an identity's second factors are, seeds included.

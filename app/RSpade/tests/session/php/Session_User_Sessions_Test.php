@@ -138,11 +138,11 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
      */
     public static function test_the_first_sign_in_stamps_the_browser_once()
     {
-        $portal_user = new \App\RSpade\Core\Models\Portal_User_Model();
+        $portal_user = new \App\RSpade\Lib\Portal\Portal_User_Model();
         $portal_user->site_id = self::SITE_ID;
         $portal_user->email = 'first_sign_in_' . uniqid() . '@example.com';
         $portal_user->set_password('secret-password');
-        $portal_user->status_id = \App\RSpade\Core\Models\Portal_User_Model::STATUS_ACTIVE;
+        $portal_user->status_id = \App\RSpade\Lib\Portal\Portal_User_Model::STATUS_ACTIVE;
         $portal_user->save();
 
         $guest = static::__insert_session_fixture();
@@ -167,11 +167,11 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
      */
     public static function test_a_realm_sign_out_clears_only_that_realms_values()
     {
-        $portal_user = new \App\RSpade\Core\Models\Portal_User_Model();
+        $portal_user = new \App\RSpade\Lib\Portal\Portal_User_Model();
         $portal_user->site_id = self::SITE_ID;
         $portal_user->email = 'user_sessions_' . uniqid() . '@example.com';
         $portal_user->set_password('secret-password');
-        $portal_user->status_id = \App\RSpade\Core\Models\Portal_User_Model::STATUS_ACTIVE;
+        $portal_user->status_id = \App\RSpade\Lib\Portal\Portal_User_Model::STATUS_ACTIVE;
         $portal_user->save();
 
         $fixture = static::__insert_session_fixture([

@@ -25,15 +25,23 @@ channel whose pipeline and error policy own it: `Dispatch/CLAUDE.md`, `rsx:man d
 
 Classes are found by NAME, not path. The manifest indexes every file under the configured
 `rsx.manifest.scan_directories` (`rsx/` plus `app/RSpade/Core`, `Integrations`, `Bundles`,
-`Breadcrumbs`, `CodeQuality`, `Lib`, `Sys`), and the test trees only while `rsx:test` runs.
+`CodeQuality`, `Lib`, `Sys`), and the test trees only while `rsx:test` runs.
 `Manifest/CLAUDE.md`.
+
+## Core vs Lib
+
+`Core/` is the ENGINE: boot, build, request handling, the browser runtime, data and identity,
+background work, live updates and the test harness. A supplementary feature - one an
+application could run without - lives in `app/RSpade/Lib/`, grouped by domain
+(`Lib/CLAUDE.md`). Both trees are always present: both are scanned, and `Core_Bundle` includes
+the browser-facing parts of each.
 
 ## Subsystem documents
 
 Subsystems with a colocated `CLAUDE.md`: `Ajax/`, `Api/`, `Bundle/`, `Database/`,
-`Dispatch/`, `Files/`, `Health/`, `Js/`, `JsParsers/`, `Manifest/`, `Models/`, `Portal/`,
-`Realtime/`, `Session/`, `SPA/`, `Sso/`, `Task/`, `TwoFactor/`. jqhtml template
-syntax (slots, inheritance, `<Define>` attributes) is skill `rspade:jqhtml`.
+`Dispatch/`, `Files/`, `Js/`, `JsParsers/`, `Manifest/`, `Models/`, `Realtime/`, `Session/`,
+`SPA/`, `Task/`. The `Lib/` features carrying one are listed in `Lib/CLAUDE.md`. jqhtml
+template syntax (slots, inheritance, `<Define>` attributes) is skill `rspade:jqhtml`.
 
 ## CLI Invocation Parameters vs Environment Variables
 

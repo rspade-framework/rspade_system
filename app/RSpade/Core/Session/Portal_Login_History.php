@@ -8,9 +8,9 @@
 namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Session\Login_History_Abstract;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Portal Login History - the CLIENT PORTAL realm's record of sign-in outcomes, over
@@ -31,8 +31,6 @@ use App\RSpade\Core\Session\Login_History_Abstract;
  *   COUNTERS. The per-email and per-IP failure statistics are kept under their own keys, so a
  *   client and a staff member typing the same address keep separate counts. The brute-force
  *   budget (Login_Throttle) is NOT separate: one client IP has one budget across both realms.
- *
- *   NO LOCATION. The portal table carries no location columns; present_record() answers null.
  *
  * Framework producers: Portal_Auth::verify_credentials() (the password door),
  * Rsx_Portal_Two_Factor (the second-factor challenge, passwordless passkey sign-in and passkey
@@ -94,13 +92,5 @@ class Portal_Login_History extends Login_History_Abstract
             'explicit' => null,
             'site' => Site_Model::withTrashed()->where('id', $site_id)->value('timezone'),
         ];
-    }
-
-    /**
-     * The portal table records no location - see the class docblock.
-     */
-    protected static function __format_location(object $record): ?string
-    {
-        return null;
     }
 }

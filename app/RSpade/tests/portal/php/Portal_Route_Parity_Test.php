@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Tests\Portal\Php;
 
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Rsx_Portal::Route() builds its URL with Rsx::Route()'s own routines, so a portal URL is

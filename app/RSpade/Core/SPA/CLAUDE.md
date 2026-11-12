@@ -43,7 +43,7 @@ bundle)**
   without touching the rest of a URL. Pure; the behaviour lives in `Core/Js/Rsx_Navigation.js`
   (carrying - `augment()` - and the full-load hand-off), `Spa.js` (the new-tab href rewrite,
   `Spa.via()` / `Spa.via_push()`) and in
-  `Breadcrumbs/Rsx_Breadcrumb_Resolver.js` (the walk, `settle_via()` - the keep/strip decision).
+  `Core/SPA/Rsx_Breadcrumb_Resolver.js` (the walk, `settle_via()` - the keep/strip decision).
 - `Spa_Journal.js` - the per-tab journal of the journey through history entries, in session
   storage (`Rsx_Storage`, key `spa_journal`, 100 records): per entry key `<spa_run>:<spa_index>`
   its `url` (fragment included, followed by `note_url()` on every in-place rewrite -

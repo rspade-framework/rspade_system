@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
 
 /**
  * Rsx_Mail::delivers() / deliverable_to() - "will this email arrive?", asked before sending.

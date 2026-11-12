@@ -15,9 +15,9 @@ use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Rsx_Csrf;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * The framework's file and report endpoints answer in the PORTAL realm, wherever PORTAL_URL

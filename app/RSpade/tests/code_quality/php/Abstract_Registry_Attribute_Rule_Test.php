@@ -151,7 +151,7 @@ class Abstract_Registry_Attribute_Rule_Test extends Rsx_Test_Abstract
         // The forbidden set is the rule's single source of truth; each entry must fire.
         $forbidden = [
             'Auth', 'Route', 'SPA', 'Portal_Route', 'Ajax_Endpoint', 'Ajax_Endpoint_Model_Fetch',
-            'Api_Endpoint', 'Task', 'Schedule', 'Exclusive', 'Debounce', 'Emitter', 'OnEvent',
+            'Api_Endpoint', 'Task', 'Schedule', 'Exclusive', 'Debounce', 'On_Build', 'Emitter', 'OnEvent',
             'Health_Check', 'Realtime_Touch', 'FPC',
         ];
 

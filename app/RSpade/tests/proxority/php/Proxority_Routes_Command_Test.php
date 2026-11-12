@@ -11,9 +11,9 @@ use Illuminate\Support\Facades\Artisan;
 use Symfony\Component\Process\Process;
 use App\RSpade\Commands\Rsx\Proxority_Routes_Command;
 use App\RSpade\Core\Framework\Framework_Maintenance;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Proxority\Proxority_Routes;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * rsx:proxority:routes - the whitelist Proxority refreshes (Proxority_Routes).

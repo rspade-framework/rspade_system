@@ -213,7 +213,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Writer request history (Core/Revisions/Request_History)
+    | Writer request history (Core/RequestHistory/Request_History)
     |--------------------------------------------------------------------------
     |
     | Every Ajax / external API writer request that commits records on its
@@ -270,8 +270,8 @@ return [
 
     'manifest_support' => [
         \App\RSpade\Core\Dispatch\Route_ManifestSupport::class,
-        \App\RSpade\Core\Portal\Portal_Route_ManifestSupport::class,
-        \App\RSpade\Core\Portal\Portal_Spa_ManifestSupport::class,
+        \App\RSpade\Lib\Portal\Portal_Route_ManifestSupport::class,
+        \App\RSpade\Lib\Portal\Portal_Spa_ManifestSupport::class,
         \App\RSpade\Core\Manifest\Modules\Model_ManifestSupport::class,
         \App\RSpade\Integrations\Jqhtml\Jqhtml_ManifestSupport::class,
         // A stylesheet's id names what it styles, which other files decide: derived from
@@ -281,14 +281,14 @@ return [
         \App\RSpade\Core\Api\Api_Endpoint_ManifestSupport::class,
         // After the last producers of `routes` (staff, SPA, API): judges PORTAL_URL and
         // its path-prefix collision with those routes.
-        \App\RSpade\Core\Portal\Portal_Url_ManifestSupport::class,
+        \App\RSpade\Lib\Portal\Portal_Url_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Access_ManifestSupport::class,
         // After the producers of `routes` (it judges the reserved /_companion path) and before
         // Auth, which reads the section for its NO SURFACE check.
         \App\RSpade\Core\Companion\Companion_ManifestSupport::class,
-        \App\RSpade\Core\Mail\Email_ManifestSupport::class,
+        \App\RSpade\Lib\Messaging\Mail\Email_ManifestSupport::class,
         \App\RSpade\Core\Bundle\Bundle_Alias_ManifestSupport::class,
         // Auth gates run LAST of the INDEX modules: the consolidated #[Auth] index covers
         // every surface kind the modules above register.
@@ -674,12 +674,11 @@ return [
         // Can be directories (will be scanned recursively) or individual files
         'scan_directories' => [
             'rsx',                         // Main RSX application directory (symlinked to ../rsx)
-            'app/RSpade/Core',             // Core framework classes (runtime essentials)
+            'app/RSpade/Core',             // The engine: boot, build, request handling, browser runtime, data, background work
             'app/RSpade/Integrations',     // Integration modules (Jqhtml, Scss, etc.)
             'app/RSpade/Bundles',          // Third-party bundles
-            'app/RSpade/Breadcrumbs',      // Progressive breadcrumb resolution
             'app/RSpade/CodeQuality',      // Code quality rules and checks
-            'app/RSpade/Lib',              // UI features (Flash alerts, etc.)
+            'app/RSpade/Lib',              // Supplementary features, grouped by domain (Lib/CLAUDE.md)
             'app/RSpade/Sys',             // The framework's own application: the /_sys control panel
             // NOT LISTED, deliberately: app/RSpade/tests, app/RSpade/temp and rsx/tests.
             // A test fixture is real indexed source - a route, a surface, an #[Auth] naming a
@@ -1047,7 +1046,7 @@ return [
         \App\RSpade\Core\Exceptions\Ajax_Exception_Handler::class,             // Priority 20
         \App\RSpade\Core\Exceptions\Api_Exception_Handler::class,        // Priority 25
         \App\RSpade\Core\Exceptions\Companion_Exception_Handler::class,  // Priority 26
-        \App\RSpade\Core\Debug\Playwright_Exception_Handler::class,            // Priority 30
+        \App\RSpade\Lib\Developer\Debug\Playwright_Exception_Handler::class,            // Priority 30
         \App\RSpade\Core\Exceptions\Web_Exception_Handler::class,              // Priority 1100
     ],
 
@@ -1985,7 +1984,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Server-to-client messages delivered through the session. See the Flash
-    | system docs in app/RSpade/Lib/Flash/CLAUDE.md.
+    | system docs in app/RSpade/Lib/Ui/Flash/CLAUDE.md.
     |
     */
     'flash' => [
@@ -2075,6 +2074,12 @@ return [
         // timeouts: nothing is waiting on them, and expiry ends in the sign-in screen
         // with a message saying why. An application handling sensitive records sets both
         // lower; see rsx:man session (HOW SESSIONS TIME OUT).
+        //
+        // These two values per realm are the DEFAULTS an application's session.limits
+        // resolve handler may override at run time (limits an administrator sets on a
+        // settings screen): Session::get_sign_in_limits() asks the hook first and falls
+        // back to these per key, and both the request check and the hourly sweep read
+        // through it. ajax_grace_minutes is config-only.
         'staff' => [
             'max_length_minutes' => 10080,
             'max_idle_minutes' => 480,
@@ -2613,7 +2618,7 @@ return [
         // being handed to a transport; a test cc/bcc on a real message is withheld and
         // recorded. Sample data and demos use them so they behave as sent without ever
         // reaching an inbox. The SMS twin is fixed: any (nnn) 555-nnnn number
-        // (App\RSpade\Core\Mail\Rsx_Test_Recipients). An application's list ADDS patterns
+        // (App\RSpade\Lib\Messaging\Mail\Rsx_Test_Recipients). An application's list ADDS patterns
         // to this one (the two-tier merge combines lists).
         'test_domains' => ['test.*'],
 

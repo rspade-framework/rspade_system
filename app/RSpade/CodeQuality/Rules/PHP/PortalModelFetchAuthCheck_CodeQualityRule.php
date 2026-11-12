@@ -194,7 +194,7 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
         $s[] = "portal_can_read() answers 'may they see THIS ROW'. Both are required.";
         $s[] = "";
         $s[] = "Recommended: use the trait and implement portal_can_read():";
-        $s[] = "    use App\\RSpade\\Core\\Portal\\Portal_Authorizable;";
+        $s[] = "    use App\\RSpade\\Lib\\Portal\\Portal_Authorizable;";
         $s[] = "    class My_Model extends Rsx_Site_Model_Abstract {";
         $s[] = "        use Portal_Authorizable;";
         $s[] = "        public function portal_can_read(): bool {";

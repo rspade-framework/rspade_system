@@ -9,8 +9,8 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Sso\Rsx_Sso;
-use App\RSpade\Core\Sso\Sso_Identity_Model;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\Sso\Sso_Identity_Model;
 
 /**
  * Shared argument handling and output shaping for the rsx:users:sso:* commands.

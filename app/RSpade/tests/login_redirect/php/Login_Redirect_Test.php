@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\LoginRedirect\Php;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Login\Login_Redirect;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\SignIn\Redirect\Login_Redirect;
 use App\RSpade\Tests\LoginRedirect\Php\Login_Redirect_Route_Fixture_Controller;
 
 /**

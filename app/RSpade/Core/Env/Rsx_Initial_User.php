@@ -7,7 +7,6 @@
 namespace App\RSpade\Core\Env;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Models\Login_User_Model;
@@ -178,7 +177,7 @@ class Rsx_Initial_User
             $login_user->incrementing = false;
             $login_user->id = self::INITIAL_USER_ID;
             $login_user->email = $email;
-            $login_user->password = Hash::make($password);
+            $login_user->set_password($password);
             $login_user->is_activated = 1;
             $login_user->is_verified = 1;
             $login_user->status_id = Login_User_Model::STATUS_ACTIVE;

@@ -8,9 +8,9 @@
 namespace App\RSpade\Tests\SysPanel\Php;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Health\Rsx_Container_Sizing;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Rsx_Container_Sizing;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
 use App\RSpade\Sys\App\Sys\Performance\_Sys_Performance_Controller;
 
 /**

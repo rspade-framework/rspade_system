@@ -6,6 +6,32 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.242] - 2026-11-12
+
+### Added
+- **Hover documentation for every framework attribute and decorator.** Hovering a PHP
+  attribute name (`#[Writer]`, `#[On_Build]`, `#[Task_Access]`, ...) or a JS decorator
+  (`@route`, `@spa`, `@spinner_until_ready`, `@mutex`, ...) shows what it does, where it goes,
+  its arguments, and the man page or skill to read.
+- **JS decorators are highlighted.** The framework's nine decorators - `@route`, `@layout`,
+  `@spa`, `@portal_spa`, `@auth`, `@title`, `@spinner_until_ready`, `@mutex`, `@debounce` -
+  are coloured like PHP attributes in JavaScript and TypeScript code. JSDoc tags and text in
+  strings and comments are never coloured.
+- **The rest of the PHP attribute vocabulary is highlighted:** `#[On_Build]`, `#[Writer]`,
+  `#[Reader]`, `#[Manual_Lock]`, `#[Site_Lock_Exempt]`, `#[Unthrottled]`, `#[Priority]`,
+  `#[Media]`, `#[Api_Versions]`, `#[Api_Resource]`, `#[Companion_Endpoint]`,
+  `#[Portal_Impersonation_Readable]`, `#[Run_As_Dispatcher]`, `#[Task_Access]` and
+  `#[Blob_Reference]`.
+
+### Changed
+- **Every name in a grouped attribute is highlighted** - `#[Task('x'), Exclusive]` colours
+  both, also when the group spans several lines.
+- **Attribute names in comments, strings and heredocs are no longer coloured** - only a
+  declaration is.
+
+### Removed
+- `#[Task_Attribute]` is no longer highlighted; the framework reads no such attribute.
+
 ## [0.1.241] - 2026-10-15
 
 ### Changed

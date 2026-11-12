@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint;
 
 /**
  * TWO KEYS, AND WHICH EVENT MOVES WHICH.

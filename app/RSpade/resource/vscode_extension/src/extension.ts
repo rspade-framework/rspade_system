@@ -28,6 +28,7 @@ import {
     doc_reference_selectors
 } from './doc_reference_provider';
 import { AuthCheckHoverProvider } from './auth_check_hover_provider';
+import { FrameworkVocabularyHoverProvider } from './framework_vocabulary_hover_provider';
 import { FrameworkPropertyGuard } from './framework_property_guard';
 import { init_override_map } from './override_map';
 import * as fs from 'fs';
@@ -299,6 +300,14 @@ export async function activate(context: vscode.ExtensionContext) {
         )
     );
 
+    // #[Attribute] / @decorator hover - what a framework attribute or decorator does
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider(
+            [{ language: 'php' }, { language: 'javascript' }, { language: 'typescript' }],
+            new FrameworkVocabularyHoverProvider()
+        )
+    );
+
     console.log('RSpade definition provider registered for JavaScript/TypeScript/PHP/Blade/jqhtml files');
 
     // Register Laravel completion provider for PHP files
@@ -350,7 +359,7 @@ export async function activate(context: vscode.ExtensionContext) {
     console.log('JQHTML lifecycle providers registered for JavaScript/TypeScript');
 
     // Register combined semantic tokens provider for JavaScript/TypeScript
-    // This includes: JQHTML lifecycle methods (orange), file references (teal), 'that' variable (blue)
+    // This includes: JQHTML lifecycle methods and framework decorators (orange), file references (teal), 'that' variable (blue)
     const combined_semantic_provider = new CombinedSemanticTokensProvider(doc_reference_index);
 
     context.subscriptions.push(

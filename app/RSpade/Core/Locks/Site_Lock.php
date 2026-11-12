@@ -19,8 +19,8 @@ use App\RSpade\Core\Database\Rsx_DatabaseTransactionsManager;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision;
 
 /**
  * Site_Lock - the per-site reader/writer lock, the write section built on it, and the

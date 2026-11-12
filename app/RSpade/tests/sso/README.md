@@ -38,22 +38,22 @@ them through).
 
 ## Source files
 
-- `app/RSpade/Core/Sso/Rsx_Sso_Abstract.php` - the engine: the roster, the ceremony, the
+- `app/RSpade/Lib/SignIn/Sso/Rsx_Sso_Abstract.php` - the engine: the roster, the ceremony, the
   pending identity, linking and removal, over realm hooks
-- `app/RSpade/Core/Sso/Rsx_Sso.php` / `Rsx_Portal_Sso.php` - the staff and portal facades
-- `app/RSpade/Core/Sso/Portal_Sso_Identity_Model.php` - the `_portal_sso_identities` model
-- `app/RSpade/Core/Sso/Rsx_Portal_Sso_Controller.php` - the portal ceremony routes
+- `app/RSpade/Lib/SignIn/Sso/Rsx_Sso.php` / `Rsx_Portal_Sso.php` - the staff and portal facades
+- `app/RSpade/Lib/SignIn/Sso/Portal_Sso_Identity_Model.php` - the `_portal_sso_identities` model
+- `app/RSpade/Lib/SignIn/Sso/Rsx_Portal_Sso_Controller.php` - the portal ceremony routes
   (`#[Portal_Route]`) and the portal settings Ajax surface
-- `app/RSpade/Core/Sso/Socialite_Bridge.php` - the only class that knows Socialite exists;
+- `app/RSpade/Lib/SignIn/Sso/Socialite_Bridge.php` - the only class that knows Socialite exists;
   carries the stateless/PKCE/Apple spike findings in its class docblock
-- `app/RSpade/Core/Sso/Sso_Identity_Model.php` - the `_sso_identities` model
-- `app/RSpade/Core/Sso/Sso_Failed_Exception.php` - the user-safe failure
-- `app/RSpade/Core/Sso/Rsx_Sso_Controller.php` - the routes (`/_sso/:provider/begin`,
+- `app/RSpade/Lib/SignIn/Sso/Sso_Identity_Model.php` - the `_sso_identities` model
+- `app/RSpade/Lib/SignIn/Sso/Sso_Failed_Exception.php` - the user-safe failure
+- `app/RSpade/Lib/SignIn/Sso/Rsx_Sso_Controller.php` - the routes (`/_sso/:provider/begin`,
   `/_sso/:provider/callback`) and the settings Ajax surface
-- `app/RSpade/Core/Sso/Rsx_Sso.js` - the browser's reader over `window.rsxapp.sso`
-- `app/RSpade/Core/Sso/Sso_Buttons.jqhtml|.js|sso_buttons.scss` - the "Continue with ..."
+- `app/RSpade/Lib/SignIn/Sso/Rsx_Sso.js` - the browser's reader over `window.rsxapp.sso`
+- `app/RSpade/Lib/SignIn/Sso/Sso_Buttons.jqhtml|.js|sso_buttons.scss` - the "Continue with ..."
   buttons, rendered as anchors to `begin_url`
-- `app/RSpade/Core/Sso/resource/icons/*.svg` - the brand marks, read into `icon_svg`
+- `app/RSpade/Lib/SignIn/Sso/resource/icons/*.svg` - the brand marks, read into `icon_svg`
 - `app/RSpade/Core/Bundle/Rsx_Bundle_Abstract.php` - the conditional `sso` rsxapp key
   (absent when no provider is live), and `BundleCompiler.php` / `Core_Bundle.php` - the
   force-included controller stub and the component include line

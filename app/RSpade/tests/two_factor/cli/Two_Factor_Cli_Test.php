@@ -13,11 +13,11 @@ use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\TwoFactor\Recovery_Codes;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Totp;
-use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
-use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
+use App\RSpade\Lib\SignIn\TwoFactor\Recovery_Codes;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Totp;
+use App\RSpade\Lib\SignIn\TwoFactor\Two_Factor_Credential_Model;
+use App\RSpade\Lib\SignIn\TwoFactor\Two_Factor_Failed_Exception;
 
 /**
  * rsx:users:2fa:setup / :dump / :remove - the operator path, end to end.

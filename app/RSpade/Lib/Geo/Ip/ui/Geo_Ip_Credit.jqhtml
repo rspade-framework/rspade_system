@@ -1,0 +1,14 @@
+<%--
+Geo_Ip_Credit
+
+The attribution DB-IP's IP to City Lite licence (CC BY 4.0) requires wherever a location from
+Rsx_Geo_Ip is shown: "IP geolocation by DB-IP", linking to https://db-ip.com. Place one near
+every list or field that shows a location - once per screen region, not once per row.
+
+    <Geo_Ip_Credit />
+
+No args. See: php artisan rsx:man geo_ip
+--%>
+<Define:Geo_Ip_Credit tag="small">
+    IP geolocation by <a class="Geo_Ip_Credit__link" href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a>
+</Define:Geo_Ip_Credit>

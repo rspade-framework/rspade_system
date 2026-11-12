@@ -295,10 +295,10 @@ class Override_Loader_Test extends Rsx_Test_Abstract
         $dir = Rsx_Project_Paths::tmp_path('class-override-loader-test/artifact_' . bin2hex(random_bytes(4)));
         $path = $dir . '/manifest/class_overrides.php';
         $map = [
-            'App\\RSpade\\Core\\Qr\\Rsx_Qr_Code' => [
+            'App\\RSpade\\Lib\\Ui\\Qr\\Rsx_Qr_Code' => [
                 'by_fqcn' => 'Rsx\\Lib\\Rsx_Qr_Code',
                 'by_file' => 'rsx/lib/rsx_qr_code.php',
-                'file' => 'app/RSpade/Core/Qr/Rsx_Qr_Code.php',
+                'file' => 'app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php',
             ],
         ];
 

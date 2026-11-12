@@ -74,7 +74,7 @@ to its own detail screen.
                                             <span class="_Sys_User_Sessions__dim"><%= Rsx_Time.relative(row.signed_out_at) %></span>
                                         <% } %>
                                     </td>
-                                    <td class="_Sys_User_Sessions__mono"><%= row.ip_address %></td>
+                                    <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
                                     <td>
                                         <% if (row.site_id !== null) { %>
                                             <span class="_Sys_User_Sessions__mono">#<%= row.site_id %></span> <%= row.site_name || '' %>
@@ -101,6 +101,7 @@ to its own detail screen.
                         </tbody>
                     </table>
                 </div>
+                <Geo_Ip_Credit />
             <% } %>
         </Slot:body>
     </_Sys_Section>

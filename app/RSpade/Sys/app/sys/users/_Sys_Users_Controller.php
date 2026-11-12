@@ -15,9 +15,10 @@ use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sso\Rsx_Sso;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Sys\App\Sys\Users\_Sys_Audit_Sessions_DataGrid;
 use App\RSpade\Sys\App\Sys\Users\_Sys_User_Signins_DataGrid;
 use App\RSpade\Sys\App\Sys\Users\_Sys_Users_DataGrid;
@@ -705,10 +706,11 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
     /**
      * get_sessions_for_user() entries as the Sessions tab and the session screen show them:
      * each with its site's name, its browser's type label, the impersonator's email and the
-     * refusal its End button explains.
+     * refusal its End button explains. ip_address__location is where the address is
+     * (Rsx_Geo_Ip::label()), resolved on every load and never stored; null when unknown.
      *
      * @param array $sessions get_sessions_for_user() entries
-     * @return array [{id, device_summary, user_agent, ip_address, location, first_seen,
+     * @return array [{id, device_summary, user_agent, ip_address, ip_address__location, first_seen,
      *               signed_in_at, last_active, is_signed_in, signed_out_at, sign_out_reason,
      *               sign_in_count, is_current, is_api, type_label, site_id, site_name,
      *               impersonator_login_user_id, impersonator_email, impersonation_started_at,
@@ -738,7 +740,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'device_summary' => $session['device_summary'],
                 'user_agent' => $session['user_agent'],
                 'ip_address' => $session['ip_address'],
-                'location' => $session['location'],
+                'ip_address__location' => $session['ip_address'] === null ? null : Rsx_Geo_Ip::label((string) $session['ip_address']),
                 'first_seen' => $session['first_seen'],
                 'signed_in_at' => $session['signed_in_at'],
                 'last_active' => $session['last_active'],

@@ -8,14 +8,14 @@ context, and swept hourly.
 
 ## Source under test
 
-- `system/app/RSpade/Lib/Flash/Flash_Alert.php` - the writers, session resolution, the
+- `system/app/RSpade/Lib/Ui/Flash/Flash_Alert.php` - the writers, session resolution, the
   per-session cap, the CLI contract, and `get_pending_messages()` (the consuming read)
-- `system/app/RSpade/Lib/Flash/Flash_Alert_Model.php`
-- `system/app/RSpade/Lib/Flash/Flash_Alert_Cleanup_Service.php` - hourly retention sweep
+- `system/app/RSpade/Lib/Ui/Flash/Flash_Alert_Model.php`
+- `system/app/RSpade/Lib/Ui/Flash/Flash_Alert_Cleanup_Service.php` - hourly retention sweep
 
 ## Behavior defined by
 
-`system/app/RSpade/Lib/Flash/CLAUDE.md`
+`system/app/RSpade/Lib/Ui/Flash/CLAUDE.md`
 
 ## Applicability note
 

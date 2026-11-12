@@ -416,7 +416,7 @@ THE UNIT OF WORK
 
 API REFERENCE
 
-  The facade - App\RSpade\Core\Revisions\Revision
+  The facade - App\RSpade\Lib\Revisions\Revision
 
     transaction_id(): int
         The transaction every revision recorded right now belongs to, MINTING

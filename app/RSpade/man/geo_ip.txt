@@ -1,0 +1,173 @@
+GEO_IP(1)                        RSpade Manual                         GEO_IP(1)
+
+NAME
+    geo_ip - where an IP address is: Rsx_Geo_Ip and the DB-IP City Lite database
+
+TAGS
+    sessions, tasks
+
+SYNOPSIS
+    use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
+
+    Rsx_Geo_Ip::lookup('8.8.8.8');
+    // ['city' => 'Mountain View', 'state' => 'California', 'country' => 'United States']
+
+    Rsx_Geo_Ip::label('8.8.8.8');
+    // 'Mountain View, California, United States'   (null when nothing is known)
+
+    // An endpoint ships the location beside the address, resolved on every load:
+    'ip_address' => $row['ip_address'],
+    'ip_address__location' => Rsx_Geo_Ip::label($row['ip_address']),
+
+    <%-- and the screen credits the data, once per region that shows it: --%>
+    <Geo_Ip_Credit />
+
+DESCRIPTION
+    Rsx_Geo_Ip answers the city, state (first subdivision) and country of a
+    public IP address, in English, from DB-IP's IP to City Lite database - a
+    free monthly MMDB release the framework downloads, verifies and keeps
+    current by itself. It is for DISPLAY: the approximate place beside an
+    address on a "where you're signed in" list, an audit trail, a session
+    page.
+
+    THREE RULES FOR CALLERS:
+
+    1. CALL IT WHENEVER A LOCATION IS SHOWN, AND NEVER STORE THE ANSWER.
+       Not in a column, not in a JSON blob, not in a history row. The answer
+       may be null the first times it is asked (until a database has been
+       acquired on this box), and a later call may answer differently when
+       the database updates - which is the point. Lookups are cached for you
+       (below), so calling it per row per load is the intended use.
+
+    2. IT IS NEVER A SECURITY CONTROL. An address's location is approximate,
+       often wrong for mobile and corporate networks, and spoofable by
+       whoever controls the routing behind it (a VPN, a proxy). Never gate,
+       block, score or alert on it.
+
+    3. CREDIT DB-IP WHERE A LOCATION IS SHOWN. The data is licensed CC BY
+       4.0: every screen showing a location carries "IP geolocation by
+       DB-IP" linking to https://db-ip.com. <Geo_Ip_Credit /> (in every
+       bundle) is that line; place it once near the list or field, not once
+       per row.
+
+API REFERENCE
+
+    Rsx_Geo_Ip::lookup(string $ip): array
+        ['city' => ?string, 'state' => ?string, 'country' => ?string] - always
+        those three keys, any of them null. Values are plain strings from a
+        downloaded file: untrusted text, capped at 100 characters, escaped
+        on output like any other string.
+
+    Rsx_Geo_Ip::label(string $ip): ?string
+        lookup() joined for display, unknown parts left out; null when
+        nothing is known.
+
+    Rsx_Geo_Ip::canonical_public_ip(string $ip): ?string
+        The address in canonical form when it is a valid GLOBAL address,
+        else null. An IPv4-mapped IPv6 address (::ffff:a.b.c.d) is read as
+        its IPv4 address.
+
+    <Geo_Ip_Credit />
+        The attribution line (a <small>, block). Under a flush card body it
+        takes the card's padding.
+
+THE ORDER OF A LOOKUP
+
+    1. An invalid address, or one outside the global range - private,
+       loopback, link-local, carrier-grade NAT, documentation, reserved -
+       answers all-null at once: no cache, no file.
+    2. A cached answer is the answer. The cache is RsxCache's persistent
+       namespace (Redis database 0), one entry per address, kept ONE DAY.
+    3. The installed database answers, and the answer is cached for a day -
+       an address the database does not know (all-null) included.
+    4. No usable database - not acquired yet, removed by rsx:clean, a file
+       that will not open - answers all-null, NOT cached, and may dispatch
+       the update task (below).
+    5. Anything that throws while reading the database or dispatching the
+       update is REPORTED through the exception handler (it reaches the
+       log) and answers all-null, NOT cached. A lookup never throws: a
+       location is decoration beside an address, never a reason a page
+       fails.
+
+    A long-running process (a task worker) reopens the file when the update
+    replaces it.
+
+    THE TRIGGER. With no usable database a lookup dispatches
+    Geo_Ip_Service::update - unless a run of it was created in the last
+    6 hours (any outcome), or its pending run or its schedule is due within
+    5 minutes. A process considers this once.
+
+THE UPDATE TASK
+
+    Geo_Ip_Service::update is a #[Task] declared #[Exclusive('maintenance')]
+    #[Schedule('maintenance')] #[On_Build]: it runs in the maintenance window
+    every day, once after every new build (rsx:man tasks, ON BUILD), and when
+    a lookup finds no database. Run it by hand with:
+
+        php artisan rsx:task:run Geo_Ip_Service update
+
+    1. The cheap local check: the installed file is this month's release
+       (the UTC month of its build epoch) - "current", no network. In
+       development the task is dispatched after every source change, and
+       this check is all it does.
+    2. The download page (https://db-ip.com/db/download/ip-to-city-lite) is
+       read for the MMDB release and the SHA1 DB-IP publishes for its
+       UNPACKED file. This month's release is taken, else the previous
+       month's (a month's release appears some days into it); neither
+       listed fails the run. The installed file already being that release
+       ends the run.
+    3. dbip-city-lite-YYYY-MM.mmdb.gz (about 60 MB) is downloaded beside the
+       installed file and unpacked with PHP's own zlib stream (about 130 MB).
+       Both are capped at 1 GB - a SIZE bound. There is no time bound of
+       ours: the run heartbeats as data arrives, so a stalled transfer is
+       ended by the task silence limit (rsx.tasks.silent_timeout); libcurl's
+       own built-in default bounds only establishing the connection.
+    4. Verification, every check required: the SHA1 matches the published
+       one; the reader opens the file; its database_type is DBIP-City-Lite;
+       its build epoch falls in the release's month (UTC); 8.8.8.8 answers
+       country US.
+    5. One rename() swaps it into place. Any failure discards the staged
+       files, leaves the installed file as it was, and fails the run with
+       the reason (rsx:tasks:list, /_sys Tasks, the health row).
+
+    The download is https only, follows at most 5 redirects, and identifies
+    itself as "RSpade IP geolocation update".
+
+WHERE THE FILE LIVES
+
+    tmp/geo_ip/dbip-city-lite.mmdb (Rsx_Project_Paths::geo_ip_database_file()).
+    It is a downloaded CACHE, not user data: rsx:clean removes it, and the
+    rebuild that follows dispatches the update (#[On_Build]), so it heals
+    itself. Never commit it, never back it up.
+
+    The reader is maxmind-db/reader, the PURE-PHP MMDB reader - by design:
+    no libmaxminddb C extension parses downloaded data in this process.
+
+HEALTH
+
+    rsx:health, row "IP Geolocation" (never a FAIL - a missing database costs
+    locations and nothing else):
+
+        OK    DB-IP City Lite, <YYYY-MM> release
+        INFO  not acquired yet
+        WARN  the last finished update run failed or was killed; the file is
+              older than 62 days; or a file is there but does not open
+
+    The remediation is the rsx:task:run line above.
+
+TROUBLESHOOTING
+
+    Every location is null
+        rsx:health's IP Geolocation row says why. "not acquired yet" on a box
+        whose task system is running resolves itself within minutes; a box
+        that cannot reach db-ip.com shows the failed run's error.
+
+    A private or loopback address shows no location
+        By design: only global addresses are looked up.
+
+SEE ALSO
+    tasks - #[Task], #[Schedule('maintenance')], #[On_Build], rsx:task:run
+    session - get_sessions_for_user() and the addresses it lists
+    health - rsx:health and its rows
+    storage_directories - the tmp/ tree
+    skill rspade:geo-ip - using Rsx_Geo_Ip on a screen

@@ -35,7 +35,7 @@ session for "who did this, from where".
   under any site lock or bypass; `RsxAuth::enter_site()` (`Site_Lock::_enter_site()`) is the
   one sanctioned change inside a handler (`rsx:man site_locks`, SITE CHANGES). **Virtual sessions** (`_begin_virtual()`): a command, a task or a test
   runs on a row-less session, so `get_session_id()` is null there. `Portal_Session`
-  (`Core/Portal/`) is a facade over the portal pointer through the `_*_portal_*` seams at the
+  (`Lib/Portal/`) is a facade over the portal pointer through the `_*_portal_*` seams at the
   bottom of this class.
 - `Rsx_Session_Cookie.php` — the ONE cookie's name and attributes: `__Host-rsx` whenever
   Secure, plain `rsx` only on a development request over http; the two are never read
@@ -60,6 +60,12 @@ session for "who did this, from where".
   per purpose from `app.key`); not a replay defence - the code is the single-use part.
 - `Rsx_Session_Controller.php` — the SPA's page-view report (`Rsx_Session.js`), which
   `max_idle_minutes` is measured from.
+- **Sign-in limits have ONE reader, `Session::get_sign_in_limits($realm)`**: the
+  `session.limits` resolve hook (validated, memoized per realm per request or task run -
+  cleared by `_end_virtual()` and `_testing_reset()`), else `config('rsx.sessions.<realm>')`
+  per key. The request check (`__expiry_of()`), the sweep (`_end_timed_out_user_sessions()`)
+  and harness-row reuse all go through it; never read the limit keys from config anywhere
+  else, or the request check and the sweep can disagree.
 - `Session_Cleanup_Service.php` — the retention sweeps (guest rows, lifetime limits, unused
   browsers made inactive, login history, link codes, trusted devices, stale impersonations,
   user agents). A browser that ever had a sign-in is never deleted, only made inactive.
@@ -79,5 +85,5 @@ session for "who did this, from where".
 ## References
 
 `rsx:man session`, `rsx:man csrf`, `rsx:man login_redirect` · skills `rspade:session-auth`,
-`rspade:audit-session`, `rspade:two-factor` · siblings `Core/Portal/` (`Portal_Session`,
-`Portal_Site_Resolver`), `Core/Auth/` (`RsxAuth`, `Login_Throttle`), `Core/TwoFactor/`.
+`rspade:audit-session`, `rspade:two-factor` · siblings `Lib/Portal/` (`Portal_Session`,
+`Portal_Site_Resolver`), `Core/Auth/` (`RsxAuth`, `Login_Throttle`), `Lib/SignIn/TwoFactor/`.

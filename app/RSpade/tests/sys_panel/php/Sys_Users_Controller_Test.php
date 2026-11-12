@@ -396,9 +396,10 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals('198.51.100.30', $first['records'][0]['ip_address'], 'newest first');
 
         $row = $first['records'][0];
-        foreach (['id', 'email', 'ip_address', 'user_agent', 'user_agent_parsed', 'location', 'status', 'status_label', 'failure_reason', 'created_at'] as $key) {
+        foreach (['id', 'email', 'ip_address', 'ip_address__location', 'user_agent', 'user_agent_parsed', 'status', 'status_label', 'failure_reason', 'created_at'] as $key) {
             static::__assert_array_has_key($key, $row, "the presented row carries {$key}");
         }
+        static::__assert_null($row['ip_address__location'], 'a documentation address has no location');
         static::__assert_equals('Success', $row['status_label'], 'the status label');
         static::__assert_equals('Firefox on Windows', $row['user_agent_parsed']['summary'], 'the parsed user agent');
         static::__assert_true(str_ends_with($row['created_at'], 'Z'), 'created_at leaves as ISO UTC');

@@ -76,7 +76,7 @@ user; _Sys_Error for anything else), and the record - a header over four tabs (h
                 </_Sys_Section>
             </Slot:overview>
             <Slot:sessions><_Sys_Portal_User_Sessions $sid="sessions" $portal_user_id=_u.id /></Slot:sessions>
-            <Slot:signins><_Sys_Portal_User_Signins_DataGrid $sid="signins" $base_params=({portal_user_id: _u.id}) /></Slot:signins>
+            <Slot:signins><_Sys_Portal_User_Signins_DataGrid $sid="signins" $base_params=({portal_user_id: _u.id}) /><Geo_Ip_Credit /></Slot:signins>
             <Slot:security><_Sys_Portal_User_Security $sid="security" $portal_user_id=_u.id /></Slot:security>
         </_Sys_Tabs>
     <% } %>

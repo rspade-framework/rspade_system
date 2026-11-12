@@ -11,9 +11,9 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Orphan_Report;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
-use App\RSpade\Core\Models\Portal_Notification_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Notification_Model;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * `php artisan rsx:type_refs:orphans` and its engine, Type_Ref_Orphan_Report.

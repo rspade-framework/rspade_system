@@ -9,7 +9,7 @@ namespace App\RSpade\Tests\Revisions\Php;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * External API endpoints for Request_History_Test: two writers that write one framework

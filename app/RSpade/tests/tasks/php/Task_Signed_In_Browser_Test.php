@@ -9,14 +9,14 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * The harness's signed-in browser: __as_signed_in_browser() / __as_signed_in_portal_browser()

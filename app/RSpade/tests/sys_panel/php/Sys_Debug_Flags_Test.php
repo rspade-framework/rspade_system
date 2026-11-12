@@ -13,9 +13,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use InvalidArgumentException;
 use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
-use App\RSpade\Core\Debug\Console_Debug_Channels;
-use App\RSpade\Core\Debug\Console_Debug_Override;
-use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Dispatch\Rsx_Front_Controller;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Models\Login_User_Model;
@@ -23,6 +20,9 @@ use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Channels;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Override;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 use App\RSpade\Sys\App\Sys\DebugFlags\_Sys_Debug_Flags_Controller;
 
 /**

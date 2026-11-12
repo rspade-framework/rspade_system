@@ -324,7 +324,7 @@ FILE LOCATIONS
     /system/app/RSpade/Core/Js/browser.js     the two scrolling helpers
     /system/app/RSpade/Core/Js/Rsx.js         HASH_ANCHOR_KEY, hash parsing
     /system/app/RSpade/Core/Rsx.php           HASH_ANCHOR_KEY, PHP Route()
-    /system/app/RSpade/Core/Portal/Rsx_Portal.php  portal Route(), same generator
+    /system/app/RSpade/Lib/Portal/Rsx_Portal.php  portal Route(), same generator
 
 SEE ALSO
     rsx:man spa

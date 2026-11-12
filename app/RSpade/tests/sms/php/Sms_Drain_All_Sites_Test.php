@@ -8,10 +8,10 @@
 namespace App\RSpade\Tests\Sms\Php;
 
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Models\Sms_Queue_Model;
-use App\RSpade\Core\Models\Sms_Recipient_Model;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
+use App\RSpade\Lib\Messaging\Sms\Sms_Recipient_Model;
 
 /**
  * Sms_Drain_All_Sites_Test - the outbound SMS queue is drained for EVERY site, exactly as

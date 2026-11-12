@@ -24,7 +24,7 @@ class Auth_Index_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     private const STAFF_BASE = 'App\\RSpade\\Core\\Permission\\Permission_Abstract';
-    private const PORTAL_BASE = 'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract';
+    private const PORTAL_BASE = 'App\\RSpade\\Lib\\Portal\\Portal_Permission_Abstract';
 
     // =========================================================================
     // GATE COLLECTION

@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Security_Health_Checks;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Security_Health_Checks;
 
 /**
  * The two security-posture rows of rsx:health that guard a third-party component:

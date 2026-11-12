@@ -8,12 +8,12 @@
 namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Session::put_value / get_value / forget_value - the session-scoped key/value store.

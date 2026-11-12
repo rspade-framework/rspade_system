@@ -10,10 +10,10 @@ namespace App\RSpade\Tests\Polymorphic\Php;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
-use App\RSpade\Core\Models\Portal_Notification_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Notification_Model;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Polymorphic transparency: STOCK Eloquent morph relations over a BIGINT type-ref

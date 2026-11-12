@@ -5,7 +5,7 @@ NAME
     codes, passwordless sign-in - for staff and the client portal
 
 SYNOPSIS
-    use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+    use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
 
     # The login function, password stage - nobody is signed in, nothing recorded
     $login_user = RsxAuth::verify_credentials($credentials, record: false);
@@ -46,7 +46,7 @@ SYNOPSIS
     <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />
 
     # The client portal: the same API over portal users
-    use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
+    use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor;
     Rsx_Portal_Two_Factor::is_enabled($portal_user);
     Rsx_Portal_Two_Factor::verify_passkey_login($params['assertion']);
 
@@ -480,8 +480,8 @@ HOW IT WORKS
         The CLI is the sanctioned exception (see CLI COMMANDS).
 
 THE FACADE
-    App\RSpade\Core\TwoFactor\Rsx_Two_Factor          (staff)
-    App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor   (client portal)
+    App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor          (staff)
+    App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor   (client portal)
 
     Both expose exactly this API. Every $identity parameter takes an int id or
     the realm's identity model - a Login_User_Model for Rsx_Two_Factor, a

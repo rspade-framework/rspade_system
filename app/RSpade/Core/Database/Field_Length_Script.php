@@ -12,7 +12,7 @@ use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * A BUNDLE'S FIELD-LENGTH SCRIPT: the column max lengths of the models a compiled bundle

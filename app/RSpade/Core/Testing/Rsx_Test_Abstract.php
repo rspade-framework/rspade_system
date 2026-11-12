@@ -9,14 +9,15 @@ namespace App\RSpade\Core\Testing;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
-use App\RSpade\Core\Turnstile\Rsx_Turnstile;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
 /**
  * Rsx_Test_Abstract - Base class for RSX framework tests
@@ -359,7 +360,7 @@ abstract class Rsx_Test_Abstract
                 // One test is one unit of work for revision history. The runner is a single
                 // process for the whole suite, so without this every revision any test
                 // recorded would be filed under the first one's transaction.
-                \App\RSpade\Core\Revisions\Revision::_reset_request_state('test', static::class . '::' . $method->getName());
+                \App\RSpade\Lib\Revisions\Revision::_reset_request_state('test', static::class . '::' . $method->getName());
 
                 $use_transaction = static::$use_database_transactions;
                 $previous_baseline = null;
@@ -435,13 +436,13 @@ abstract class Rsx_Test_Abstract
                     // Forget which identities passed a second factor "in this request": a
                     // test is a request, and a verification left standing would let a later
                     // test mint browser trust without one.
-                    \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::_reset_request_state();
+                    \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::_reset_request_state();
 
                     // Clear the request classification (channel and staff/portal realm). A
                     // test that declared a portal request and threw before restoring it
                     // would otherwise leave every later model write stamped with the
                     // portal's site, in this class and in every class after it.
-                    \App\RSpade\Core\Portal\Rsx_Portal::_clear_cache();
+                    \App\RSpade\Lib\Portal\Rsx_Portal::_clear_cache();
 
                     // Clear the Turnstile per-request validation latch so a controller
                     // call in one test cannot satisfy the completeness guard for the next.
@@ -449,7 +450,7 @@ abstract class Rsx_Test_Abstract
 
                     // Clear every revision static, suppression included: a test that threw
                     // inside Revision::without() must not leave recording off for the next.
-                    \App\RSpade\Core\Revisions\Revision::_testing_reset();
+                    \App\RSpade\Lib\Revisions\Revision::_testing_reset();
 
                     // Forget a browser timezone cookie a test stood in for, and the zone
                     // resolved from it: the next test is another request, from no browser.
@@ -865,13 +866,13 @@ abstract class Rsx_Test_Abstract
      * error and state().
      *
      * @param int $task_id A PENDING _tasks row (Task::dispatch() under the suite leaves one)
-     * @return \App\RSpade\Core\Task\Task_Run_Model The settled run
+     * @return Task_Run_Model The settled run
      */
-    protected static function __run_pending_task(int $task_id): \App\RSpade\Core\Task\Task_Run_Model
+    protected static function __run_pending_task(int $task_id): Task_Run_Model
     {
         $claimed = DB::table('_tasks')
             ->where('id', $task_id)
-            ->where('status_id', \App\RSpade\Core\Task\Task_Run_Model::STATUS_PENDING)
+            ->where('status_id', Task_Run_Model::STATUS_PENDING)
             ->update(\App\RSpade\Core\Task\Task_Runner::running_fields());
 
         if (!$claimed) {
@@ -889,7 +890,7 @@ abstract class Rsx_Test_Abstract
 
         \App\RSpade\Core\Task\Task_Runner::settle($instance, $outcome);
 
-        return \App\RSpade\Core\Task\Task_Run_Model::find($task_id);
+        return Task_Run_Model::find($task_id);
     }
 
     /**
@@ -1064,7 +1065,7 @@ abstract class Rsx_Test_Abstract
             $class,
             $method,
             $params,
-            \App\RSpade\Core\Task\Task_Run_Model::ORIGIN_INLINE,
+            Task_Run_Model::ORIGIN_INLINE,
             \App\RSpade\Core\Task\Task_Runner::running_fields()
         );
         $task = \App\RSpade\Core\Task\Task_Instance::find($task_id);
@@ -1073,7 +1074,7 @@ abstract class Rsx_Test_Abstract
 
         \App\RSpade\Core\Task\Task_Runner::settle($task, \App\RSpade\Core\Task\Task_Run_Outcome::from_return($value));
 
-        return \App\RSpade\Core\Task\Task_Run_Model::find($task_id)->state();
+        return Task_Run_Model::find($task_id)->state();
     }
 
     /**

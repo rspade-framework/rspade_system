@@ -8,9 +8,9 @@
 namespace App\RSpade\Tests\LoginRedirect\Php;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Login\Login_Redirect;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\SignIn\Redirect\Login_Redirect;
 
 /**
  * Login_Redirect portal-context behavior. Exercises the same four calls under a

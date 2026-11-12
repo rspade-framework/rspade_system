@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Scaffold\Php;
 
 use Illuminate\Support\Facades\Artisan;
-use App\RSpade\Core\CodeTemplates\StubProcessor;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Scaffolding\StubProcessor;
 
 /**
  * Pins the output of the module scaffolder (rsx:app:module:create +

@@ -29,7 +29,7 @@ again.**
 - `Rsx_Request_Channel.php` — the stored answer to "what kind of request is this":
   `classify()`, `realm()` (`REALM_STAFF` / `REALM_PORTAL`, an attribute of AJAX and PAGE, not
   a channel), `realm_path()`, `is_portal_host()`. Which requests are the portal's is
-  `Core/Portal/Portal_Site_Resolver`'s reading of the URL against `PORTAL_URL`. Every later
+  `Lib/Portal/Portal_Site_Resolver`'s reading of the URL against `PORTAL_URL`. Every later
   question reads this; nothing re-derives it from `$_SERVER`. Outside a request the answer is
   a staff PAGE.
 - `Dispatcher.php` — the ONE pipeline for AJAX and PAGE in **both realms**: the realm picks a
@@ -69,5 +69,5 @@ again.**
 
 `rsx:man dispatch`, `rsx:man routing`, `rsx:man auth_gates`, `rsx:man error_pages`,
 `rsx:man proxority` · skills `rspade:spa`, `rspade:auth-gates`, `rspade:error-pages` ·
-siblings `Core/Ajax/`, `Core/Api/` (`Api_Dispatcher`), `Core/Companion/`, `Core/Portal/`,
+siblings `Core/Ajax/`, `Core/Api/` (`Api_Dispatcher`), `Core/Companion/`, `Lib/Portal/`,
 `Core/Errors/`.

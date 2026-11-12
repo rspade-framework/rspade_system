@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data), the claim flow (find_by_key, can_user_assign_this_file, attach_to), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
+description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data), the claim flow (find_by_key, can_user_assign_this_file, attach_to), the duplicate-upload question (duplicates_on(), Rsx_Duplicate_Upload, Rsx_Form.call_answering(), 'Upload Again' / 'Skip This File' / 'Cancel Upload'), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or claim endpoint or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
 ---
 
 # File attachments
@@ -145,6 +145,24 @@ if (!$doc) { return response_not_found('Not found'); }
 ```
 
 `File_Attachment_Model::find()` and `find_by_key()` are tenant-scoped and nothing more — within one site they will hand back an attachment hanging off a *different* record, so removing/renaming/sharing by a caller-supplied id without this is a real hole. A miss and a mismatch are the same null. On a site-scoped record every reader here is additionally pinned to the current session's site, so they stay correct even inside `without_site_scope()`.
+
+### A file the record already holds - the duplicate-upload question
+
+**Every endpoint that files a NEW upload onto a record asks first when the record already holds those bytes** (under any name - a retried upload has a new key, so only content can catch it). The lookup is `$upload->duplicates_on($record, $exclude_categories)` (an `Rsx_Result_Set`; leaves out the upload, soft-deleted rows, embeds and the categories you pass; empty for an upload with no resident blob) - an exact comparison, because identical bytes share ONE `file_storage_id`. The question is `Rsx_Duplicate_Upload`, one per duplicate upload, keyed `duplicate_upload:<attachment id>`, kind `confirm`: **Upload Again** (`true`, file it) / **Skip This File** (`false`, file nothing) / **Cancel Upload** (`back_label` -> `Rsx_Form.CANCELLED`, the call is never resent so the whole batch stops). Validate, screen, write:
+
+```php
+#[Writer]                                                  // a question records and writes nothing
+...
+$screen = Rsx_Duplicate_Upload::screen($params, $task, $uploads);   // uploads already claimable
+if ($screen['question'] !== null) {
+    return $screen['question'];
+}
+foreach ($screen['file'] as $upload) {
+    $upload->add_to($task, 'attachments');
+}
+```
+
+The widget calls the endpoint through `Rsx_Form.call_answering(Controller.method, params)` (each question through the app's registered handler; resolves `Rsx_Form.CANCELLED` on Cancel Upload); a form's `submit()` does that itself. **A skipped or cancelled upload needs nothing done** - it is never claimed, and the claim-window sweep takes it. A REPLACEMENT (a photo, a logo, a version) whose bytes are the current one changes nothing: `$new->has_same_content_as($current)`. `decide()` / `question()` are the per-upload pieces `screen()` is built from. Template examples: `Record_Attachment_List::claim()`, the client documents panel, both request-thread reply composers, the API attach endpoints (`duplicate_upload` param, 409 without it). `rsx:man file_upload`, DUPLICATE UPLOADS.
 
 ### Files embedded in rich text
 

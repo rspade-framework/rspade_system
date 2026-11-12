@@ -265,7 +265,7 @@ the email directories would be actively harmful rather than merely noisy.
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | EMAIL-SCOPE-OUT | the rule refuses to inspect a blade that is not an email template | php | the same offending fixture at `emails/`, `pages/` and `app/frontend/clients/` | 2 violations under emails/, 0 elsewhere | implemented | 2026-08-31 |
-| EMAIL-SCOPE-FRAMEWORK | the framework's own templates (beside their class, under `Core/Mail/`) are in scope | php | fixture at `Core/Mail/Probe_Email.blade.php` printing `$sent_at` | 1 violation | implemented | 2026-08-31 |
+| EMAIL-SCOPE-FRAMEWORK | the framework's own templates (beside their class, under `Lib/Messaging/Mail/`) are in scope | php | fixture at `Lib/Messaging/Mail/Probe_Email.blade.php` printing `$sent_at` | 1 violation | implemented | 2026-08-31 |
 | EMAIL-DATETIME-RAW | every bare read of an `_at`/`_date` value is flagged - variable, arrow, both string-key subscripts, a nested chain, and a `?? ''` guard | php | six fixture expressions | 1 violation each, high | implemented | 2026-08-31 |
 | EMAIL-DATETIME-RAW-ECHO | the unescaped `{!! !!}` form prints the same unformatted string and is flagged too | php | fixture: `{!! $created_at !!}` | 1 violation | implemented | 2026-08-31 |
 | EMAIL-DATETIME-REMEDIATION | the remediation names both formatters, the man page and the marker | php | fixture: `{{ $created_at }}` | suggestion contains `Rsx_Time::format_timestamp`, `Rsx_Date::format`, `rsx:man time`, the marker | implemented | 2026-08-31 |
@@ -281,7 +281,7 @@ the email directories would be actively harmful rather than merely noisy.
 | EMAIL-EXCEPTION-BOTH-CHECKS | one marker covers both checks on the line it guards | php | fixture: marker above a bare `Route()` call | 0 violations | implemented | 2026-08-31 |
 | EMAIL-EXCEPTION-RATIONALE | a bare marker suppresses nothing | php | fixture: `@EMAIL-TEMPLATE-01-EXCEPTION` with no text | 1 violation | implemented | 2026-08-31 |
 | EMAIL-EXCEPTION-FILE-LEVEL | the checker's generic file-level suppression still applies | php | two fixtures through `CodeQualityChecker::check_file()`, one marked | control flagged, marked file clean | implemented | 2026-08-31 |
-| EMAIL-SHIPPED-CLEAN | the rule reports nothing on the templates this repository actually ships (it found one real defect when written - a raw expiry timestamp in the portal shared-content email) | php | every `rsx/emails/*.blade.php` and `Core/Mail/*.blade.php` | 0 violations, and at least one template was found | implemented | 2026-08-31 |
+| EMAIL-SHIPPED-CLEAN | the rule reports nothing on the templates this repository actually ships (it found one real defect when written - a raw expiry timestamp in the portal shared-content email) | php | every `rsx/emails/*.blade.php` and `Lib/Messaging/Mail/*.blade.php` | 0 violations, and at least one template was found | implemented | 2026-08-31 |
 
 ## NAME-RESERVED-01 - the reserved framework-application prefix (Name_Reserved_Prefix_Rule_Test)
 
@@ -601,3 +601,16 @@ stay aligned.
 | TAB-DRIVER | through the real driver, a granted marker does not skip the rest of the file | php | two opens, one granted | one violation | implemented | 2026-11-06 |
 | TAB-SCOPE | framework code, test trees, resource/, vendored and minified files are ignored | php | six paths | violations only for `rsx/lib/` | implemented | 2026-11-06 |
 | TAB-JQHTML | template `@event=` values and code blocks are checked (one block = one function for the target-blank heuristic); a real `<a target="_blank">` is not | php | two templates | lines 3, 4, 7; none with the marker | implemented | 2026-11-06 |
+
+PHP-FQCN-MODEL-01 (ModelFqcnReference_CodeQualityRule), via `Model_Fqcn_Reference_Rule_Test`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MFR-CORE-MODELS | an inline FQCN of a Core/Models model is flagged | php | `\...\Core\Models\User_Model::find()` | 1 violation | implemented | 2026-11-12 |
+| MFR-SUBSYSTEM-MODEL | a model living beside its subsystem (Core/Files) is flagged | php | `\...\Core\Files\File_Attachment_Model::find()` | 1 violation | implemented | 2026-11-12 |
+| MFR-LIB-MODEL | a model under Lib/ (and a model base) is flagged | php | Portal_User_Model, Region_Model_Abstract | 1 violation each | implemented | 2026-11-12 |
+| MFR-STRING | a quoted FQCN string of a framework model is flagged | php | `'App\...\Email_Queue_Model'` | 1 violation | implemented | 2026-11-12 |
+| MFR-SYSTEM-MODEL | a system model (Rsx_System_Model_Abstract, e.g. Session) is not flagged | php | `\...\Core\Session\Session::find()` | 0 violations | implemented | 2026-11-12 |
+| MFR-NON-MODEL | a framework class that is not a model is not flagged | php | `\...\Lib\Portal\Rsx_Portal` | 0 violations | implemented | 2026-11-12 |
+| MFR-USE-AND-COMMENTS | use lines, docblocks and comments are allowed | php | fixture with all three | 0 violations | implemented | 2026-11-12 |
+| MFR-MODEL-FILE-EXEMPT | a framework model file itself is exempt | php | fixture checked as Lib/Portal/Portal_User_Model_Abstract.php | 0 violations | implemented | 2026-11-12 |

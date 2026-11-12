@@ -10,8 +10,8 @@ namespace App\RSpade\Tests\Revisions\Php;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision_Dictionary;
 
 /**
  * Pins the DERIVATION of the compression dictionary - what goes into it, in what order,

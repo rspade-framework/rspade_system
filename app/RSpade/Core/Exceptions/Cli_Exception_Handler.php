@@ -151,7 +151,7 @@ class Cli_Exception_Handler extends Rsx_Exception_Handler_Abstract
 
         // Output console debug messages if enabled and any exist
         if (!app()->environment('production')) {
-            $console_messages = \App\RSpade\Core\Debug\Debugger::_get_console_messages();
+            $console_messages = \App\RSpade\Lib\Developer\Debug\Debugger::_get_console_messages();
             if (!empty($console_messages)) {
                 $error_output .= "\nConsole Debug Messages:\n";
                 foreach ($console_messages as $message) {

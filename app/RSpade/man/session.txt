@@ -219,9 +219,11 @@ HOW SESSIONS TIME OUT
     session. A guest browser nobody ever signed in on is deleted after
     guest_expiry_minutes (30 days).
 
-    Set the limits in rsx/resource/config/rsx.php. Never implement "remember
-    me" or a timeout of your own. The application's one job is the dialog the
-    page shows when its sign-in is gone:
+    Set the limits in rsx/resource/config/rsx.php, or - when an administrator
+    sets them at run time - supply them through the session.limits resolve
+    hook (LIFETIMES, CLEANUP AND DEACTIVATION in part two). Never implement
+    "remember me" or a timeout of your own. The application's one job is the
+    dialog the page shows when its sign-in is gone:
 
         // from a static on_app_modules_define()
         Rsx.set_session_expired_handler(function (info) { ... });
@@ -528,7 +530,51 @@ LIFETIMES, CLEANUP AND DEACTIVATION
                                              per realm
         login_history_retention_days   365   rows kept in the login histories
 
-    A limit of 0 turns that limit off.
+    A limit of 0 turns that limit off. The staff / portal values are the
+    DEFAULTS an application's session.limits handler may override (below).
+
+    APPLICATION-SUPPLIED LIMITS. Session::get_sign_in_limits($realm) answers
+    a realm's two limits, ['max_length_minutes' => int, 'max_idle_minutes' =>
+    int], and is the ONE reader: the request check below, the cleanup sweep
+    and the rsx:debug harness-row reuse all judge a sign-in by its answer, so
+    a request and the sweep never disagree about when a sign-in ends. Each
+    limit resolves in this order:
+
+        1. the session.limits RESOLVE hook,
+               Rsx::trigger_resolve('session.limits', ['realm' => $realm])
+           first non-null answer wins; it is an array naming either limit or
+           both;
+        2. for a limit the answer does not name, or when every handler
+           declines (null) or none exists, config('rsx.sessions.<realm>.<key>').
+           With no handler the behaviour is exactly the config's.
+
+    A supplied value must be an integer >= 0 (0 = no limit). A non-array
+    answer, a value that is not an integer (a numeric string included) or is
+    negative, or a key other than the two THROWS, naming the hook and the
+    realm - an application's mistake never becomes "no limit". Cast what you
+    read from storage. ajax_grace_minutes is config-only.
+
+    The hook is asked at most ONCE per realm per request (or task run); the
+    answer is kept for the rest of it. That is the only caching the framework
+    does, and the hook is asked on EVERY signed-in request, so a handler that
+    reads stored settings caches its own answer (RsxCache::remember(), with
+    the key deleted when the settings screen saves) rather than querying the
+    database per request. The payload is the realm and nothing else: the sweep
+    runs as a task with nobody signed in and no site declared, so a handler
+    answers from GLOBAL state - never the session, the current user or a
+    site-scoped model (a site-scoped read throws there). On a multi-tenant
+    install the answer is the same for every site, as the config is.
+
+        #[OnEvent('session.limits')]
+        public static function limits(array $data): ?array
+        {
+            return RsxCache::remember('session_limits:' . $data['realm'],
+                function () use ($data) {
+                    $idle = Rsx_Settings::get(
+                        'session_' . $data['realm'] . '_max_idle_minutes');
+                    return $idle === null ? [] : ['max_idle_minutes' => $idle];
+                }, 600);
+        }
 
     AT REQUEST TIME. Session::enforce_timeouts($strict) and
     Portal_Session::enforce_timeouts($strict), called by the dispatcher (a
@@ -563,7 +609,8 @@ LIFETIMES, CLEANUP AND DEACTIVATION
                                       first_signed_in_at null, TYPE_WEB - unused
                                       for guest_expiry_minutes, with their
                                       values; signs out the CURRENT sign-ins
-                                      past a limit PLUS ajax_grace_minutes
+                                      past a limit (get_sign_in_limits(), as
+                                      at a request) PLUS ajax_grace_minutes
                                       (a request would not end them sooner, and
                                       an open form may still save), under the
                                       reason a request would record; signs out
@@ -877,8 +924,8 @@ PASSWORD CHANGES
     SIGN_OUT_PASSWORD_CHANGED. It is the models' own `updated` hook
     (booted()), so there is nothing to call and no way to forget it:
 
-        $login_user->password = Login_User_Model::hash_password($new);
-        $login_user->save();     // every other browser is now signed out
+        $login_user->set_password($new, Password_Change::CAUSE_SELF);   // hashes; does not save
+        $login_user->save();               // every other browser is now signed out
 
     - THE BROWSER THAT MADE THE CHANGE stays signed in: everything on the
       browser making the request is spared.
@@ -896,6 +943,51 @@ PASSWORD CHANGES
     save forgets every browser's two-factor trust (TRUSTED BROWSERS) and clears
     password_reset_required (PASSWORD RESET REQUIRED). A write that bypasses the
     model (raw SQL, ->raw_bulk()) does none of this.
+
+    THE PASSWORD-CHANGE EVENT. Once the save has COMMITTED, the model fires
+    one action (Password_Change, rsx:man event_hooks):
+
+        login_user.password.changed     a staff login identity
+        portal_user.password.changed    a portal user
+
+        {identity, cause, actor, audit_session_id, ip_address}
+
+    - cause - HOW it changed, stated by the code setting the password:
+
+          $login_user->set_password($new, Password_Change::CAUSE_SELF);
+
+          self            the user changed it, proving the old one
+          reset_link      a self-service reset completed from an emailed link
+          admin           somebody else (an administrator) set it
+          forced_change   chosen at sign-in after a forced reset (the framework
+                          states this itself: Forced_Password_Change)
+          cli             rsx:users:password:set (stated by the command)
+          unknown         the save stated none - a bare ->password assignment,
+                          set_password() without a cause. Never guessed.
+
+      Every path that changes an EXISTING identity's password states one;
+      any other value throws (InvalidArgumentException). The cause belongs to
+      the one save that follows.
+    - actor - the identity acting on the request: on a portal request the
+      signed-in portal user, otherwise the staff identity signed in on the
+      browser (the IMPERSONATOR while one impersonates). Null with nobody
+      signed in - a reset link, the forced change before its sign-in, a
+      command.
+    - audit_session_id - Session::get_audit_session_id() (AUDIT SESSIONS),
+      resolved after the commit; null in a command, a task and the rsx:debug
+      harness. Store THIS to say where it came from, never the address.
+    - ip_address - Session::get_client_ip(); null in a command.
+
+    Creating an identity with a password is not a change and fires nothing;
+    neither does a save that leaves the password alone. Inside a transaction
+    (a #[Writer], a Site_Lock::write() section, DB::transaction()) the event
+    waits for the commit and a rollback drops it; with none open it fires at
+    once. A handler that throws after a commit is reported, never answered -
+    the change stands. A handler runs under whatever lock the change was made
+    under (another site's, or none), so a handler writing site-scoped rows on
+    the identity's sites dispatches a task (the template's
+    Password_Event_Handlers / Password_Audit_Service: an action-log row per
+    site, open reset links ended, a SECURITY notice email).
 
 TRUSTED BROWSERS (TWO-FACTOR)
     A browser that passed a second factor may be trusted for a window
@@ -959,7 +1051,7 @@ SESSION MANAGEMENT
 
         Each entry: id (the user session - what the terminate functions take),
         session_id (the browser), site_id, user_id, ip_address, user_agent,
-        user_agent_parsed, device_summary, location, last_active, created_at,
+        user_agent_parsed, device_summary, last_active, created_at,
         signed_in_at, first_seen, signed_out_at, sign_out_reason (a label or
         null), is_signed_in, is_current, is_impersonation, impersonator_id,
         impersonation_started_at, sign_in_count, type_id (the browser's),
@@ -1295,6 +1387,9 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
         php artisan rsx:users:force_password_reset --portal-user=<id> [--clear]
         php artisan rsx:users:force_password_reset --portal-user=<email> --site=<id>
 
+        php artisan rsx:users:password:set --user=<id|email> --require-reset
+                                                   // a TEMPORARY password: set AND flagged
+
     The command is the operator's switch and its --clear the recovery for a
     wrongly flagged account. It sends no email, ends no session and changes no
     password - the reset workflow (a forgot-password link, a support call) is the
@@ -1311,15 +1406,18 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     Nothing about the flag reaches a caller that has not proved the password, and
     an identity the installation would refuse anyway (no active membership) still
     answers the indistinguishable null. It is the second thrown refusal beside
-    Auth_Throttled_Exception, and a login function catches both, rendering the
-    message and the way to a new password:
+    Auth_Throttled_Exception, and a login function catches both - the throttle as
+    the form's error, the reset flag by starting the FORCED PASSWORD CHANGE AT
+    SIGN-IN below (or, the simpler choice, an error pointing at a forgot-password
+    flow):
 
         try {
             $login_user = RsxAuth::verify_credentials($credentials, record: false);
         } catch (Auth_Throttled_Exception $e) {
             return $form_with_error($e->getMessage());
         } catch (Auth_Password_Reset_Required_Exception $e) {
-            return $form_with_error($e->getMessage() . ' Use "Forgot your password?".');
+            RsxAuth::begin_forced_password_change($e->identity);
+            return redirect(Rsx::Route('Login_Controller::new_password'));
         }
 
     A login function that does not catch it lets a flagged account's sign-in
@@ -1339,13 +1437,19 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
 
     CLEARED BY THE FRAMEWORK when the password changes: both models' booted()
     zero the flag in the same save that writes a new password hash (one UPDATE,
-    no second save). A save that assigns the flag ITSELF beside a new password
-    keeps what it assigned - an operator issuing a temporary password that must
-    be replaced writes both at once:
+    no second save). A save that ASKS for the flag beside a new password keeps
+    it - an operator or administrator issuing a temporary password that must be
+    replaced writes both at once:
 
-        $login_user->password = Login_User_Model::hash_password($temporary);
+        $login_user->set_password($temporary, Password_Change::CAUSE_ADMIN);
         $login_user->require_password_reset();
-        $login_user->save();
+        $login_user->save();          // flagged, even if it was flagged already
+
+    require_password_reset() records the request on the INSTANCE as well as the
+    column, and that save honours it: an identity that was ALREADY flagged stays
+    flagged (assigning 1 over 1 leaves the column clean, which a dirty check
+    alone would read as "not asked"). The request belongs to that one save; the
+    next password change clears the flag as usual.
 
     Only a model save clears it; a write that bypasses the model (raw SQL,
     ->raw_bulk()) does not. The same save signs the identity out of every other
@@ -1354,6 +1458,56 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     THE PORTAL. Portal_Auth::verify_credentials() (rsx:man portal, SIGNING IN)
     applies the same flag on portal_users, throws the same exception carrying the
     Portal_User_Model, and records into Portal_Login_History.
+
+    FORCED PASSWORD CHANGE AT SIGN-IN
+
+    "This identity proved its password but must choose a new one before it is
+    signed in" - the second-factor challenge's shape (half-authenticated is
+    represented as NOT authenticated), with no email and no token in a URL:
+
+        RsxAuth::begin_forced_password_change(Login_User_Model $identity): void
+        RsxAuth::forced_password_change_pending(): ?array      // {email}
+        RsxAuth::complete_forced_password_change(string $new): Login_User_Model
+        RsxAuth::abandon_forced_password_change(): void
+
+        Portal_Auth::  the same four, for a Portal_User_Model on the portal's site
+
+    1. The login function catches Auth_Password_Reset_Required_Exception and
+       calls begin_forced_password_change($e->identity): the realm is SIGNED OUT
+       first, then the identity is parked in the realm's session values. The
+       parked value has no window of its own - it lives as long as the session
+       and goes with the realm's next sign-out - and it goes STALE the moment the
+       password changes some other way (it holds a fingerprint of the hash it was
+       proven against; a mismatch reads as nothing pending).
+    2. The "choose a new password" page reads forced_password_change_pending()
+       (the full address, for its hidden autocomplete="username" field).
+    3. Its POST checks the APPLICATION's password policy (length, a confirmation
+       field) and calls complete_forced_password_change($new), which:
+         - asks Login_Throttle::require_not_throttled() of the parked address
+           first (Auth_Throttled_Exception) - the step draws on the sign-in
+           budget;
+         - refuses an empty password and the CURRENT password, throwing
+           Forced_Password_Change_Exception (user-safe message; reason() is
+           REASON_EMPTY / REASON_UNCHANGED / REASON_NOTHING_PENDING) and leaving
+           the step pending;
+         - saves through the model (set_password() + save(); a portal user under
+           Site_Lock::write() on its site): the flag clears, trusted browsers
+           are forgotten, every other sign-in ends;
+         - forgets the parked value and answers the identity, STILL NOT SIGNED IN.
+           The save states CAUSE_FORCED_CHANGE, so login_user.password.changed /
+           portal_user.password.changed reports 'forced_change' (PASSWORD
+           CHANGES); the sign-in that follows records its own success.
+    4. The login function continues exactly where verify_credentials() would
+       have returned: a second factor the identity holds is challenged NEXT
+       (begin_challenge()), and only then is the identity signed in - so a forced
+       change is never a way around a second factor; it is the step BEFORE it.
+       The sign-in records its own success.
+
+    A passkey or federated sign-in is never refused by the flag (it presents no
+    password) and so never reaches this step: such a user keeps the flag until
+    their next password sign-in. The template's staff sign-in uses this step
+    (rsx/app/login/CLAUDE.md); its portal sign-in still points a flagged account
+    at its emailed "Forgot your password?" link, and may adopt the portal twin.
 
     Enforce your own IDENTITY statuses in TWO places, and understand why both
     (site membership needs neither - the framework does it):
@@ -1788,7 +1942,7 @@ LOGIN HISTORY
 
         Successes, post-password refusals and passkey enrollment outcomes, most
         recent first. Each record: id, email, ip_address, user_agent,
-        user_agent_parsed, location (null until geo-IP is wired), status,
+        user_agent_parsed, status,
         status_label, failure_reason, timezone, timezone_source, created_at.
         status tells a sign-in from a refusal or an enrollment row; an app may
         also record its own outcomes through record_success() / record_refusal().
@@ -1818,7 +1972,6 @@ LOGIN HISTORY
               ('portal_login_failures:...'), so get_failed_attempts_count*() on
               each class reads its own realm - while Login_Throttle, the
               enforcement, is ONE limit across both realms;
-            - location is always null (the portal table has no location columns);
             - rows cascade with their portal user (a FOREIGN KEY ... ON DELETE
               CASCADE, like the other portal-user-keyed system tables).
 
@@ -2171,19 +2324,15 @@ USER AGENT PARSING
         - This is a simple parser for display purposes
         - Not intended for feature detection or security decisions
         - For comprehensive parsing, use a dedicated library like WhichBrowser
-        - Location fields are placeholders for future geo-IP integration
+        - A location is Rsx_Geo_Ip::label() of the address at display time
+          (rsx:man geo_ip)
 
 LOCATION (GEOCODING)
-    Where an address is located is recorded once per address, on its
-    _ip_addresses row: city, state, country, latitude, longitude
-    (rsx:man ip_addresses). The framework does not ship a geocoder yet, so
-    those fields are null today; a resolver that fills them is coming, and
-    Ip_Address::describe() and Ip_Address::join() answer its results when it
-    lands.
-
-    The `location` key of a login-history record (Login_History) is read from
-    _login_history.location_city / location_region / location_country, which
-    nothing populates; it answers null.
+    Where an address is located is answered at display time by
+    Rsx_Geo_Ip::lookup() / label() and never stored (rsx:man geo_ip). None
+    of the readers here answers a location - not get_sessions_for_user(),
+    not Login_History, not Audit_Session: an endpoint showing an address
+    ships Rsx_Geo_Ip::label() of it beside it as ip_address__location.
 
 INTERNALS MAP
     For framework maintainers: which method owns which job. Every

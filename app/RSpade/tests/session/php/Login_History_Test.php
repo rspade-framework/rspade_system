@@ -259,7 +259,7 @@ class Login_History_Test extends Rsx_Test_Abstract
         static::__assert_array_has_key('status_label', $entry);
         static::__assert_array_has_key('failure_reason', $entry);
         static::__assert_array_has_key('created_at', $entry);
-        static::__assert_array_has_key('location', $entry);
+        static::__assert_false(array_key_exists('location', $entry), 'no stored location: an address is located at display time (Rsx_Geo_Ip)');
         static::__assert_array_has_key('timezone', $entry);
         static::__assert_array_has_key('timezone_source', $entry);
     }

@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher] incl. mass edits, imports, reassignments and exports with progress and a dry run, per-item Site_Lock::write() sections, request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, moving slow endpoint work to a task, or a run 'returned an array', is stuck Pending, was killed with 'no report for Ns', or failed with 'Site lock enforcement: ... by task'."
+description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[On_Build] (once per new build), #[Exclusive] / #[Debounce], #[Run_As_Dispatcher] incl. mass edits, imports, reassignments and exports with progress and a dry run, per-item Site_Lock::write() sections, request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, moving slow endpoint work to a task, or a run 'returned an array', is stuck Pending, was killed with 'no report for Ns', or failed with 'Site lock enforcement: ... by task'."
 ---
 
 # Background Tasks
@@ -451,6 +451,25 @@ Each declaration is a `_task_schedules` row (cadence + statistics); **each run o
 ```
 * * * * * php artisan rsx:task:process
 ```
+
+## After every build: `#[On_Build]`
+
+```php
+#[Task('Refresh the lookup data')]
+#[Exclusive]
+#[Schedule('maintenance')]            // optional: a cadence as well
+#[On_Build]
+public static function refresh(Task_Instance $task, array $params = [])
+{
+    if (static::is_current()) {       // cheap local check FIRST - in development this runs after every edit
+        $task->summary('Already current; nothing to do.');
+        return null;
+    }
+    // ... the real work
+}
+```
+
+The scheduler TICK - never the build - compares `Manifest::get_build_key()` with the key it last dispatched for (`_task_on_build`) and, when they differ, dispatches each `#[On_Build]` task once with no params and records the key. A burst of rebuilds between ticks is one dispatch; a database with no recorded key (fresh install, fresh deploy) dispatches; in development the key moves with every source change, in production with `rsx:build`. **While the task system is off nothing is dispatched and the key stays unrecorded** - the first tick after `rsx:tasks:enable` dispatches; under maintenance mode the tick is refused. The declaration (`TASK-ON-BUILD-01`, a manifest-build FATAL - the build fails naming the method): no arguments, on a `#[Task]`, beside `#[Exclusive]` or `#[Debounce]`, `array $params = []` with no required params, never `#[Run_As_Dispatcher]`. Under the suite the tick skips the step; a test calls `Task_On_Build::dispatch_for_build('<key>')`. `rsx:man tasks`, ON BUILD.
 
 ---
 

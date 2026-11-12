@@ -9,8 +9,8 @@ SYNOPSIS
                               [--days-retention=<n>] [--json]
 
     Config:  rsx.logging.rotation.{enabled,days_uncompressed,days_retention}
-    Task:    App\RSpade\Core\Logging\Log_Maintenance_Service::rotate
-    Engine:  App\RSpade\Core\Logging\Rsx_Logrotate::rotate()
+    Task:    App\RSpade\Lib\Operations\Logging\Log_Maintenance_Service::rotate
+    Engine:  App\RSpade\Lib\Operations\Logging\Rsx_Logrotate::rotate()
 
 DESCRIPTION
     RSpade rotates its own log directory. NOTHING in the framework assumes an OS

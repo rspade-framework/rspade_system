@@ -56,18 +56,18 @@ Invariants the tests exist to hold:
 
 | File | Role |
 |------|------|
-| `Core/Mail/Rsx_Email_Abstract.php` | The email class contract and the fluent envelope |
-| `Core/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, the `tag()` read, unsubscribe signature, attachment persistence, drain kick, `displayable_html()`, `preview()`, `catalogue()` |
-| `Core/Mail/Email_ManifestSupport.php` | The build-time email table and its three FATALs |
-| `Core/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email`; `compose()`, the one body assembly shared with `compose_preview()` |
-| `Core/Mail/Rsx_Mail_Text.php` | The derived plain-text part |
-| `Core/Mail/Rsx_Mail_Transport.php` | The four delivery modes, the Laravel mailer resolution (`make()`, `mailer_config()`, `describe()`), the aiosmtpd banner probe, `$override_for_tests` / `$banner_for_tests`, the `Mail` health rows |
-| `Core/Mail/Mail_Queue_Service.php` | The drain and the daily cleanup |
-| `Core/Mail/Mail_Unsubscribe_Controller.php` | `GET`/`POST /_mail/unsubscribe`, incl. RFC 8058 one-click |
-| `Core/Mail/Rsx_Mail_Test_Email.php` | The framework's own smoke-test email |
-| `Core/Models/Email_Queue_Model.php` | The row's state machine, the claim, `reclaim_stranded()`, retention |
-| `Core/Models/Email_Attachment_Model.php` | Attachment and inline-image rows |
-| `Core/Models/Email_Recipient_Model.php` | Per-recipient blocklist and counters |
+| `Lib/Messaging/Mail/Rsx_Email_Abstract.php` | The email class contract and the fluent envelope |
+| `Lib/Messaging/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, the `tag()` read, unsubscribe signature, attachment persistence, drain kick, `displayable_html()`, `preview()`, `catalogue()` |
+| `Lib/Messaging/Mail/Email_ManifestSupport.php` | The build-time email table and its three FATALs |
+| `Lib/Messaging/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email`; `compose()`, the one body assembly shared with `compose_preview()` |
+| `Lib/Messaging/Mail/Rsx_Mail_Text.php` | The derived plain-text part |
+| `Lib/Messaging/Mail/Rsx_Mail_Transport.php` | The four delivery modes, the Laravel mailer resolution (`make()`, `mailer_config()`, `describe()`), the aiosmtpd banner probe, `$override_for_tests` / `$banner_for_tests`, the `Mail` health rows |
+| `Lib/Messaging/Mail/Mail_Queue_Service.php` | The drain and the daily cleanup |
+| `Lib/Messaging/Mail/Mail_Unsubscribe_Controller.php` | `GET`/`POST /_mail/unsubscribe`, incl. RFC 8058 one-click |
+| `Lib/Messaging/Mail/Rsx_Mail_Test_Email.php` | The framework's own smoke-test email |
+| `Lib/Messaging/Mail/Email_Queue_Model.php` | The row's state machine, the claim, `reclaim_stranded()`, retention |
+| `Lib/Messaging/Mail/Email_Attachment_Model.php` | Attachment and inline-image rows |
+| `Lib/Messaging/Mail/Email_Recipient_Model.php` | Per-recipient blocklist and counters |
 | `Commands/Rsx/Mail_Test_Command.php` | `rsx:mail:test` |
 | `Commands/Rsx/Mail_Queue_Command.php` | `rsx:mail:queue` - the summary and the filtered listing |
 | `Commands/Rsx/Mail_Show_Command.php` | `rsx:mail:show` - one row in full |

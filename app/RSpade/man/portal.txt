@@ -5,8 +5,8 @@ NAME
 
 SYNOPSIS
     // Application portal middleware (/rsx/portal_main.php)
-    use App\RSpade\Core\Portal\Portal_Main_Abstract;
-    use App\RSpade\Core\Portal\Portal_Session;
+    use App\RSpade\Lib\Portal\Portal_Main_Abstract;
+    use App\RSpade\Lib\Portal\Portal_Session;
 
     class Portal_Main extends Portal_Main_Abstract {
         public static function init(): void {
@@ -72,7 +72,7 @@ DESCRIPTION
     CSP realm (rsx:man dispatch, THE REALM DESCRIPTOR).
 
     Framework vs application:
-      Framework (App\RSpade\Core\Portal\, App\RSpade\Core\Models\)
+      Framework (App\RSpade\Lib\Portal\, App\RSpade\Core\Models\)
         - Portal_Session       session, CSRF, login/logout, device sessions
         - Rsx_Portal (PHP+JS)  context detection and type-safe URL generation
         - Portal_Main_Abstract portal-wide middleware hook contract
@@ -394,7 +394,7 @@ PORTAL MAIN HOOKS
     (rsx:man dispatch, CODED FAILURES).
 
 SESSION & AUTH
-    use App\RSpade\Core\Portal\Portal_Session;
+    use App\RSpade\Lib\Portal\Portal_Session;
 
     Portal_Session is the portal's Session. It is site-scoped and is a FACADE
     over the PORTAL SIGN-IN of the one session the browser has - not a second
@@ -754,7 +754,15 @@ PORTAL LOGIN FLOW
         4. A portal user flagged portal_users.password_reset_required THROWS
            Auth_Password_Reset_Required_Exception (->identity is the portal
            user), only now that the password matched - recorded as a
-           FAILED_PASSWORD_RESET_REQUIRED row even with $record = false.
+           FAILED_PASSWORD_RESET_REQUIRED row even with $record = false. A
+           login function either points at its forgot-password flow or starts
+           the forced change at sign-in (the template does, on its "Choose a
+           new password" page, /login/new-password):
+           Portal_Auth::begin_forced_password_change($e->identity),
+           forced_password_change_pending(), complete_forced_password_change()
+           (answers the portal user NOT signed in - a second step and the
+           sign-in follow), abandon_forced_password_change(). rsx:man session,
+           FORCED PASSWORD CHANGE AT SIGN-IN.
         5. Success: a SUCCESS row when $record is true; the portal user is
            answered. NOBODY IS SIGNED IN - that is set_portal_user_id().
 
@@ -835,7 +843,7 @@ PORTAL LOGIN FLOW
         Portal_Session, end to end.
 
 PORTAL USER MODEL
-    App\RSpade\Core\Models\Portal_User_Model is the portal identity - the portal
+    App\RSpade\Lib\Portal\Portal_User_Model is the portal identity - the portal
     analogue of Login_User_Model. It is a framework-core model so the portal
     subsystem never depends on a class defined in the application. Table:
     portal_users (site-scoped). Surface:
@@ -843,8 +851,12 @@ PORTAL USER MODEL
       can_login(): bool                  active and verified
       check_password(string): bool       a bare hash check - a sign-in form
                                          uses Portal_Auth::verify_credentials()
-      set_password(string): void         hashes; does not save (a saved new
-                                         password clears password_reset_required)
+      set_password(string, ?cause): void hashes; does not save (a saved new
+                                         password clears password_reset_required and
+                                         fires portal_user.password.changed with
+                                         the cause - Password_Change::CAUSE_*,
+                                         'unknown' when none; rsx:man session,
+                                         PASSWORD CHANGES)
       require_password_reset(): void     sets password_reset_required; does not save
       is_password_reset_required(): bool
       touch_last_login(): void
@@ -884,7 +896,7 @@ AUTHORIZATION
 
   Portal_Permission (the facade)
     The portal analogue of the staff Permission class. The marker base
-    Portal_Permission_Abstract lives in framework core (Core/Portal/); the concrete
+    Portal_Permission_Abstract lives in framework core (Lib/Portal/); the concrete
     Portal_Permission lives in the application (rsx/portal_permission.php) because
     its membership/role methods reference app models (Portal_Membership_Model) -
     exactly like staff Permission extends Permission_Abstract. All methods static:
@@ -909,7 +921,7 @@ AUTHORIZATION
   Record-level access: portal_fetch() + portal_can_read()
     A model becomes fetchable from portal JavaScript by using the core trait:
 
-      use App\RSpade\Core\Portal\Portal_Authorizable;
+      use App\RSpade\Lib\Portal\Portal_Authorizable;
 
     The trait supplies a gated portal_fetch($id) that (1) requires a portal session
     and (2) defers to the model's portal_can_read(). The ORM endpoint dispatches to
@@ -952,7 +964,7 @@ AUTHORIZATION
                         layer, which gates do not cover.
 
 ACTIVITY & NOTIFICATIONS
-    use App\RSpade\Core\Models\Portal_Notification_Model;
+    use App\RSpade\Lib\Portal\Portal_Notification_Model;
 
     Portal_Notification_Model is the framework-core portal activity / notification
     primitive - the bus that portal features emit into (the dashboard "what's new"
@@ -1655,7 +1667,7 @@ DOCUMENTS (FIRM -> CLIENT SHARE)
 SAMPLE APPLICATION (THE SHIPPED REFERENCE TEMPLATE)
     Everything in /rsx/ is a working REFERENCE APPLICATION, not framework core - a
     runnable B2B SaaS starter that demonstrates the portal end to end and is meant to be
-    customized or replaced per app. The framework (the Core/Portal classes and helpers
+    customized or replaced per app. The framework (the Lib/Portal classes and helpers
     documented above) is the contract; /rsx/ is one concrete, opinionated build on it.
 
     What it ships

@@ -52,7 +52,7 @@ assert_no_portal_cookie() {
 # the application host, reached here as localhost + <prefix> (Rsx_Portal_Url, read from
 # the live configuration). A portal on a host of its own holds a cookie per host by
 # construction, so the test does not apply there.
-PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Core\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Core\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
+PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Lib\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Lib\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
 case "${PORTAL_LAYOUT%% *}" in
     same) PORTAL_PREFIX="${PORTAL_LAYOUT#* }" ;;
     separate) echo "SKIP: $TEST_NAME - PORTAL_URL names a host of its own"; exit 0 ;;
@@ -65,12 +65,12 @@ esac
 # ---------------------------------------------------------------------------
 echo "[TEST] 0. Seed the portal fixture account..." >&2
 seed_out="$(cd /var/www/html && php artisan tinker --execute='
-    $u = \App\RSpade\Core\Models\Portal_User_Model::withTrashed()
+    $u = \App\RSpade\Lib\Portal\Portal_User_Model::withTrashed()
         ->where("site_id", 1)->where("email", "flash-http-fixture@rspade.test")->first();
-    if (!$u) { $u = new \App\RSpade\Core\Models\Portal_User_Model(); $u->site_id = 1; $u->email = "flash-http-fixture@rspade.test"; }
+    if (!$u) { $u = new \App\RSpade\Lib\Portal\Portal_User_Model(); $u->site_id = 1; $u->email = "flash-http-fixture@rspade.test"; }
     $u->deleted_at = null;
     $u->is_verified = 1;
-    $u->status_id = \App\RSpade\Core\Models\Portal_User_Model::STATUS_ACTIVE;
+    $u->status_id = \App\RSpade\Lib\Portal\Portal_User_Model::STATUS_ACTIVE;
     $u->set_password("FlashHttp!123");
     $u->save();
     echo "SEEDED:" . $u->id;

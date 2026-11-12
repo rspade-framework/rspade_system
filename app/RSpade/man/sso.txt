@@ -5,7 +5,7 @@ NAME
     Socialite provider you install - for staff and the client portal
 
 SYNOPSIS
-    use App\RSpade\Core\Sso\Rsx_Sso;
+    use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
 
     # .env - switching a provider on is the whole installation step
     SSO_GOOGLE_ENABLED=true

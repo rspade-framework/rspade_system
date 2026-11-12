@@ -25,7 +25,7 @@ rsx/emails/welcome_email.blade.php
 ```php
 namespace Rsx\Emails;
 
-use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Email_Abstract;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Rsx;
 
@@ -62,7 +62,7 @@ class Welcome_Email extends Rsx_Email_Abstract
 
 ```blade
 @rsx_id('Welcome_Email')                            {{-- EQUALS the class basename --}}
-{!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::header($subject ?? 'Welcome') !!}
+{!! \App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Layout::header($subject ?? 'Welcome') !!}
 
 <p>Hello {{ $name }},</p>
 
@@ -70,7 +70,7 @@ class Welcome_Email extends Rsx_Email_Abstract
     <a href="{{ $login_url }}" class="email-button">Sign in</a>
 </p>
 
-{!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
+{!! \App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
 ```
 
 `$subject`, `$branding` and `$unsubscribe_url` (null for transactional) are injected; everything else is `data()`. Classes the shipped stylesheet defines: `.email-button`, `.email-muted`, `.email-divider`, plus the wrapper/container/header/body/footer scaffolding.
@@ -110,7 +110,7 @@ A recipient object's display name comes from `get_printed_name()`, else `first_n
 
 Enqueue order (load-bearing): site (portal-aware) -> dedupe (returns the existing row, any status) -> **site block list** (every category but SECURITY, original addresses: a listed `to` becomes a **BLOCKED** row; a listed cc/bcc is removed and recorded in `withheld_recipients`) -> recipient opt-out (notification/marketing to an opted-out address becomes a **BLOCKED** row) -> test recipients (a test cc/bcc is withheld and recorded; a test `to` skips the dev-site gate) -> dev-site gate (`to` AND every cc/bcc) -> freeze `subject()`/`data()`/`tag()` (tag read and validated first) -> persist attachments (Blocked/Suppressed rows too) -> kick the drain.
 
-**Categories**: `TRANSACTIONAL` (ignores the recipient opt-out), `NOTIFICATION`, `MARKETING`, `SECURITY` (a required notice the RECIPIENT set in motion - the emailed sign-in code, `rsx:man two_factor_codes`: ignores the opt-out AND the site block list, no unsubscribe link; the `.dev.` gate and `rsx.mail.delivery` still apply). SECURITY is never for a notice the site decides to send.
+**Categories**: `TRANSACTIONAL` (ignores the recipient opt-out), `NOTIFICATION`, `MARKETING`, `SECURITY` (a required notice the RECIPIENT set in motion - the emailed sign-in code, `rsx:man two_factor_codes`: ignores the opt-out AND the site block list, no unsubscribe link; the `.dev.` gate and `rsx.mail.delivery` still apply). A warning that somebody acted on the recipient's OWN account (a changed password, a spent second-factor challenge) is SECURITY too - it says what to do if it was not them. SECURITY is never for any other notice the site decides to send.
 
 **An address's history is `Rsx_Mail::recent_to_address($email, $limit)`** - the current site's newest messages by the ORIGINAL recipient, indexed - never a query of `_email_queue`.
 

@@ -12,11 +12,11 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Cookie;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
-use App\RSpade\Core\Portal\Portal_Site_Resolver;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Rsx_Signed_Url;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Portal\Portal_Site_Resolver;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Session_Link - the linked-session handshake: three one-time GET legs that make a portal

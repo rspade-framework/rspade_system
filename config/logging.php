@@ -66,21 +66,21 @@ return [
 
     'channels' => [
         'stack' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'stack',
             'channels' => ['single'],
             'ignore_exceptions' => false,
         ],
 
         'single' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'single',
             'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
 
         'daily' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'daily',
             'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
             'level' => env('LOG_LEVEL', 'debug'),
@@ -88,7 +88,7 @@ return [
         ],
 
         'monthly' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'monthly',
             'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
             'level' => env('LOG_LEVEL', 'debug'),
@@ -97,7 +97,7 @@ return [
         ],
 
         'slack' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),
             'username' => 'Laravel Log',
@@ -106,7 +106,7 @@ return [
         ],
 
         'papertrail' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),
             'handler' => env('LOG_PAPERTRAIL_HANDLER', SyslogUdpHandler::class),
@@ -118,7 +118,7 @@ return [
         ],
 
         'stderr' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),
             'handler' => StreamHandler::class,
@@ -129,13 +129,13 @@ return [
         ],
 
         'syslog' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'syslog',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
 
         'errorlog' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'driver' => 'errorlog',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
@@ -146,7 +146,7 @@ return [
         ],
 
         'emergency' => [
-            'tap' => [App\RSpade\Core\Logging\System_Timezone_Log_Tap::class],
+            'tap' => [App\RSpade\Lib\Operations\Logging\System_Timezone_Log_Tap::class],
             'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
         ],
     ],

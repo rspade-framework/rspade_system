@@ -219,9 +219,10 @@ FILE LIFECYCLE
 
     Orphaned attachments
         A file uploaded but never attached (fileable_type/id NULL) is an
-        orphan. There is currently NO scheduled task that auto-deletes idle
-        orphan attachments - reclaim them with the manual rsx:storage:cleanup
-        command (see CLI COMMANDS). Design your flow to attach promptly.
+        orphan. The claim-window sweep soft-deletes it once the window has
+        passed (THE CLAIM WINDOW); the manual rsx:storage:cleanup command (see
+        CLI COMMANDS) reclaims orphans on demand. Design your flow to attach
+        promptly.
 
     Storage cleanup on delete
         $attachment->delete() is a SOFT delete: it enters the recoverable
@@ -315,6 +316,111 @@ THE CLAIM WINDOW
 
     An unattached upload that some record's text EMBEDS is never swept (FILES
     EMBEDDED IN TEXT below); the run's output counts the ones it skipped.
+
+DUPLICATE UPLOADS
+
+    A user who uploads a file the record already holds - by accident, or
+    retrying an upload whose answer was lost - would get a second copy. A
+    request reference cannot catch the retry: it re-uploads and gets a NEW key,
+    so the claim is a different request. Content can catch it.
+
+    THE LOOKUP
+
+        $upload->duplicates_on($record, $exclude_categories = []): Rsx_Result_Set
+            The live attachments on $record whose bytes are identical to
+            $upload's, under any name, oldest first. Left out: $upload itself,
+            soft-deleted rows, embeds (CATEGORY_INLINE_EMBED) and every category
+            in $exclude_categories (an application's own non-list categories:
+            a pinned version, a generated rendition). An attachment with no
+            resident blob (handler-backed, not materialized) answers empty.
+
+        $a->has_same_content_as($b): bool
+            Both have resident bytes and they are identical. The test a
+            replacement asks of what it replaces: a new photo, logo or version
+            whose bytes ARE the current one changes nothing.
+
+        THE GUARANTEE: identical bytes have ONE file_storage_id. Ingest
+        byte-compares an incoming file against the blob at its hash and reuses
+        that row (DEDUPLICATION AND HASH COLLISION HANDLING), and the hash is
+        unique; a hash collision is stored under an incremented hash, a
+        DIFFERENT row by construction. So comparing file_storage_id is an exact
+        comparison - one indexed lookup, no hashing in the endpoint or the
+        browser.
+
+    THE QUESTION
+
+        Rsx_Duplicate_Upload turns the lookup into the standard server-driven
+        question (rsx:man form_conventions, QUESTIONS), so every endpoint words
+        it and reads its answer the same way. One question per duplicate
+        upload, keyed duplicate_upload:<the upload's attachment id> - a batch
+        claimed in ONE call asks about each such file in turn:
+
+            { kind: 'confirm', title, body,
+              confirm_label: 'Upload Again',      answer true   -> file it
+              cancel_label:  'Skip This File',    answer false  -> file nothing
+              back_label:    'Cancel Upload',     Rsx_Form.CANCELLED -> the
+                                                  call is never resent: the
+                                                  whole batch stops
+              file_name,                          the upload's name
+              existing: {file_attachment_id, file_name, created_at} }
+
+        The body names both files and when the existing one was uploaded. The
+        framework draws nothing: the application's registered question handler
+        presents it (back_label is the label of the answer that stops the call;
+        a handler following the recommended confirm contract shows it on its
+        Back button).
+
+        Rsx_Duplicate_Upload::screen($params, $record, $uploads, $exclude = [])
+            {question, file, skip}: the first upload still to be asked about
+            becomes question (return it, write nothing); otherwise every upload
+            is sorted into file or skip.
+        Rsx_Duplicate_Upload::decide($params, $upload, $record, $exclude = [])
+            FILE | SKIP | ASK for one upload.
+        Rsx_Duplicate_Upload::question($upload, $record, $exclude = [])
+            The response_form_question() for one upload.
+        Rsx_Duplicate_Upload::question_key($upload)
+
+    THE ENDPOINT - validate, screen, write:
+
+        #[Auth('can_edit_data')]
+        #[Writer]
+        #[Ajax_Endpoint]
+        public static function attachments_add(Request $request, array $params = [])
+        {
+            $task = Task_Model::find($params['id'] ?? 0);
+            ... find each key, refuse one that is not can_user_assign_this_file() ...
+
+            $screen = Rsx_Duplicate_Upload::screen($params, $task, $uploads);
+            if ($screen['question'] !== null) {
+                return $screen['question'];        // records nothing, writes nothing
+            }
+
+            foreach ($screen['file'] as $upload) {
+                $upload->add_to($task, 'attachments');
+            }
+
+            return [...];
+        }
+
+    THE CALLER. A form's submit() answers questions by itself. A widget calling
+    the claim endpoint directly uses Rsx_Form.call_answering(), which asks each
+    question through the registered handler and resends with the answers:
+
+        const result = await Rsx_Form.call_answering(Tasks_Controller.attachments_add, { id, keys });
+        if (Rsx_Form.is_cancelled(result)) return;   // Cancel Upload: nothing attached
+
+    A SKIPPED OR CANCELLED UPLOAD IS NEVER CLAIMED, and needs nothing done to
+    it: the claim-window sweep takes it like any other unclaimed upload (THE
+    CLAIM WINDOW).
+
+    An integration over the external API has no dialog: the template's attach
+    endpoints refuse a duplicate with 409 duplicate_upload unless the
+    duplicate_upload parameter says what to do (true attaches, false skips).
+
+    The template application's worked examples: Record_Attachment_List::claim()
+    (rsx/lib/attachments/) behind <Record_Attachments>, the client documents
+    panel, both request-thread reply composers, and the profile photo (a
+    replacement with identical bytes changes nothing).
 
 FILES EMBEDDED IN TEXT
     A file a user drops into a rich-text field is uploaded before the record it
@@ -1072,7 +1178,7 @@ THE MANDATORY UPLOAD GATE
 
         namespace Rsx\Handlers;
 
-        use App\RSpade\Core\Portal\Portal_Session;
+        use App\RSpade\Lib\Portal\Portal_Session;
         use App\RSpade\Core\Session\Session;
 
         class File_Upload_Handlers
@@ -2006,6 +2112,7 @@ SEE ALSO
     rsx:man external_api       /api/v1/files, Bearer access to the byte routes
     rsx:man portal             Portal_Authorizable, the portal twin of Staff_Authorizable
     rsx:man class_override     Override drift, and preferring a seam over a clone
+    rsx:man form_conventions   QUESTIONS: the protocol the duplicate-upload question rides
 
 VERSION
     RSpade Framework 1.0

@@ -1,0 +1,18 @@
+// The DB-IP attribution line: secondary text, never louder than the data it credits.
+.Geo_Ip_Credit {
+    display: block;
+    margin-top: 8px;
+    color: var(--bs-secondary-color);
+
+    // Under an edge-to-edge (flush) card body - a table's section - it takes the card's own
+    // padding, so it lines up with the card's content rather than its border.
+    .card-body.p-0 & {
+        margin-top: 0;
+        padding: var(--bs-card-spacer-y) var(--bs-card-spacer-x);
+    }
+
+    &__link {
+        color: inherit;
+        text-decoration: underline;
+    }
+}

@@ -3,7 +3,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Framework\Framework_Maintenance;
-use App\RSpade\Core\Health\Health_Check_Runner;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
 use App\RSpade\Core\Time\Rsx_Time;
 use Illuminate\Console\Command;
 

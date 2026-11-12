@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
        PHP:
-           use App\RSpade\Core\Qr\Rsx_Qr_Code;
+           use App\RSpade\Lib\Ui\Qr\Rsx_Qr_Code;
 
            $qr = Rsx_Qr_Code::generate($text);
 
@@ -87,10 +87,10 @@ LIMITS
        interface.
 
 FILES
-       system/app/RSpade/Core/Qr/Rsx_Qr_Code.php
+       system/app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php
 
        In use: the authenticator enrollment screen,
-       system/app/RSpade/Core/TwoFactor/Totp_Enrollment.jqhtml
+       system/app/RSpade/Lib/SignIn/TwoFactor/Totp_Enrollment.jqhtml
 
 SEE ALSO
        skill rspade:qr-codes     recipes for a screen and for a print sheet

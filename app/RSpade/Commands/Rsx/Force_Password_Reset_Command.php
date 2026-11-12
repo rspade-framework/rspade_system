@@ -9,7 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * rsx:users:force_password_reset - require (or, with --clear, stop requiring) that an identity

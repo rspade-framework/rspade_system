@@ -1,0 +1,91 @@
+DUPLICATE UPLOADS: ASK BEFORE FILING A FILE THE RECORD ALREADY HOLDS
+Date: 2026-11-12
+
+IF YOU DO NOTHING: every upload widget and claim endpoint in your application keeps filing a
+    second copy when a user uploads a file the record already holds - including a retried
+    upload whose first answer was lost - because the question that catches it is asked only
+    by endpoints that call Rsx_Duplicate_Upload, and yours do not.
+
+SUMMARY
+    An upload a record already holds (identical bytes, under any name) is now caught by
+    content and asked about before it is filed: "This File Is Already Attached" with three
+    answers - Upload Again (file it), Skip This File (file nothing) and Cancel Upload (stop,
+    the whole batch included). A retry of a lost upload re-uploads and gets a NEW key, so a
+    request reference cannot catch it; the content-addressed store can, in one indexed
+    lookup. The framework supplies the lookup, the standard question and the browser-side
+    loop; the application's claim endpoints and widgets ask it.
+
+WHAT YOU ALREADY HAVE
+    - File_Attachment_Model::duplicates_on($record, $exclude_categories = []) - the live
+      attachments on $record with identical bytes (embeds, soft-deleted rows and the upload
+      itself left out), and has_same_content_as($other) for a replacement.
+    - Rsx_Duplicate_Upload - screen($params, $record, $uploads) / decide() / question():
+      one question per duplicate upload, key duplicate_upload:<attachment id>, kind
+      'confirm' with confirm_label 'Upload Again', cancel_label 'Skip This File' and the
+      new optional back_label 'Cancel Upload'.
+    - Rsx_Form.call_answering(Controller.method, params) - a widget's direct call that asks
+      each question through your registered question handler and resends with the answers;
+      resolves Rsx_Form.CANCELLED on Cancel Upload.
+    A skipped or cancelled upload is never claimed; the existing claim-window sweep takes
+    it. Contract: php artisan rsx:man file_upload (DUPLICATE UPLOADS).
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Your claim endpoints file every key they are handed, and your widgets call them
+    directly, so no question is ever asked. Your question handler (the template's is
+    Modal._register_question_handler()) labels the dismiss button "Back" whatever the
+    question says, so it would not read "Cancel Upload" until it honours back_label.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    lib/modal/modal.js
+        The confirm branch of the registered question handler: the Back button's label is
+        question.back_label || 'Back'.
+    lib/attachments/record_attachment_list.php
+        claim($params, $record, $keys): refuse an unclaimable key, then
+        Rsx_Duplicate_Upload::screen(), return its question or file the rest. Returns the
+        response to send instead, or null when attached.
+    app/frontend/tasks/tasks_controller.php
+        attachments_add(): returns what claim() answers.
+    theme/components/view/record_attachments/record_attachments.js
+        _upload(): the batch claim through Rsx_Form.call_answering(); clears its pending
+        rows itself, because a fully skipped batch changes no rows for the host to redraw.
+    app/frontend/clients/clients_controller.php
+        documents_add() (one file; answers skipped: true) and request_thread_reply() (asks
+        before posting; a reply left with nothing posts nothing, message_id null).
+    app/frontend/clients/portal/Clients_Portal_Panel.js
+    app/frontend/clients/portal/request_thread/Clients_Request_Thread_Action.js
+    portal/workspaces/requests/portal_request_threads_controller.php  (reply())
+    portal/workspaces/requests/thread/Portal_Request_Thread_Action.js
+        The same pattern on a single-file panel and on both reply composers (Cancel Upload
+        keeps the composer's text and staged files).
+    app/frontend/settings/profile_edit/settings_profile_edit_controller.php
+        A replacement whose bytes ARE the current photo changes nothing
+        (has_same_content_as()).
+    app/api/v1/tasks_api_controller.php, app/api/v1/clients_api_controller.php
+        attachments_attach(): an integration has no dialog, so a duplicate answers 409
+        duplicate_upload unless the duplicate_upload parameter says true (attach) or
+        false (skip; answers the existing attachment).
+    tests/Duplicate_Upload_Endpoints_Test.php
+        The endpoint behaviour, pinned.
+
+PORTING IT
+    For each endpoint of yours that files a NEW upload onto a record (grep your rsx/ for
+    add_to( and attach_to(): after validating, collect the claimable uploads, call
+    Rsx_Duplicate_Upload::screen($params, $record, $uploads), return its question when it
+    has one, and file only $screen['file']. Pass the categories that are not "the record's
+    files" (a pinned version, a generated rendition) as $exclude_categories. The endpoint is
+    a #[Writer]; nothing may be written before the screen. For each widget that calls such
+    an endpoint, call it through Rsx_Form.call_answering() and treat Rsx_Form.CANCELLED as
+    "nothing happened". A replacement path compares with has_same_content_as(). A form
+    submitting through <Rsx_Form> needs no widget change - submit() answers questions
+    itself. If your question handler is your own, have its confirm dialog show
+    question.back_label on the button that answers Rsx_Form.CANCELLED. Your API is your
+    decision: the template refuses with 409 rather than filing silently.
+
+VERIFICATION
+    Upload a file onto a record, then upload the same bytes again under another name: the
+    dialog names both files with the original's upload time and offers Cancel Upload, Skip
+    This File and Upload Again. Skip leaves the list unchanged; Upload Again adds the copy;
+    in a batch of a new file plus a duplicate, Cancel Upload attaches neither and Skip This
+    File attaches only the new one.

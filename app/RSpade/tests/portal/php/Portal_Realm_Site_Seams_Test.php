@@ -9,14 +9,14 @@ namespace App\RSpade\Tests\Portal\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Settings\Rsx_Settings;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\Throttle\Rsx_Throttle;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Settings\Rsx_Settings;
+use App\RSpade\Lib\SignIn\Throttle\Rsx_Throttle;
 
 /**
  * THE SITE SEAMS ARE REALM-AWARE (backlog B-76).

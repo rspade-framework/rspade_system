@@ -175,7 +175,7 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
         $degraded = ['data' => ['files' => [
             // A synthetic application entry: the shape of the index, not a real class.
             'rsx/models/fixture_app_model.php' => ['class' => 'Fixture_App_Model'],
-            'app/RSpade/Core/Portal/Portal_Authorizable.php' => [],
+            'app/RSpade/Lib/Portal/Portal_Authorizable.php' => [],
         ]]];
 
         static::__assert_false(

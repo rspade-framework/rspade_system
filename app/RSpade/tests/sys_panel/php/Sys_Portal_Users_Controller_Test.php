@@ -10,7 +10,6 @@ namespace App\RSpade\Tests\SysPanel\Php;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Response\Error_Response;
@@ -19,6 +18,7 @@ use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 use App\RSpade\Sys\App\Sys\PortalUsers\_Sys_Portal_Users_Controller;
 
 /**
@@ -347,13 +347,13 @@ class Sys_Portal_Users_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals('198.51.100.30', $first['records'][0]['ip_address'], 'the newest row leads');
 
         $top = $first['records'][0];
-        foreach (['id', 'email', 'ip_address', 'user_agent', 'user_agent_parsed', 'location', 'status', 'status_label', 'failure_reason', 'created_at', 'tone'] as $key) {
+        foreach (['id', 'email', 'ip_address', 'ip_address__location', 'user_agent', 'user_agent_parsed', 'status', 'status_label', 'failure_reason', 'created_at', 'tone'] as $key) {
             static::__assert_array_has_key($key, $top, "the presented row carries {$key}");
         }
         static::__assert_equals('Success', $top['status_label'], 'the status label');
         static::__assert_equals('ok', $top['tone'], 'a success is drawn ok');
         static::__assert_equals('fail', $first['records'][1]['tone'], 'a refusal is drawn as a failure');
-        static::__assert_null($top['location'], 'the portal table records no location');
+        static::__assert_null($top['ip_address__location'], 'a documentation address has no location');
         static::__assert_equals('Firefox on Windows', $top['user_agent_parsed']['summary'], 'the parsed user agent');
         static::__assert_true(str_ends_with($top['created_at'], 'Z'), 'created_at leaves as ISO UTC');
 

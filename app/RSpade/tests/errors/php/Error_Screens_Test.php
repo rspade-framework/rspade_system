@@ -17,9 +17,9 @@ use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Exceptions\Web_Exception_Handler;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 use App\RSpade\Tests\Errors\Php\Error_Screens_Route_Fixture_Controller;
 
 /**

@@ -1,0 +1,35 @@
+THE STORED IP-LOCATION FIELDS ARE GONE; A LOCATION IS RESOLVED AT DISPLAY TIME
+Date: 2026-11-12
+
+IF YOU DO NOTHING: code that reads city, state, country, latitude or longitude from Ip_Address::describe(), a <prefix>_city / _state / _country / _latitude / _longitude field after Ip_Address::join(), calls Ip_Address::column($prefix, 'country') (or another of those names), or reads ['location'] from a Login_History / Portal_Login_History row or a Session::get_sessions_for_user() / Portal_Session::get_sessions_for_user() entry, now fails with "Undefined array key", an unknown-column SQL error or InvalidArgumentException; in JavaScript those fields are undefined. Every one of them was always null - nothing ever filled them.
+
+SUMMARY
+    Category 1 (a documented framework interface removed fields your code may
+    read). Affects an application that reads any of the fields above; the
+    template app read none of them.
+
+THE CHANGE
+    The never-filled columns are dropped: _ip_addresses city, state, country,
+    latitude, longitude and _login_history location_city, location_region,
+    location_country. Ip_Address::describe() returns ip_address only;
+    Ip_Address::join() adds no location fields; Ip_Address::column() refuses
+    the old names. The login-history rows and the session listings carry no
+    'location' key.
+
+    An IP address's location is never stored: it is resolved when a screen
+    shows it, by Rsx_Geo_Ip::lookup() / label() (rsx:man geo_ip), and an
+    endpoint ships it beside the address as ip_address__location.
+
+ACTION REQUIRED
+    1. Find the reads: grep your rsx/ tree for describe( / Ip_Address::join(
+       / Ip_Address::column( and for ['location'] / .location on login-history
+       and session-listing data, and for _city / _country on joined rows.
+    2. Delete each read (it was always null), or - where a screen should show
+       where an address is - ship Rsx_Geo_Ip::label($row['ip_address']) as
+       ip_address__location from the endpoint and render it (the template's
+       Ip_Address_Display component; breaking_changes/ip_geolocation_on_ip_screens_11_12.txt).
+
+VERIFICATION
+    The screens that showed sessions or sign-in history render with no
+    "Undefined array key" or unknown-column error; php artisan rsx:check is
+    clean.

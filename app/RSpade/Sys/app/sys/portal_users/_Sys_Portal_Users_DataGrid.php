@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Sys\App\Sys\PortalUsers;
 
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 use App\RSpade\Sys\Lib\_Sys_Enum_Words;
 use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
 

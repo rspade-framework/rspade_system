@@ -1,8 +1,8 @@
 HEALTH(1)                         RSpade Manual                         HEALTH(1)
 
 NAME
-    health - rsx:health environment/dependency verification and the
-    #[Health_Check] attribute
+    health - rsx:health environment/dependency verification, the
+    #[Health_Check] attribute, and rsx:heal with its #[Health_Heal] attribute
 
 SYNOPSIS
     php artisan rsx:health
@@ -20,6 +20,17 @@ SYNOPSIS
 
         #[Health_Check('Playwright / Chromium', modes: 'development')]
         #[Health_Check('Production Seal', modes: ['debug', 'production'])]
+
+    Repair a definitionally-absent piece of the installation a row names:
+
+        php artisan rsx:heal --list
+        php artisan rsx:heal <target>
+
+        #[Health_Heal('target-name')]
+        public static function heal_my_thing(): array
+        {
+            return ['status' => 'HEALED', 'detail' => '...'];
+        }
 
 DESCRIPTION
     rsx:health verifies that every dependency, service, and environment invariant
@@ -139,6 +150,40 @@ THE #[Health_Check] ATTRIBUTE
             return ['status' => 'OK', 'detail' => 'soffice at ' . $binary];
         }
 
+THE #[Health_Heal] ATTRIBUTE AND rsx:heal
+    A health row can carry a remediation string; a healer is that remedy made
+    runnable. rsx:heal <target> runs ONE named healer; rsx:heal --list (or no
+    target) lists every declared target with the method that answers it. There
+    is deliberately no --all: healing is a decision about one finding, never
+    housekeeping run blind after a failure.
+
+    - Placed on a PUBLIC STATIC method taking no arguments, declared where its
+      feature lives - normally beside the #[Health_Check] whose row it answers.
+      A class-level #[Health_Heal] is ignored (there is no method to run).
+    - Requires a target name: #[Health_Heal('target-name')] - a literal, the
+      name operators type. A missing target, or two methods claiming one
+      target, fails loud at discovery. Like #[Health_Check] it is a bare
+      marker attribute discovered through the manifest, never a defined class.
+
+    THE BOUNDARY. A healer may only CREATE WHAT IS DEFINITIONALLY ABSENT - a
+    manifest an application never adopted, a link nobody made, an image never
+    built. It must NEVER repair something that exists and is wrong (a corrupt
+    file, a half-written manifest, a link pointing somewhere unexpected): that
+    is a broken install, and quietly making it look fixed is a silent repair.
+    A healer that finds its artifact present and unexpected REFUSES and says
+    what it found; the operator decides.
+
+    Return contract:
+
+        ['status' => 'HEALED' | 'ALREADY_OK' | 'REFUSED',
+         'detail' => string]
+
+    A healer that throws, or returns anything else, becomes a REFUSED result
+    carrying the message - one broken healer never aborts the command. Exit
+    code: 1 for REFUSED (an unknown target included), 0 for HEALED and
+    ALREADY_OK. rsx:heal runs with the PHP extension check stood down, like
+    rsx:health (PHP EXTENSION CONTRACT, THE EXEMPTION).
+
 FRAMEWORK INVENTORY
     The framework declares these checks (each in the feature that owns it).
     THE MODES COLUMN is the axis above: "all" is a check declaring none.
@@ -172,6 +217,8 @@ FRAMEWORK INVENTORY
         FPC                         all
         Hostname                    debug, prod   a .dev. hostname gates every
                                                   outbound email and SMS
+        IP Geolocation              all           never FAIL: a missing database
+                                                  costs locations only
         Ignition Read-Only          all           security; the debug page
                                                   exists in development
         ImageMagick Coder Policy    all           security; uploads are
@@ -308,6 +355,12 @@ FRAMEWORK INVENTORY
                                  a scheme APP_URL's rule refuses, malformed, a prefix
                                  claiming a framework path). OK with a note while
                                  APP_URL is not configured yet. See rsx:man portal.
+        IP Geolocation           the DB-IP City Lite database (rsx:man geo_ip). OK
+                                 names the installed release month; INFO before it
+                                 is first acquired; WARN when the last finished
+                                 Geo_Ip_Service::update run failed or was killed,
+                                 when the file is older than 62 days, or when a
+                                 file is there but does not open.
         Ignition Read-Only       Laravel's debug page cannot act: ignition's
                                  enable_runnable_solutions and enable_share_button
                                  are both false (system/config/ignition.php ships
@@ -584,7 +637,7 @@ FRAMEWORK INVENTORY
     See rsx:man prod, ADMINISTRATION.
 
 PHP EXTENSION CONTRACT
-    ONE DECLARATION. App\RSpade\Core\Health\Rsx_Php_Requirements holds
+    ONE DECLARATION. App\RSpade\Lib\Operations\Health\Rsx_Php_Requirements holds
     REQUIRED_EXTENSIONS, REQUIRED_CLI_EXTENSIONS and MIN_PHP_VERSION, and nothing
     else declares any of them. Two consumers read it:
 

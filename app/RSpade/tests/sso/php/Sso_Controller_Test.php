@@ -12,13 +12,13 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sso\Rsx_Sso;
-use App\RSpade\Core\Sso\Rsx_Sso_Controller;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\SignIn\Confirmation\Rsx_Password_Confirmation;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso_Controller;
 use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
 
 /**

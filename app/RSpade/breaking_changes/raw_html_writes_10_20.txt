@@ -105,9 +105,9 @@ THE FIX
     Informational - arrives with the framework:
     - system/app/RSpade/CodeQuality/Rules/JavaScript/RawHtmlWrite_CodeQualityRule.php
       and quality.analyze_raw_html in the code-quality node service
-    - Core/Js/Form_Utils.js, Lib/Flash/Flash_Alert.js, Core/Js/Rsx.js
+    - Core/Js/Form_Utils.js, Lib/Ui/Flash/Flash_Alert.js, Core/Js/Rsx.js
       (render_error), Core/SPA/Spa_Layout.js (show_debug_exception),
-      Core/Debug/JS_Tree_Debug_Node.js, Core/Ui/Button_Utils.js (the busy state
+      Lib/Developer/Debug/JS_Tree_Debug_Node.js, Core/Ui/Button_Utils.js (the busy state
       now detaches and re-attaches the button's own nodes), Core/Forms/Rsx_Form.js
     - Core/Js/functions.js (nl2brhtml, html_to_text), helpers.php (nl2brhtml)
     - Sys/app/sys/_Sys_Layout.js (page_actions takes {component, args})

@@ -51,7 +51,7 @@ is written after the lock is released. A thrown `Rollback_Response` is caught ou
 rolled back) and its carried response goes through the same `__api_response()` as a returned
 one.
 
-**The request history** (`Core/Revisions/Request_History`). `_request_ref` is a system
+**The request history** (`Core/RequestHistory/Request_History`). `_request_ref` is a system
 parameter on every endpoint: `Api_Param_Validator` accepts it undeclared (checked as a string
 of 1 to 128 characters, else 422 on the field) and never copies it into `$params`. A writer
 (`#[Writer]`, or a `#[Manual_Lock]` that takes a site write lock) records its fingerprint,

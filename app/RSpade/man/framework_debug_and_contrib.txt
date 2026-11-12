@@ -437,7 +437,7 @@ WHAT IS ALREADY ON YOUR DISK
       Core/Ajax/CLAUDE.md             the unified Ajax surface
       Core/Bundle/CLAUDE.md           the two-tier bundle architecture
       Core/SPA/CLAUDE.md              the SPA runtime (STALE - see primer 8)
-      Core/Portal/CLAUDE.md           the framework half of the portal
+      Lib/Portal/CLAUDE.md           the framework half of the portal
       Core/Task/CLAUDE.md             the task system's implementation
       Core/Realtime/CLAUDE.md         Redis to relay to browser
       Core/Files/CLAUDE.md            a pointer into the file man pages
@@ -462,7 +462,7 @@ WHAT IS ALREADY ON YOUR DISK
                                       and pre-boot command interception
       Commands/Restricted/CLAUDE.md   the guardrails blocking destructive
                                       Laravel commands
-      Lib/Flash/CLAUDE.md             flash alerts across redirects and Ajax
+      Lib/Ui/Flash/CLAUDE.md             flash alerts across redirects and Ajax
       man/CLAUDE.md                   how a man page is written
       breaking_changes/CLAUDE.md      the AUTHOR's side of the mandates you
                                       consume - the gate deciding whether one
@@ -677,7 +677,7 @@ SUBSYSTEM PRIMERS
     References
       Man pages: dispatch, routing, controller, auth_gates, csrf, portal,
       fpc, app_mode, error_handling.
-      Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md.
+      Colocated: Core/CLAUDE.md, Lib/Portal/CLAUDE.md.
       Source: system/public/index.php, system/bootstrap/,
       Core/Providers/Rsx_Framework_Provider.php,
       Core/Dispatch/Rsx_Front_Controller.php,
@@ -992,12 +992,12 @@ SUBSYSTEM PRIMERS
     References
       Man pages: dispatch, routing, controller, auth_gates, spa, portal,
       external_api, error_handling, error_pages, coding_standards.
-      Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md, Core/SPA/CLAUDE.md.
+      Colocated: Core/CLAUDE.md, Lib/Portal/CLAUDE.md, Core/SPA/CLAUDE.md.
       Source: Core/Dispatch/ (Dispatcher, Route_ManifestSupport,
       RouteResolver, AssetHandler), Core/Auth/ (Auth_Gates,
       Auth_ManifestSupport), Core/Errors/ (Error_Screens, Error_Pages,
       Error_Context),
-      Core/SPA/Error_Screens.js, Core/Rsx.php, Core/Portal/Rsx_Portal.php,
+      Core/SPA/Error_Screens.js, Core/Rsx.php, Lib/Portal/Rsx_Portal.php,
       Core/Base/Main_Abstract.php.
       Skills: rspade:auth-gates, rspade:spa, rspade:portal-core.
 
@@ -1191,9 +1191,9 @@ SUBSYSTEM PRIMERS
     References
       Man pages: session, csrf, portal, auth_gates, login_redirect,
       initial_user, acls.
-      Colocated: Core/Portal/CLAUDE.md.
+      Colocated: Lib/Portal/CLAUDE.md.
       Source: Core/Session/ (Session.php, Rsx_Csrf.php),
-      Core/Portal/ (Portal_Session.php, Rsx_Portal.php,
+      Lib/Portal/ (Portal_Session.php, Rsx_Portal.php,
       Portal_Main_Abstract.php),
       Core/Auth/ (RsxAuth.php, Login_Throttle.php, Login_History.php),
       Core/Js/Rsx_Csrf.js.
@@ -2185,10 +2185,10 @@ SUBSYSTEM PRIMERS
 
     References
       Man pages: email, sms, tasks, config_rsx, health.
-      Source: Core/Mail/ (Rsx_Mail.php, Rsx_Email_Abstract,
+      Source: Lib/Messaging/Mail/ (Rsx_Mail.php, Rsx_Email_Abstract,
       Mail_Queue_Service, Rsx_Mail_Builder, Rsx_Mail_Transport,
       Mail_Unsubscribe_Controller, Email_ManifestSupport),
-      Core/Models/Email_Queue_Model.php, Core/Sms/,
+      Lib/Messaging/Mail/Email_Queue_Model.php, Lib/Messaging/Sms/,
       Commands/Rsx/Mail_*.php, system/app/RSpade/resource/docker/mail-catcher/mail_catcher.py,
       config/rsx.php (mail, sms),
       resource/reference_app/emails/ (worked examples).
@@ -2604,9 +2604,9 @@ SUBSYSTEM PRIMERS
       logrotate, testing, ajax_error_handling, caching.
       Source: Core/Exceptions/ (Rsx_Exception_Handler and the per-context
       handlers), Core/Errors/Error_Screens.php, Core/SPA/Error_Screens.js,
-      Core/Debug/ (Debugger.php, Debugger_Controller.php),
-      Core/Health/ (Health_Check_Runner, Heal_Runner),
-      Core/Logging/, helpers.php, Core/Js/error.js, Core/Js/Debugger.js,
+      Lib/Developer/Debug/ (Debugger.php, Debugger_Controller.php),
+      Lib/Operations/Health/ (Health_Check_Runner, Heal_Runner),
+      Lib/Operations/Logging/, helpers.php, Core/Js/error.js, Core/Js/Debugger.js,
       Commands/Rsx/Route_Debug_Command.php, system/bin/route-debug.js,
       config/rsx.php (console_debug, logging, exception_handlers).
       Skills: rspade:rsx-debug, rspade:rsx-testing.

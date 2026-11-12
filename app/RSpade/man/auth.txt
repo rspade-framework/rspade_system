@@ -117,7 +117,7 @@ OPERATOR COMMANDS
 
     rsx:users:password:set --user=<id|email>
                            [--password=<value> | --password-stdin]
-                           [--json]
+                           [--require-reset] [--json]
         Sets the password. With neither source flag it prompts twice on the
         terminal with no echo; --password-stdin reads the first line of stdin
         (its line ending stripped, nothing else); --password puts the value on
@@ -125,6 +125,11 @@ OPERATOR COMMANDS
         it. Two sources at once is an error, and so is a call with no terminal
         and no source (--json included). The only rule applied to the value is
         that it is not empty - a password policy is application vocabulary.
+        --require-reset makes it a TEMPORARY password: the identity is flagged
+        password_reset_required in the same save (even when it was already
+        flagged), so its next password sign-in asks for a new one; without it
+        the new password clears the flag. The JSON carries
+        password_reset_required.
         Every signed-in web session of the identity ENDS - the identity
         model's own consequence of a password change (rsx:man session,
         PASSWORD CHANGES): reason SIGN_OUT_PASSWORD_CHANGED, the realtime
@@ -202,7 +207,9 @@ AUTHENTICATION
             rsx:man session (LOGIN HISTORY) and rsx:man two_factor.
 
             IT THROWS TWO REFUSALS that are not "wrong credentials", and a login
-            function catches both and renders getMessage():
+            function catches both - rendering the throttle's getMessage(), and
+            for the reset flag either rendering it or starting the forced
+            change at sign-in (RsxAuth::begin_forced_password_change()):
             Auth_Throttled_Exception (the client address or the account is throttled - before the
             lookup) and Auth_Password_Reset_Required_Exception (the password
             matched, the membership is active, and the identity is flagged

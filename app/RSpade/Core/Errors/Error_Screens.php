@@ -13,15 +13,15 @@ use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Context;
 use App\RSpade\Core\Errors\Error_Pages;
-use App\RSpade\Core\Login\Login_Redirect;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\SignIn\Redirect\Login_Redirect;
 
 /**
  * Error_Screens - what a terminal request outcome RENDERS (full-page, server side)

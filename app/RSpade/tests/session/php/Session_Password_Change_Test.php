@@ -9,9 +9,9 @@ namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * A PASSWORD CHANGE SIGNS THE IDENTITY OUT EVERYWHERE ELSE.

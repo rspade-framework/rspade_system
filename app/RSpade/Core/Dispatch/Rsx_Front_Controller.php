@@ -19,16 +19,16 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Companion\Companion_Dispatcher;
-use App\RSpade\Core\Debug\Debugger;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Env\Rsx_Env_Hostname_Guard;
 use App\RSpade\Core\Env\Rsx_First_User_Setup;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
-use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Lib\Developer\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
+use App\RSpade\Lib\Revisions\Revision;
 
 /**
  * Rsx_Front_Controller - the one entry point of every HTTP request into RSX.

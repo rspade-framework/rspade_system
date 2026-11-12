@@ -10,10 +10,10 @@ namespace App\RSpade\Tests\Dispatch\Php;
 use Illuminate\Http\Request;
 use ReflectionMethod;
 use RuntimeException;
-use App\RSpade\Core\Debug\Debugger;
-use App\RSpade\Core\Debug\Playwright_Exception_Handler;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Playwright_Exception_Handler;
 
 /**
  * The two rsx:debug DISCLOSURE paths, and the loopback question they both ask.

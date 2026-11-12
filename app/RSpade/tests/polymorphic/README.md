@@ -15,7 +15,7 @@ ids and simple class names transparently (see `rsx:man polymorphic`).
 - `system/app/RSpade/CodeQuality/Rules/Manifest/MorphStringPattern_CodeQualityRule.php`
   - POLY-01, the manifest-fatal rule against the Laravel string-morph pattern (its unit
   tests live in the `code_quality` concern).
-- `system/app/RSpade/Core/Models/Portal_Notification_Model.php` (`subject_type` +
+- `system/app/RSpade/Lib/Portal/Portal_Notification_Model.php` (`subject_type` +
   `subject()`), `system/app/RSpade/Core/Files/File_Attachment_Model.php`
   (`fileable_type`), `system/app/RSpade/Core/Search/Search_Index_Model.php`
   (`indexable_type`) - the framework-core type-ref models.

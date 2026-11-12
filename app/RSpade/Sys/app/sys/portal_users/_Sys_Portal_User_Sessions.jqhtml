@@ -65,7 +65,7 @@ from.
                                             <span class="_Sys_Portal_User_Sessions__dim"><%= Rsx_Time.relative(row.signed_out_at) %></span>
                                         <% } %>
                                     </td>
-                                    <td class="_Sys_Portal_User_Sessions__mono"><%= row.ip_address %></td>
+                                    <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
                                     <td><%= row.signed_in_at ? Rsx_Time.format_timestamp(row.signed_in_at) : '' %></td>
                                     <td><%= row.last_active ? Rsx_Time.relative(row.last_active) : '' %></td>
                                     <td><%= row.sign_in_count %></td>
@@ -82,6 +82,7 @@ from.
                         </tbody>
                     </table>
                 </div>
+                <Geo_Ip_Credit />
             <% } %>
         </Slot:body>
     </_Sys_Section>

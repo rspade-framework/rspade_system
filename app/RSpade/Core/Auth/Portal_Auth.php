@@ -8,10 +8,12 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
+use App\RSpade\Core\Auth\Forced_Password_Change;
+use App\RSpade\Core\Auth\Forced_Password_Change_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Auth\Password_Verifier;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Session\Portal_Login_History;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Portal_Auth - the client portal's credential front door: the portal twin of
@@ -132,5 +134,72 @@ class Portal_Auth
         }
 
         return $portal_user;
+    }
+
+    // -------------------------------------------------------------------------
+    // Forced password change at sign-in
+    // -------------------------------------------------------------------------
+
+    /**
+     * Park an identity whose correct password was refused by the reset flag, WITHOUT signing
+     * it in, so a "choose a new password" page can finish the sign-in.
+     *
+     * The portal twin of RsxAuth::begin_forced_password_change(); the portal user is read back on
+     * the site this portal request serves.
+     *
+     * The caller is a login function holding Auth_Password_Reset_Required_Exception::$identity.
+     * Signs the browser's portal sign-in out first, then parks the portal user in the portal
+     * realm's session values (the second-factor challenge's shape). No email, no token in a URL; the
+     * parked value lives as long as the session and goes stale if the password changes some
+     * other way. Engine and rulings: Forced_Password_Change.
+     *
+     * @param Portal_User_Model $portal_user
+     * @return void
+     */
+    public static function begin_forced_password_change(Portal_User_Model $portal_user): void
+    {
+        Forced_Password_Change::_begin(Forced_Password_Change::REALM_PORTAL, $portal_user);
+    }
+
+    /**
+     * What the "choose a new password" page needs, or null when nothing is pending.
+     *
+     * @return array|null {email} - the full address, for the page's autocomplete="username" field
+     */
+    public static function forced_password_change_pending(): ?array
+    {
+        return Forced_Password_Change::_pending(Forced_Password_Change::REALM_PORTAL);
+    }
+
+    /**
+     * Set the parked identity's new password and answer the identity - NOT signed in.
+     *
+     * The caller validates its own password policy first (length, a confirmation field); the
+     * framework refuses an empty password and the CURRENT password, draws on the sign-in
+     * throttle, and saves through the model (the flag clears, trusted browsers are forgotten,
+     * other sign-ins end). Then the caller continues its sign-in exactly where
+     * verify_credentials() would have returned: a second factor the identity holds is
+     * challenged next, and only after that is the identity signed in (through the application's own
+     * completion function). Nothing is recorded here; the sign-in records
+     * its own success.
+     *
+     * @param string $new_password
+     * @return Portal_User_Model
+     * @throws Auth_Throttled_Exception
+     * @throws Forced_Password_Change_Exception (reason(): nothing pending, empty, unchanged)
+     */
+    public static function complete_forced_password_change(string $new_password): Portal_User_Model
+    {
+        return Forced_Password_Change::_complete(Forced_Password_Change::REALM_PORTAL, $new_password);
+    }
+
+    /**
+     * Forget a parked forced password change (the page's Cancel).
+     *
+     * @return void
+     */
+    public static function abandon_forced_password_change(): void
+    {
+        Forced_Password_Change::_abandon(Forced_Password_Change::REALM_PORTAL);
     }
 }

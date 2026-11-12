@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\SysPanel\Php;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
@@ -17,6 +16,7 @@ use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_Controller;
 
 /**
@@ -158,7 +158,7 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
 
         $exclusive = null;
         foreach ($declarations as $declaration) {
-            if ($declaration['class'] === 'App\\RSpade\\Core\\Mail\\Mail_Queue_Service' && $declaration['method'] === 'send_pending_queue') {
+            if ($declaration['class'] === 'App\\RSpade\\Lib\\Messaging\\Mail\\Mail_Queue_Service' && $declaration['method'] === 'send_pending_queue') {
                 $exclusive = $declaration;
             }
         }

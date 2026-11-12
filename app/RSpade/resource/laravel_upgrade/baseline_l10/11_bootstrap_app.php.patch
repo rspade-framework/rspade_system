@@ -239,7 +239,7 @@
 +| - Example handlers:
 +|   - app/RSpade/Core/Exceptions/Cli_Exception_Handler.php
 +|   - app/RSpade/Core/Exceptions/Ajax_Exception_Handler.php
-+|   - app/RSpade/Core/Debug/Playwright_Exception_Handler.php
++|   - app/RSpade/Lib/Developer/Debug/Playwright_Exception_Handler.php
 +|   - app/RSpade/Core/Providers/Rsx_Dispatch_Bootstrapper_Handler.php
 +|
 +*/

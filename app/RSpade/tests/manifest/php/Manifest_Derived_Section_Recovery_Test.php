@@ -12,10 +12,10 @@ use App\RSpade\Core\Dispatch\Route_ManifestSupport;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
-use App\RSpade\Core\Portal\Portal_Route_ManifestSupport;
-use App\RSpade\Core\Portal\Portal_Spa_ManifestSupport;
 use App\RSpade\Core\SPA\Spa_ManifestSupport;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Route_ManifestSupport;
+use App\RSpade\Lib\Portal\Portal_Spa_ManifestSupport;
 
 /**
  * A derived section REPAIRS ITSELF on an ordinary build.

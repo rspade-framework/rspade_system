@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Sys\App\Sys\Email;
 
-use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
 use App\RSpade\Sys\Lib\_Sys_Enum_Words;
 use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
 

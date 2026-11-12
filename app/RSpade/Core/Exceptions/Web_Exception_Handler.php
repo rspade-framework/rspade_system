@@ -9,11 +9,11 @@ namespace App\RSpade\Core\Exceptions;
 
 use Illuminate\Http\Request;
 use Throwable;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
 
 /**
  * Web_Exception_Handler - the full-page terminal outcome of an uncaught exception

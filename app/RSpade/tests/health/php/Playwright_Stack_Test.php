@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Health_Check_Runner;
-use App\RSpade\Core\Health\Playwright_Health_Checks;
-use App\RSpade\Core\Health\Playwright_Stack;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
+use App\RSpade\Lib\Operations\Health\Playwright_Health_Checks;
+use App\RSpade\Lib\Operations\Health\Playwright_Stack;
 
 /**
  * The node -> playwright -> chromium chain, its health row and the refusal rsx:debug

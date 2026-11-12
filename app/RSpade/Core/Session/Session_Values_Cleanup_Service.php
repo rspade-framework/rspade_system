@@ -5,8 +5,8 @@ namespace App\RSpade\Core\Session;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
-use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
 
 /**
  * Session_Values_Cleanup_Service

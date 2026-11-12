@@ -3,7 +3,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Debug\Console_Debug_Channels;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Channels;
 
 class Console_Debug_List_Channels_Command extends Command
 {

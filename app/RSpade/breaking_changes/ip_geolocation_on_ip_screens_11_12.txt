@@ -1,0 +1,41 @@
+IP ADDRESSES CAN SHOW WHERE THEY ARE: Rsx_Geo_Ip, AND THE TEMPLATE'S SETTINGS SCREENS USE IT
+Date: 2026-11-12
+
+IF YOU DO NOTHING: your screens keep showing bare IP addresses with no location. Nothing breaks: the framework still downloads the DB-IP City Lite database into tmp/geo_ip/ (about 130 MB, refreshed monthly by its own task) and rsx:health gains an "IP Geolocation" row.
+
+SUMMARY
+    Category 3 (a new framework feature with template screens to port).
+    Affects every application that shows a user's sign-in sessions, sign-in
+    history or other IP addresses - most applications built from the
+    template.
+
+THE CHANGE
+    Rsx_Geo_Ip::lookup($ip) answers ['city' => ..., 'state' => ..., 'country'
+    => ...] for an IP address (each may be null); Rsx_Geo_Ip::label($ip)
+    answers "City, State, Country" or null. The data is DB-IP's City Lite
+    database, kept current by the Geo_Ip_Service::update task (#[On_Build] and
+    the maintenance window) and cached per address for a day.
+
+    The answer may be null the first times it is asked, until a database has
+    been acquired, and may change when the database updates. So call it
+    whenever a screen needs it and NEVER store the answer: no column, no
+    copy in a payload that is saved. A location is never a security control.
+
+    DB-IP's licence (CC BY 4.0) requires the credit "IP geolocation by DB-IP"
+    wherever a location is shown: the framework component <Geo_Ip_Credit />.
+
+ACTION REQUIRED (to show locations)
+    Port the template's pattern - rsx:man geo_ip, skill rspade:geo-ip:
+    1. The endpoint that returns an IP address returns ip_address__location
+       beside it, resolved on every load (the template does this once, in
+       Session_Listing::row(), and in the user-session activity endpoint).
+    2. The screen renders the address with the location under it - the
+       template's Ip_Address_Display component (rsx/theme/components/view/ip_address_display/)
+       - and places one <Geo_Ip_Credit /> in each region that shows locations.
+    Screens to compare: Settings > Password & Security (sign-in sessions),
+    Settings > User Management > a user, and its session view.
+
+VERIFICATION
+    php artisan rsx:health shows "IP Geolocation" OK with a release month;
+    php artisan tinker --execute='dump(\App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip::label("8.8.8.8"));'
+    answers a location; the screens show it beside a public IP address.

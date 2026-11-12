@@ -6,9 +6,9 @@
 
 namespace App\RSpade\Tests\Dispatch\Php;
 
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * Rsx::Route()'s third argument, the hash state: a fragment encoded exactly as

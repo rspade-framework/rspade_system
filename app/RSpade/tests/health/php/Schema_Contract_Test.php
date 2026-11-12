@@ -10,8 +10,8 @@ namespace App\RSpade\Tests\Health\Php;
 use App\RSpade\Core\Database\Schema_Contract;
 use App\RSpade\Core\Database\Schema_Contract_Health_Checks;
 use App\RSpade\Core\Env\Rsx_Tenancy;
-use App\RSpade\Core\Health\Health_Check_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
 
 /**
  * The framework's contract on application-owned tables, and the rsx:health rows over it.

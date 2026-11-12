@@ -9,12 +9,12 @@ namespace App\RSpade\Tests\Database\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Files\File_Attachment_Model;
-use App\RSpade\Core\Models\Country_Model;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Geo\Places\Country_Model;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * The DELETION stamp: deleted_by_id/deleted_by_type, the third audit pair.

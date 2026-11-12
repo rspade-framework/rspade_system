@@ -13,25 +13,25 @@ decides which portal user may see which record and reach which route.
 ## Source under test
 
 Framework core:
-- `Core/Portal/Portal_Permission_Abstract.php` - marker base for the app facade
-- `Core/Portal/Portal_Authorizable.php` - trait supplying the gated `portal_fetch()`
+- `Lib/Portal/Portal_Permission_Abstract.php` - marker base for the app facade
+- `Lib/Portal/Portal_Authorizable.php` - trait supplying the gated `portal_fetch()`
 - `Core/Js/Portal_Permission.js` - client mirror (UI affordance hiding only)
-- `Core/Models/Portal_User_Model.php` - own-record `portal_can_read()`
+- `Lib/Portal/Portal_User_Model.php` - own-record `portal_can_read()`
 - `Core/Database/Orm_Controller.php` - dispatches portal requests to `portal_fetch()`
 - `Core/Bundle/Rsx_Bundle_Abstract.php` - injects `window.rsxapp.portal`
 - `Core/Database/Models/Rsx_Site_Model_Abstract.php` - `get_current_site_id()`, the tenant
   boundary; it forks on the EXPERIENCE of the request (B-76)
-- `Core/Time/Rsx_Time.php`, `Core/Sms/Rsx_Sms.php`, `Core/Settings/Rsx_Settings.php`,
-  `Core/Throttle/Rsx_Throttle.php` - the other site seams, same fork
-- `Core/Portal/Portal_Session.php` (`begin_impersonation_from_staff()`), `Core/Session/Session_Link.php`,
+- `Core/Time/Rsx_Time.php`, `Lib/Messaging/Sms/Rsx_Sms.php`, `Lib/Settings/Rsx_Settings.php`,
+  `Lib/SignIn/Throttle/Rsx_Throttle.php` - the other site seams, same fork
+- `Lib/Portal/Portal_Session.php` (`begin_impersonation_from_staff()`), `Core/Session/Session_Link.php`,
   `Core/Session/Session_Link_Controller.php`, `Core/Session/Rsx_Signed_Url.php` - staff "View as
   Client" and the linked-session handshake that joins a portal on its own host to the staff row,
   addressed per site (a tenant subdomain, a custom domain)
-- `Core/Portal/Rsx_Portal_Url.php` - PORTAL_URL parsed as a template, `check()` per tenancy,
+- `Lib/Portal/Rsx_Portal_Url.php` - PORTAL_URL parsed as a template, `check()` per tenancy,
   the PORTAL_ENABLED / PORTAL_CUSTOM_DOMAINS switches, the settings fingerprint, and
   `for_site()` - one site's portal address or false - with the current-site accessors and
   `client_payload()` (`window.rsxapp.portal`) built on it (`Portal_Url_Test`); `Core/Env/Rsx_Tenancy.php` - rsx.tenancy and the single-tenant site constant
-- `Core/Portal/Portal_Site_Resolver.php` - which site a portal request serves, read from its
+- `Lib/Portal/Portal_Site_Resolver.php` - which site a portal request serves, read from its
   host and path (custom domain, template, single-tenant site 1), the 301 / not-served
   verdicts, the cached site lookups and the host patterns the hostname guards accept
   (`Portal_Site_Resolver_Test`); its declaration per request and the mismatch sign-out are
@@ -40,13 +40,13 @@ Framework core:
 - `Core/Dispatch/Dispatcher.php` `__handle_portal_dev_auth()` - the rsx:debug --portal identity:
   the credential verified against the request URI inside the portal, query included
   (`http/portal_dev_auth_query_string.sh` - live server, development mode)
-- `Core/Portal/Portal_Url_ManifestSupport.php` - the build-time FATALs: settings refusals and
+- `Lib/Portal/Portal_Url_ManifestSupport.php` - the build-time FATALs: settings refusals and
   the prefix's collision with staff routes (`Portal_Url_Manifest_Support_Test`)
-- `Core/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which
+- `Lib/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which
   selects and generates with `Rsx`'s own routines and adds only the portal base - per site
   (`site_id:`), false when the site has no portal; `Core/SPA/Spa.js` matches portal SPA routes
   only under the page's base (`playwright/portal_spa_prefix.js`)
-- `Lib/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);
+- `Lib/Ui/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);
   the tests live in the `flash` concern
 - `Core/Auth/Portal_Auth.php` - `verify_credentials()`, the portal password door (`Portal_Auth_Test`;
   its history store is pinned in the `session` concern)

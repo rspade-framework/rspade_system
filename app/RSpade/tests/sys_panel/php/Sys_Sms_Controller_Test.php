@@ -11,10 +11,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Response\Error_Response;
-use App\RSpade\Core\Sms\Rsx_Sms;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
 use App\RSpade\Sys\App\Sys\Email\_Sys_Sms_Controller;
 
 /**

@@ -65,7 +65,7 @@ way - it is the per-process snapshot the lock backend selection reads.
 - `system/artisan` (the other caller - its behaviour must not have moved)
 - `app/RSpade/Core/Console/Rsx_Script.php` (the booted-world reader)
 - `app/RSpade/Core/Manifest/Manifest.php`, `app/RSpade/Core/Providers/Rsx_Framework_Provider.php`,
-  `app/RSpade/Core/Prod/Rsx_Build_Context.php`, `app/RSpade/Core/Health/Rsx_Php_Requirements.php`,
+  `app/RSpade/Core/Prod/Rsx_Build_Context.php`, `app/RSpade/Lib/Operations/Health/Rsx_Php_Requirements.php`,
   `system/bootstrap/rsx_paths.php`, `system/bootstrap/rsx_container_gate.php` (the guarded sniffs)
 
 ## Man pages

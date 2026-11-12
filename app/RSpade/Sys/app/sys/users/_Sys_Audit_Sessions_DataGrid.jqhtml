@@ -10,7 +10,9 @@ $base_params - the record and the session the controller checks, sent with every
                ({portal_user_id, user_session_id})
 
 Server half: _Sys_Audit_Sessions_DataGrid.php, a page of
-Audit_Session::list_page_for_user_session() plus the site's name. Grid key "audit"; sort
+Audit_Session::list_page_for_user_session() plus the site's name and the address's
+location (ip_address__location, resolved per row of the page, never sorted or searched;
+the hosting screen places <Geo_Ip_Credit /> beneath the grid). Grid key "audit"; sort
 last seen, first seen or IP; search on IP or user agent. A row is recorded when the sign-in
 does something attributed to it (a revision-recorded change, a task it dispatches), and a
 new one whenever its address, its browser's user agent or the site it acts on changes - so
@@ -37,7 +39,7 @@ records nothing.
         <tr>
             <td><%= row.last_seen_at ? Rsx_Time.format_timestamp(row.last_seen_at) : '' %></td>
             <td><%= row.first_seen_at ? Rsx_Time.format_timestamp(row.first_seen_at) : '' %></td>
-            <td class="_Sys_Audit_Sessions_DataGrid__mono"><%= row.ip_address %></td>
+            <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
             <td><span title="<%= row.user_agent || '' %>"><%= row.device_summary %></span></td>
             <td>
                 <% if (row.site_id !== null) { %>

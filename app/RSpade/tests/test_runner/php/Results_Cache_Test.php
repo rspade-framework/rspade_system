@@ -6,8 +6,8 @@ use ReflectionMethod;
 use App\RSpade\Commands\Rsx\Rsx_Test_Command;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint;
 
 /**
  * The RESULT CACHE: a docker run records its per-class records and exit code under the

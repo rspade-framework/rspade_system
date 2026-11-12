@@ -7,14 +7,14 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Rsx_Mail;
-use App\RSpade\Core\Mail\Rsx_Mail_Transport;
-use App\RSpade\Core\Mail\Rsx_Test_Recipients;
-use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Models\Sms_Queue_Model;
-use App\RSpade\Core\Sms\Rsx_Sms;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Test_Recipients;
+use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Transport_Stub;
 

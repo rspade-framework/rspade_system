@@ -271,7 +271,7 @@ map above.
 ### Phase 1: File Discovery
 - Implemented in `Manifest_Scanner::_get_rsx_files()`
 - Scans the directories `Manifest_Scanner::_scan_directories()` returns (facade: `Manifest::scan_directories()`) - the ONE answer to "does this build index that path"
-- Configured list (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
+- Configured list (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
 - **THE TEST TREES ARE NOT IN IT.** `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` are appended ONLY while `Rsx_Test_Abstract::suite_is_running()` (the `--_test-run` internal flag `system/artisan` declares pre-boot for `rsx:test` and `Rsx_Artisan` forwards to every child). A fixture is real indexed source - a route, an Ajax surface, an `#[Auth]` naming a check - and a served site must not carry one; the outage that set this rule was a fixture whose `#[Auth]` named an application-only check, which failed the manifest build of every install that scanned it. `rsx/tests` lives inside the `rsx/` root, so it is additionally skipped BY PATH when it is not in the list
 - The transition costs one rebuild in each direction and nothing else: the first ordinary request after a test run drops the fixtures again through the normal add/remove path (measured on this box: 5.7 s for that request, 0.11 s steady)
 - A missing scan path is a FATAL, the three TEST TREES excepted: they are added by the test RUN rather than by the operator, and each is legitimately absent (`app/RSpade/temp` is the framework developer's scratch tree; an application that keeps its suites beside the code they test has no `rsx/tests`). A missing root that came from config stays fatal
@@ -866,7 +866,7 @@ When testing manifest functionality:
 - Cache files: `build/manifest_index.php` (hot) and `manifest_files.php` (cold)
 - JS stubs: `tmp/js-stubs/`
 - Model stubs: `tmp/js-model-stubs/`
-- Scan dirs (`Manifest::scan_directories()`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel) - plus `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` while the process is a test run
+- Scan dirs (`Manifest::scan_directories()`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel) - plus `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` while the process is a test run
 
 ## Direct Data Access
 

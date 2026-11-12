@@ -10,7 +10,7 @@ namespace App\RSpade\Tests\Throttle\Php;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\Throttle\Rsx_Throttle;
+use App\RSpade\Lib\SignIn\Throttle\Rsx_Throttle;
 
 /**
  * Rsx_Throttle::check() claims a per (site, user, action) interval with ONE atomic upsert

@@ -35,10 +35,10 @@ deliberately the mail concern's tests with the transport removed:
 
 | File | Role |
 |------|------|
-| `Core/Sms/Rsx_Sms.php` | The send facade: tenant, blocklist, dev-host gate, enqueue, and the two delivery modes |
-| `Core/Sms/Sms_Queue_Service.php` | The drain (frozen in `disabled`; otherwise reclaim, then SUPPRESSED per row) and the daily cleanup |
-| `Core/Models/Sms_Queue_Model.php` | The row's state machine, the claim, `reclaim_stranded()`, retention |
-| `Core/Models/Sms_Recipient_Model.php` | Per-number blocklist and counters |
+| `Lib/Messaging/Sms/Rsx_Sms.php` | The send facade: tenant, blocklist, dev-host gate, enqueue, and the two delivery modes |
+| `Lib/Messaging/Sms/Sms_Queue_Service.php` | The drain (frozen in `disabled`; otherwise reclaim, then SUPPRESSED per row) and the daily cleanup |
+| `Lib/Messaging/Sms/Sms_Queue_Model.php` | The row's state machine, the claim, `reclaim_stranded()`, retention |
+| `Lib/Messaging/Sms/Sms_Recipient_Model.php` | Per-number blocklist and counters |
 
 Behavior of record: `php artisan rsx:man sms`. Config: `rsx:man config_rsx`.
 

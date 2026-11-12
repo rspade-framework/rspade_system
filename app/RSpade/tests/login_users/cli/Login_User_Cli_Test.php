@@ -144,6 +144,39 @@ class Login_User_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * luc-08: --require-reset sets a TEMPORARY password - the new hash and the forced-reset flag
+     * in one save - and it holds on an identity that was ALREADY flagged; without the option a
+     * new password clears the flag.
+     */
+    public static function test_password_set_require_reset_flags_the_identity_even_when_already_flagged()
+    {
+        $login_user = static::__make_login_user('temp');
+        $login_user->require_password_reset();
+        $login_user->save();
+
+        [$code, $envelope] = static::__json_call('rsx:users:password:set', [
+            '--user' => (string) $login_user->id,
+            '--password' => 'a-temporary-password',
+            '--require-reset' => true,
+        ]);
+
+        static::__assert_equals(0, $code);
+        static::__assert_true($envelope['data']['password_reset_required'], 'the envelope says so');
+
+        $row = static::__row((int) $login_user->id);
+        static::__assert_true(Hash::check('a-temporary-password', $row->password), 'the password is set');
+        static::__assert_equals(1, (int) $row->password_reset_required, 'and still flagged');
+
+        [$code, $envelope] = static::__json_call('rsx:users:password:set', [
+            '--user' => (string) $login_user->id,
+            '--password' => 'a-permanent-password',
+        ]);
+
+        static::__assert_false($envelope['data']['password_reset_required']);
+        static::__assert_equals(0, (int) static::__row((int) $login_user->id)->password_reset_required, 'a plain set clears it');
+    }
+
+    /**
      * luc-02: every signed-in session of the identity ends, and nobody else's does.
      */
     public static function test_password_set_ends_the_identitys_sessions()

@@ -3,11 +3,11 @@
 namespace App\RSpade\Core\Time;
 
 use Carbon\Carbon;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Date;
 use App\RSpade\Core\Time\Rsx_Timestamp_Format;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Rsx_Time - Datetime handling for RSpade (moments in time with timezone)

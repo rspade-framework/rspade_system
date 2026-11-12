@@ -362,7 +362,7 @@ class Manifest_Store
         // (Portal_Url_ManifestSupport) - so a development boot whose settings differ from the
         // stamp rebuilds (index_portal_env_stale_reason()), and a sealed one refuses to boot
         // (Manifest::init()).
-        Manifest::$data['portal_env'] = \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint();
+        Manifest::$data['portal_env'] = \App\RSpade\Lib\Portal\Rsx_Portal_Url::fingerprint();
         Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data'], Manifest::$data['mode'], Manifest::$data['portal_env']);
 
         // The hot payload: every derived section, the file index, and the hot files only.
@@ -593,7 +593,7 @@ class Manifest_Store
         // where they are judged, so a change re-runs the judgement - and keys the new build.
         $portal_env_reason = self::index_portal_env_stale_reason(
             Manifest::$data['portal_env'] ?? null,
-            \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint()
+            \App\RSpade\Lib\Portal\Rsx_Portal_Url::fingerprint()
         );
 
         if ($portal_env_reason !== null) {

@@ -77,18 +77,4 @@ class Login_History extends Login_History_Abstract
             'site' => null,
         ];
     }
-
-    /**
-     * The city, region and country columns the staff table carries.
-     */
-    protected static function __format_location(object $record): ?string
-    {
-        $parts = array_filter([
-            $record->location_city,
-            $record->location_region,
-            $record->location_country,
-        ]);
-
-        return !empty($parts) ? implode(', ', $parts) : null;
-    }
 }

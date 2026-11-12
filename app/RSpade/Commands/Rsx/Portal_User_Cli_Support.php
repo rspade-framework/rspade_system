@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * "Which portal user does --portal-user name?" - answered ONCE, for every framework CLI

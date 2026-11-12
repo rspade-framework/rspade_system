@@ -38,19 +38,19 @@ own history row).
 
 ## Source files
 
-- `app/RSpade/Core/TwoFactor/Rsx_Two_Factor.php` - the facade: enrollment, the challenge, removal
-- `app/RSpade/Core/TwoFactor/Totp.php` - RFC 6238 codes and RFC 4648 base32, pure and static
-- `app/RSpade/Core/TwoFactor/Passkeys.php` - the WebAuthn wrapper over `lbuchs/webauthn`
-- `app/RSpade/Core/TwoFactor/Recovery_Codes.php` - minting, bcrypt storage, consume-once
-- `app/RSpade/Core/TwoFactor/Two_Factor_Credential_Model.php` - the `_two_factor_credentials` model
-- `app/RSpade/Core/TwoFactor/Two_Factor_Failed_Exception.php` - the user-safe failure
-- `app/RSpade/Core/TwoFactor/Rsx_Two_Factor_Controller.php` - the Ajax surface: enrollment,
+- `app/RSpade/Lib/SignIn/TwoFactor/Rsx_Two_Factor.php` - the facade: enrollment, the challenge, removal
+- `app/RSpade/Lib/SignIn/TwoFactor/Totp.php` - RFC 6238 codes and RFC 4648 base32, pure and static
+- `app/RSpade/Lib/SignIn/TwoFactor/Passkeys.php` - the WebAuthn wrapper over `lbuchs/webauthn`
+- `app/RSpade/Lib/SignIn/TwoFactor/Recovery_Codes.php` - minting, bcrypt storage, consume-once
+- `app/RSpade/Lib/SignIn/TwoFactor/Two_Factor_Credential_Model.php` - the `_two_factor_credentials` model
+- `app/RSpade/Lib/SignIn/TwoFactor/Two_Factor_Failed_Exception.php` - the user-safe failure
+- `app/RSpade/Lib/SignIn/TwoFactor/Rsx_Two_Factor_Controller.php` - the Ajax surface: enrollment,
   the settings list, and the two public challenge endpoints
-- `app/RSpade/Core/TwoFactor/Rsx_Email_Link_Controller.php` - `/_email_link/:token`, the read-only
+- `app/RSpade/Lib/SignIn/TwoFactor/Rsx_Email_Link_Controller.php` - `/_email_link/:token`, the read-only
   landing route of the link an emailed code travels with (`issued_link()`), on both hosts
-- `app/RSpade/Core/TwoFactor/Rsx_Two_Factor.js` - the browser half of the passkey ceremonies
+- `app/RSpade/Lib/SignIn/TwoFactor/Rsx_Two_Factor.js` - the browser half of the passkey ceremonies
   (base64url <-> ArrayBuffer, `navigator.credentials.create/get`)
-- `app/RSpade/Core/TwoFactor/Totp_Enrollment.*` / `Passkey_Register.*` /
+- `app/RSpade/Lib/SignIn/TwoFactor/Totp_Enrollment.*` / `Passkey_Register.*` /
   `Two_Factor_Challenge.*` - the three components, reaching every bundle via `Core_Bundle`
 - `app/RSpade/Core/Bundle/Core_Bundle.php` (the directory include) and
   `app/RSpade/Core/Bundle/BundleCompiler.php` (the controller stub force-include)

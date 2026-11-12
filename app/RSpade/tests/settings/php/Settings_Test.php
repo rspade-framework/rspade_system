@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Tests\Settings\Php;
 
-use App\RSpade\Core\Settings\Rsx_Settings;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Settings\Rsx_Settings;
 
 /**
  * Tests for the Rsx_Settings application-value store.

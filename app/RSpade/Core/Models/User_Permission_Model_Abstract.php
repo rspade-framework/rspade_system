@@ -3,9 +3,9 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Realtime\Realtime;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * User_Permission_Model_Abstract - one supplementary GRANT or DENY layered over a

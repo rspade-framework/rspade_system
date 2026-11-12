@@ -7,15 +7,15 @@
 
 namespace App\RSpade\Tests\Database\Php;
 
-use App\RSpade\Core\Models\Country_Model;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_Notification_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Geo\Places\Country_Model;
+use App\RSpade\Lib\Portal\Portal_Notification_Model;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * The audit authorship auto-stamp: Rsx_Model_Abstract::save() recording WHO wrote a record

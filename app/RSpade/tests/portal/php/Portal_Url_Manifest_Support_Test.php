@@ -7,8 +7,8 @@
 namespace App\RSpade\Tests\Portal\Php;
 
 use RuntimeException;
-use App\RSpade\Core\Portal\Portal_Url_ManifestSupport;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Url_ManifestSupport;
 
 /**
  * The build-time judge of the client portal's address: the settings refusals become a

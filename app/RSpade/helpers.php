@@ -80,7 +80,7 @@ function is_ide(): bool
  */
 function console_debug(string $channel, ...$values)
 {
-    \App\RSpade\Core\Debug\Debugger::console_debug($channel, ...$values);
+    \App\RSpade\Lib\Developer\Debug\Debugger::console_debug($channel, ...$values);
 }
 
 
@@ -1246,7 +1246,7 @@ function exec_safe(string $command, array &$output = [], int &$return_var = 0, a
  */
 function rsx_dump_die(...$values)
 {
-    \App\RSpade\Core\Debug\Debugger::rsx_dump_die(...$values);
+    \App\RSpade\Lib\Developer\Debug\Debugger::rsx_dump_die(...$values);
 }
 
 /**

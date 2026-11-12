@@ -8,10 +8,10 @@ namespace App\RSpade\Tests\ClassOverride\Php;
 
 use App\RSpade\CodeQuality\Rules\Convention\ClassOverrideDrift_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
-use App\RSpade\Core\Health\Class_Override_Drift_Health_Checks;
 use App\RSpade\Core\Manifest\Class_Override_Drift;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Class_Override_Drift_Health_Checks;
 
 /**
  * CLASS-OVERRIDE-DRIFT-01 - the drift detector.

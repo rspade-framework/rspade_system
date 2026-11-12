@@ -16,10 +16,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * What is pinned: an address resolves to one row however often it is asked for, and the
  * answer is memoized for the process; no address (null, '', 'CLI') is null; a full-length
- * IPv6 address is kept whole; address() and describe() read a row back, describe() with
- * every geocode field present and null until a geocoder fills it; join() puts the address
- * and its geocode on a caller's query under the caller's prefix and column() names a field
- * for where()/orderBy(); a row minted in a rolled-back transaction is not answered again.
+ * IPv6 address is kept whole; address() and describe() read a row back, describe() as the
+ * address alone (a location is never stored); join() puts the address on a caller's query
+ * under the caller's prefix and column() names it for where()/orderBy(); a row minted in a rolled-back transaction is not answered again.
  *
  * The memo is a process static a transaction rollback does not undo by itself, so every
  * test resets it first.
@@ -95,50 +94,24 @@ class Ip_Address_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * describe() answers the address and every geocode field; until a geocoder has located
-     * the address those are null, and once a row carries them they are answered as stored.
+     * describe() answers the address and nothing else: where it is located is never stored
+     * (Rsx_Geo_Ip answers it at display time).
      */
-    public static function test_describe_answers_the_address_and_its_geocode()
+    public static function test_describe_answers_the_address()
     {
         $id = Ip_Address::id('198.51.100.64');
 
-        static::__assert_equals(
-            [
-                'ip_address' => '198.51.100.64',
-                'city' => null,
-                'state' => null,
-                'country' => null,
-                'latitude' => null,
-                'longitude' => null,
-            ],
-            Ip_Address::describe($id),
-            'every geocode field is present and null before a geocoder runs'
-        );
-
-        DB::statement(
-            "UPDATE _ip_addresses SET city = 'Springfield', state = 'Illinois', country = 'United States', latitude = 39.7817, longitude = -89.6501 WHERE id = ?",
-            [$id]
-        );
-
-        $described = Ip_Address::describe($id);
-
-        static::__assert_equals('Springfield', $described['city']);
-        static::__assert_equals('Illinois', $described['state']);
-        static::__assert_equals('United States', $described['country']);
-        static::__assert_equals_approx(39.7817, $described['latitude'], 0.00001);
-        static::__assert_equals_approx(-89.6501, $described['longitude'], 0.00001);
-
+        static::__assert_equals(['ip_address' => '198.51.100.64'], Ip_Address::describe($id), 'the address, and no location');
         static::__assert_null(Ip_Address::describe(0), 'no such row');
     }
 
     /**
-     * join() puts the address and its geocode on the caller's query as <prefix>_<name>,
-     * keeps the query's own columns, and lists a row with no address.
+     * join() puts the address on the caller's query as <prefix>_ip_address, keeps the
+     * query's own columns, and lists a row with no address.
      */
     public static function test_join_adds_the_address_fields_under_the_prefix()
     {
         $located = Ip_Address::id('198.51.100.65');
-        DB::statement("UPDATE _ip_addresses SET city = 'Lisbon', country = 'Portugal', latitude = 38.7223, longitude = -9.1393 WHERE id = ?", [$located]);
 
         $with = DB::table('_login_history')->insertGetId([
             'login_user_id' => 0, 'email_attempted' => 'ip-join-a@rspade.test', 'ip_address_id' => $located, 'status' => 'success',
@@ -156,14 +129,7 @@ class Ip_Address_Test extends Rsx_Test_Abstract
         static::__assert_equals('ip-join-a@rspade.test', $rows[0]->email_attempted, "the query's own columns are kept");
 
         static::__assert_equals('198.51.100.65', $rows[0]->visitor_ip_address);
-        static::__assert_equals('Lisbon', $rows[0]->visitor_city);
-        static::__assert_null($rows[0]->visitor_state);
-        static::__assert_equals('Portugal', $rows[0]->visitor_country);
-        static::__assert_equals_approx(38.7223, (float) $rows[0]->visitor_latitude, 0.00001);
-        static::__assert_equals_approx(-9.1393, (float) $rows[0]->visitor_longitude, 0.00001);
-
         static::__assert_null($rows[1]->visitor_ip_address);
-        static::__assert_null($rows[1]->visitor_city);
 
         static::__assert_equals(
             array_keys(Ip_Address::describe($located)),
@@ -186,7 +152,7 @@ class Ip_Address_Test extends Rsx_Test_Abstract
         Ip_Address::join($query, '_login_history.ip_address_id', 'origin');
 
         $matches = $query->where(Ip_Address::column('origin', 'ip_address'), '198.51.100.67')
-            ->orderBy(Ip_Address::column('origin', 'country'))
+            ->orderBy(Ip_Address::column('origin', 'ip_address'))
             ->get()
             ->all();
 
@@ -194,7 +160,8 @@ class Ip_Address_Test extends Rsx_Test_Abstract
         static::__assert_equals('ip-col-b@rspade.test', $matches[0]->email_attempted);
 
         static::__assert_throws(\InvalidArgumentException::class, fn () => Ip_Address::column('origin', 'id'), 'no address field');
-        static::__assert_throws(\InvalidArgumentException::class, fn () => Ip_Address::column('1 or 1', 'city'), 'not a usable prefix');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Ip_Address::column('origin', 'country'), 'no address field');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Ip_Address::column('1 or 1', 'ip_address'), 'not a usable prefix');
         static::__assert_throws(
             \InvalidArgumentException::class,
             fn () => Ip_Address::join(DB::table('_login_history'), 'ip_address_id', 'origin'),

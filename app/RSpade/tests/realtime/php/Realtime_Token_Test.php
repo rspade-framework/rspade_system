@@ -7,11 +7,11 @@
 
 namespace App\RSpade\Tests\Realtime\Php;
 
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Tests for Realtime::connection_token() / subscribe_token() token minting and

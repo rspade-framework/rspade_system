@@ -11,10 +11,10 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * The user timezone PREFERENCE surface: Rsx_Time::set_user_timezone() /

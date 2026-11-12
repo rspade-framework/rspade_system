@@ -8,8 +8,8 @@
 namespace App\RSpade\Core\Files;
 
 use Exception;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Document_Sandbox - THE one place a document binary's command line is built.

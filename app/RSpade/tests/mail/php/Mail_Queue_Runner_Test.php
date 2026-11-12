@@ -7,17 +7,17 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Mail_Queue_Service;
-use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
-use App\RSpade\Core\Mail\Rsx_Mail_Transport;
-use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Recipient_Model;
+use App\RSpade\Lib\Messaging\Mail\Mail_Queue_Service;
+use App\RSpade\Lib\Messaging\Mail\Mail_Transport_Unavailable_Exception;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Transport_Stub;
 

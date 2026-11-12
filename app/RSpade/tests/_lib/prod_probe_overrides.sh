@@ -19,7 +19,7 @@
 #                                 its _Abstract base (the core-model override shape) and
 #                                 carrying the marker as a public class constant. The model's
 #                                 generated JS stub carries every public constant the model
-#                                 declares, and Core_Bundle's Core/Models include reaches the
+#                                 declares, and Core_Bundle's Lib/Geo/Places include reaches the
 #                                 framework file in EVERY bundle - so the marker is how the
 #                                 sealed /login bundle, which names no application model,
 #                                 shows it compiled the override (Region_Model.PROBE)
@@ -30,7 +30,7 @@
 #
 # THE REPOINTED IMPORT. An rsx/ file resolves a simple name to the rsx/ class, so while the
 # PHP probe exists the development-mode import fixer (Php_Fixer) repoints an application
-# file's `use App\RSpade\Core\Models\Region_Model;` at the probe's Rsx\ FQCN - which
+# file's `use App\RSpade\Lib\Geo\Places\Region_Model;` at the probe's Rsx\ FQCN - which
 # happens on the development boot that runs rsx:prod:enable. Both names answer with the
 # same class while the probe exists. A production build runs no fixer, so once the probe is
 # gone that import would name a class that no longer exists: removal therefore restores
@@ -50,8 +50,8 @@
 PROBE_OVERRIDE_MARKER="rsx_prod_probe_override_$$"
 
 PROBE_PHP_OVERRIDE_FILE="rsx/models/region_model.php"
-PROBE_PHP_SHADOWED_FILE="system/app/RSpade/Core/Models/Region_Model.php"
-PROBE_PHP_FRAMEWORK_FQCN='App\RSpade\Core\Models\Region_Model'
+PROBE_PHP_SHADOWED_FILE="system/app/RSpade/Lib/Geo/Places/Region_Model.php"
+PROBE_PHP_FRAMEWORK_FQCN='App\RSpade\Lib\Geo\Places\Region_Model'
 PROBE_PHP_OVERRIDE_FQCN='Rsx\Models\Region_Model'
 
 PROBE_OVERRIDES_WRITTEN=false
@@ -71,7 +71,7 @@ probe_overrides_create() {
 
 namespace Rsx\Models;
 
-use App\RSpade\Core\Models\Region_Model_Abstract;
+use App\RSpade\Lib\Geo\Places\Region_Model_Abstract;
 
 /**
  * Written by the production-mode lifecycle test and removed by it again: an application

@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Environment_Health_Checks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Environment_Health_Checks;
 
 /**
  * The project-tree rows of rsx:health: storage/, tmp/ and build/ writability, the

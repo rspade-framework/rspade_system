@@ -4,8 +4,8 @@ namespace App\RSpade\Commands\Database;
 
 use Illuminate\Console\Command;
 use Sokil\IsoCodes\IsoCodesFactory;
-use App\RSpade\Core\Models\Country_Model;
-use App\RSpade\Core\Models\Region_Model;
+use App\RSpade\Lib\Geo\Places\Country_Model;
+use App\RSpade\Lib\Geo\Places\Region_Model;
 
 /**
  * Seed geographic data (countries and regions) from ISO 3166 standards

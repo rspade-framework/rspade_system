@@ -5,14 +5,14 @@ namespace App\RSpade\Core\Models;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
-use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Models\User_Profile_Model;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
+use App\RSpade\Lib\Settings\Has_Preference_Variables;
 /**
  * User_Model_Abstract - site-specific user profile with role-based access control
  *

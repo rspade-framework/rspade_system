@@ -17,8 +17,8 @@ use App\RSpade\Core\Companion\Companion_Output_Topic;
 use App\RSpade\Core\Companion\Companion_Store;
 use App\RSpade\Core\Companion\Rsx_Companion;
 use App\RSpade\Core\Events\Event_Registry;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * What the application sees of its companions: Companion_Gates (deny by default, a developer

@@ -14,8 +14,8 @@ The artisan generators that write new application code into `rsx/app/`:
   feature's own directory (the index feature included); `--blade` writes the
   legacy controller + view + js + scss set.
 
-Both are template-driven: `Core/CodeTemplates/StubProcessor.php` derives the
-replacements and `Core/CodeTemplates/stubs/*.stub` supply the content. The
+Both are template-driven: `Lib/Developer/Scaffolding/StubProcessor.php` derives the
+replacements and `Lib/Developer/Scaffolding/stubs/*.stub` supply the content. The
 processor THROWS on an unreplaced `{{ placeholder }}`, so a stub referencing a
 key the processor does not derive fails loudly at generation time.
 
@@ -23,9 +23,9 @@ key the processor does not derive fails loudly at generation time.
 
 - `app/RSpade/Commands/Rsx/Module_Create_Command.php`
 - `app/RSpade/Commands/Rsx/Module_Feature_Create_Command.php`
-- `app/RSpade/Core/CodeTemplates/StubProcessor.php`
+- `app/RSpade/Lib/Developer/Scaffolding/StubProcessor.php`
   (`generate_replacements()` for Blade, `generate_spa_replacements()` for SPA)
-- `app/RSpade/Core/CodeTemplates/stubs/`
+- `app/RSpade/Lib/Developer/Scaffolding/stubs/`
 
 ## Governing docs
 

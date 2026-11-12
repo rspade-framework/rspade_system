@@ -8,11 +8,11 @@
 namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision;
 
 /**
  * The audit session: the permanent record of an acting context that a logged act points
@@ -296,11 +296,11 @@ class Audit_Session_Test extends Rsx_Test_Abstract
 
         $transaction_id = Revision::unit_of_work('audit join', fn () => Revision::transaction_id());
 
-        $query = \App\RSpade\Core\Revisions\Transaction_Model::query()->where('_transactions.id', $transaction_id);
+        $query = \App\RSpade\Lib\Revisions\Transaction_Model::query()->where('_transactions.id', $transaction_id);
         Audit_Session::join($query, '_transactions.audit_session_id');
         $transaction = $query->first();
 
-        static::__assert_instance_of(\App\RSpade\Core\Revisions\Transaction_Model::class, $transaction);
+        static::__assert_instance_of(\App\RSpade\Lib\Revisions\Transaction_Model::class, $transaction);
         static::__assert_equals($transaction_id, (int) $transaction->id);
         static::__assert_equals(511, (int) $transaction->audit_login_user_id);
         static::__assert_equals('audit join', $transaction->description, "the model's own columns are kept");

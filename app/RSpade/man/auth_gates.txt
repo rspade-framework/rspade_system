@@ -611,7 +611,7 @@ PORTAL
 
         1. a class-level #[Auth_Realm('staff'|'portal'|'any')], else
         2. 'portal' when the file lives under a portal root
-           (rsx/portal/, app/RSpade/Core/Portal/), else
+           (rsx/portal/, app/RSpade/Lib/Portal/), else
         3. 'staff' - the fail-closed default.
 
     #[Auth_Realm('any')] is for the framework services that deliberately serve

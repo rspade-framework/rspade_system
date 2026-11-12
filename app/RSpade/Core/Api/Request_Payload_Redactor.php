@@ -14,7 +14,7 @@ use Illuminate\Http\Request;
  *
  * Two records keep a copy of a request's input for later reading: the external API's
  * request log (_api_request_log.request_body) and the writer request history
- * (_transactions.request_payload, Core/Revisions/Request_History). Both store it through
+ * (_transactions.request_payload, Core/RequestHistory/Request_History). Both store it through
  * here, so "what is redacted, what is capped, what is never stored" has one answer:
  *
  *   - CREDENTIALS are redacted: the value under any key matching REDACT_KEYS, at any depth,

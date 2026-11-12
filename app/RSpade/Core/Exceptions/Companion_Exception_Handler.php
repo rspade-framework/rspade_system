@@ -10,9 +10,9 @@ namespace App\RSpade\Core\Exceptions;
 use Illuminate\Http\Request;
 use Throwable;
 use App\RSpade\Core\Api\Api_Dispatcher;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
 
 /**
  * Companion_Exception_Handler - render uncaught companion-channel errors as JSON 500.

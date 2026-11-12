@@ -40,7 +40,7 @@ namespace App\RSpade\Core\Auth;
  * naming it here would bind core to a class that may not exist under that namespace.
  * Callers pass their own user object; implementors are free to type their override.
  *
- * @see \App\RSpade\Core\Portal\Portal_Authorizable The portal-realm equivalent.
+ * @see \App\RSpade\Lib\Portal\Portal_Authorizable The portal-realm equivalent.
  */
 trait Staff_Authorizable
 {

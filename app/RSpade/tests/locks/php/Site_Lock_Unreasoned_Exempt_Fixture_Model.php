@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Tests\Locks\Php;
 
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * A #[Site_Lock_Exempt] declaration with no reason, for Site_Lock_Test: Site_Lock refuses

@@ -10,7 +10,7 @@ namespace App\RSpade\Core\Auth;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Framework-internal evaluation engine for declarative #[Auth] gates.

@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with the Session facade and staff login - RsxAuth::verify_credentials() then RsxAuth::login(), Login_History, Login_Throttle, Auth_Throttled_Exception, get_session_id() vs has_session(), put_value(), get_sessions_for_user() / terminate_session(), session lifetimes, Login_Redirect / Login_Notice, begin_impersonation(), RsxAuth::enter_site() under the site locks. Use when building a login or logout page, a site picker, a where-you're-signed-in screen or an account-status check, or on 'You're doing that too fast', 'Session::set_site_id() refused inside', 'RsxAuth::enter_site(N) refused' or every visitor throttled at once (TRUSTED_PROXIES)."
+description: "Working with the Session facade and staff login - RsxAuth::verify_credentials() then RsxAuth::login(), Login_History, Login_Throttle, Auth_Throttled_Exception, get_session_id() vs has_session(), put_value(), get_sessions_for_user() / terminate_session(), session lifetimes, Login_Redirect / Login_Notice, begin_impersonation(), RsxAuth::enter_site() under the site locks, set_password() causes and the login_user.password.changed / portal_user.password.changed events. Use when building a login or logout page, a site picker, a where-you're-signed-in screen, an account-status check or a password audit trail, or on 'You're doing that too fast', 'Session::set_site_id() refused inside', 'RsxAuth::enter_site(N) refused' or every visitor throttled at once (TRUSTED_PROXIES)."
 ---
 
 # Sessions and Login
@@ -94,9 +94,11 @@ CREDENTIAL FIELDS.
 
 ### A password that must be reset - the second thrown refusal
 
-`login_users.password_reset_required` (and `portal_users.password_reset_required`) refuses a PASSWORD sign-in until the password changes. The app sets it (`$identity->require_password_reset(); $identity->save();`) or an operator runs `rsx:users:force_password_reset --user=<id|email>` / `--portal-user=<id>` (`--clear` lifts it; no email is sent, no session ended). The framework CLEARS it in the same save that writes a new password hash - unless that save assigns the flag itself (a temporary password that must be replaced).
+`login_users.password_reset_required` (and `portal_users.password_reset_required`) refuses a PASSWORD sign-in until the password changes. The app sets it (`$identity->require_password_reset(); $identity->save();`), an operator runs `rsx:users:force_password_reset --user=<id|email>` / `--portal-user=<id>` (`--clear` lifts it; no email is sent, no session ended), or issues a TEMPORARY password with `rsx:users:password:set --user=<id|email> --require-reset`. The framework CLEARS it in the same save that writes a new password hash - unless that save asks for it (`set_password($temporary, Password_Change::CAUSE_ADMIN)` + `require_password_reset()` + `save()`), which holds even when the identity was ALREADY flagged (the request is recorded on the instance, not read from a dirty column).
 
-`verify_credentials()` asks it LAST - after the password matched and an active membership was found - and THROWS `Auth_Password_Reset_Required_Exception` (`->identity`, `getMessage()` = "Your password must be reset before you can sign in."). A wrong password or a disabled membership on a flagged identity is still the plain null. The refusal is a `_login_history` ROW (`STATUS_FAILED_PASSWORD_RESET_REQUIRED`, `Login_History::record_refusal()`) **even under `record: false`** - nothing can turn it into a sign-in - and is never counted against the throttle. Catch it beside `Auth_Throttled_Exception` and point at your reset flow:
+`verify_credentials()` asks it LAST - after the password matched and an active membership was found - and THROWS `Auth_Password_Reset_Required_Exception` (`->identity`, `getMessage()` = "Your password must be reset before you can sign in."). A wrong password or a disabled membership on a flagged identity is still the plain null. The refusal is a `_login_history` ROW (`STATUS_FAILED_PASSWORD_RESET_REQUIRED`, `Login_History::record_refusal()`) **even under `record: false`** - nothing can turn it into a sign-in - and is never counted against the throttle.
+
+**The forced change at sign-in** - catch it beside `Auth_Throttled_Exception` and let the person choose a new password right there (no email, no token in a URL):
 
 ```php
 try {
@@ -104,11 +106,27 @@ try {
 } catch (Auth_Throttled_Exception $e) {
     $error = $e->getMessage();
 } catch (Auth_Password_Reset_Required_Exception $e) {
-    $error = $e->getMessage() . ' Use "Forgot your password?" to choose a new one.';
+    RsxAuth::begin_forced_password_change($e->identity);   // signs the realm out, parks the identity
+    return redirect(Rsx::Route('Login_Controller::new_password'));
 }
+
+// The "Choose a new password" POST - your policy first (length, confirmation), then:
+try {
+    $login_user = RsxAuth::complete_forced_password_change($password);   // NOT signed in
+} catch (Auth_Throttled_Exception | Forced_Password_Change_Exception $e) {
+    $error = $e->getMessage();          // reason(): nothing_pending / empty / unchanged
+}
+// ...then continue the ladder exactly as after verify_credentials(): the second factor
+// first (Rsx_Two_Factor::begin_challenge()), else your completion function -> RsxAuth::login().
 ```
 
-A passkey or SSO sign-in is NOT refused - it never presents the password. Uncaught, the exception is an error page, but only for an account somebody flagged. `rsx:man session`, PASSWORD RESET REQUIRED.
+`forced_password_change_pending()` gives the page `{email}` for its hidden `autocomplete="username"` field; `abandon_forced_password_change()` is its Cancel. The parked value lives with the session and goes stale if the password changes another way; the step refuses the CURRENT password, draws on the sign-in throttle, saves through the model (flag cleared, trusted browsers forgotten, other sign-ins ended, `login_user.password.changed` with cause `forced_change`) - the sign-in records its own success. `Portal_Auth::` has the same four methods. The template's staff sign-in is the worked example (`Login_Controller::new_password`, `rsx/app/login/CLAUDE.md`); the simpler alternative is an error pointing at a forgot-password flow.
+
+A passkey or SSO sign-in is NOT refused - it never presents the password - so such a user keeps the flag until their next password sign-in. Uncaught, the exception is an error page, but only for an account somebody flagged. `rsx:man session`, PASSWORD RESET REQUIRED and FORCED PASSWORD CHANGE AT SIGN-IN.
+
+**Every password is given with `set_password($plain, $cause)` + `save()`** on `Login_User_Model` / `Portal_User_Model` - a change screen, a reset link, an administrator, the forced change, the CLI - so the model's consequences (PASSWORD CHANGES) follow every path.
+
+**Every change is announced, once, after it commits**: `login_user.password.changed` / `portal_user.password.changed` (actions) with `{identity, cause, actor, audit_session_id, ip_address}`. The cause is the `Password_Change::CAUSE_*` the caller stated - `self` (a change screen, old password proven), `reset_link`, `admin` (somebody else set it), `forced_change` (stated by the framework's forced change), `cli` (stated by `rsx:users:password:set`) - and `unknown` when the save stated none (a bare `->password =`, `set_password()` alone); any other string throws. Creating an identity is not a change. `actor` is the signed-in identity acting (the impersonator while impersonating; null for a reset link, the forced change, a command). An audit trail stores `audit_session_id` (the address is read back from it, never copied); a handler that writes site-scoped rows runs under whatever lock the change was made under, so it dispatches a task - the template's `Password_Event_Handlers` + `Password_Audit_Service` record an action-log row on every site of the identity, end its open reset links, and send the SECURITY notice `Password_Changed_Email`. The template ships all three resets (self-service link, administrator Reset Password, the forced change); `rsx/app/login/CLAUDE.md`, PASSWORD RESET.
 
 `RsxAuth::login($identity, $touch_last_login = true)`: `false` skips the `last_login` stamp - pass it whenever the login is not a real login (impersonation, a harness). **In CLI the stamp never happens at all.**
 
@@ -281,6 +299,23 @@ To keep longer sign-ins, set both staff (and portal) numbers higher there - e.g.
 - **`max_length_minutes`** - from the sign-in. The hard ceiling; the person signs in again (second factor included). **This is the one that bounds a hijacked session** - a thief is never idle.
 - **`max_idle_minutes`** - from the last PAGE VIEW: a page rendering its bundle, or a completed SPA navigation (the browser reports those itself). **Ajax, downloads, thumbnails and API calls are not page views**, so a polling tab does not keep a sign-in alive.
 - `0` = no limit. Both are measured on the USER SESSION. A page view also stamps `last_seen` on the account (`users`, `login_users`, `portal_users`), at most once a minute.
+
+**Limits an administrator sets at run time** (a settings screen) are supplied through the **`session.limits` RESOLVE hook** - the sanctioned seam, never a check of your own. `Session::get_sign_in_limits($realm)` is the ONE reader: the request check and the hourly sweep both judge by it, so they always agree. It asks the hook once per realm per request (or task run); the answer names either limit or both, each an integer `>= 0`; an unnamed key, or `null` (decline), falls back to config. Anything else THROWS (`The session.limits handler's answer for realm 'staff' ...`) - a mistake never becomes "no limit". The payload is `{realm}` only and the sweep runs as a task with nobody signed in and no site, so **answer from GLOBAL state, never the session or a site-scoped model**, and **cache it** - the hook runs on every signed-in request:
+
+```php
+// rsx/handlers/session_limit_handlers.php
+#[OnEvent('session.limits')]
+public static function limits(array $data): ?array
+{
+    // Cached: the hook is asked on every signed-in request. Delete the key when the settings screen saves.
+    return RsxCache::remember('session_limits:' . $data['realm'], function () use ($data) {
+        $idle = Rsx_Settings::get('session_' . $data['realm'] . '_max_idle_minutes');   // a GLOBAL TYPE_INTEGER setting
+        return $idle === null ? [] : ['max_idle_minutes' => $idle];                  // unset -> the config default
+    }, 600);
+}
+```
+
+`ajax_grace_minutes` stays config-only.
 
 **Enforced on every request, before the gates - you write nothing:**
 

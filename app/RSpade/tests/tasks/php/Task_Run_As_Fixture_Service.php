@@ -8,12 +8,12 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Fixture tasks for Task_Run_As_Dispatcher_Test: each records, into its run's state, who the

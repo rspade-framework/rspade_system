@@ -72,11 +72,14 @@ redirect is resolved with the real path on disk, not from a list of known names.
 
 ## Read
 
-**Framework attributes are highlighted** — `#[Ajax_Endpoint]`, `#[Route]`,
-`#[Auth]`, `#[Auth_Realm]`, `#[Task]`, `#[Schedule]`, `#[OnEvent]`,
-`#[Api_Endpoint]`, `#[Relationship]` and the rest of the declarative surface are
-the load-bearing declarations in an RSpade class, and they read as declarations
-rather than as comments. A name that is not coloured is a name nothing reads.
+**Framework attributes and decorators are highlighted and explained** —
+`#[Ajax_Endpoint]`, `#[Route]`, `#[Auth]`, `#[Writer]`, `#[Task]`, `#[On_Build]`,
+`#[OnEvent]`, `#[Api_Endpoint]` and the rest of the PHP declarative surface, and
+the JS decorators `@route`, `@layout`, `@spa`, `@auth`, `@title`,
+`@spinner_until_ready`, `@mutex` and `@debounce`, are the load-bearing
+declarations in an RSpade class, and they read as declarations rather than as
+comments. A name that is not coloured is a name nothing reads. Hover one to see
+what it does, where it goes, its arguments, and the man page or skill to read.
 
 **Documentation references are clickable.** `rsx:man tasks` in a comment, or
 `rspade:background-tasks`, is highlighted amber and `F12` opens the page or the

@@ -401,8 +401,12 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
 
     THE RECOMMENDED QUESTION CONTRACT
 
-        { kind: 'confirm', title, body, confirm_label, cancel_label }
+        { kind: 'confirm', title, body, confirm_label, cancel_label, back_label }
             answer: true | false        (Back / X -> Rsx_Form.CANCELLED)
+            back_label (optional) labels the button that answers nothing and
+            stops the call ("Back" when absent). The duplicate-upload question
+            is a confirm: Cancel Upload / Skip This File / Upload Again
+            (rsx:man file_upload, DUPLICATE UPLOADS).
 
         { kind: 'select', title, body, options: [{value, label}], default }
             answer: the chosen value
@@ -472,7 +476,21 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
 
         Rsx_Form.ask(question, {key}) runs the registered handler for such a
         caller, so the question looks identical wherever it came from; the
-        caller then decides what to do with the answer. In PHP, an in-process
+        caller then decides what to do with the answer.
+
+        Rsx_Form.call_answering(url, params) is that whole loop for a caller
+        that simply wants the endpoint answered: it calls, asks each question
+        through Rsx_Form.ask(), resends with every answer so far in _answers,
+        and resolves with the endpoint's value - or Rsx_Form.CANCELLED when a
+        question was cancelled (the endpoint is not called again).
+
+            const result = await Rsx_Form.call_answering(Tasks_Controller.attachments_add, { id, keys });
+            if (Rsx_Form.is_cancelled(result)) return;
+
+        Its rounds are not capped, because a batch endpoint may ask one
+        question per item under a key per item. What it refuses is the defect
+        MAX_QUESTION_ROUNDS guards in a form: an endpoint asking a key it was
+        already answered throws, naming the endpoint. In PHP, an in-process
         Ajax::internal() raises AjaxQuestionException, carrying get_key() and
         get_question() - which is what a PHP test and rsx:ajax see.
 

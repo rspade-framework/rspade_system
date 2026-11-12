@@ -370,7 +370,7 @@ PATTERNS BY PAGE TYPE
 RSX_BREADCRUMB_RESOLVER
     Framework class that handles breadcrumb resolution with caching.
 
-    Location: /system/app/RSpade/Breadcrumbs/Rsx_Breadcrumb_Resolver.js
+    Location: /system/app/RSpade/Core/SPA/Rsx_Breadcrumb_Resolver.js
 
     API:
         Rsx_Breadcrumb_Resolver.stream(action, url, callbacks)
@@ -605,7 +605,7 @@ CACHING STRATEGY
         - Previous breadcrumbs stay visible until new chain ready
 
 FILES
-    /system/app/RSpade/Breadcrumbs/Rsx_Breadcrumb_Resolver.js
+    /system/app/RSpade/Core/SPA/Rsx_Breadcrumb_Resolver.js
         Breadcrumb resolution with progressive streaming and caching
 
     /rsx/app/frontend/Frontend_Spa_Layout.js

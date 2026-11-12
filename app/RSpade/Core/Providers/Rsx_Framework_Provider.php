@@ -238,7 +238,7 @@ class Rsx_Framework_Provider extends ServiceProvider
         // bootstrapped AND after the RSX autoloader is available, so the throw renders
         // as an error page. Raised from AppServiceProvider::register() it produced a
         // blank fatal - the configured exception handler could not be resolved yet.
-        \App\RSpade\Core\Health\Rsx_Php_Requirements::enforce();
+        \App\RSpade\Lib\Operations\Health\Rsx_Php_Requirements::enforce();
 
         // Fail loud on an APP_URL whose scheme this mode does not accept (https always;
         // http in development only), or a missing one. Deferred to here from the
@@ -423,7 +423,7 @@ class Rsx_Framework_Provider extends ServiceProvider
         // Redis is reachable), nothing has dispatched yet, and a check that lands here cannot
         // change what the request does. Web SAPI only, every mode, silent when OPcache
         // is on. See Opcache_Advisory.
-        \App\RSpade\Core\Health\Opcache_Advisory::check();
+        \App\RSpade\Lib\Operations\Health\Opcache_Advisory::check();
     }
 
     /**
@@ -487,7 +487,7 @@ class Rsx_Framework_Provider extends ServiceProvider
             return;
         }
 
-        \App\RSpade\Core\Ide\Ide_Bridge_Token::ensure();
+        \App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token::ensure();
     }
 
     /**

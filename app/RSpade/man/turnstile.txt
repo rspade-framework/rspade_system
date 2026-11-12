@@ -13,7 +13,7 @@ SYNOPSIS
     <Turnstile_Input />
 
     // The endpoint: FIRST statement of the POST branch.
-    use App\RSpade\Core\Turnstile\Rsx_Turnstile;
+    use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
     Rsx_Turnstile::validate($request);          // native #[Route] POST
     Rsx_Turnstile::validate($request, $params); // #[Ajax_Endpoint]

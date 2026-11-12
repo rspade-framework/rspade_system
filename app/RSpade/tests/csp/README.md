@@ -54,7 +54,7 @@ Invariants the tests exist to hold:
 | `Core/Csp/Csp_Report_Controller.php` | `POST /_csp-report` collector |
 | `Core/Dispatch/Dispatcher.php` | Header seam, both realms (`__transform_response`, with the request's realm) |
 | `Core/Bundle/Rsx_Bundle_Abstract.php` | Nonce on the inline script, `csp_nonce` export, `/_vendor/` asset emission |
-| `Core/Debug/Debugger.php` | Nonce on the shutdown console echo |
+| `Lib/Developer/Debug/Debugger.php` | Nonce on the shutdown console echo |
 | `Core/Session/Rsx_Csrf.php` | The collector's CSRF exemption |
 | `config/rsx.php` | The `csp` block |
 

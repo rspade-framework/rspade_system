@@ -58,7 +58,7 @@ Framework-core, globally available - nothing to import. Args: `$theme` (auto|lig
 ## In the endpoint
 
 ```php
-use App\RSpade\Core\Turnstile\Rsx_Turnstile;
+use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
 #[Route('/login', methods: ['GET','POST'])]
 #[Auth('public')]

@@ -6,9 +6,9 @@
 
 namespace App\RSpade\Tests\ProdMode\Php;
 
-use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 
 /**
  * The PHP console_debug() gate is driven by RSX_MODE (build-mode policy), the single

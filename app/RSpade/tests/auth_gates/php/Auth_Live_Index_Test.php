@@ -83,15 +83,15 @@ class Auth_Live_Index_Test extends Rsx_Test_Abstract
         $checks = Auth_Gates::get_checks(Auth_Gates::REALM_PORTAL);
 
         static::__assert_equals(
-            'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract',
+            'App\\RSpade\\Lib\\Portal\\Portal_Permission_Abstract',
             $checks['is_logged_in']['class']
         );
         static::__assert_equals(
-            'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract',
+            'App\\RSpade\\Lib\\Portal\\Portal_Permission_Abstract',
             $checks['public']['class']
         );
         static::__assert_equals(
-            'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract',
+            'App\\RSpade\\Lib\\Portal\\Portal_Permission_Abstract',
             $checks['closed']['class']
         );
     }

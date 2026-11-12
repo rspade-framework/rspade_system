@@ -35,6 +35,13 @@ says what is in this DIRECTORY and what must stay true when editing it.
   run at its time, a scheduled-origin run early) and `next_run_after()` (advance from the later
   of now and the due time). Pokes come from `dispatch()`, `set_next_run()`, a worker that ran
   something exiting, a manifest rebuild and `rsx:tasks:enable`.
+- `Task_On_Build.php` — `#[On_Build]`: `declarations()` (the manifest attribute index),
+  `recorded_build_key()` / `dispatch_for_build($build_key)` (the scheduler tick's last step:
+  when the key differs from `_task_on_build` row 1, dispatch every declaration once with no
+  params, THEN record the key - a throw leaves it unrecorded; nothing while the task system is
+  off; skipped by the tick under the test suite) and `declaration_problems()`, the one
+  judgement of a declaration, asked by `TASK-ON-BUILD-01` (a manifest-build FATAL, so the tick
+  never re-judges a declaration). The build never dispatches - it only pokes the daemon.
 - `Task_Dispatcher_Context.php` — `#[Run_As_Dispatcher]`: `begin($task_id)` loads the run's
   `_tasks.user_session_id` (the dispatching sign-in - staff, portal or an API key's) and
   starts a FROZEN, BOUND virtual session from it (`Session::_begin_virtual()`: identity, site,
@@ -237,7 +244,7 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `worker_id` in ONE `members_alive()` per pool, under that pool's lock: the daemon's own
   generation and not alive -> abandoned at once; an older generation (`known: false`) ->
   this host judges its own runs by pid - `Task::is_run_process()`: the pid must still be
-  the process the run recorded (`worker_pid_start_time`, `Core/Process/Process_Identity`)
+  the process the run recorded (`worker_pid_start_time`, `Lib/Support/Process/Process_Identity`)
   and a task worker of this project (`Task::is_worker_process()`, the command line); never
   bare pid existence, which a reused pid satisfies - and leaves other hosts' alone. A run
   with no `worker_id` (inline) is the same pid + start-time probe on its own host, with no
@@ -314,7 +321,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `--force-scheduled`, and the worker write that advances it (the tick, whether it creates a
   RUNNING run or enqueues a pending one) is guarded on the `next_run_at` the worker read. A new write to
   that column must be guarded the same way.
-- Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]`/`#[Task_Access]` classes.
+- **A build never dispatches.** `#[On_Build]` work is dispatched only by the tick
+  (`Task_On_Build::dispatch_for_build()`), which a build pokes; nothing in `rsx.rebuilt` or the
+  manifest may write a run - a build may have no database, run inside a request, or run while
+  the task system is off.
+- Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]`/`#[Task_Access]`/`#[On_Build]` classes.
 
 ## Site locks in a task body
 

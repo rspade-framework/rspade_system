@@ -9,7 +9,7 @@ namespace App\RSpade\Tests\Theme\Php;
 
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\Theme\Rsx_Dark_Mode;
+use App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode;
 
 /**
  * The theme preference: resolution, storage, and the vocabulary shipped to the browser.

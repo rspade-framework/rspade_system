@@ -1,6 +1,6 @@
 {{--
     RSpade unsubscribe screen - the page behind every non-transactional footer link
-    (App\RSpade\Core\Mail\Mail_Unsubscribe_Controller).
+    (App\RSpade\Lib\Messaging\Mail\Mail_Unsubscribe_Controller).
 
     STANDALONE ON PURPOSE, exactly like errors/rsx_error.blade.php: inline styles, no
     bundle, no manifest view lookup, no JavaScript. The visitor is a mail recipient who

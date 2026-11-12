@@ -16,7 +16,7 @@ audit.
 
 ## Source files
 
-- `app/RSpade/Core/Conformance/Conformance_Audits.php` - the reader: `directories()`
+- `app/RSpade/Lib/Developer/Conformance/Conformance_Audits.php` - the reader: `directories()`
   (and the `$_directories_for_tests` seam), `all()`, `find()`, `for_path()`, the strict
   header parser and `glob_regex()`
 - `app/RSpade/Commands/Rsx/Conformance_List_Command.php` - `rsx:conformance:list

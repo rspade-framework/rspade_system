@@ -35,7 +35,7 @@ endpoint, and every caller goes through it:
    `pre_dispatch` THROWS: an Ajax call answers a value or a coded result, never a page.
 6. A DB transaction the call left open is rolled back, and the call THROWS naming the
    endpoint - its writes inside it are gone (and a writer's whole transaction with them).
-7. THE REQUEST HISTORY (`Core/Revisions/Request_History`), for a browser call to a writer
+7. THE REQUEST HISTORY (`Core/RequestHistory/Request_History`), for a browser call to a writer
    (`#[Writer]`, or a `#[Manual_Lock]` that takes a site write lock): the call's
    `_transactions` row (minted eagerly by the boundary) records its fingerprint, redacted
    payload and timing inside its transaction, and - for a SUCCESS that carried a

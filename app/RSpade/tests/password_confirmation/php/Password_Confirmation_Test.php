@@ -11,15 +11,15 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
-use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\SignIn\Confirmation\Rsx_Password_Confirmation;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
 
 /**

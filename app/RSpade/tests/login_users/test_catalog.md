@@ -17,6 +17,7 @@ no stdin. What is pinned is that a call with no terminal refuses rather than set
 | luc-05 | the address moves with its memberships on every site, trashed included; a re-addressed membership is untouched | three memberships across three sites, one trashed, one re-addressed | identity + two memberships moved, third unchanged; no session ends; repeat is action none | implemented |
 | luc-06 | an address held by another identity, live or soft-deleted, is refused | the other identities' emails | email_in_use, message names the deleted identity; nothing changed | implemented |
 | luc-07 | a missing or malformed --email is refused | '' and 'not-an-address' | email_required, email_invalid; nothing changed | implemented |
+| luc-08 | --require-reset sets a temporary password, flagged in the same save, even over an already-flagged identity; a plain set clears it | already-flagged identity; --require-reset then a plain set | hash set, flag 1, envelope true; then flag 0 | implemented |
 
 ## Force_Password_Reset_Cli_Test (cli, default isolation) - rsx:users:force_password_reset
 

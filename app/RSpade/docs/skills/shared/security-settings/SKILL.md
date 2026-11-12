@@ -17,7 +17,7 @@ The template's screens are the worked examples, and are what a fork already has:
 
 | Section | Data | Actions | Detail |
 |---|---|---|---|
-| Change password | - | an `<Rsx_Form>` to your own endpoint: current password checked throttle-first (`Login_Throttle::require_not_throttled($email)`), a miss recorded with `Login_History::record_failure()`, the new hash saved through `Login_User_Model` (which signs every OTHER browser out itself) | `rsx:man session` |
+| Change password | - | an `<Rsx_Form>` to your own endpoint: current password checked throttle-first (`Login_Throttle::require_not_throttled($email)`), a miss recorded with `Login_History::record_failure()`, the new password saved with `Login_User_Model::set_password($new, Password_Change::CAUSE_SELF)` + `save()` (which signs every OTHER browser out itself and fires `login_user.password.changed` - the hook for the history row and the "your password was changed" email) | `rsx:man session` |
 | Two-factor | `Rsx_Two_Factor_Controller.credentials_list()` - factors, recovery codes left, whether codes are issued | `<Totp_Enrollment>` / `<Passkey_Register>` hosted in a dialog, listening for `'enrolled'` / `'registered'`; `credential_remove({id})`; `recovery_regenerate()` (show the codes once) | skill `rspade:two-factor`, `rsx:man two_factor` |
 | Connected accounts | `Rsx_Sso.is_enabled()` / `enabled_providers()` (no fetch), `Rsx_Sso_Controller.identities_list()` | `link_begin({provider})` then `Rsx.navigate(result.url)`; `identity_unlink({id})` | skill `rspade:sso` |
 | Where you're signed in | your own endpoint over `Session::get_sessions_for_user()` | `Session::terminate_session()` / `terminate_all_other_sessions()` | skill `rspade:session-auth` |
@@ -65,6 +65,16 @@ The parts:
   sign-in method" does. Mounted unconditionally, its own button reaches the endpoint
   unconfirmed and is refused.
 - **Changing the password is not gated** - it already asks for the current password.
+- **An administrator setting SOMEBODY ELSE's password is gated** - it hands the caller a way into
+  that account. The template's User Management Reset Password (a temporary password, flagged
+  `require_password_reset()` in the same save, refused on your own account and on an identity
+  that belongs to another site) awaits `Password_Confirmation_Modal.require()` and its endpoint
+  calls `require_confirmed()` (`rsx/app/frontend/settings/user_management/CLAUDE.md`).
+  **The other-site refusal is BY DESIGN**: a staff password is one credential across every site
+  the identity belongs to, and one site's administrator has no authority over the others - that
+  user resets it themselves or an operator does (`rsx:users:password:set --require-reset`). An
+  application that is single-site in practice never meets it; one that wants another path adds
+  its own endpoint with its own authority rule, never a loosened refusal.
 
 ## Pitfalls
 

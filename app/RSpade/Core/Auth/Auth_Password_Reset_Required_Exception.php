@@ -22,13 +22,15 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * address, a wrong password, no usable membership - still collapses to null.
  *
  * THROWN, NOT RETURNED, like Auth_Throttled_Exception: null already means "those credentials
- * are wrong", and this is not that. A login function catches it and shows the visitor the way
- * to a new password (a forgot-password flow, or whom to ask). The refusal is already recorded
+ * are wrong", and this is not that. A login function catches it and starts the forced
+ * password change at sign-in with $identity - RsxAuth::begin_forced_password_change() /
+ * Portal_Auth::begin_forced_password_change() - or points the visitor at a forgot-password
+ * flow. The refusal is already recorded
  * (STATUS_FAILED_PASSWORD_RESET_REQUIRED in the realm's login history) by the time the caller
  * sees it.
  *
  * $identity is the identity the credentials proved (a Login_User_Model or a
- * Portal_User_Model), for a caller that starts the reset itself. It is NOT signed in.
+ * Portal_User_Model), for the forced change at sign-in. It is NOT signed in.
  *
  * The flag refuses the PASSWORD door only. A passkey or a federated sign-in never presents
  * the password the flag distrusts, so neither consults it.

@@ -99,7 +99,7 @@ ACTION REQUIRED
 
        BEFORE (rsx/app/frontend/settings/user_management/...):
 
-           \App\RSpade\Core\Mail\Rsx_Mail::send(
+           \App\RSpade\Lib\Messaging\Mail\Rsx_Mail::send(
                $user->email,
                'You\'re Invited to ' . config('rsx.name', 'RSpade'),
                'User_Invitation_Email',
@@ -109,7 +109,7 @@ ACTION REQUIRED
                    'invite_url' => $invite_url,
                    'expiry_days' => config('rsx.auth.invite_expiration_days', 7),
                ],
-               \App\RSpade\Core\Mail\Rsx_Mail::TRANSACTIONAL
+               \App\RSpade\Lib\Messaging\Mail\Rsx_Mail::TRANSACTIONAL
            );
 
        AFTER - the call site:
@@ -124,7 +124,7 @@ ACTION REQUIRED
 
            namespace Rsx\Emails;
 
-           use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+           use App\RSpade\Lib\Messaging\Mail\Rsx_Email_Abstract;
            use App\RSpade\Core\Models\User_Model;
            use App\RSpade\Core\Rsx;
 

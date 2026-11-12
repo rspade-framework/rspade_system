@@ -9,9 +9,9 @@ namespace App\RSpade\Tests\Locks\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * Test-only task bodies for Site_Lock_Test and Site_Lock_Hold_Discipline_Test: a site-scoped

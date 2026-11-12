@@ -61,7 +61,7 @@ ACTION REQUIRED - CODE
 
 VERIFICATION
     php artisan tinker, then:
-        $u = new \App\RSpade\Core\Models\Portal_User_Model(); $u->password = 'x';
+        $u = new \App\RSpade\Lib\Portal\Portal_User_Model(); $u->password = 'x';
         array_key_exists('password', $u->makeVisible('password')->toArray());   // false
     Before this change the same two lines answered true.
 

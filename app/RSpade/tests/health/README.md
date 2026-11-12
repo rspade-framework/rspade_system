@@ -19,25 +19,25 @@ Shipped in the Document Pipeline epic, Batch 5.
 
 - `Commands/Rsx/Health_Command.php` - the `rsx:health {--json}` command (table + [OK]/[FAIL]
   summary, exit 1 iff any FAIL, WARN/INFO never flip the exit).
-- `Core/Health/Health_Check_Runner.php` - discovery, `run()` / `report()` / `run_one()`,
+- `Lib/Operations/Health/Health_Check_Runner.php` - discovery, `run()` / `report()` / `run_one()`,
   the MODE AXIS (`normalize_modes()`, `applies_in_mode()`, `partition()`), and
   `normalize_check_result()` (single-row vs list, label inheritance + #n suffix, invalid
   shape/status -> FAIL-naming-offender, throw -> FAIL).
-- `Core/Health/Rsx_Php_Requirements.php` - the ONE declaration of the required PHP
+- `Lib/Operations/Health/Rsx_Php_Requirements.php` - the ONE declaration of the required PHP
   extensions and minimum version, read by BOTH the rsx:health PHP row and the boot
   check in `Rsx_Preboot_Service::init()` (which throws, exempting only rsx:health
   and rsx:heal).
-- `Core/Health/Environment_Health_Checks.php` - PHP version + extensions, node, storage
+- `Lib/Operations/Health/Environment_Health_Checks.php` - PHP version + extensions, node, storage
   writability, env-encryption posture, application-mode posture.
-- `Core/Health/Playwright_Stack.php` - the ONE probe of the node -> playwright ->
+- `Lib/Operations/Health/Playwright_Stack.php` - the ONE probe of the node -> playwright ->
   chromium chain and the ONE set of install commands, read by both the health row and
   `rsx:debug`'s preflight refusal. Probe only; it never installs anything.
-- `Core/Health/Playwright_Health_Checks.php` - the health row over that probe: WARN and
+- `Lib/Operations/Health/Playwright_Health_Checks.php` - the health row over that probe: WARN and
   never FAIL, `modes: 'development'`.
-- `Core/Health/Opcache_Advisory.php` - NOT a health row: the once-per-six-hours log
+- `Lib/Operations/Health/Opcache_Advisory.php` - NOT a health row: the once-per-six-hours log
   recommendation a web process with no OPcache writes during boot (whether a host runs
   OPcache is the host's decision, so rsx:health carries no OPcache check).
-- `Core/Health/Production_Health_Checks.php` - the rows that only mean something on a
+- `Lib/Operations/Health/Production_Health_Checks.php` - the rows that only mean something on a
   sealed box (the seal, the APP_URL scheme, the hostname, login auto-fill, the
   console_debug variant, the mail delivery target), each declaring
   `modes: ['debug', 'production']`.
@@ -58,15 +58,15 @@ Shipped in the Document Pipeline epic, Batch 5.
 - `Core/Search/Search_Health_Checks.php::poppler_utils` - pdftotext + pdfinfo presence.
 - `Core/Search/Search_Index_Service.php::index_backlog` - queued / failed extraction counts.
 - `Core/Prod/Rsx_Env_Symlink.php::env_symlink` - the system/.env symlink invariant.
-- `Core/Health/Environment_Health_Checks.php::env_encryption` - a `.env.encrypted` snapshot
+- `Lib/Operations/Health/Environment_Health_Checks.php::env_encryption` - a `.env.encrypted` snapshot
   at the project root: WARN on a development box (nothing keeps it in step with the `.env`
   the heal rewrites), INFO on a sealed build, OK when there is none.
 
-- `Core/Health/Security_Health_Checks.php::laravel_route_table` - the "Laravel Route
+- `Lib/Operations/Health/Security_Health_Checks.php::laravel_route_table` - the "Laravel Route
   Table" row, every mode: FAIL naming each route the booted Laravel router holds (the
   framework provider clears the table after boot), OK when it is empty.
 
-- `Core/Health/Submodule_Visibility_Health_Checks.php` - is a framework update VISIBLE in
+- `Lib/Operations/Health/Submodule_Visibility_Health_Checks.php` - is a framework update VISIBLE in
   git output? WARN when `submodule.system.ignore` is not `dirty` in the tracked
   `.gitmodules`, WARN on a repo-wide `diff.ignoreSubmodules` in `.git/config`, INFO in the
   monorepo and on a non-submodule project. Heal target `submodule-ignore-dirty` runs

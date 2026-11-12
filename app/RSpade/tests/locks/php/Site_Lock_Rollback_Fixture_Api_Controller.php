@@ -10,8 +10,8 @@ namespace App\RSpade\Tests\Locks\Php;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Response\Rollback_Response;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * External API endpoint for Site_Lock_Hold_Discipline_Test: a writer that writes one framework

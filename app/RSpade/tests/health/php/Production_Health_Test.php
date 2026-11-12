@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Health_Check_Runner;
-use App\RSpade\Core\Health\Production_Health_Checks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
+use App\RSpade\Lib\Operations\Health\Production_Health_Checks;
 
 /**
  * The rows that only mean something on a SEALED box: the seal, the APP_URL scheme,

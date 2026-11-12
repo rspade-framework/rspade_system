@@ -159,7 +159,7 @@ Cataloged here because the rule is part of this concern's contract.
 
 ## Request_History_Test / Request_History_Concurrency_Test / Request_History_Prune_Test (php)
 
-The writer request history and replay by `_request_ref` (`Core/Revisions/Request_History`),
+The writer request history and replay by `_request_ref` (`Core/RequestHistory/Request_History`),
 through the Ajax browser transport and the external API front controller, against fixture
 endpoints (`Request_History_Fixture_Controller`, `Request_History_Fixture_Api_Controller`).
 

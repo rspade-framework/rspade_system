@@ -11,7 +11,7 @@ client only when explicitly returned from an `#[Ajax_Endpoint]`.
 
 ## Source files
 
-- `app/RSpade/Core/Settings/Rsx_Settings.php` - the facade (define/get/set/forget/all/is_defined)
+- `app/RSpade/Lib/Settings/Rsx_Settings.php` - the facade (define/get/set/forget/all/is_defined)
 - `database/migrations/2026_06_22_054710_create_settings_tables.php` - `_settings` + `_setting_values`
 
 ## Man page(s)

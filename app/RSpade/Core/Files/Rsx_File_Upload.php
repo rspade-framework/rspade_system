@@ -5,14 +5,14 @@ namespace App\RSpade\Core\Files;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Unparseable_Svg_Exception;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
+use App\RSpade\Lib\Portal\Portal_Session;
 
 /**
  * Rsx_File_Upload - the ONE ingest path a received file travels, whatever transport carried it.

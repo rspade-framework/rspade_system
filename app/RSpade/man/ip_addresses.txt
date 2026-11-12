@@ -1,14 +1,14 @@
 IP_ADDRESSES(1)                  RSpade Manual                  IP_ADDRESSES(1)
 
 NAME
-    ip_addresses - client IP addresses stored once, with their geocode
+    ip_addresses - client IP addresses stored once
 
 SYNOPSIS
     use App\RSpade\Core\Session\Ip_Address;
 
     Ip_Address::id(?string $ip): ?int          // record (or find) an address
     Ip_Address::address(?int $id): ?string     // the address behind an id
-    Ip_Address::describe(int $id): ?array      // address + geocode fields
+    Ip_Address::describe(int $id): ?array      // ['ip_address' => ...]
     Ip_Address::join($query, string $column, string $prefix)
     Ip_Address::column(string $prefix, string $name): string
 
@@ -47,24 +47,17 @@ THE TABLE
         id            BIGINT
         ip_address    VARCHAR(45), unique - the address as the request
                       presented it (Session::get_client_ip())
-        city          VARCHAR(100), null
-        state         VARCHAR(100), null
-        country       VARCHAR(100), null
-        latitude      DOUBLE, null
-        longitude     DOUBLE, null
 
-    Rows are never deleted. A row is where its address's geocode lives, and
-    the audit sessions that reference it are permanent (rsx:man session,
-    AUDIT SESSIONS). Every referencing column is a foreign key with ON DELETE
-    RESTRICT.
+    Rows are never deleted: the audit sessions that reference them are
+    permanent (rsx:man session, AUDIT SESSIONS). Every referencing column is
+    a foreign key with ON DELETE RESTRICT.
 
-GEOCODING
-    The geocode fields exist so an address is located once and every record
-    that names it shares the answer. THE FRAMEWORK DOES NOT SHIP A GEOCODER
-    YET: today every city, state, country, latitude and longitude is null. A
-    resolver that fills them is coming; when it lands, describe() and join()
-    answer its results with no change to their shape, so code written against
-    them now needs no change then.
+LOCATION
+    Where an address is located is NOT stored - not here, not anywhere. It
+    is answered at display time by Rsx_Geo_Ip::lookup() / label() (rsx:man
+    geo_ip): an endpoint showing an address ships ip_address__location beside
+    it, resolved on every load. A location can therefore be neither a join
+    field, nor a sort, nor a search.
 
 API
     Ip_Address::id(?string $ip): ?int
@@ -82,27 +75,22 @@ API
         Memoized for the process.
 
     Ip_Address::describe(int $id): ?array
-        One address with what is known about it, or null for no such row:
+        One address as a record, or null for no such row:
 
-            ['ip_address' => '203.0.113.7', 'city' => null, 'state' => null,
-             'country' => null, 'latitude' => null, 'longitude' => null]
-
-        latitude and longitude are floats when set.
+            ['ip_address' => '203.0.113.7']
 
     Ip_Address::join($query, string $column, string $prefix)
         Join the address onto a query of your own, so a list can show, search
-        and sort by an address and where it is:
+        and sort by an address:
 
             $query = Visit_Log_Model::query();
             Ip_Address::join($query, 'visit_logs.ip_address_id', 'visitor');
 
             $query->where(Ip_Address::column('visitor', 'ip_address'), 'like', $like)
-                  ->orderBy(Ip_Address::column('visitor', 'country'));
+                  ->orderBy(Ip_Address::column('visitor', 'ip_address'));
 
             foreach ($query->limit(25)->get() as $log) {
                 $log->visitor_ip_address;
-                $log->visitor_city;
-                $log->visitor_country;
             }
 
         $column is YOUR qualified column ('table.column') holding an
@@ -130,6 +118,7 @@ NOT HERE
     counter store and never touch _ip_addresses.
 
 SEE ALSO
+    rsx:man geo_ip                       - where an address is, at display time
     rsx:man session                      - AUDIT SESSIONS, Audit_Session::join(),
                                            the session listings
     skill rspade:audit-session           - recording and joining audit sessions

@@ -1,0 +1,21 @@
+// _Sys_Ip_Address - the address in the monospace face, its approximate location as a muted
+// second line.
+._Sys_Ip_Address {
+    display: inline-block;
+
+    &__address {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__location {
+        display: block;
+        color: var(--rsx-dim);
+        font-size: 12px;
+    }
+
+    &__empty {
+        color: var(--rsx-muted);
+        opacity: 0.5;
+    }
+}

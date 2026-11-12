@@ -25,7 +25,8 @@ members the framework adds, which is exactly what the split prevents. A base mem
 
 The same split is used for framework models that live beside their subsystem
 (`Core/Api/Api_Key_Model`, `Core/Files/File_Attachment_Model`, the two-factor and SSO
-credential models, ...); this directory holds the identity, tenancy and messaging ones.
+credential models, the mail and SMS queues, the portal identity, the country and region
+tables, ...); this directory holds the staff identity and tenancy ones.
 
 ## What is here
 
@@ -37,22 +38,17 @@ credential models, ...); this directory holds the identity, tenancy and messagin
     `is_enabled`, `is_api_access_enabled`. Site-scoped actor. `is_active()` / `->active()` is
     the one "usable membership" definition (the user and its site both enabled).
   - `Site_Model` — the tenant boundary (`sites`, `is_enabled`; site 0 can never be disabled).
-  - `Portal_User_Model` — the client portal identity, one row per site; a site-scoped actor.
   - `User_Profile_Model` — 1:1 auxiliary profile columns, created on access.
   - `User_Permission_Model` — one GRANT/DENY row layered over a role (`_user_permissions`).
-- **Preferences**: `Has_Preference_Variables` — the `get_variable()` / `set_variable()` /
-  `forget_variable()` / `has_variable()` store on `Login_User_Model`, `User_Model` and
-  `Portal_User_Model`, for a per-person fact not worth a column. A lifelong preference is a
-  column; a value that dies with the browser is `Session::put_value()`.
-- **Messaging**: `Email_Queue_Model`, `Email_Recipient_Model`, `Email_Attachment_Model`,
-  `Email_Blocked_Address_Model`, `Sms_Queue_Model`, `Sms_Recipient_Model` — the outbound queue
-  `Core/Mail/` and `Core/Sms/` drain; `Portal_Notification_Model` — portal-user notifications.
-- **Reference data**: `Country_Model`, `Region_Model` (ISO 3166, seeded by
-  `rsx:seed:geographic-data`).
+
+Beside their feature, in `Lib/`: `Portal_User_Model` and `Portal_Notification_Model`
+(`Lib/Portal/`), the mail and SMS queue models (`Lib/Messaging/Mail/`, `Lib/Messaging/Sms/`),
+`Country_Model` / `Region_Model` (`Lib/Geo/Places/`) and the `Has_Preference_Variables` trait
+on `Login_User_Model`, `User_Model` and `Portal_User_Model` (`Lib/Settings/`).
 
 ## Overriding: which models are likely
 
-`User_Model`, `Login_User_Model`, `Site_Model`, `Portal_User_Model` (with
+`User_Model`, `Login_User_Model`, `Site_Model` (with `Portal_User_Model` in `Lib/Portal/` and
 `File_Attachment_Model` / `File_Storage_Model` in `Core/Files/`) are the likely-overridden set:
 a change to one that the override must state for itself ships a `breaking_changes` document
 (`breaking_changes/CLAUDE.md`, the fourth trigger). **A seam beats an override for policy**:

@@ -11,7 +11,7 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\Turnstile\Rsx_Turnstile;
+use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
 /**
  * Turnstile_Validate_Test - the Rsx_Turnstile::validate() decision matrix, in-process.

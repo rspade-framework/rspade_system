@@ -24,8 +24,8 @@ so a portal request always resolves to the configured default.
 
 ## Source under test
 
-- `system/app/RSpade/Core/Theme/Rsx_Dark_Mode.php` (resolution, storage, the vocabulary)
-- `system/app/RSpade/Core/Theme/Rsx_Dark_Mode_Controller.php` (get_settings / set_dark_mode)
+- `system/app/RSpade/Lib/Ui/DarkMode/Rsx_Dark_Mode.php` (resolution, storage, the vocabulary)
+- `system/app/RSpade/Lib/Ui/DarkMode/Rsx_Dark_Mode_Controller.php` (get_settings / set_dark_mode)
 - `system/app/RSpade/Core/public/_rsx/autotheme.js` (applies the theme, follows the OS)
 - `system/app/RSpade/Core/Js/Rsx_Dark_Mode.js` (the in-bundle API over it)
 - `system/app/RSpade/Core/Bundle/Rsx_Bundle_Abstract.php` (the rsxapp theme block and the script tag)

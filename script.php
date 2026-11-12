@@ -82,7 +82,7 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 // One script run is one unit of work for revision history, named after the script file. A
 // script performing many units (an import) declares each one itself with
 // Revision::begin_unit_of_work() or Revision::unit_of_work() - rsx:man scripting.
-\App\RSpade\Core\Revisions\Revision::_reset_request_state('cli', basename((string) ($_SERVER['argv'][0] ?? 'script')));
+\App\RSpade\Lib\Revisions\Revision::_reset_request_state('cli', basename((string) ($_SERVER['argv'][0] ?? 'script')));
 
 // SITE LOCKS. The script is command-line code and is enforced like an artisan command: from
 // here to the end of the process it runs inside a site lock enforcement window with no

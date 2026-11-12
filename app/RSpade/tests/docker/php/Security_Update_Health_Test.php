@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Tests\Docker\Php;
 
-use App\RSpade\Core\Health\Security_Update_Health_Checks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Security_Update_Health_Checks;
 
 /**
  * The rsx:health "Security Updates" row reads the status rspade-security-update writes:

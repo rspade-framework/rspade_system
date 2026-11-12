@@ -8,8 +8,8 @@
 namespace App\RSpade\Sys\App\Sys\Email;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Models\Sms_Queue_Model;
-use App\RSpade\Core\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
 use App\RSpade\Sys\App\Sys\Email\_Sys_Sms_DataGrid;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 use App\RSpade\Sys\Lib\_Sys_Enum_Words;

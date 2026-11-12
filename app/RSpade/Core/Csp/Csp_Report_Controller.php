@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Csp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
-use App\RSpade\Core\Debug\Browser_Log_Budget;
+use App\RSpade\Lib\Developer\Debug\Browser_Log_Budget;
 
 /**
  * Csp_Report_Controller - the violation collector named by every policy's report-uri.

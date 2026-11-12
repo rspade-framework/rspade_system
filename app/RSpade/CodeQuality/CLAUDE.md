@@ -333,7 +333,7 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
 8. **AbstractRegistryAttribute_CodeQualityRule** (ABSTRACT-ATTR-01)
    - An abstract class may not declare a REGISTRY attribute, at class level or on a method:
      `Auth`, `Route`, `SPA`, `Portal_Route`, `Ajax_Endpoint`, `Ajax_Endpoint_Model_Fetch`,
-     `Api_Endpoint`, `Task`, `Schedule`, `Exclusive`, `Debounce`, `Emitter`, `OnEvent`,
+     `Api_Endpoint`, `Task`, `Schedule`, `Exclusive`, `Debounce`, `On_Build`, `Emitter`, `OnEvent`,
      `Health_Check`, `Realtime_Touch`, `FPC` (the list is a class constant on the rule)
    - Those registries are built from the manifest, which indexes attributes per FILE and never
      inherits them: the registration reaches no subclass, or becomes a phantom entry keyed to the
@@ -860,8 +860,8 @@ retires the verdicts recorded against the old one.
 
 ### Current Manifest-Time Rules
 
-**53 of the 155 rules** return `true` from `is_called_during_manifest_scan()` (verified
-2026-11-06). This list drifts; regenerate it from the source of truth:
+**54 of the 156 rules** return `true` from `is_called_during_manifest_scan()` (verified
+2026-11-12). This list drifts; regenerate it from the source of truth:
 
 ```bash
 cd system/app/RSpade/CodeQuality
@@ -887,7 +887,7 @@ Approved for manifest-time execution, by rule directory:
 - `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01, TEXT-TYPE-01
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,
-  TASK-RUN-AS-01
+  TASK-ON-BUILD-01, TASK-RUN-AS-01
 - `Scss/` - SCSS-SID-01
 
 The heaviest of these deserves its own note:

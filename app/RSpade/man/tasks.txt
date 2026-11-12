@@ -31,6 +31,12 @@ SYNOPSIS
         #[Schedule('daily at 3am')]           // or standard cron '0 3 * * *'
         public static function cleanup(Task_Instance $task, array $params = []) { ... }
 
+    Run it once after every new build (ON BUILD):
+        #[Task('Refresh the lookup data')]
+        #[Exclusive]
+        #[On_Build]
+        public static function refresh(Task_Instance $task, array $params = []) { ... }
+
     Act on a run:
         $run->request_stop();                 // graceful: the task stops at its next check
         $run->force_stop(30);                 // ask, then kill after 30 s
@@ -1098,6 +1104,64 @@ SCHEDULES
                                        reaches rsx.tasks.failing_schedule_warn_after (3)
                                        consecutive failures
 
+ON BUILD
+
+    #[On_Build] dispatches a task once for every new BUILD of the application - the work a
+    deploy or a source change makes due (refreshing a downloaded data file, warming a
+    derived table), without waiting for its schedule:
+
+        #[Task('Refresh the lookup data')]
+        #[Exclusive]
+        #[Schedule('maintenance')]
+        #[On_Build]
+        public static function refresh(Task_Instance $task, array $params = [])
+        {
+            if (static::is_current()) {           // cheap local check first
+                $task->summary('Already current; nothing to do.');
+                return null;
+            }
+            ...
+        }
+
+    WHEN IT RUNS. The scheduler tick (rsx:task:process: rspade-taskd in the container,
+    cron elsewhere) compares the running build key (Manifest::get_build_key()) with the
+    key it last dispatched the #[On_Build] tasks for, kept in _task_on_build. When they
+    differ it dispatches each #[On_Build] task once, with no params, and records the new
+    key. A manifest rebuild pokes the task daemon, so in the container that tick follows
+    the build within seconds; under cron, within a minute.
+
+        - In DEVELOPMENT the build key moves with every source change, so the task is
+          dispatched after every edit that reaches the manifest. Keep its first step a
+          cheap local check that ends the run when nothing is owed.
+        - In debug and production the key moves only with rsx:build, so the task runs
+          once per deploy.
+        - A burst of rebuilds between two ticks is ONE dispatch: the tick only ever sees
+          the key it runs with.
+        - A database with no recorded key - a fresh install, a fresh deploy - dispatches
+          on its first tick.
+        - While the task system is off nothing is dispatched and the recorded key stays
+          as it was, so the first tick after rsx:tasks:enable dispatches for the build
+          then running. Under maintenance mode the tick is refused outright, so nothing is
+          dispatched until the window ends.
+
+    The build itself never dispatches: a build may run with no database, inside a web
+    request, many times a minute in development, or while the task system is off. The run
+    is an ordinary dispatched run (origin Dispatched) - listed, reported and controlled
+    like any other.
+
+    THE DECLARATION. #[On_Build] takes no arguments and sits on a public static #[Task]
+    method beside #[Exclusive] or #[Debounce], so builds in quick succession coalesce into
+    one pending run rather than piling up; every parameter after the Task_Instance is
+    optional (declare array $params = [] and require nothing - the tick passes no params);
+    never beside #[Run_As_Dispatcher] (a tick has no dispatcher). It may sit beside
+    #[Schedule]. A wrong declaration is TASK-ON-BUILD-01, a manifest-build FATAL: the
+    build that indexes it fails, naming the method and the fix, and keeps failing until
+    the declaration is fixed - so a build key the tick dispatches for never carries one.
+
+    Under the test suite the tick skips this step, so a fixture's #[On_Build] queues
+    nothing into the tests that tick; a test drives Task_On_Build::dispatch_for_build()
+    with the keys it needs (TESTING).
+
 LIFECYCLE CONTROL
 
     Five operations on a Task_Run_Model. Each appends an OPERATOR line to the run's output
@@ -1833,6 +1897,8 @@ DATABASE SCHEMA
     _task_schedules    one row per #[Schedule] (SCHEDULES)
     _task_kill_requests  force stops and kills waiting for a kill worker
     _task_system_off   one row while the task system is off: when, by whom, why, where
+    _task_on_build     one row: the build key the #[On_Build] tasks were last dispatched
+                       for, and when (ON BUILD)
 
     The side tables cascade from _tasks. All are framework system tables - read them
     through the models and the readers above.
@@ -1844,6 +1910,10 @@ TESTING
 
         Task::internal('My_Service', 'my_task', $params);       // a real inline run
         Artisan::call('rsx:task:worker');                       // drain in-process
+
+    The tick skips the #[On_Build] step under the suite (ON BUILD). A test of a
+    build-triggered task calls Task_On_Build::dispatch_for_build('<a key>') - a key the
+    test database has not recorded dispatches every #[On_Build] task as a PENDING run.
 
     A test whose SUBJECT is the spawn calls Task::spawn_workers(true); the runner resets it
     at every class boundary and waits there for every detached process the class started

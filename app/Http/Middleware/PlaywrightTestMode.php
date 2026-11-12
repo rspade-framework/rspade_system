@@ -4,7 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 
 class PlaywrightTestMode
 {

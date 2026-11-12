@@ -2,7 +2,7 @@
  * Login_Redirect - intended-URL ("return to the page I was trying to visit")
  * threading for a multi-hop login flow (JavaScript mirror).
  *
- * Identical-API twin of the PHP App\RSpade\Core\Login\Login_Redirect. The PHP side
+ * Identical-API twin of the PHP App\RSpade\Lib\SignIn\Redirect\Login_Redirect. The PHP side
  * captures the intended URL at the server-side auth-rejection 302; this JS side is
  * the client-side entry point (a future expired-session Ajax handler): it captures
  * the current browser location and threads/reads the same ?redirect= param through

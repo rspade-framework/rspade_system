@@ -582,6 +582,29 @@ FRAMEWORK EVENT CATALOG
             Use for: producing custom thumbnail rasters for a mime the renderer
                      registry does not cover.
 
+    Session Events (resolve; rsx:man session)
+
+        session.limits (resolve)
+            Fired from: Session::get_sign_in_limits() - the one reader of the
+                        sign-in limits, used by the request check
+                        (enforce_timeouts()) AND the hourly
+                        Session_Cleanup_Service::cleanup_sessions sweep. Asked
+                        at most once per realm per request or task run; the
+                        answer is memoized for the rest of it. It runs on EVERY
+                        signed-in request, so a handler caches its own answer.
+            Data: {realm: 'staff'|'portal'} - nothing else. The sweep runs as a
+                  task with nobody signed in and no site declared: answer from
+                  global state, never the session or a site-scoped model.
+            Return: null (decline: the config values) | array naming
+                    max_length_minutes and/or max_idle_minutes, each an int
+                    >= 0 (0 = no limit); a key it does not name falls back to
+                    config('rsx.sessions.<realm>.<key>'). A non-array, a
+                    non-int or negative value, or any other key THROWS.
+            Use for: limits an administrator sets at run time (a settings
+                     screen) instead of in config. ajax_grace_minutes is not
+                     part of it. See rsx:man session (LIFETIMES, CLEANUP AND
+                     DEACTIVATION).
+
     Migrate Events (action)
 
         migrate.normalize_schema.complete (action)
@@ -645,6 +668,41 @@ FRAMEWORK EVENT CATALOG
                      the second factor repeatedly. The framework notifies nobody
                      itself; a handler queues the application's own SECURITY
                      email. See rsx:man two_factor.
+
+    Password Events (action)
+
+        login_user.password.changed (action)     a staff login identity
+        portal_user.password.changed (action)    a portal user
+            Fired from: the identity model's `updated` hook
+                        (Login_User_Model_Abstract / Portal_User_Model_Abstract
+                        booted(), through Password_Change) when a save changed
+                        the password of an EXISTING identity - AFTER that save
+                        commits (registered with afterCommit(): inside a
+                        transaction it waits for the commit and a rollback
+                        drops it; with none open it fires at once). Creating an
+                        identity, or a save that leaves the password alone,
+                        fires nothing. A raw write (SQL, ->raw_bulk()) fires
+                        nothing.
+            Data: {identity: Login_User_Model|Portal_User_Model,
+                   cause: string, actor: Login_User_Model|Portal_User_Model|null,
+                   audit_session_id: int|null, ip_address: string|null}
+                  cause is what the caller passed to set_password($plain,
+                  $cause): self | reset_link | admin | forced_change | cli
+                  (Password_Change::CAUSE_*), or unknown when the save stated
+                  none. actor is the identity acting on the request (the
+                  portal user on a portal request; otherwise the staff
+                  identity signed in, the impersonator while impersonating),
+                  null with nobody signed in. audit_session_id is
+                  Session::get_audit_session_id() resolved after the commit -
+                  store it, never the address; null in a command or task.
+            Return: ignored (it is an action). A throw after the commit is
+                    reported, never answered: the change stands.
+            Use for: recording the change on the account's history and
+                     announcing it to the owner. A handler runs under whatever
+                     lock the change was made under - another site's, or none
+                     - so one writing site-scoped rows dispatches a task. See
+                     rsx:man session (PASSWORD CHANGES).
+            Write the event name as a LITERAL in #[OnEvent] - never a class constant.
 
     Initial User Events (action)
 

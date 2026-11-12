@@ -10,9 +10,9 @@ namespace App\RSpade\Tests\TwoFactor\Php;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\TwoFactor\Recovery_Codes;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
+use App\RSpade\Lib\SignIn\TwoFactor\Recovery_Codes;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Two_Factor_Credential_Model;
 
 /**
  * Recovery codes are the way back in when the second factor is gone, so the properties that

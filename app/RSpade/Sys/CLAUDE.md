@@ -76,6 +76,7 @@ contract; this is the roster.
 | `_Sys_Stacked_Chart` | a stacked area chart over equal time slots, inline SVG with no dependency: `$series` [{key, label, values[]}] stacked in order and coloured `--rsx-series-1..5` by position, `$ceilings` [{label, value}] dashed across it, `$unit`, `$visible` keys (`set_visible(keys)` redraws; the y axis rescales to what is shown), a hover tooltip per slot. The Performance screen's two charts |
 | `_Sys_Time_Until` | a future moment counted down in words ("33 minutes from now"); `$time` is an ISO datetime; rewrites itself every second, reads "any moment now" once the moment has passed, exact time in the title. Used for a live run's ETA in `_Sys_Task_Facts` |
 | `_Sys_Detail_List` / `_Sys_Detail_Item` | key/value facts; an empty `$value` renders a muted em-dash |
+| `_Sys_Ip_Address` | an IP address (monospace) with `$location` - the endpoint's `ip_address__location`, `Rsx_Geo_Ip::label()` resolved per row on every load, never stored, sorted or searched (`rsx:man geo_ip`) - as a muted second line; null address = muted em-dash. A region showing locations carries one framework `<Geo_Ip_Credit />` |
 | `_Sys_Empty_State` | an empty region: `$icon`, `$title`, `$body`, `<Slot:cta>` |
 | `_Sys_Tabs` | tab bar + one `<Slot:key>` panel per tab, active tab in the URL hash (`$hash`); fires `tab_change` |
 | `_Sys_Code_Pane` | a monospace pane for `$json` or `$text` (`$pretty` re-indents JSON text); `_Sys_Code_Pane.pretty()` is the one pretty-printer, the console's response pane included |

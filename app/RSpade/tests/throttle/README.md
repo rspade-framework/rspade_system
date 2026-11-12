@@ -2,7 +2,7 @@
 
 ## Domain
 
-`App\RSpade\Core\Throttle\Rsx_Throttle` - the per (site, user, action) rate limiter for periodic
+`App\RSpade\Lib\SignIn\Throttle\Rsx_Throttle` - the per (site, user, action) rate limiter for periodic
 work that rides along on a user request (a per-user cache refresh, a rate-limited action). The API is
 two static methods: `check($action_key, $user_id, $minutes)` claims the interval and returns
 whether the caller should run; `reset($action_key, $user_id)` drops the claim.
@@ -29,7 +29,7 @@ Two properties follow, and both are covered here:
 
 ## Source under test
 
-- `system/app/RSpade/Core/Throttle/Rsx_Throttle.php`
+- `system/app/RSpade/Lib/SignIn/Throttle/Rsx_Throttle.php`
 - `system/database/migrations/2026_01_29_081808_create_throttle_table.php` (the unique key the
   atomicity rests on, and the TIMESTAMP(3) precision)
 

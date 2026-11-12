@@ -30,7 +30,7 @@ use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Locks\RsxLocks;
-use App\RSpade\Core\Revisions\Revision_Dictionary;
+use App\RSpade\Lib\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 

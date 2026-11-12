@@ -13,7 +13,6 @@ use Illuminate\Http\Request;
 use PDOException;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Exceptions\Ajax_Exception_Handler;
 use App\RSpade\Core\Exceptions\Api_Exception_Handler;
@@ -22,6 +21,7 @@ use App\RSpade\Core\Exceptions\Rsx_User_Facing_Exception;
 use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
 
 /**
  * Exception detail is keyed on WHO IS ASKING (Rsx_Diagnostics::caller_sees_detail()),

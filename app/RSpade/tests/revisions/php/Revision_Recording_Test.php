@@ -9,10 +9,10 @@ namespace App\RSpade\Tests\Revisions\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
-use App\RSpade\Core\Revisions\Revision;
-use App\RSpade\Core\Revisions\Revision_Model;
-use App\RSpade\Core\Revisions\Transaction_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision;
+use App\RSpade\Lib\Revisions\Revision_Model;
+use App\RSpade\Lib\Revisions\Transaction_Model;
 use App\RSpade\Tests\Revisions\Php\Revision_Child_Fixture_Model;
 use App\RSpade\Tests\Revisions\Php\Revision_Fixture_Model;
 use App\RSpade\Tests\Revisions\Php\Revision_Plain_Fixture_Model;

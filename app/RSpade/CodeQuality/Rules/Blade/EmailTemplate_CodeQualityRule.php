@@ -43,13 +43,13 @@ class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
      * Path segments that make a blade an EMAIL template.
      *
      * `emails/` is the application's directory (rsx/emails/, and any module-local one an
-     * app writes). `Core/Mail/` is the framework's own - Rsx_Mail_Test_Email lives beside
+     * app writes). `Lib/Messaging/Mail/` is the framework's own - Rsx_Mail_Test_Email lives beside
      * the class that sends it, not in an emails/ directory, and it is held to the same
      * contract as anything an application ships.
      */
     protected const EMAIL_PATH_SEGMENTS = [
         '/emails/',
-        '/Core/Mail/',
+        '/Lib/Messaging/Mail/',
     ];
 
     /**

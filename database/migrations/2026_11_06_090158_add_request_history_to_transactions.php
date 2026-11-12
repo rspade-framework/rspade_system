@@ -11,7 +11,7 @@ return new class extends Migration
      * Use raw MySQL queries for clarity and auditability (DB::statement with raw SQL,
      * never Schema::create with Blueprint). Migrations must be self-contained.
      *
-     * The writer request history on _transactions (Core/Revisions/Request_History). Every
+     * The writer request history on _transactions (Core/RequestHistory/Request_History). Every
      * writer request that commits has its _transactions row; these columns record what it
      * was sent and, when the client named the request with _request_ref, what it answered,
      * so a retry of the same request is answered from the record instead of running again.

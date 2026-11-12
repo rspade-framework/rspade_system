@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Tests\Realtime\Php;
 
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Realtime\Realtime_Topic_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
 
 /**
  * Test fixture: an auth-required topic (the default). Mirrors the real

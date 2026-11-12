@@ -10,10 +10,10 @@ retention task, and the REVISION-01 declaration rule.
 
 ## Source under test
 
-- `app/RSpade/Core/Revisions/Revision_Codec.php` - `encode()` / `decode()`. The two-byte
+- `app/RSpade/Lib/Revisions/Revision_Codec.php` - `encode()` / `decode()`. The two-byte
   self-describing prefix (codec byte, dictionary-id byte), the size rule that picks a
   codec, the raw escape, and the two refusals on read.
-- `app/RSpade/Core/Revisions/Revision_Dictionary.php` - `build_tokens()`,
+- `app/RSpade/Lib/Revisions/Revision_Dictionary.php` - `build_tokens()`,
   `build_bytes()`, `regenerate_if_stale()`, `current()`, `bytes_for()`, `_reset_cache()`.
 - `app/RSpade/Commands/Migrate/Maint_Migrate.php` - the post-migrate dictionary step in
   `execute_migrations()` and the cache clear on both success tails.
@@ -21,22 +21,22 @@ retention task, and the REVISION-01 declaration rule.
   restore.
 - `system/database/migrations/2026_08_28_122844_create_revisions_tables.php` -
   `_transactions`, `_revisions`, `_revision_dictionaries`.
-- `app/RSpade/Core/Revisions/Revision.php` - the transaction facade: `transaction_id()`
+- `app/RSpade/Lib/Revisions/Revision.php` - the transaction facade: `transaction_id()`
   (the writer that mints), `current_transaction()`, `current_revisions()`, `describe()`,
   `without()`, `for_transaction()`, `transactions_for()`, `_record()`, and the
   `_reset_request_state()` / `_snapshot_request_state()` unit boundaries, and the public
   seam over them, `begin_unit_of_work()` / `unit_of_work()`.
 - `system/script.php` - the one-unit-per-run boundary of an external script.
-- `app/RSpade/Core/Revisions/Transaction_Model.php`, `Revision_Model.php` - the two models,
+- `app/RSpade/Lib/Revisions/Transaction_Model.php`, `Revision_Model.php` - the two models,
   their type-ref pairs, their enums, `Revision_Model::diff()` and `is_redacted()`.
-- `app/RSpade/Core/Revisions/Revision_Parent_Registry.php` - `#[Revision_Parent]` discovery.
-- `app/RSpade/Core/Revisions/Revision_Cleanup_Service.php` - the retention task.
+- `app/RSpade/Lib/Revisions/Revision_Parent_Registry.php` - `#[Revision_Parent]` discovery.
+- `app/RSpade/Lib/Revisions/Revision_Cleanup_Service.php` - the retention task.
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - `$revisions`,
   `$revision_exclude`, `revisions()`, `revisions_including_children()`, the differ and the
   two write-effect hooks, `_resolve_context_actor()`, and the `toArray()` system-column strip.
 - `app/RSpade/CodeQuality/Rules/Manifest/RevisionParent_CodeQualityRule.php` - REVISION-01.
 - `config('rsx.revisions')` - `retention_days`, `dictionary_max_age_days`.
-- `app/RSpade/Core/Revisions/Request_History.php`, `Request_History_Call.php`,
+- `app/RSpade/Core/RequestHistory/Request_History.php`, `Request_History_Call.php`,
   `Request_History_Answer.php` - the writer request history on `_transactions` and replay
   by `_request_ref`, wired through `Ajax::execute()` / `handle_calls()` and
   `Api_Dispatcher` (`stamp_response()`), with the eager mint in

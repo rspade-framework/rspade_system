@@ -64,7 +64,7 @@ path_of() {
 # ---------------------------------------------------------------------------
 # Step 0: the layout, and the fixtures.
 # ---------------------------------------------------------------------------
-LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Core\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . parse_url((string) config("app.url"), PHP_URL_HOST);' 2>/dev/null | tail -1)"
+LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Lib\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . parse_url((string) config("app.url"), PHP_URL_HOST);' 2>/dev/null | tail -1)"
 case "${LAYOUT%% *}" in
     same) APP_HOST="${LAYOUT#* }" ;;
     separate) echo "SKIP: $TEST_NAME - PORTAL_URL names a host of its own"; exit 0 ;;
@@ -99,13 +99,13 @@ seed_out="$(tinker '
     $user->deleted_at = null;
     $user->save();
 
-    $portal = \App\RSpade\Core\Models\Portal_User_Model::withTrashed()->where("site_id", $site_id)->where("email", "'"$PORTAL_EMAIL"'")->first()
-        ?? new \App\RSpade\Core\Models\Portal_User_Model();
+    $portal = \App\RSpade\Lib\Portal\Portal_User_Model::withTrashed()->where("site_id", $site_id)->where("email", "'"$PORTAL_EMAIL"'")->first()
+        ?? new \App\RSpade\Lib\Portal\Portal_User_Model();
     $portal->site_id = $site_id;
     $portal->email = "'"$PORTAL_EMAIL"'";
     $portal->deleted_at = null;
     $portal->is_verified = 1;
-    $portal->status_id = \App\RSpade\Core\Models\Portal_User_Model::STATUS_ACTIVE;
+    $portal->status_id = \App\RSpade\Lib\Portal\Portal_User_Model::STATUS_ACTIVE;
     $portal->set_password(bin2hex(random_bytes(16)));
     $portal->save();
 

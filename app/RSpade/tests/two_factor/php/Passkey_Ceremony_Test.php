@@ -10,20 +10,20 @@ namespace App\RSpade\Tests\TwoFactor\Php;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Values_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\TwoFactor\Passkeys;
-use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\SignIn\TwoFactor\Passkeys;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Two_Factor_Failed_Exception;
 use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
 
 /**

@@ -8,9 +8,9 @@
 namespace App\RSpade\Tests\Health\Php;
 
 use Illuminate\Support\Facades\Artisan;
-use App\RSpade\Core\Health\Health_Check_Runner;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
 
 /**
  * The mode axis of rsx:health: `#[Health_Check('Label', modes: ...)]`.

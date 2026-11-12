@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Acl\Php;
 
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * The API an ACL administration screen is written against: the permission catalogue

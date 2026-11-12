@@ -341,6 +341,70 @@ class Rsx_Form extends Component {
         return await handler(question, Object.assign({ form: form, key: null, attempt: 1, answers: {} }, context));
     }
 
+    /**
+     * Call an endpoint that may ask questions, from code that is not a form - a widget's
+     * claim call, a button's writer. The direct-caller twin of submit()'s question loop:
+     * each question is asked through the registered handler (Rsx_Form.ask()), its answer is
+     * added to _answers, and the endpoint is called again from scratch, until it answers.
+     *
+     *     const result = await Rsx_Form.call_answering(Tasks_Controller.attachments_add, { id, keys });
+     *     if (Rsx_Form.is_cancelled(result)) return;   // the user stopped it; nothing was written
+     *
+     * A batch endpoint may ask one question per item (a key per item), so the number of
+     * rounds is not capped. What IS refused is the defect the cap guards in submit(): an
+     * endpoint asking a key it has already been answered is ignoring _answers, and that
+     * throws, naming the endpoint, instead of asking forever.
+     *
+     * @param {string|object|function} url - As Ajax.call(): a stub method, or an Ajax URL
+     * @param {Object} [params]
+     * @returns {Promise<*>} The endpoint's value, or Rsx_Form.CANCELLED when a question was
+     *          cancelled (the endpoint was not called again)
+     */
+    static async call_answering(url, params = {}) {
+        const answers = {};
+        let attempt = 0;
+
+        while (true) {
+            const payload = Object.assign({}, params);
+            if (attempt > 0) {
+                payload._answers = Object.assign({}, answers);
+            }
+
+            let pending = null;
+
+            try {
+                return await Ajax.call(url, payload);
+            } catch (error) {
+                if (!error || error.code !== Ajax.ERROR_QUESTION) {
+                    throw error;
+                }
+                pending = error.metadata || {};
+            }
+
+            if (Object.prototype.hasOwnProperty.call(answers, pending.key)) {
+                const { controller, action } = Ajax.ajax_url_to_controller_action(url);
+                throw new Error(
+                    `${controller}::${action} asked '${pending.key}' again after it was answered. ` +
+                    'The endpoint is not reading the answers it was given (_answers).'
+                );
+            }
+
+            attempt++;
+
+            const answer = await Rsx_Form.ask(pending.question || {}, {
+                key: pending.key,
+                attempt: attempt,
+                answers: Object.assign({}, answers),
+            });
+
+            if (Rsx_Form.is_cancelled(answer)) {
+                return Rsx_Form.CANCELLED;
+            }
+
+            answers[pending.key] = answer;
+        }
+    }
+
     on_create() {
         this.state = {
             values: {}, // Seed values {name: value} - applied in on_ready()

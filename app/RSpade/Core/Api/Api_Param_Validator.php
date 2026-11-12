@@ -4,8 +4,8 @@ namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
-use App\RSpade\Core\Revisions\Request_History;
-use App\RSpade\Core\Turnstile\Rsx_Turnstile;
+use App\RSpade\Core\RequestHistory\Request_History;
+use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
 /**
  * Api_Param_Validator - validate + coerce raw request input against baked #[Api_Param] specs.

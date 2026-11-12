@@ -32,7 +32,7 @@ import aiosmtpd
 from aiosmtpd.controller import Controller
 from aiosmtpd.handlers import Mailbox
 
-# The substring App\RSpade\Core\Mail\Rsx_Mail_Transport::probe_banner() looks for.
+# The substring App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport::probe_banner() looks for.
 # Changing the word `aiosmtpd` here breaks that check; the two are one contract.
 IDENT = "aiosmtpd {0} (RSpade dev mail catcher)".format(aiosmtpd.__version__)
 

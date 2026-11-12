@@ -10,8 +10,8 @@ namespace App\RSpade\Sys\App\Sys\Performance;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Throwable;
-use App\RSpade\Core\Health\Rsx_Container_Sizing;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
+use App\RSpade\Lib\Operations\Health\Rsx_Container_Sizing;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**

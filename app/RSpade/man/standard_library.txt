@@ -29,7 +29,7 @@ DESCRIPTION
     the app's composer.json, or has to be required before use.
 
     THE DECLARATION OF RECORD IS CODE, NOT THIS PAGE. The extension list lives in
-    App\RSpade\Core\Health\Rsx_Php_Requirements (REQUIRED_EXTENSIONS and
+    App\RSpade\Lib\Operations\Health\Rsx_Php_Requirements (REQUIRED_EXTENSIONS and
     REQUIRED_CLI_EXTENSIONS); the package list lives in config('rsx.dependencies')
     under exposed_composer. This page explains what to reach for and when. If the
     two ever disagree, the code is right and this page is a bug.

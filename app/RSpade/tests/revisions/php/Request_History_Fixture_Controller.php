@@ -11,8 +11,8 @@ use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Locks\RsxLocks;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * Ajax endpoints for Request_History_Test: writers that write one framework site-scoped row

@@ -12,15 +12,15 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Auth\Auth_Gates;
-use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Controller;
-use App\RSpade\Core\TwoFactor\Totp;
-use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
+use App\RSpade\Lib\SignIn\Confirmation\Rsx_Password_Confirmation;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor_Controller;
+use App\RSpade\Lib\SignIn\TwoFactor\Totp;
+use App\RSpade\Lib\SignIn\TwoFactor\Two_Factor_Credential_Model;
 
 /**
  * The Ajax surface: Rsx_Two_Factor_Controller, driven exactly as the browser drives it.

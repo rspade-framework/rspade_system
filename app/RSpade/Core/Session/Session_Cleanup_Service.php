@@ -17,8 +17,8 @@ use App\RSpade\Core\Task\Task_Instance;
  *   cleanup_sessions            hourly: DELETES guest browser sessions - nobody ever signed in
  *                               on them (_sessions.first_signed_in_at is null) - unused for
  *                               rsx.sessions.guest_expiry_minutes, signs out the sign-ins past
- *                               their rsx.sessions.staff / portal limits, and signs out what is
- *                               still signed in through an EXPIRED API key
+ *                               their realm's limits (Session::get_sign_in_limits()), and
+ *                               signs out what is still signed in through an EXPIRED API key
  *   deactivate_unused_sessions  daily maintenance: makes every browser unused for
  *                               rsx.sessions.unused_session_days INACTIVE, signing out what
  *                               is still signed in on it
@@ -105,8 +105,10 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * A SIGN-IN PAST ITS LIMITS is ended when its browser next makes a request
      * (Session::enforce_timeouts()); this ends the ones whose browser never comes back, so
      * "where you're signed in" stops listing them as signed in. Per realm (staff, portal) and
-     * per clock - rsx.sessions.<realm>.max_length_minutes from the sign-in, max_idle_minutes
-     * from the last page view, 0 = no limit - with rsx.sessions.ajax_grace_minutes added: a
+     * per clock - max_length_minutes from the sign-in, max_idle_minutes from the last page
+     * view, 0 = no limit, both from Session::get_sign_in_limits() (the session.limits hook,
+     * else rsx.sessions.<realm>), the answer the request check judges by - with
+     * rsx.sessions.ajax_grace_minutes added: a
      * page left open past its limit may still save through Ajax for that long, so the sweep
      * never ends a sign-in sooner than a request would. Recorded SIGN_OUT_TIMED_OUT_LENGTH /
      * _IDLE, through the ordinary sign-out (pointer cleared, the realm's values cleared, a
@@ -467,7 +469,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     {
         $task->status('Deleting expired two-factor browser trust');
 
-        $deleted = \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::_delete_expired_trust();
+        $deleted = \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::_delete_expired_trust();
 
         $task->stdout("Deleted {$deleted} expired trusted-browser row(s).");
         $task->summary("{$deleted} expired trusted browser(s) removed.");

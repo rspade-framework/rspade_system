@@ -69,7 +69,7 @@ class Rsx_Csrf
         $path = '/' . ltrim($request->getPathInfo(), '/');
 
         if ($path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('staff')
-            || (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
+            || (\App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()
                 && $path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('portal'))) {
             return;
         }
@@ -81,7 +81,7 @@ class Rsx_Csrf
         // browser and no session, and a recipient clicking the footer link is usually not
         // a user of this application at all. A token check could only ever reject a
         // legitimate opt-out. See Mail_Unsubscribe_Controller.
-        if ($path === \App\RSpade\Core\Mail\Mail_Unsubscribe_Controller::PATH) {
+        if ($path === \App\RSpade\Lib\Messaging\Mail\Mail_Unsubscribe_Controller::PATH) {
             return;
         }
 
@@ -106,9 +106,9 @@ class Rsx_Csrf
         // provider, one path PER REALM: the client portal runs its own ceremony and its own
         // callback (Rsx_Portal_Sso), whose Apple leg is the same do-nothing 303 - computed
         // from the request's portal base, and asked only of a portal request.
-        if ($path === \App\RSpade\Core\Sso\Rsx_Sso::APPLE_CALLBACK_PATH
-            || (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
-                && $path === \App\RSpade\Core\Sso\Rsx_Portal_Sso::apple_callback_path())) {
+        if ($path === \App\RSpade\Lib\SignIn\Sso\Rsx_Sso::APPLE_CALLBACK_PATH
+            || (\App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()
+                && $path === \App\RSpade\Lib\SignIn\Sso\Rsx_Portal_Sso::apple_callback_path())) {
             return;
         }
 

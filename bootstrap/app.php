@@ -301,7 +301,7 @@ $app->singleton(
 |   - app/RSpade/Core/Exceptions/Cli_Exception_Handler.php
 |   - app/RSpade/Core/Exceptions/Ajax_Exception_Handler.php
 |   - app/RSpade/Core/Exceptions/Api_Exception_Handler.php
-|   - app/RSpade/Core/Debug/Playwright_Exception_Handler.php
+|   - app/RSpade/Lib/Developer/Debug/Playwright_Exception_Handler.php
 |   - app/RSpade/Core/Exceptions/Web_Exception_Handler.php
 |
 | A handler FORMATS a failure; none dispatches. RSX dispatch has one entry point,

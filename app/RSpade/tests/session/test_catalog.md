@@ -176,6 +176,18 @@ and delete their keys in teardown.
 | sess-gc-24 | a string resolved within the last day is left alone | an unreferenced string resolved now | kept | implemented |
 | sess-gc-25 | resolving a string again protects it from the sweep | a 10-day-old orphan, resolved again | kept | implemented |
 
+## Session_Limits_Hook_Test (php, $requires_db_reset + no-tx) - the session.limits resolve hook
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-limits-01 | a supplied idle limit SHORTER than config moves the request check and the sweep together | handler idle 60 (config 480, grace 120); sign-ins 30, 90, 200 minutes idle | request: 90 expired, 30 not; sweep: only 200 signed out (IDLE) | implemented |
+| sess-limits-02 | a supplied idle limit LONGER than config moves both readers | handler idle 1440; sign-ins 11h and 27h idle | 11h kept by both (config alone would end it); 27h ended by both | implemented |
+| sess-limits-03 | a limit the answer does not name comes from config; a declined realm and an empty answer are all config | handler idle 60 for staff, null for portal; then [] | staff {10080, 60}; portal and [] {10080, 480} | implemented |
+| sess-limits-04 | no handler reads the config, re-read on every call | no handler; config changed mid-test | the config values, 0 included | implemented |
+| sess-limits-05 | a supplied 0 is no limit | handler idle 0; 20h idle | not expired | implemented |
+| sess-limits-06 | a malformed answer throws naming the hook and realm | negative, numeric string, float, null value, unknown key, list, non-array | RuntimeException each | implemented |
+| sess-limits-07 | the hook is asked once per realm per process, again after _forget_sign_in_limits() | counting handler; 5 resolver reads + request check + whole sweep | staff 1, portal 1; staff 2 after forget | implemented |
+
 ## Session_Cap_Test (php, $requires_db_reset + no-tx) - concurrent session cap
 
 | ID | Purpose | Input | Expected | Status |
@@ -299,9 +311,9 @@ screens; rows minted through `_id_for_context()` with their clocks set by the te
 | sess-ip-02 | resolving is memoized until _reset() | resolve, delete the row, resolve; reset; resolve | memo answers the old id; a new id after reset | implemented |
 | sess-ip-03 | no address is null | null, '', 'CLI'; address(null/0) | null; no 'CLI' row | implemented |
 | sess-ip-04 | a full-length IPv6 address is kept whole | 39-character IPv6 | read back intact | implemented |
-| sess-ip-05 | describe() answers the address and every geocode field, null until located | fresh row; row with geocode set | null geocode; the stored values | implemented |
-| sess-ip-06 | join() adds describe()'s fields as <prefix>_<name>, keeps the query's columns, lists a row with no address | two _login_history rows, one located | fields set / null; names equal describe()'s keys | implemented |
-| sess-ip-07 | column() names a joined field for where()/orderBy(); bad field, prefix or column refused | filter on ip_address, sort on country | 1 match; InvalidArgumentException | implemented |
+| sess-ip-05 | describe() answers the address and no location (a location is never stored) | fresh row | `['ip_address' => ...]`; null for no row | implemented |
+| sess-ip-06 | join() adds describe()'s fields as <prefix>_<name>, keeps the query's columns, lists a row with no address | two _login_history rows, one with an address | ip_address set / null; names equal describe()'s keys | implemented |
+| sess-ip-07 | column() names a joined field for where()/orderBy(); bad field, prefix or column refused | filter and sort on ip_address; ask for country | 1 match; InvalidArgumentException | implemented |
 | sess-ip-08 | a row minted in a rolled-back transaction is not answered again | begin, resolve, roll back, resolve | row gone, then minted again | implemented |
 
 ## http/audit_session.sh (http - live server)
@@ -591,12 +603,19 @@ refuses a cross-site save or delete.
 | prr-07 | any other change keeps the staff flag | timezone saved | stored flag 1 | implemented |
 | prr-08 | a new password saved WITH the flag keeps it | temporary password + require_password_reset() | stored flag 1 | implemented |
 | prr-09 | the portal model clears its flag on a password change, and only then | status change, then set_password() + save | 1 after the status change, 0 after the password | implemented |
+| prr-10 | an already-flagged identity stays flagged through a temporary password, once | flagged; set_password() + require_password_reset() + save; then a plain change | stored flag 1, then 0 | implemented |
+| prr-11 | the same for a portal user | flagged portal user; the same two saves | 1, then 0 | implemented |
+| fpc-01 | begin_forced_password_change() signs the staff realm out and parks the identity | signed-in browser, flagged identity proven | not signed in; pending {email} | implemented |
+| fpc-02 | complete saves through the model and signs nobody in | new password | identity answered; hash new, flag 0; pending gone; not signed in; no SUCCESS row; the new password verifies | implemented |
+| fpc-03 | the current and an empty password are refused, nothing changes | current, '' | REASON_UNCHANGED, REASON_EMPTY; still flagged, still pending | implemented |
+| fpc-04 | nothing pending and a stale proof are both "nothing pending" | never begun; password changed elsewhere after begin | REASON_NOTHING_PENDING; pending null; the newer password stands | implemented |
+| fpc-05 | the portal twin parks, refuses the current password and completes on its own site | flagged portal user | same as staff on portal_users | implemented |
 
 ## Portal_Login_History_Test (php, default isolation) - the portal binding of the history store
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| plh-01 | rows carry the portal user and its site; the reader answers them labelled, newest first, with no location | record_success + record_refusal outside a portal request | site_id from the portal user; two rows, refusal first, labels; location null; no failure count | implemented |
+| plh-01 | rows carry the portal user and its site; the reader answers them labelled, newest first | record_success + record_refusal outside a portal request | site_id from the portal user; two rows, refusal first, labels; no `location` key; no failure count | implemented |
 | plh-02 | the realms never read each other's rows | a staff and a portal row under the same numeric id | each reader answers its own realm only | implemented |
 | plh-03 | list_page() takes 'portal_user_id' and refuses the staff key | three rows, limit 2; login_user_id | total 3, two rows; InvalidArgumentException naming Portal_Login_History::list_page | implemented |
 | plh-04 | the retention sweep prunes portal rows on the same window | one row aged 400 days | aged row gone, recent kept | implemented |
@@ -680,3 +699,19 @@ through the model and read the user sessions back.
 | CLI-USER-02 | a save under that declaration is authored by the site user, not the login identity | php | save user 1 | updated_by_type User_Model, updated_by_id 1 | implemented | 2026-10-28 |
 | CLI-USER-03 | the resolved user follows a site change (no stale answer from the previous site) | php | set_temporary_site_id() to a site with no membership, then cleared | null, then 1 | implemented | 2026-10-28 |
 | CLI-USER-04 | a user named by impersonate() wins over the derivation | php | impersonate(1, 1, 55) | 55 | implemented | 2026-10-28 |
+
+## Password_Change_Event_Test (php, commits; clean baseline) - every password change is reported once, after it commits
+
+The event is registered with afterCommit(), which only a real outermost commit runs, so the
+class opts out of the per-test transaction. Handlers are replaced by a recorder
+(`Event_Registry::_set_test_handlers()`).
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| pce-01 | a stated cause is reported once with the identity; creation fires nothing; the cause belongs to one save | php | create, set_password(CAUSE_ADMIN)+save, then a bare ->password save | one login_user.password.changed {cause admin, actor/audit/ip null in a command}; the next save reports unknown | implemented | 2026-11-12 |
+| pce-02 | no stated cause reports unknown; a non-password save fires nothing | php | timezone save, then set_password() with no cause | nothing, then one event cause unknown | implemented | 2026-11-12 |
+| pce-03 | inside a transaction the event waits for the commit; a rollback drops it | php | DB::transaction(); beginTransaction + rollBack | nothing before commit, one after; none for the rollback | implemented | 2026-11-12 |
+| pce-04 | actor is the signed-in identity | php | set_login_user_id(admin), change target | actor = admin's Login_User_Model | implemented | 2026-11-12 |
+| pce-05 | an unknown cause throws and assigns nothing | php | set_password('x', 'because') | InvalidArgumentException naming the vocabulary; hash unchanged | implemented | 2026-11-12 |
+| pce-06 | rsx:users:password:set states cli | php | Artisan::call | one event cause cli | implemented | 2026-11-12 |
+| pce-07 | the portal twin, inside a Site_Lock::write() section | php | create + change a portal user | portal_user.password.changed after the section commits | implemented | 2026-11-12 |

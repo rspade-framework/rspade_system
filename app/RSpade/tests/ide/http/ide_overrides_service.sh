@@ -32,7 +32,7 @@ if [ "$MODE" != "dev" ]; then
     exit 0
 fi
 
-TOKEN="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; \App\RSpade\Core\Ide\Ide_Bridge_Token::ensure_grant_store(); echo \App\RSpade\Core\Ide\Ide_Bridge_Token::current_token();' 2>/dev/null | tail -1)"
+TOKEN="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; \App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token::ensure_grant_store(); echo \App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token::current_token();' 2>/dev/null | tail -1)"
 if [ -z "$TOKEN" ]; then
     echo "FAIL: $TEST_NAME - no IDE grant token could be established"
     exit 1

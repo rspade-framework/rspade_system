@@ -24,11 +24,11 @@ their payload computation is proven here in php, and the browser half is verifie
 | `Core/Auth/Auth_ManifestSupport.php` | Builds `manifest['data']['auth']`: the per-realm `#[Auth_Check]` registry and the surface index (`build_index()`), then enforces closed-by-default (`validate()`). Owns every build-time fatal. |
 | `Core/Auth/Auth_Gates.php` | Evaluation engine: realm detection, LIVE strict execution (no result cache anywhere), `gates_pass()`, `can_access()` target resolution. |
 | `Core/Permission/Permission_Abstract.php` | Staff realm root. Built-ins `public()` / `closed()` / `is_logged_in()` / `is_sysadmin()` (the control panel's gate), plus `can_access()`. |
-| `Core/Portal/Portal_Permission_Abstract.php` | Portal realm root. Portal twins of the same three. |
+| `Lib/Portal/Portal_Permission_Abstract.php` | Portal realm root. Portal twins of the same three. |
 | `Core/Dispatch/Route_ManifestSupport.php` | `'auth'` on `#[Route]` rows. |
 | `Core/SPA/Spa_ManifestSupport.php` | `'surface'` (the PHP bootstrap's key in `auth.surfaces`) + `'target'` (the JS action class, which is its OWN key in `auth.surfaces`) on SPA rows. |
-| `Core/Portal/Portal_Route_ManifestSupport.php` | `'auth'` on `#[Portal_Route]` rows. |
-| `Core/Portal/Portal_Spa_ManifestSupport.php` | `'surface'` + `'target'` on portal SPA rows. |
+| `Lib/Portal/Portal_Route_ManifestSupport.php` | `'auth'` on `#[Portal_Route]` rows. |
+| `Lib/Portal/Portal_Spa_ManifestSupport.php` | `'surface'` + `'target'` on portal SPA rows. |
 | `Core/Api/Api_Endpoint_ManifestSupport.php` | `'auth'` on `#[Api_Endpoint]` rows. |
 | `Core/Dispatch/Dispatcher.php` | Route/SPA seam, both realms (`#[Route]`, `#[Portal_Route]`); portal login redirect on denial. Also owns the dev-auth identity (per realm) so gates can see it. |
 | `Core/Ajax/Ajax.php` | The one Ajax core (`execute()`) behind every entry point (`handle_browser_request`, `handle_batch_request`, `internal`). |

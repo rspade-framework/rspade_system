@@ -10,7 +10,6 @@ namespace App\RSpade\Tests\Tasks\Php;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Process\Process_Identity;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Health_Checks;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
@@ -19,6 +18,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
 
@@ -390,7 +390,11 @@ class Task_System_Switch_Test extends Rsx_Test_Abstract
         $schedule_id = DB::table('_task_schedules')->insertGetId([
             'class' => self::FIX,
             'method' => 'marker_a',
-            'cron_expression' => '* * * * *',
+            // Hourly, at the minute half an hour from now (UTC, as the schedule reads it): the
+            // run after the catch-up is ~30 minutes away whenever the test starts, so it can never
+            // fall inside the early-claim window (Task_Daemon::SCHEDULE_LEAD_SECONDS) and be
+            // claimed by the second worker pass. An every-minute schedule near a minute boundary was.
+            'cron_expression' => gmdate('i', time() + 1800) . ' * * * *',
             'timezone' => 'UTC',
             'next_run_at' => $overdue,
             'created_at' => now(),

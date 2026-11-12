@@ -21,9 +21,9 @@ use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Revisions\Transaction_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Transaction_Model;
 use App\RSpade\Tests\Companions\Php\CompanionFixture\Companion_Fixture_Companion_Service;
 use App\RSpade\Tests\Companions\Php\Companion_Fixture_Model;
 

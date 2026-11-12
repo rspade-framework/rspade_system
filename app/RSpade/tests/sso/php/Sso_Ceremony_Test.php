@@ -15,12 +15,12 @@ use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sso\Rsx_Sso;
-use App\RSpade\Core\Sso\Sso_Identity_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Totp;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\Sso\Sso_Identity_Model;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Lib\SignIn\TwoFactor\Totp;
 use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
 
 /**

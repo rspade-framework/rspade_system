@@ -1,0 +1,36 @@
+<?php
+
+namespace App\RSpade\Lib\Ui\Flash;
+
+use App\RSpade\Lib\Ui\Flash\Flash_Alert_Model_Abstract;
+
+/**
+ * Flash_Alert_Model - one queued flash alert, held against the session until the next page renders it.
+ *
+ * THIS FILE IS A SHELL, AND THAT IS ITS ENTIRE JOB. Every member lives on
+ * Flash_Alert_Model_Abstract (`Flash_Alert_Model_Abstract.php`, beside this file); this class exists
+ * so that an application can REPLACE it without holding a copy of the implementation.
+ *
+ * TO CUSTOMIZE IT, declare your own class of the same name under rsx/models/,
+ * extending the base:
+ *
+ *     namespace Rsx\Models;
+ *
+ *     class Flash_Alert_Model extends Flash_Alert_Model_Abstract
+ *     {
+ *         // only the members you change
+ *     }
+ *
+ * The manifest shadows this file - it stays in place, never loaded - and your class becomes
+ * Flash_Alert_Model for the whole tree, and it keeps inheriting everything the framework
+ * adds to the base from then on - so your override drifts by exactly the members you
+ * declared and no others. A member the base marks #[Replaceable] is replaced outright;
+ * any other override calls parent:: (PHP-PARENT-CHAIN-01). Copying the base's
+ * implementation into your class instead is a second implementation of a class the
+ * framework keeps developing, and the manifest refuses it by name.
+ *
+ * See: php artisan rsx:man class_override
+ */
+class Flash_Alert_Model extends Flash_Alert_Model_Abstract
+{
+}

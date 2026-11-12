@@ -8,6 +8,8 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
+use App\RSpade\Core\Auth\Forced_Password_Change;
+use App\RSpade\Core\Auth\Forced_Password_Change_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Locks\Site_Lock;
@@ -84,8 +86,9 @@ class RsxAuth
      * EVEN WHEN $record IS false: the opt-out defers an outcome the caller will know better (a
      * success that still owes a second factor), and this one is already final - nothing the
      * caller does next can turn it into a sign-in. It is not a failure in the throttle's sense:
-     * nothing is counted. A login function catches it and points the visitor at the way to a new
-     * password.
+     * nothing is counted. A login function catches it and hands $e->identity to
+     * begin_forced_password_change(), which parks it for a "choose a new password" step that
+     * then continues the sign-in (the forced-change methods below; rsx:man session).
      *
      * A SOFT-DELETED identity is therefore refused for free: Login_User_Model uses SoftDeletes, so
      * the global scope excludes trashed rows from the lookup below and a deleted account is
@@ -301,5 +304,69 @@ class RsxAuth
     {
         // Use Session to logout
         Session::logout();
+    }
+
+    // -------------------------------------------------------------------------
+    // Forced password change at sign-in
+    // -------------------------------------------------------------------------
+
+    /**
+     * Park an identity whose correct password was refused by the reset flag, WITHOUT signing
+     * it in, so a "choose a new password" page can finish the sign-in.
+     *
+     * The caller is a login function holding Auth_Password_Reset_Required_Exception::$identity.
+     * Signs the browser's staff sign-in out first, then parks the identity in the staff realm's
+     * session values (the second-factor challenge's shape). No email, no token in a URL; the
+     * parked value lives as long as the session and goes stale if the password changes some
+     * other way. Engine and rulings: Forced_Password_Change.
+     *
+     * @param Login_User_Model $login_user
+     * @return void
+     */
+    public static function begin_forced_password_change(Login_User_Model $login_user): void
+    {
+        Forced_Password_Change::_begin(Forced_Password_Change::REALM_STAFF, $login_user);
+    }
+
+    /**
+     * What the "choose a new password" page needs, or null when nothing is pending.
+     *
+     * @return array|null {email} - the full address, for the page's autocomplete="username" field
+     */
+    public static function forced_password_change_pending(): ?array
+    {
+        return Forced_Password_Change::_pending(Forced_Password_Change::REALM_STAFF);
+    }
+
+    /**
+     * Set the parked identity's new password and answer the identity - NOT signed in.
+     *
+     * The caller validates its own password policy first (length, a confirmation field); the
+     * framework refuses an empty password and the CURRENT password, draws on the sign-in
+     * throttle, and saves through the model (the flag clears, trusted browsers are forgotten,
+     * other sign-ins end). Then the caller continues its sign-in exactly where
+     * verify_credentials() would have returned: a second factor the identity holds is
+     * challenged next, and only after that is the identity signed in (RsxAuth::login(), through
+     * the application's own completion function). Nothing is recorded here; the sign-in records
+     * its own success.
+     *
+     * @param string $new_password
+     * @return Login_User_Model
+     * @throws Auth_Throttled_Exception
+     * @throws Forced_Password_Change_Exception (reason(): nothing pending, empty, unchanged)
+     */
+    public static function complete_forced_password_change(string $new_password): Login_User_Model
+    {
+        return Forced_Password_Change::_complete(Forced_Password_Change::REALM_STAFF, $new_password);
+    }
+
+    /**
+     * Forget a parked forced password change (the page's Cancel).
+     *
+     * @return void
+     */
+    public static function abandon_forced_password_change(): void
+    {
+        Forced_Password_Change::_abandon(Forced_Password_Change::REALM_STAFF);
     }
 }

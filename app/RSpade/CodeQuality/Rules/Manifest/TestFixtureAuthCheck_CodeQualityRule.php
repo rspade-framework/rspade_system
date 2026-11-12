@@ -33,7 +33,7 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * The checks the FRAMEWORK declares, and therefore the only ones a fixture may name.
      * See App\RSpade\Core\Permission\Permission_Abstract (staff) and
-     * App\RSpade\Core\Portal\Portal_Permission_Abstract (portal).
+     * App\RSpade\Lib\Portal\Portal_Permission_Abstract (portal).
      */
     private const FRAMEWORK_CHECKS = ['public', 'closed', 'is_logged_in', 'is_sysadmin', 'is_framework_developer'];
 

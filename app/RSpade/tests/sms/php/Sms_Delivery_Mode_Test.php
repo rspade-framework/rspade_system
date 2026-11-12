@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Sms\Php;
 
-use App\RSpade\Core\Models\Sms_Queue_Model;
-use App\RSpade\Core\Sms\Rsx_Sms;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
 
 /**
  * Sms_Delivery_Mode_Test - rsx.sms.delivery, and why it has only two values.

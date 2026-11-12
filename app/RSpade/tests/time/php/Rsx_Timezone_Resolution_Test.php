@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Time\Php;
 
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Rsx_Time::get_user_timezone() - the zone a request displays in, resolved per request:
@@ -141,7 +141,7 @@ class Rsx_Timezone_Resolution_Test extends Rsx_Test_Abstract
         static::__fresh();
         Session::get_login_user()->timezone = self::EXPLICIT;
         Rsx_Time::$browser_timezone_cookie_for_tests = self::BROWSER;
-        \App\RSpade\Core\Portal\Portal_Session::set_site_id(1);
+        \App\RSpade\Lib\Portal\Portal_Session::set_site_id(1);
         Rsx_Portal::set_portal_request(true);
 
         try {

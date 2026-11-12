@@ -79,7 +79,7 @@ with a refusal explains it instead of confirming.
                 </div>
             </Slot:overview>
             <Slot:sessions><_Sys_User_Sessions $sid="sessions" $login_user_id=_u.id $email=_u.email /></Slot:sessions>
-            <Slot:signins><_Sys_User_Signins_DataGrid $sid="signins" $base_params=({login_user_id: _u.id}) /></Slot:signins>
+            <Slot:signins><_Sys_User_Signins_DataGrid $sid="signins" $base_params=({login_user_id: _u.id}) /><Geo_Ip_Credit /></Slot:signins>
             <Slot:security><_Sys_User_Security $sid="security" $login_user_id=_u.id $email=_u.email /></Slot:security>
         </_Sys_Tabs>
     <% } %>

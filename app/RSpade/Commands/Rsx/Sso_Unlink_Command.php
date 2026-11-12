@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
 
 /**
  * rsx:users:sso:unlink - disconnect a provider account from a login identity.

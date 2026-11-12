@@ -19,14 +19,10 @@ use Illuminate\Support\Facades\DB;
  *     _api_request_log.ip_address_id             the address of an external API call
  *     _transactions.ip_address_id                the address a unit of work came from
  *
- * GEOCODING. Each row carries city, state, country, latitude and longitude. They exist so
- * an address is located once and every record that references it shares the answer. The
- * framework does not ship a geocoder yet: today every one of those fields is null. A
- * resolver that fills them is coming; when it lands, describe() and join() answer its
- * results with no change to their shape.
+ * LOCATION. Where an address is located is answered at display time by Rsx_Geo_Ip and is
+ * never stored (rsx:man geo_ip): a row is the address and nothing else.
  *
- * Rows are never deleted - a row is where an address's geocode lives, and it stays
- * referenced by audit sessions, which are permanent.
+ * Rows are never deleted - they stay referenced by audit sessions, which are permanent.
  *
  * _ip_addresses is a SYSTEM table: application code never names it. It reads an address
  * through this class (describe(), address()), through the framework's own answers (the
@@ -41,11 +37,6 @@ class Ip_Address
      */
     private const JOINED_FIELDS = [
         'ip_address',
-        'city',
-        'state',
-        'country',
-        'latitude',
-        'longitude',
     ];
 
     /**
@@ -117,13 +108,12 @@ class Ip_Address
     }
 
     /**
-     * One address with what is known about it:
+     * One address as a record:
      *
-     *     ['ip_address' => '203.0.113.7', 'city' => null, 'state' => null,
-     *      'country' => null, 'latitude' => null, 'longitude' => null]
+     *     ['ip_address' => '203.0.113.7']
      *
-     * The geocode fields are null until a geocoder has located the address (none ships
-     * yet - see the class docblock). Null when there is no such row.
+     * Null when there is no such row. Where it is located is Rsx_Geo_Ip::label() at
+     * display time (see the class docblock).
      *
      * @param int $ip_address_id
      * @return array|null
@@ -136,30 +126,23 @@ class Ip_Address
             return null;
         }
 
-        $float = fn ($value) => $value === null ? null : (float) $value;
-
         return [
             'ip_address' => $row->ip_address,
-            'city' => $row->city,
-            'state' => $row->state,
-            'country' => $row->country,
-            'latitude' => $float($row->latitude),
-            'longitude' => $float($row->longitude),
         ];
     }
 
     /**
      * Join the address onto a query of your own, so a list can show, search and sort by
-     * an address and where it is.
+     * an address.
      *
      *     $query = Visit_Log_Model::query();
      *     Ip_Address::join($query, 'visit_logs.ip_address_id', 'visitor');
      *
      *     $query->where(Ip_Address::column('visitor', 'ip_address'), 'like', $like)
-     *           ->orderBy(Ip_Address::column('visitor', 'country'));
+     *           ->orderBy(Ip_Address::column('visitor', 'ip_address'));
      *
      *     foreach ($query->limit(25)->get() as $log) {
-     *         $log->visitor_ip_address;   $log->visitor_city;   $log->visitor_country;
+     *         $log->visitor_ip_address;
      *     }
      *
      * $column is YOUR column holding an Ip_Address::id() value. $prefix names this join:

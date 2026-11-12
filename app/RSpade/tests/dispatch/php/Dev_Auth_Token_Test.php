@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Dispatch\Php;
 
-use App\RSpade\Core\Debug\Dev_Auth_Token;
-use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Dev_Auth_Token;
+use App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token;
 
 /**
  * Dev_Auth_Token - the credential rsx:debug's browser presents to assert an identity.

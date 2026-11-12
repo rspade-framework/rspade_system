@@ -7,13 +7,13 @@
 
 namespace App\RSpade\Tests\Sms\Php;
 
-use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sms\Rsx_Sms;
-use App\RSpade\Core\Sms\Sms_Queue_Service;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Service;
 
 /**
  * Sms_Queue_Test - the core SMS queue model (mirrors Email_Queue_Test). There is no

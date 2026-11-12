@@ -24,27 +24,27 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Api\Request_Payload_Redactor;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
-use App\RSpade\Core\Debug\Debugger;
-use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\RequestHistory\Request_History;
+use App\RSpade\Core\RequestHistory\Request_History_Answer;
+use App\RSpade\Core\RequestHistory\Request_History_Call;
 use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
-use App\RSpade\Core\Revisions\Request_History;
-use App\RSpade\Core\Revisions\Request_History_Answer;
-use App\RSpade\Core\Revisions\Request_History_Call;
-use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\Turnstile\Rsx_Turnstile;
-use App\RSpade\Lib\Flash\Flash_Alert;
+use App\RSpade\Lib\Developer\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Revisions\Revision;
+use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
+use App\RSpade\Lib\Ui\Flash\Flash_Alert;
 
 // @FILE-SUBCLASS-01-EXCEPTION
 
@@ -1342,7 +1342,7 @@ class Ajax
     {
         // A CODED not-found, not a fault: a name that is not an endpoint is the caller's
         // mistake (or a probe), so it is answered, never reported and logged as a server error.
-        if (\App\RSpade\Core\Debug\Rsx_Diagnostics::caller_sees_detail()) {
+        if (\App\RSpade\Lib\Developer\Debug\Rsx_Diagnostics::caller_sees_detail()) {
             throw new AjaxNotFoundException($developer_detail);
         }
 
@@ -1368,7 +1368,7 @@ class Ajax
             return false;
         }
 
-        if (!\App\RSpade\Core\Portal\Portal_Session::is_impersonating()) {
+        if (!\App\RSpade\Lib\Portal\Portal_Session::is_impersonating()) {
             return false;
         }
 

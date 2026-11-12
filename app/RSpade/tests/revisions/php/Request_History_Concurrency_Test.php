@@ -148,10 +148,10 @@ require {$autoload};
 \$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Revisions\Request_History;
-use App\RSpade\Core\Revisions\Request_History_Answer;
-use App\RSpade\Core\Revisions\Request_History_Call;
-use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Core\RequestHistory\Request_History;
+use App\RSpade\Core\RequestHistory\Request_History_Answer;
+use App\RSpade\Core\RequestHistory\Request_History_Call;
+use App\RSpade\Lib\Revisions\Revision;
 use App\RSpade\Core\Session\Session;
 
 // The test database, and lock names scoped by it, as the test process uses.

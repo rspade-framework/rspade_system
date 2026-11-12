@@ -60,7 +60,9 @@ and _Sys_Audit_Sessions_DataGrid.
                     <% } %>
                 </_Sys_Detail_Item>
                 <_Sys_Detail_Item $label="Browser type" $value=_s.type_label />
-                <_Sys_Detail_Item $label="Last IP" $value=_s.ip_address $mono=true />
+                <_Sys_Detail_Item $label="Last IP">
+                    <_Sys_Ip_Address $ip_address=_s.ip_address $location=_s.ip_address__location />
+                </_Sys_Detail_Item>
                 <_Sys_Detail_Item $label="User agent" $value=_s.user_agent />
                 <_Sys_Detail_Item $label="First signed in here" $value=(_s.first_seen ? Rsx_Time.format_timestamp(_s.first_seen) : null) />
                 <_Sys_Detail_Item $label="This sign-in" $value=(_s.signed_in_at ? Rsx_Time.format_timestamp(_s.signed_in_at) : null) />
@@ -75,9 +77,11 @@ and _Sys_Audit_Sessions_DataGrid.
                     </_Sys_Detail_Item>
                 <% } %>
             </_Sys_Detail_List>
+            <Geo_Ip_Credit />
         </_Sys_Section>
 
         <_Sys_Audit_Sessions_DataGrid $data_source=_Sys_Users_Controller.audit_sessions_fetch $base_params=({login_user_id: _u.id, user_session_id: _s.id}) />
+        <Geo_Ip_Credit />
     <% } %>
     </Slot:main>
 </_Sys_Page_Scaffold>

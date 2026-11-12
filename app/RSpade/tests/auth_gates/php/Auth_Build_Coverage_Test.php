@@ -10,9 +10,9 @@ namespace App\RSpade\Tests\AuthGates\Php;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
 use App\RSpade\Core\Database\Model_Fetch_Lineage;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Portal_Spa_ManifestSupport;
 use App\RSpade\Core\SPA\Spa_ManifestSupport;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Spa_ManifestSupport;
 
 /**
  * CLOSED BY DEFAULT AT BUILD TIME: every dispatchable row the manifest records has a

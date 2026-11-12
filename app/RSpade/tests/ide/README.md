@@ -9,11 +9,11 @@ surface (replaced by a narrow `refactor` allowlist).
 
 ## Source under test
 
-- `app/RSpade/Core/Ide/Ide_Bridge_Token.php` - the booted-context token manager
+- `app/RSpade/Lib/Developer/Ide/Ide_Bridge_Token.php` - the booted-context token manager
   (`ensure()` / `ensure_grant_store()` / `active_secrets()` / `current_token()` /
   `bridge_dir()`). The grant is the SHARED development credential: the IDE bridge
   takes it as the `X-Ide-Token` bearer, and rsx:debug's dev-auth signs with it
-  (`Core/Debug/Dev_Auth_Token`, tested in the `dispatch` concern). Hence the split -
+  (`Lib/Developer/Debug/Dev_Auth_Token`, tested in the `dispatch` concern). Hence the split -
   `ensure_grant_store()` is gated on development ONLY, `ensure()` additionally on
   `rsx.ide_integration.enabled`.
 - `app/RSpade/Ide/Services/auth.php` - pre-boot grant verification (`X-Ide-Token`
@@ -24,7 +24,7 @@ surface (replaced by a narrow `refactor` allowlist).
 - `app/RSpade/Ide/Services/handler.php` - service router + `handle_refactor_service`
   exact-match allowlist (`rsx:refactor:rename_php_class`,
   `rename_php_class_function`, `sort_php_class_functions`).
-- `app/RSpade/Core/Health/Security_Health_Checks.php` - the `Web Exposure`
+- `app/RSpade/Lib/Operations/Health/Security_Health_Checks.php` - the `Web Exposure`
   health check (probes own APP_URL for served `.env` / `.git` / bridge dir).
 - `app/RSpade/Core/Providers/Rsx_Framework_Provider.php` - `ensure_ide_bridge_token()`.
 

@@ -2,7 +2,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\RSpade\Core\Logging\Rsx_Logrotate;
+use App\RSpade\Lib\Operations\Logging\Rsx_Logrotate;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use Illuminate\Console\Command;
 

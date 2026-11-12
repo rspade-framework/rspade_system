@@ -8,10 +8,10 @@
 namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
-use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
+use App\RSpade\Lib\Revisions\Revision;
 
 /**
  * The VIRTUAL SESSION - what a process with no browser (a command, a task, this test

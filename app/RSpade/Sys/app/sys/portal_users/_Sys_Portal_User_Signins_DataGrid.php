@@ -9,6 +9,7 @@ namespace App\RSpade\Sys\App\Sys\PortalUsers;
 
 use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
 use App\RSpade\Sys\App\Sys\Users\_Sys_User_Signins_DataGrid;
 
 /**
@@ -26,7 +27,7 @@ use App\RSpade\Sys\App\Sys\Users\_Sys_User_Signins_DataGrid;
  * What the table holds is Portal_Login_History's business: successes, post-password
  * refusals (a required password reset), passkey enrollment ceremony outcomes and any
  * outcome an application records itself, for rsx.sessions.login_history_retention_days -
- * sign-in failures are counters, never rows. The portal table records no location.
+ * sign-in failures are counters, never rows.
  *
  * Request: portal_user_id (the grid's $base_params, required), page, per_page, sort, order,
  * filter (the reader matches the email given, the IP address or the user agent).
@@ -37,7 +38,9 @@ use App\RSpade\Sys\App\Sys\Users\_Sys_User_Signins_DataGrid;
  * Response: {records, page, per_page, total, total_pages, sort, order}; each record is
  * present_record()'s keys, id as an int, created_at as ISO UTC, plus `tone` - the
  * _Sys_Status_Badge tone of its outcome (_Sys_User_Signins_DataGrid::TONES, the staff
- * grid's map: one vocabulary, one drawing).
+ * grid's map: one vocabulary, one drawing) - and `ip_address__location`, where the address
+ * is (Rsx_Geo_Ip::label()), resolved for the rows of the page served and never stored,
+ * sorted or searched.
  */
 class _Sys_Portal_User_Signins_DataGrid
 {
@@ -104,6 +107,7 @@ class _Sys_Portal_User_Signins_DataGrid
                 $row['id'] = (int) $row['id'];
                 $row['created_at'] = Rsx_Time::to_iso($row['created_at']);
                 $row['tone'] = _Sys_User_Signins_DataGrid::TONES[$row['status']] ?? 'fail';
+                $row['ip_address__location'] = $row['ip_address'] === null ? null : Rsx_Geo_Ip::label($row['ip_address']);
 
                 return $row;
             }, $result['rows']),

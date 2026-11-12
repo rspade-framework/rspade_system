@@ -22,14 +22,14 @@ use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
-use App\RSpade\Core\Portal\Portal_Authorizable;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_Authorizable;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 /**
  * File_Attachment_Model_Abstract - Logical file upload record
  *
@@ -1230,12 +1230,12 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * orphan sweep's job; the previously-linked blob is left for it.
      *
      * @return void
-     * @throws \App\RSpade\Core\Debug\Rsx_Caller_Exception
+     * @throws \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception
      */
     public function evict_blob(): void
     {
         if ($this->handler_class === null) {
-            throw new \App\RSpade\Core\Debug\Rsx_Caller_Exception(
+            throw new \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception(
                 'Cannot evict blob: attachment has no handler_class (bytes would be unrecoverable)'
             );
         }
@@ -1260,13 +1260,13 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * @param array  $attributes    Required: site_id, file_name, file_extension, mime_type,
      *                              file_size. Optional: notes.
      * @return static
-     * @throws \App\RSpade\Core\Debug\Rsx_Caller_Exception
+     * @throws \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception
      */
     public static function create_external(string $handler_class, array $handler_ref, array $attributes): static
     {
         foreach (['site_id', 'file_name', 'file_extension', 'mime_type', 'file_size'] as $required) {
             if (!isset($attributes[$required])) {
-                throw new \App\RSpade\Core\Debug\Rsx_Caller_Exception(
+                throw new \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception(
                     "create_external: missing required attribute '{$required}'"
                 );
             }
@@ -2810,8 +2810,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // the claim check has to ask the same facade or a portal upload can never be claimed
         // by the portal endpoint that asked for it. See
         // docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md.
-        $current_site_id = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
-            ? \App\RSpade\Core\Portal\Portal_Session::get_site_id()
+        $current_site_id = \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()
+            ? \App\RSpade\Lib\Portal\Portal_Session::get_site_id()
             : \App\RSpade\Core\Session\Session::get_site_id();
 
         // Site IDs must match (both null is a match)
@@ -2913,7 +2913,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * @param \App\RSpade\Core\Database\Models\Rsx_Model_Abstract $model The model to attach to
      * @param string $category Category identifier (e.g., 'profile_photo', 'logo')
      * @return void
-     * @throws \App\RSpade\Core\Debug\Rsx_Caller_Exception If not authorized or already attached
+     * @throws \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception If not authorized or already attached
      */
     public function attach_to($model, string $category): void
     {
@@ -2921,7 +2921,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // attachments; external (handler-backed) attachments are created programmatically by
         // trusted app code (create_external) and are attached by that same code.
         if ($this->handler_class === null && !$this->can_user_assign_this_file()) {
-            throw new \App\RSpade\Core\Debug\Rsx_Caller_Exception('Not authorized to assign this attachment');
+            throw new \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception('Not authorized to assign this attachment');
         }
 
         // Replace any existing attachment with this category
@@ -2952,7 +2952,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * @param \App\RSpade\Core\Database\Models\Rsx_Model_Abstract $model The model to attach to
      * @param string $category Category identifier (e.g., 'documents', 'photos')
      * @return void
-     * @throws \App\RSpade\Core\Debug\Rsx_Caller_Exception If not authorized or already attached
+     * @throws \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception If not authorized or already attached
      */
     public function add_to($model, string $category): void
     {
@@ -2960,7 +2960,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // attachments; external (handler-backed) attachments are created programmatically by
         // trusted app code (create_external) and are attached by that same code.
         if ($this->handler_class === null && !$this->can_user_assign_this_file()) {
-            throw new \App\RSpade\Core\Debug\Rsx_Caller_Exception('Not authorized to assign this attachment');
+            throw new \App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception('Not authorized to assign this attachment');
         }
 
         // Assign this attachment (without replacing others)
@@ -2985,6 +2985,81 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         $this->fileable_id = null;
         $this->fileable_category = null;
         $this->save();
+    }
+
+    // -------------------------------------------------------------------------
+    // Duplicate content (see Rsx_Duplicate_Upload, rsx:man file_upload DUPLICATE UPLOADS)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The live attachments on $parent whose bytes are identical to this attachment's, oldest
+     * first - "is this exact file already on this record?", whatever either copy is named.
+     *
+     * THE GUARANTEE IT RESTS ON. The blob store is content-addressed: File_Storage_Model's
+     * ingest byte-compares an incoming file against the blob at its hash and REUSES that row
+     * when the bytes are identical, and the hash column is unique. So identical bytes have ONE
+     * file_storage_id, and a hash collision (different bytes, same hash) is stored under an
+     * incremented hash - a DIFFERENT row by construction. Comparing file_storage_id is
+     * therefore an exact byte comparison, answered by one indexed lookup, with no hashing here
+     * or in the browser.
+     *
+     * Left out: this attachment itself, soft-deleted (and destroyed) rows, files embedded in
+     * the record's text (CATEGORY_INLINE_EMBED, as every listing of a record's files leaves
+     * them out), and every category in $exclude_categories - an application's own categories
+     * that are not "the record's files" (a pinned version, a generated rendition). An
+     * attachment with no resident blob (handler-backed, not yet materialized) has no bytes
+     * to compare and answers an empty set.
+     *
+     * @param \App\RSpade\Core\Database\Models\Rsx_Model_Abstract $parent A saved record.
+     * @param string[] $exclude_categories fileable_category values to leave out.
+     * @return \App\RSpade\Core\Database\Rsx_Result_Set
+     */
+    public function duplicates_on($parent, array $exclude_categories = [])
+    {
+        if (!$parent->exists) {
+            shouldnt_happen('duplicates_on() needs a saved parent record.');
+        }
+
+        $query = static::where('fileable_type', class_basename($parent))
+            ->where('fileable_id', $parent->getKey())
+            ->excludingEmbeds();
+
+        if (!$this->has_blob()) {
+            // No bytes to compare: a query that matches nothing, so the answer keeps its type.
+            $query->whereRaw('1 = 0');
+        } else {
+            $query->where('file_storage_id', $this->file_storage_id);
+        }
+
+        if ($this->exists) {
+            $query->where('id', '!=', $this->id);
+        }
+
+        if ($exclude_categories !== []) {
+            $query->where(function ($q) use ($exclude_categories) {
+                $q->whereNull('fileable_category')
+                    ->orWhereNotIn('fileable_category', $exclude_categories);
+            });
+        }
+
+        return $query->result_set();
+    }
+
+    /**
+     * Whether this attachment and $other hold identical bytes (the same blob - see
+     * duplicates_on() for why that is an exact comparison). False when either has no
+     * resident blob.
+     *
+     * The test a replacement asks of the file it replaces: a new profile photo, logo or
+     * document version whose bytes ARE the current one changes nothing.
+     *
+     * @param File_Attachment_Model_Abstract $other
+     * @return bool
+     */
+    public function has_same_content_as(File_Attachment_Model_Abstract $other): bool
+    {
+        return $this->has_blob() && $other->has_blob()
+            && (int) $this->file_storage_id === (int) $other->file_storage_id;
     }
 
     // -------------------------------------------------------------------------

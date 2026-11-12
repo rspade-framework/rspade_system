@@ -136,7 +136,7 @@ abstract class Site_Model_Abstract extends Rsx_Model_Abstract
 
         // The client portal's cached site lookups (slug, portal_domain, the serving flags)
         // follow every change to a site.
-        $forget_portal_lookups = static fn ($model) => \App\RSpade\Core\Portal\Portal_Site_Resolver::_forget_site($model);
+        $forget_portal_lookups = static fn ($model) => \App\RSpade\Lib\Portal\Portal_Site_Resolver::_forget_site($model);
         static::saved($forget_portal_lookups);
         static::deleted($forget_portal_lookups);
         static::restored($forget_portal_lookups);

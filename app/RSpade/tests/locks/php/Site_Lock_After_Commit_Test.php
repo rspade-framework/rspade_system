@@ -22,9 +22,9 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 use App\RSpade\Tests\Locks\Php\Site_Lock_After_Commit_Fixture_Controller;
 
 /**

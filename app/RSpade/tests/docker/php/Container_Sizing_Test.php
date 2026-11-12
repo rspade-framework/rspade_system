@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Docker\Php;
 
-use App\RSpade\Core\Health\Resource_Sizing_Health_Checks;
-use App\RSpade\Core\Health\Rsx_Container_Sizing;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Resource_Sizing_Health_Checks;
+use App\RSpade\Lib\Operations\Health\Rsx_Container_Sizing;
 
 /**
  * The framework reads the budget rspade-sizing records: the on-demand task pool is automatic

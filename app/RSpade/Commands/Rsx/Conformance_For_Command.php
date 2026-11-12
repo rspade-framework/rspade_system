@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Conformance\Conformance_Audits;
+use App\RSpade\Lib\Developer\Conformance\Conformance_Audits;
 
 /**
  * The conformance audits whose scope covers a file - the ones to read before writing or

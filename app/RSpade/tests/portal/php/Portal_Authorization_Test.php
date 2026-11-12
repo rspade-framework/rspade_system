@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Tests\Portal\Php;
 
-use App\RSpade\Core\Models\Portal_User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * The framework half of the portal authorization contract: Portal_User_Model's own

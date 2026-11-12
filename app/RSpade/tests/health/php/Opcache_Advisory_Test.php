@@ -9,9 +9,9 @@ namespace App\RSpade\Tests\Health\Php;
 
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Cache\RsxCache;
-use App\RSpade\Core\Health\Opcache_Advisory;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Opcache_Advisory;
 
 /**
  * The once-per-six-hours OPcache recommendation written during boot.

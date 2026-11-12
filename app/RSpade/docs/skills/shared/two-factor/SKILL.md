@@ -49,6 +49,8 @@ if ($login_user !== null) {
 }
 ```
 
+**A password that must be replaced comes BEFORE the factor.** A flagged identity's correct password throws `Auth_Password_Reset_Required_Exception`; the forced change at sign-in (`RsxAuth::begin_forced_password_change()` -> `complete_forced_password_change()`, `rsx:man session`) answers the identity still NOT signed in, and the login function then runs this same `is_enabled()` -> `begin_challenge()` step. So the forced change is never a way around the second factor. The template routes both through one private `__continue_sign_in()`.
+
 **Stage 2 - the challenge screen.** A public GET route that bounces when nothing is pending, hosting the component:
 
 ```php

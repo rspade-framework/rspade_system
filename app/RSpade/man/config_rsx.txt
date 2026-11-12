@@ -399,7 +399,9 @@ SESSIONS
     page view (8 hours; an Ajax or API call is not a page view). 0 = no limit.
     Checked on every request; the hourly cleanup signs out the ones nobody
     comes back to. To keep sign-ins longer, set both higher - e.g. 43200 each
-    for 30 days.
+    for 30 days. These are the DEFAULTS: an application that lets an
+    administrator set the limits answers the session.limits resolve hook,
+    which overrides them per key (rsx:man session, HOW SESSIONS TIME OUT).
 
     ajax_grace_minutes - how long past a limit a non-page request (Ajax, a
     thumbnail, a download) still works, so an open form can still save.

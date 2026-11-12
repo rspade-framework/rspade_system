@@ -3,9 +3,9 @@
 namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Zip_Download_Request_Model_Abstract - one row per minted multi-file ZIP download (_zip_download_requests).

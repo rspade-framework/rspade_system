@@ -153,8 +153,8 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
     {
         static::__assert_count(
             1,
-            self::__run(self::__interpolate('$sent_at'), 'Core/Mail/Probe_Email.blade.php'),
-            'a blade under Core/Mail/ is an email template'
+            self::__run(self::__interpolate('$sent_at'), 'Lib/Messaging/Mail/Probe_Email.blade.php'),
+            'a blade under Lib/Messaging/Mail/ is an email template'
         );
     }
 
@@ -256,7 +256,7 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
         $calls = [
             "Rsx::Route('Contacts_Index_Action')",
             "Rsx_Portal::Route('Portal_Dashboard_Action')",
-            "\\App\\RSpade\\Core\\Portal\\Rsx_Portal::Route('Portal_Dashboard_Action')",
+            "\\App\\RSpade\\Lib\\Portal\\Rsx_Portal::Route('Portal_Dashboard_Action')",
         ];
 
         foreach ($calls as $call) {
@@ -428,7 +428,7 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
 
         $templates = array_merge(
             glob(rsx_project_file_path('rsx/emails/*.blade.php')) ?: [],
-            glob(base_path('app/RSpade/Core/Mail/*.blade.php')) ?: []
+            glob(base_path('app/RSpade/Lib/Messaging/Mail/*.blade.php')) ?: []
         );
 
         static::__assert_greater_than(0, count($templates), 'the shipped templates were found');

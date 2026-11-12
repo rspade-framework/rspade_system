@@ -17,7 +17,7 @@ use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Console\Rsx_Artisan;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
+use App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint;
 
 class Manifest_Build_Command extends FrameworkDeveloperCommand
 {

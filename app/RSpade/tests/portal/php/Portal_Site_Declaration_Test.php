@@ -7,11 +7,11 @@
 
 namespace App\RSpade\Tests\Portal\Php;
 
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
-use App\RSpade\Core\Models\Portal_User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * THE PORTAL SITE CONTRACT (Portal_Session::set_site_id / _declare_resolved_site).

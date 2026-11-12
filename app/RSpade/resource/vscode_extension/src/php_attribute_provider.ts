@@ -1,48 +1,13 @@
 import * as vscode from 'vscode';
 import { DocReferenceIndex } from './doc_reference_provider';
-
-/**
- * Framework PHP attributes that should be highlighted.
- *
- * The whole declarative surface of the framework, so that an attribute reads as
- * framework vocabulary at a glance and a misspelling shows up as an uncoloured
- * one. Kept in step with what the manifest actually scans for - a name here that
- * nothing reads would colour a lie.
- */
-const FRAMEWORK_ATTRIBUTES = [
-    'Ajax_Endpoint_Model_Fetch',
-    'Ajax_Endpoint',
-    'Api_Endpoint',
-    'Api_Param',
-    'Auth_Check',
-    'Auth_Realm',
-    'Auth',
-    'Command',
-    'Debounce',
-    'Emitter',
-    'Exclusive',
-    'FPC',
-    'Health_Check',
-    'Health_Heal',
-    'Instantiatable',
-    'Monoprogenic',
-    'OnEvent',
-    'Portal_Route',
-    'Realtime_Touch',
-    'Relationship',
-    'Replaceable',
-    'Revision_Parent',
-    'Route',
-    'Schedule',
-    'Sealed',
-    'SPA',
-    'Task_Attribute',
-    'Task',
-];
+import { recognize_php_attributes } from './rspade_recognizers';
 
 /**
  * Semantic tokens for PHP files: framework attributes and resolvable man-page /
  * skill references in comments, both amber.
+ *
+ * Which attributes are framework vocabulary is framework_vocabulary.ts, and where
+ * they are is recognize_php_attributes() - the same tokens the hover describes.
  *
  * One provider, because VS Code honours ONE semantic tokens legend per language.
  */
@@ -63,24 +28,8 @@ export class PhpAttributeSemanticTokensProvider implements vscode.DocumentSemant
         const text = document.getText();
         const pushed: { line: number; character: number; length: number }[] = [];
 
-        // Find all PHP attributes: #[AttributeName] or #[\AttributeName]
-        // The list is ordered longest-prefix-first, and an already-covered range is
-        // skipped, so #[Ajax_Endpoint_Model_Fetch] is not also matched as
-        // #[Ajax_Endpoint].
-        for (const attribute_name of FRAMEWORK_ATTRIBUTES) {
-            const regex = new RegExp(`#\\[\\\\?(${attribute_name})(?:\\s|\\(|\\]|,)`, 'g');
-            let match;
-
-            while ((match = regex.exec(text)) !== null) {
-                const attr_start = match.index + match[0].indexOf(match[1]);
-                const position = document.positionAt(attr_start);
-
-                if (pushed.some(t => t.line === position.line && t.character === position.character)) {
-                    continue;
-                }
-
-                pushed.push({ line: position.line, character: position.character, length: attribute_name.length });
-            }
+        for (const token of recognize_php_attributes(text)) {
+            pushed.push({ line: token.line, character: token.start, length: token.end - token.start });
         }
 
         if (this.doc_reference_index) {

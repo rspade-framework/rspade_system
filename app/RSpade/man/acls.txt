@@ -866,17 +866,6 @@ FRAMEWORK IMPLEMENTATION DETAILS
 
 FUTURE ENHANCEMENTS
 
-    Attribute-Based Permission Checks
-
-        Future goal: Declare permissions directly in route attributes.
-
-            #[Route('/settings/users')]
-            #[RequiresPermission(User_Model::PERM_MANAGE_SITE_USERS)]
-            public static function users(...)
-
-        This section will be replaced with implementation details when
-        attribute-based permission checking is complete.
-
     Custom Filters
 
         Future goal: Allow permission modifications based on context.

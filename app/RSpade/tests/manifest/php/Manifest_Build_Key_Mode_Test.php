@@ -8,9 +8,9 @@ namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\Manifest_Store;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * The build key identifies the BUILD, so it carries the mode the build was produced in.

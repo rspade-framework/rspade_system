@@ -8,8 +8,8 @@ namespace App\RSpade\Tests\Portal\Php;
 
 use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Site_Resolver;
 
 /**
  * Portal_Site_Resolver - which site a portal request serves, read from its URL.

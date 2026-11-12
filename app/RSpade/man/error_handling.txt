@@ -149,7 +149,7 @@ SHOULDNT_HAPPEN()
     assertion.
 
 RSX_CALLER_EXCEPTION
-    App\RSpade\Core\Debug\Rsx_Caller_Exception extends \RuntimeException.
+    App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception extends \RuntimeException.
     It reports the error at the CALLER's location instead of where the
     exception is constructed. Use it in utility/helper methods where the
     bug is in how the caller USED the utility, not in the utility itself -
@@ -175,7 +175,7 @@ RSX_CALLER_EXCEPTION
         throw new Rsx_Caller_Exception("Class {$class_name} not found in manifest");
 
 RSX_FILE_EXCEPTION
-    App\RSpade\Core\Debug\Rsx_File_Exception extends \RuntimeException.
+    App\RSpade\Lib\Developer\Debug\Rsx_File_Exception extends \RuntimeException.
     It reports the error at an EXPLICIT file:line, different from where the
     exception is thrown. Use it when the error logically belongs to another
     file - a parsed template, a linted source file, a validated config -

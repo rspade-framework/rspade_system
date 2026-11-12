@@ -10,10 +10,10 @@ namespace App\RSpade\Tests\SiteModel\Php;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Models\Site_Scoped;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Profile_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 /**
  * Structural guarantees of Rsx_Site_Model_Abstract's booted().
  *

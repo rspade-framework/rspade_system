@@ -16,7 +16,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
 use App\RSpade\Core\Console\Rsx_Cli_Actor;
 use App\RSpade\Core\Console\Rsx_Cli_Actor_Exception;
-use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Lib\Developer\Debug\Debugger;
 
 /**
  * RSX Ajax Command

@@ -81,8 +81,8 @@ class Rsx_Tenancy
     public static function enforce_settings(): void
     {
         static::mode();
-        \App\RSpade\Core\Portal\Rsx_Portal_Url::is_enabled();
-        \App\RSpade\Core\Portal\Rsx_Portal_Url::custom_domains();
+        \App\RSpade\Lib\Portal\Rsx_Portal_Url::is_enabled();
+        \App\RSpade\Lib\Portal\Rsx_Portal_Url::custom_domains();
     }
 
     /**

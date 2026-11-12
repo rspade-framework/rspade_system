@@ -9,7 +9,7 @@ title reaches a layout - and the **navigation guard**, the toggle that has the b
 ask before a page with unsaved changes is left, and **breadcrumb origins** - the reserved
 `_via` parameter, carried across navigation and kept or stripped after each breadcrumb walk
 (`rsx:man breadcrumb_origins`; source `Core/SPA/Spa_Via.js`, `Core/Js/Rsx_Navigation.js` `augment()`,
-`Spa.js` `_rewrite_link_via()` / `via()` / `via_push()`, `Breadcrumbs/Rsx_Breadcrumb_Resolver.js`
+`Spa.js` `_rewrite_link_via()` / `via()` / `via_push()`, `Core/SPA/Rsx_Breadcrumb_Resolver.js`
 `settle_via()` / `_walk_chain_structure()`; test `playwright/breadcrumb_origins.js`) - and the **navigation door**, `Rsx.navigate()` /
 `Rsx.redirect()` (`Core/Js/Rsx_Navigation.js`: validate, classify, carry, one transport, the
 full-load hand-off read once by `Spa._on_spa_init()`; test `playwright/navigate.js`) - and

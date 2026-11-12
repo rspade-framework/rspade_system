@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Email_ManifestSupport;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_ManifestSupport;
 
 /**
  * Mail_Manifest_Support_Test - the build-time contract every email class owes.

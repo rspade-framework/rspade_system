@@ -8,6 +8,7 @@
 namespace App\RSpade\Sys\App\Sys\Users;
 
 use App\RSpade\Core\Session\Audit_Session;
+use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
 use App\RSpade\Sys\Lib\_Sys_Enum_Words;
 
 /**
@@ -29,7 +30,9 @@ use App\RSpade\Sys\Lib\_Sys_Enum_Words;
  *
  * Response: {records, page, per_page, total, total_pages, sort, order}; each record is the
  * reader's row (ISO datetimes, device_summary) plus `site_id` - the realm's site (the staff
- * site, or the portal site on a portal user session) - and its `site_name`.
+ * site, or the portal site on a portal user session) - its `site_name`, and
+ * `ip_address__location`, where the address is (Rsx_Geo_Ip::label()), resolved for the rows
+ * of the page served and never stored, sorted or searched.
  */
 class _Sys_Audit_Sessions_DataGrid
 {
@@ -101,6 +104,7 @@ class _Sys_Audit_Sessions_DataGrid
         return [
             'records' => array_map(function ($row) use ($site_names) {
                 $row['site_name'] = $row['site_id'] === null ? null : ($site_names[$row['site_id']] ?? null);
+                $row['ip_address__location'] = $row['ip_address'] === null ? null : Rsx_Geo_Ip::label($row['ip_address']);
 
                 return $row;
             }, $rows),

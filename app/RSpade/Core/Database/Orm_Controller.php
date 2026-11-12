@@ -555,6 +555,6 @@ class Orm_Controller extends Rsx_Controller_Abstract
      */
     private static function _resolve_fetch_method_name(): string
     {
-        return \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request() ? 'portal_fetch' : 'fetch';
+        return \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request() ? 'portal_fetch' : 'fetch';
     }
 }

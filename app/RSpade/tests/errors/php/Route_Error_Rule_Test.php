@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Errors\Php;
 
 use App\RSpade\Core\Dispatch\Route_ManifestSupport;
-use App\RSpade\Core\Portal\Portal_Route_ManifestSupport;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Route_ManifestSupport;
 
 /**
  * ROUTE-ERROR-01: scan-time enforcement of the reserved /error/ prefix, in both

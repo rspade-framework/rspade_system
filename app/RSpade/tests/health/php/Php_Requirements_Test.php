@@ -8,10 +8,10 @@
 namespace App\RSpade\Tests\Health\Php;
 
 use RuntimeException;
-use App\RSpade\Core\Health\Environment_Health_Checks;
-use App\RSpade\Core\Health\Health_Check_Runner;
-use App\RSpade\Core\Health\Rsx_Php_Requirements;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Environment_Health_Checks;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
+use App\RSpade\Lib\Operations\Health\Rsx_Php_Requirements;
 
 /**
  * Rsx_Php_Requirements: the ONE declared PHP-extension list, and its two consumers.

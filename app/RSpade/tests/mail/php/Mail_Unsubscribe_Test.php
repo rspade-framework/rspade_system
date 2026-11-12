@@ -9,11 +9,11 @@ namespace App\RSpade\Tests\Mail\Php;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Dispatch\Dispatcher;
-use App\RSpade\Core\Mail\Mail_Unsubscribe_Controller;
-use App\RSpade\Core\Mail\Rsx_Mail;
-use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Recipient_Model;
+use App\RSpade\Lib\Messaging\Mail\Mail_Unsubscribe_Controller;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 
 /**
@@ -337,7 +337,7 @@ class Mail_Unsubscribe_Test extends Rsx_Test_Abstract
         config(['rsx.mail.dev_site.domain_whitelist' => 'example.com']);
 
         try {
-            $record = (new \App\RSpade\Core\Mail\Rsx_Mail_Test_Email())->to($email)->send();
+            $record = (new \App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Test_Email())->to($email)->send();
 
             static::__assert_equals(
                 Email_Queue_Model::STATUS_PENDING,

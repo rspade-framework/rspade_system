@@ -14,8 +14,8 @@ use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\RSpade\Commands\Rsx\Rsx_Test_Command;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Cli;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 use App\RSpade\Tests\Locks\Php\Site_Lock_Cli_Exempt_Fixture_Command;
 use App\RSpade\Tests\Locks\Php\Site_Lock_Cli_Fixture_Command;
 

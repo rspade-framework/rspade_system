@@ -7,9 +7,9 @@ use Illuminate\Auth\Passwords\CanResetPassword;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Notifications\Notifiable;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
-use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Settings\Has_Preference_Variables;
 /**
  * Login_User_Model_Abstract - Authentication identity for multi-tenant system
  *
@@ -90,13 +90,33 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
 {
 
     /**
-     * Three consequences of a password change, all the framework's:
+     * Set by require_password_reset() and honoured by the next save (booted()), then cleared:
+     * "keep this identity flagged" survives a save that also changes the password even when
+     * the column was already 1 and so is not dirty. Not a column.
+     *
+     * @var bool
+     */
+    protected $_password_reset_asserted = false;
+
+    /**
+     * The cause set_password() stated (a Password_Change::CAUSE_* value), read by the next save
+     * that changes the password and then cleared. Null: that save reports CAUSE_UNKNOWN. Not a
+     * column.
+     *
+     * @var string|null
+     */
+    protected $_password_change_cause = null;
+
+    /**
+     * The consequences of a password change, all the framework's:
      *
      *   - password_reset_required is CLEARED in the same write (a `saving` hook, so it is one
      *     UPDATE and no second save re-enters these hooks). The flag asked for a new password and
-     *     this is one. A save that assigns the flag itself alongside the password keeps what it
-     *     assigned - an operator setting a temporary password and requiring its replacement
-     *     writes both at once (rsx:man session, PASSWORD RESET REQUIRED).
+     *     this is one. A save that asks for the flag alongside the password keeps it - an
+     *     operator setting a temporary password and requiring its replacement writes both at
+     *     once (rsx:man session, PASSWORD RESET REQUIRED). "Asks" is require_password_reset()
+     *     on the instance (or a dirty assignment of the column): an identity that was ALREADY
+     *     flagged stays flagged, though assigning 1 over 1 leaves the column clean.
      *   - every browser's two-factor trust for this identity ends: whoever knew the old password
      *     must verify again wherever they are (rsx:man two_factor, TRUSTED BROWSERS).
      *   - every OTHER signed-in sign-in of this identity ends (SIGN_OUT_PASSWORD_CHANGED),
@@ -106,7 +126,13 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      *     touched - the key, not the password, is its credential
      *     (Session::_end_sessions_for_password_change(), rsx:man session, PASSWORD CHANGES).
      *
-     * All three run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
+     *   - the password-change event fires once the save has COMMITTED -
+     *     login_user.password.changed {identity, cause, actor, audit_session_id, ip_address},
+     *     the cause being what set_password() stated, else 'unknown'
+     *     (Password_Change, rsx:man session, PASSWORD CHANGES). Creating an identity is not a
+     *     change and fires nothing.
+     *
+     * All of them run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
      * gets none of them.
      */
     protected static function booted()
@@ -122,17 +148,30 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
         });
 
         static::saving(function ($model) {
-            if ($model->isDirty('password') && !$model->isDirty('password_reset_required')) {
+            if ($model->_password_reset_asserted) {
+                $model->password_reset_required = 1;
+            } elseif ($model->isDirty('password') && !$model->isDirty('password_reset_required')) {
                 $model->password_reset_required = 0;
             }
         });
 
+        // The assertion and the stated cause belong to the one save they were made for.
+        static::saved(function ($model) {
+            $model->_password_reset_asserted = false;
+            $model->_password_change_cause = null;
+        });
+
         static::updated(function ($model) {
             if ($model->wasChanged('password')) {
-                \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $model->id);
+                \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $model->id);
                 \App\RSpade\Core\Session\Session::_end_sessions_for_password_change(
                     \App\RSpade\Core\Session\Session::REALM_STAFF,
                     (int) $model->id
+                );
+                \App\RSpade\Core\Auth\Password_Change::_after_change(
+                    $model,
+                    'login_user.password.changed',
+                    $model->_password_change_cause
                 );
             }
         });
@@ -327,6 +366,30 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     }
 
     /**
+     * Set the password (hashes automatically). Does not save.
+     *
+     * THE ONE WAY A PASSWORD IS GIVEN TO AN IDENTITY - every path that sets or changes one
+     * (the user's own change, a reset link, an administrator, the forced change at sign-in,
+     * rsx:users:password:set, an accepted invitation, the initial user) calls this and then
+     * save(). The consequences of a change are the model's own (booted()).
+     *
+     * $cause says HOW the password is changing - a Password_Change::CAUSE_* value (self,
+     * reset_link, admin, forced_change, cli) - and is reported by the
+     * login_user.password.changed event the save fires. Every path that changes an existing
+     * identity's password states one; with none the event reports 'unknown'. Creating an
+     * identity is not a change, so a creation path needs none.
+     *
+     * @param string $password Plain text password
+     * @param string|null $cause Password_Change::CAUSE_*; anything else throws
+     * @return void
+     */
+    public function set_password(string $password, ?string $cause = null): void
+    {
+        $this->_password_change_cause = \App\RSpade\Core\Auth\Password_Change::_checked_cause($cause);
+        $this->password = static::hash_password($password);
+    }
+
+    /**
      * Refuse this identity's next PASSWORD sign-in until its password has been changed. Does
      * not save.
      *
@@ -336,11 +399,17 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      * A passkey or federated sign-in is not refused - it never presents the password. Nothing
      * is emailed and no session is ended: both are the application's reset workflow.
      *
+     * The request is recorded on the INSTANCE as well as the column, and the next save honours
+     * it whatever else that save writes: a new password saved together with this call leaves
+     * the identity flagged even when it was flagged already (assigning 1 over 1 leaves the
+     * column clean, which the password-change hook would otherwise read as "not asked").
+     *
      * @return void
      */
     public function require_password_reset(): void
     {
         $this->password_reset_required = 1;
+        $this->_password_reset_asserted = true;
     }
 
     /**

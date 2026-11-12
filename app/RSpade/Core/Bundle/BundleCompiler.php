@@ -1974,7 +1974,7 @@ class BundleCompiler
         // all. Rsx_Two_Factor_Controller's PHP source is framework core, so no bundle's file
         // set carries it and the loop above would miss its stub, leaving
         // "Rsx_Two_Factor_Controller is not defined" on the login screen.
-        $two_factor_controller_source = 'app/RSpade/Core/TwoFactor/Rsx_Two_Factor_Controller.php';
+        $two_factor_controller_source = 'app/RSpade/Lib/SignIn/TwoFactor/Rsx_Two_Factor_Controller.php';
         if (isset($manifest_files[$two_factor_controller_source]['js_stub'])) {
             $two_factor_stub = rsx_project_file_path($manifest_files[$two_factor_controller_source]['js_stub']);
             if (file_exists($two_factor_stub)) {
@@ -2009,7 +2009,7 @@ class BundleCompiler
         // all. Rsx_Sso_Controller's PHP source is framework core, so no bundle's file set
         // carries it and the loop above would miss its stub, leaving "Rsx_Sso_Controller is
         // not defined" the moment a settings screen lists connected accounts.
-        $sso_controller_source = 'app/RSpade/Core/Sso/Rsx_Sso_Controller.php';
+        $sso_controller_source = 'app/RSpade/Lib/SignIn/Sso/Rsx_Sso_Controller.php';
         if (isset($manifest_files[$sso_controller_source]['js_stub'])) {
             $sso_stub = rsx_project_file_path($manifest_files[$sso_controller_source]['js_stub']);
             if (file_exists($sso_stub)) {
@@ -2022,11 +2022,11 @@ class BundleCompiler
         // the page's experience), and the portal login page is a bundle carrying no
         // application controller that would pull either stub in.
         $portal_auth_controller_sources = [
-            'app/RSpade/Core/TwoFactor/Rsx_Portal_Two_Factor_Controller.php',
-            'app/RSpade/Core/Sso/Rsx_Portal_Sso_Controller.php',
+            'app/RSpade/Lib/SignIn/TwoFactor/Rsx_Portal_Two_Factor_Controller.php',
+            'app/RSpade/Lib/SignIn/Sso/Rsx_Portal_Sso_Controller.php',
             // Not a portal twin but the same situation: <Password_Confirmation_Form> (Core_Bundle)
             // calls it from any page of either realm.
-            'app/RSpade/Core/Confirmation/Rsx_Password_Confirmation_Controller.php',
+            'app/RSpade/Lib/SignIn/Confirmation/Rsx_Password_Confirmation_Controller.php',
         ];
         foreach ($portal_auth_controller_sources as $portal_auth_controller_source) {
             if (isset($manifest_files[$portal_auth_controller_source]['js_stub'])) {
@@ -4316,13 +4316,13 @@ JS;
             $relative = str_replace(base_path() . '/', '', $file_path);
 
             // A bundle's realm is a statement about the APPLICATION's controllers. Framework
-            // core controllers are realm-agnostic infrastructure that serves both channels
-            // by design (File_Attachment_Controller answers /_upload for staff AND the portal
-            // from one handler) and, through Core_Bundle, they are present in every bundle -
-            // so a #[Portal_Route] on one of them says nothing about which realm THIS bundle
-            // is for. Without this skip, Core/Files joining Core_Bundle baked "Realm: portal"
-            // into every staff bundle.
-            if (str_starts_with($relative, 'app/RSpade/Core/')) {
+            // controllers (Core/ and Lib/) are realm-agnostic infrastructure that serves both
+            // channels by design (File_Attachment_Controller answers /_upload for staff AND the
+            // portal from one handler) and, through Core_Bundle, they are present in every
+            // bundle - so a #[Portal_Route] on one of them says nothing about which realm THIS
+            // bundle is for. Without this skip, Core/Files joining Core_Bundle baked "Realm:
+            // portal" into every staff bundle.
+            if (str_starts_with($relative, 'app/RSpade/Core/') || str_starts_with($relative, 'app/RSpade/Lib/')) {
                 continue;
             }
 

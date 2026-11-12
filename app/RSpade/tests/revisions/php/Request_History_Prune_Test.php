@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Revisions\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Revisions\Revision_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision_Cleanup_Service;
 
 /**
  * Revision_Cleanup_Service::prune_request_payloads(): it nulls request_payload,

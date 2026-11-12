@@ -8,12 +8,12 @@
 namespace App\RSpade\Tests\Mail\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Models\Email_Attachment_Model;
-use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Models\Email_Recipient_Model;
-use App\RSpade\Core\Models\Sms_Queue_Model;
-use App\RSpade\Core\Models\Sms_Recipient_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Attachment_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Recipient_Model;
+use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
+use App\RSpade\Lib\Messaging\Sms\Sms_Recipient_Model;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 
 /**

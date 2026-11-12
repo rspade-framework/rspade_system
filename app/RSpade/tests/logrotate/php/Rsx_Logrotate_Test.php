@@ -2,9 +2,9 @@
 
 namespace App\RSpade\Tests\Logrotate\Php;
 
-use App\RSpade\Core\Logging\Rsx_Logrotate;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Logging\Rsx_Logrotate;
 
 /**
  * Rsx_Logrotate - the rotation mechanics.

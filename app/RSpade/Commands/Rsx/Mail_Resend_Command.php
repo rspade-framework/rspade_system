@@ -8,8 +8,8 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Mail\Rsx_Mail;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
 use Illuminate\Console\Command;
 
 /**

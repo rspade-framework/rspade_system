@@ -225,7 +225,7 @@ Staff and portal registries are **separate namespaces**: `is_logged_in` exists i
 class Portal_Documents_Controller extends Rsx_Controller_Abstract { }
 ```
 
-**Defaulting**: an `#[Ajax_Endpoint]` controller under a portal root (`rsx/portal/`, `app/RSpade/Core/Portal/`) defaults to `portal`; everything else defaults to `staff` (fail-closed). Declare it explicitly when the file lives elsewhere but serves the portal.
+**Defaulting**: an `#[Ajax_Endpoint]` controller under a portal root (`rsx/portal/`, `app/RSpade/Lib/Portal/`) defaults to `portal`; everything else defaults to `staff` (fail-closed). Declare it explicitly when the file lives elsewhere but serves the portal.
 
 At the two shared-transport seams (Ajax, ORM) **a realm mismatch DENIES with one logged warning before any check name resolves** - evaluating a portal endpoint's gate in the staff registry would admit a staff session.
 

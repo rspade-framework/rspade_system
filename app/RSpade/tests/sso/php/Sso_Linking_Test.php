@@ -13,11 +13,11 @@ use RuntimeException;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sso\Rsx_Sso;
-use App\RSpade\Core\Sso\Sso_Failed_Exception;
-use App\RSpade\Core\Sso\Sso_Identity_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
+use App\RSpade\Lib\SignIn\Sso\Sso_Failed_Exception;
+use App\RSpade\Lib\SignIn\Sso\Sso_Identity_Model;
 use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
 
 /**

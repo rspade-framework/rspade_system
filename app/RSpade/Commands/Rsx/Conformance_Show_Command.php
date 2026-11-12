@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\Conformance\Conformance_Audits;
+use App\RSpade\Lib\Developer\Conformance\Conformance_Audits;
 
 /**
  * Print one conformance audit: its header, then its prompt. See rsx:man conformance_audits.

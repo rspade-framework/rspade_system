@@ -9,9 +9,9 @@ namespace App\RSpade\Core\Task;
 
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
-use App\RSpade\Core\Health\Rsx_Container_Sizing;
 use App\RSpade\Core\Locks\Lockd_Connection;
 use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
+use App\RSpade\Lib\Operations\Health\Rsx_Container_Sizing;
 
 /**
  * The task worker pools, as accounted by rsx-lockd (the `pool.*` ops, system/app/RSpade/resource/docker/rsx-lockd

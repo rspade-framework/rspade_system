@@ -8,9 +8,9 @@
 namespace App\RSpade\Sys\App\Sys\SystemInfo;
 
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Health\Opcache_Advisory;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Operations\Health\Opcache_Advisory;
 
 /**
  * The System Info screen's probes: what the machine, PHP and the RSpade container

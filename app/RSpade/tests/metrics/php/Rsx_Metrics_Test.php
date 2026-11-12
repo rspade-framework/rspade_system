@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Metrics\Php;
 
 use App\RSpade\Core\Framework\Framework_Maintenance;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
 
 /**
  * Rsx_Metrics keeps the last 100 entries per kind and per-minute totals for two hours: the

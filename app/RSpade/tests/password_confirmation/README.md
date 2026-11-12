@@ -5,10 +5,10 @@ without a recent password confirmation, in both realms.
 
 ## Source under test
 
-- `app/RSpade/Core/Confirmation/Rsx_Password_Confirmation.php` - the rule: give, check, clear,
+- `app/RSpade/Lib/SignIn/Confirmation/Rsx_Password_Confirmation.php` - the rule: give, check, clear,
   per identity and per realm, refused while impersonating
-- `app/RSpade/Core/Confirmation/Rsx_Password_Confirmation_Controller.php` - the endpoints
-- `app/RSpade/Core/Confirmation/Rsx_Password_Confirmation.js`, `Password_Confirmation_Form.*`,
+- `app/RSpade/Lib/SignIn/Confirmation/Rsx_Password_Confirmation_Controller.php` - the endpoints
+- `app/RSpade/Lib/SignIn/Confirmation/Rsx_Password_Confirmation.js`, `Password_Confirmation_Form.*`,
   `app/RSpade/Core/Forms/Password_Input.*` - the browser half
 - the `require_confirmed()` calls in `Rsx_Two_Factor_Controller`, `Rsx_Portal_Two_Factor_Controller`,
   `Rsx_Sso_Controller`, `Rsx_Portal_Sso_Controller`

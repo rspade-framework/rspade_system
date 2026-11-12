@@ -13,13 +13,13 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Dispatch\Rsx_Front_Controller;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Revisions\Request_History;
-use App\RSpade\Core\Revisions\Revision_Cleanup_Service;
+use App\RSpade\Core\RequestHistory\Request_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
+use App\RSpade\Lib\Revisions\Revision_Cleanup_Service;
 use App\RSpade\Tests\Revisions\Php\Request_History_Fixture_Api_Controller;
 use App\RSpade\Tests\Revisions\Php\Request_History_Fixture_Controller;
 

@@ -11,8 +11,8 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Companion\Companion_Dispatcher;
 use App\RSpade\Core\Dispatch\AssetHandler;
-use App\RSpade\Core\Portal\Portal_Site_Resolver;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Lib\Portal\Portal_Site_Resolver;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Rsx_Request_Channel - which kind of request this is, decided ONCE per request.

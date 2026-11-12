@@ -9,8 +9,8 @@ namespace App\RSpade\Core\Database\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 
 /**

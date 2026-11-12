@@ -60,7 +60,7 @@ row_of() {
 # The signed dev-auth headers rsx:debug sends, for $PAGE and the seeded account.
 mint_headers() {
     (cd "$PROJECT_DIR" && php artisan tinker --execute='
-        $minted = \App\RSpade\Core\Debug\Dev_Auth_Token::mint("'"$PAGE"'", '"$LOGIN_ID"', false);
+        $minted = \App\RSpade\Lib\Developer\Debug\Dev_Auth_Token::mint("'"$PAGE"'", '"$LOGIN_ID"', false);
         echo "MINTED:" . ($minted === null ? "" : $minted["token"] . "|" . $minted["exp"]);
     ' 2>&1 | grep -oE 'MINTED:.*' | sed 's/^MINTED://')
 }

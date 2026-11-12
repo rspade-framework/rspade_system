@@ -8,7 +8,7 @@
 namespace App\RSpade\Tests\TwoFactor\Php;
 
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Core\TwoFactor\Totp;
+use App\RSpade\Lib\SignIn\TwoFactor\Totp;
 
 /**
  * Totp is a hand-written RFC 6238 implementation, so the RFC's own test vectors are what

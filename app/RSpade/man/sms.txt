@@ -4,7 +4,7 @@ NAME
     sms - Queue-based SMS with dev-site safety and opt-out management
 
 SYNOPSIS
-    use App\RSpade\Core\Sms\Rsx_Sms;
+    use App\RSpade\Lib\Messaging\Sms\Rsx_Sms;
 
     Rsx_Sms::send('+15555550123', 'Your code is 4821', Rsx_Sms::TRANSACTIONAL);
 
@@ -54,8 +54,8 @@ DELIVERY MODES
 
     Models (framework core; each is a base plus a shell, so an app override extends
     <Name>_Abstract in rsx/models/ - rsx:man class_override):
-        App\RSpade\Core\Models\Sms_Queue_Model      the queue
-        App\RSpade\Core\Models\Sms_Recipient_Model  per-number blocklist + stats
+        App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model      the queue
+        App\RSpade\Lib\Messaging\Sms\Sms_Recipient_Model  per-number blocklist + stats
 
 SENDING
     Rsx_Sms::send($to, $body, $category = NOTIFICATION, $related_type = null,
@@ -157,7 +157,7 @@ TEST NUMBERS
     status Test in every mode that drains, production included - never a provider call,
     even once one is wired. Sample data and demos use these numbers. The rule is fixed,
     not configured; the email twin is rsx.mail.test_domains (rsx:man email, TEST
-    ADDRESSES), and both live in App\RSpade\Core\Mail\Rsx_Test_Recipients.
+    ADDRESSES), and both live in App\RSpade\Lib\Messaging\Mail\Rsx_Test_Recipients.
 
 DEV SITE SMS SAFETY
     On a dev host (Rsx::is_dev_site() - the hostname contains '.dev.') outbound

@@ -6,7 +6,6 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Login_User_Model;
@@ -20,6 +19,7 @@ use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Site_Sign_In_History;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * Session model - handles both authentication sessions and static session management
@@ -127,7 +127,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * $_request_site_id_override (subdomain enforcement, and the tenant of a guest), the virtual
  * session's statics, then the current user session.
  *
- * A sign-in lasts as long as rsx.sessions.staff / rsx.sessions.portal allow - a maximum
+ * A sign-in lasts as long as its realm's limits allow (get_sign_in_limits(): the
+ * session.limits resolve hook, else rsx.sessions.staff / rsx.sessions.portal) - a maximum
  * length from the sign-in and a maximum idle time from the last page view, both measured on
  * the user session - enforced when a request arrives (enforce_timeouts()). There is no
  * "remember me" option: the cookie is always long-lived.
@@ -230,10 +231,10 @@ class Session extends Rsx_System_Model_Abstract
     /** The account signed out on this browser (logout()). */
     const SIGN_OUT_SIGNED_OUT = 1;
 
-    /** rsx.sessions.<realm>.max_length_minutes passed (enforce_timeouts()). */
+    /** The realm's max_length_minutes passed (enforce_timeouts(), get_sign_in_limits()). */
     const SIGN_OUT_TIMED_OUT_LENGTH = 2;
 
-    /** rsx.sessions.<realm>.max_idle_minutes passed (enforce_timeouts()). */
+    /** The realm's max_idle_minutes passed (enforce_timeouts(), get_sign_in_limits()). */
     const SIGN_OUT_TIMED_OUT_IDLE = 3;
 
     /** The account itself ended it from another browser (terminate_session() and friends). */
@@ -381,6 +382,14 @@ class Session extends Rsx_System_Model_Abstract
     // ['session_id' => the row's id, REALM_STAFF => ?object, REALM_PORTAL => ?object].
     // null = not read yet. Dropped whenever a pointer moves (__point()).
     private static ?array $_user_sessions = null;
+
+    /**
+     * The validated session.limits answer per realm word ([] = declined, or named neither
+     * limit), resolved once per request or task run - get_sign_in_limits().
+     *
+     * @var array<string, array<string, int>>
+     */
+    private static array $_sign_in_limit_answers = [];
 
     // Request-scoped overrides
     private static $_request_site_id_override = null;
@@ -715,6 +724,9 @@ class Session extends Rsx_System_Model_Abstract
         self::$_request_site_id_override = null;
         self::$_browser_session_id_for_tests = null;
 
+        // The application's session.limits answer: a test installs its own handler.
+        self::_forget_sign_in_limits();
+
         // THE DECLARED TENANT, and it has to be cleared HERE rather than only in
         // reset_impersonation(). set_temporary_site_id() declares a tenant "for the rest
         // of the script" and OUTRANKS every other tier, the CLI declaration included -
@@ -810,7 +822,7 @@ class Session extends Rsx_System_Model_Abstract
         self::$_user = null;
         self::$_site = null;
 
-        \App\RSpade\Core\Portal\Portal_Session::_clear_cli_identity();
+        \App\RSpade\Lib\Portal\Portal_Session::_clear_cli_identity();
         Rsx_Time::_clear_user_timezone_cache();
     }
 
@@ -883,11 +895,11 @@ class Session extends Rsx_System_Model_Abstract
                 shouldnt_happen("Session::_begin_virtual(): unknown realm '{$context['realm']}'");
             }
 
-            \App\RSpade\Core\Portal\Rsx_Portal::set_portal_request($context['realm'] === 'portal');
+            \App\RSpade\Lib\Portal\Rsx_Portal::set_portal_request($context['realm'] === 'portal');
         }
 
         if (isset($context['portal_user_id']) || isset($context['portal_site_id'])) {
-            \App\RSpade\Core\Portal\Portal_Session::_declare_virtual_identity(
+            \App\RSpade\Lib\Portal\Portal_Session::_declare_virtual_identity(
                 $int_or_null('portal_user_id'),
                 $int_or_null('portal_site_id'),
                 $int_or_null('impersonator_user_id')
@@ -941,12 +953,15 @@ class Session extends Rsx_System_Model_Abstract
         self::$_user = null;
         self::$_login_user = null;
 
-        \App\RSpade\Core\Portal\Portal_Session::_clear_cli_identity();
+        // A worker runs task after task in one process: each run asks session.limits afresh.
+        self::_forget_sign_in_limits();
+
+        \App\RSpade\Lib\Portal\Portal_Session::_clear_cli_identity();
         Audit_Session::_declare(null);
         \App\RSpade\Core\Dispatch\Rsx_Request_Channel::reset();
         Rsx_Time::_clear_user_timezone_cache();
-        \App\RSpade\Core\Theme\Rsx_Dark_Mode::_clear_cache();
-        \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::_reset_request_state();
+        \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::_clear_cache();
+        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::_reset_request_state();
     }
 
     /**
@@ -1008,7 +1023,7 @@ class Session extends Rsx_System_Model_Abstract
                 'temporary_site_id' => self::$_temporary_site_id,
                 'request_site_id_override' => self::$_request_site_id_override,
             ],
-            'portal' => \App\RSpade\Core\Portal\Portal_Session::_snapshot_context(),
+            'portal' => \App\RSpade\Lib\Portal\Portal_Session::_snapshot_context(),
             'audit_session_id' => Audit_Session::_declared_id(),
             'channel' => \App\RSpade\Core\Dispatch\Rsx_Request_Channel::_snapshot(),
         ];
@@ -1043,11 +1058,11 @@ class Session extends Rsx_System_Model_Abstract
         self::$_user = null;
         self::$_login_user = null;
 
-        \App\RSpade\Core\Portal\Portal_Session::_restore_context($snapshot['portal']);
+        \App\RSpade\Lib\Portal\Portal_Session::_restore_context($snapshot['portal']);
         Audit_Session::_declare($snapshot['audit_session_id']);
         \App\RSpade\Core\Dispatch\Rsx_Request_Channel::_restore($snapshot['channel']);
         Rsx_Time::_clear_user_timezone_cache();
-        \App\RSpade\Core\Theme\Rsx_Dark_Mode::_clear_cache();
+        \App\RSpade\Lib\Ui\DarkMode\Rsx_Dark_Mode::_clear_cache();
     }
 
     /**
@@ -1474,7 +1489,7 @@ class Session extends Rsx_System_Model_Abstract
      *     run's own later requests): kept as it is;
      *   - otherwise an active harness row signed in as that identity is REUSED - the cookie is
      *     pointed at it - provided its sign-in is within the realm's ordinary limits
-     *     (rsx.sessions.<realm>, from the sign-in and from the last page view) and the row
+     *     (get_sign_in_limits(), from the sign-in and from the last page view) and the row
      *     within rsx.sessions.unused_session_days. A candidate past a limit is signed out
      *     with that reason (or made inactive) and passed over;
      *   - otherwise a NEW harness row is minted, and the caller's sign-in lands on it.
@@ -2137,8 +2152,108 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     // =========================================================================
-    // SESSION LIFETIME (rsx.sessions.staff / rsx.sessions.portal)
+    // SESSION LIFETIME (session.limits, else rsx.sessions.staff / rsx.sessions.portal)
     // =========================================================================
+
+    /** The two sign-in limits a realm has, in the order a session.limits answer may name them. */
+    private const SIGN_IN_LIMIT_KEYS = ['max_length_minutes', 'max_idle_minutes'];
+
+    /**
+     * A realm's two sign-in limits, in minutes - 0 is "no limit". The ONE reader: the request
+     * check (enforce_timeouts(), through __expiry_of()), the hourly sweep
+     * (_end_timed_out_user_sessions()) and the harness-row reuse all judge a sign-in by this
+     * answer, so they can never disagree about when it ends.
+     *
+     * Each limit resolves in this order:
+     *
+     *   1. the session.limits RESOLVE hook - Rsx::trigger_resolve('session.limits',
+     *      ['realm' => $realm]); the first handler not answering null supplies an array
+     *      naming either limit or both, each an integer >= 0. Anything else THROWS, naming
+     *      the hook and the realm: an application's mistake must never become "no limit";
+     *   2. for a limit the answer does not name, or when every handler declines (or there is
+     *      none), config('rsx.sessions.<realm>.<key>').
+     *
+     * The hook runs at most ONCE per realm per request (or task run): its validated answer is
+     * kept for the rest of the process's unit of work, while the config value is read on
+     * every call. The payload is the realm only - the sweep runs as a task with nobody signed
+     * in and no site - so a handler answers from global state, never the session.
+     * rsx.sessions.ajax_grace_minutes is config-only and not part of the hook.
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @return array{max_length_minutes: int, max_idle_minutes: int}
+     */
+    public static function get_sign_in_limits(string $realm): array
+    {
+        self::__realm_id($realm);
+
+        if (!array_key_exists($realm, self::$_sign_in_limit_answers)) {
+            self::$_sign_in_limit_answers[$realm] = self::__resolve_sign_in_limits($realm);
+        }
+
+        $limits = [];
+
+        foreach (self::SIGN_IN_LIMIT_KEYS as $key) {
+            $limits[$key] = self::$_sign_in_limit_answers[$realm][$key]
+                ?? (int) config('rsx.sessions.' . $realm . '.' . $key);
+        }
+
+        return $limits;
+    }
+
+    /**
+     * Ask session.limits for a realm and validate the answer: [] when every handler declined.
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @return array<string, int>
+     */
+    private static function __resolve_sign_in_limits(string $realm): array
+    {
+        $answer = Rsx::trigger_resolve('session.limits', ['realm' => $realm]);
+
+        if ($answer === null) {
+            return [];
+        }
+
+        $subject = "The session.limits handler's answer for realm '{$realm}'";
+
+        if (!is_array($answer)) {
+            throw new RuntimeException(
+                "{$subject} must be an array naming max_length_minutes and/or max_idle_minutes "
+                . '(or null to decline); got ' . get_debug_type($answer)
+            );
+        }
+
+        foreach ($answer as $key => $minutes) {
+            if (!in_array($key, self::SIGN_IN_LIMIT_KEYS, true)) {
+                throw new RuntimeException(
+                    "{$subject} names '{$key}', which is not a sign-in limit: only "
+                    . implode(' and ', self::SIGN_IN_LIMIT_KEYS) . ' may be supplied'
+                );
+            }
+
+            if (!is_int($minutes) || $minutes < 0) {
+                throw new RuntimeException(
+                    "{$subject}: {$key} must be an integer >= 0 (minutes; 0 = no limit); got "
+                    . var_export($minutes, true)
+                );
+            }
+        }
+
+        return $answer;
+    }
+
+    /**
+     * Forget the session.limits answers, so the next get_sign_in_limits() asks the hook again.
+     *
+     * FRAMEWORK INTERNAL - the end of a task run (_end_virtual()) and of a test
+     * (_testing_reset()); a test that swaps its handler mid-test calls it too.
+     *
+     * @return void
+     */
+    public static function _forget_sign_in_limits(): void
+    {
+        self::$_sign_in_limit_answers = [];
+    }
 
     /**
      * When the sign-in one experience holds on this browser stops being valid, and why - or
@@ -2153,7 +2268,8 @@ class Session extends Rsx_System_Model_Abstract
      *                        An Ajax call is not a page view, so an open tab that polls does
      *                        not keep a session alive.
      *
-     * A limit of 0 means "no limit". The earlier of the two is the answer.
+     * Both limits are get_sign_in_limits($realm); 0 means "no limit". The earlier expiry is
+     * the answer.
      *
      * FRAMEWORK INTERNAL - Session and Portal_Session enforce through it.
      *
@@ -2177,15 +2293,16 @@ class Session extends Rsx_System_Model_Abstract
      */
     private static function __expiry_of(object $user_session, string $realm): ?array
     {
-        $limits = [
+        $limits = self::get_sign_in_limits($realm);
+        $clocks = [
             'length' => [$user_session->signed_in_at, 'max_length_minutes'],
             'idle' => [$user_session->last_page_view_at, 'max_idle_minutes'],
         ];
 
         $expiry = null;
 
-        foreach ($limits as $reason => [$since, $config_key]) {
-            $minutes = (int) config('rsx.sessions.' . $realm . '.' . $config_key);
+        foreach ($clocks as $reason => [$since, $key]) {
+            $minutes = $limits[$key];
 
             if ($minutes <= 0 || empty($since)) {
                 continue;
@@ -2240,8 +2357,8 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * End the staff sign-in on this browser when it has outlived rsx.sessions.staff, and say
-     * why.
+     * End the staff sign-in on this browser when it has outlived its limits
+     * (get_sign_in_limits('staff')), and say why.
      *
      * Invoked ONCE per request by the dispatcher (a page: $strict) and by the Ajax entry
      * point (not strict - the grace applies), ahead of the #[Auth] gates, so the request
@@ -3345,9 +3462,8 @@ class Session extends Rsx_System_Model_Abstract
      * label it.
      *
      * Each entry: id (the user session - what the terminate functions take), session_id (the
-     * browser), site_id, user_id, ip_address, user_agent, user_agent_parsed, device_summary,
-     * location (the browser's - its address and agent are refreshed at every sign-in on it),
-     * last_active, created_at, signed_in_at, first_seen (first_signed_in_at), signed_out_at,
+     * browser), site_id, user_id, ip_address and user_agent (the browser's - refreshed at
+     * every sign-in on it), user_agent_parsed, device_summary, last_active, created_at, signed_in_at, first_seen (first_signed_in_at), signed_out_at,
      * sign_out_reason (a label, or null), is_signed_in, is_current, is_impersonation,
      * impersonator_login_user_id, impersonation_started_at, sign_in_count, type_id (the
      * browser's), is_api (an API key's use).
@@ -3414,7 +3530,7 @@ class Session extends Rsx_System_Model_Abstract
             return self::$_cli_user_session_id;
         }
 
-        $realm_id = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request() ? self::REALM_PORTAL : self::REALM_STAFF;
+        $realm_id = \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request() ? self::REALM_PORTAL : self::REALM_STAFF;
         $user_session = self::__user_session($realm_id);
 
         return $user_session === null ? null : (int) $user_session->id;
@@ -3478,7 +3594,6 @@ class Session extends Rsx_System_Model_Abstract
                 'user_agent' => $user_agent,
                 'user_agent_parsed' => $parsed_ua,
                 'device_summary' => $parsed_ua['summary'],
-                'location' => null,
                 'last_active' => Rsx_Time::to_iso($row->last_active_at),
                 'created_at' => Rsx_Time::to_iso($row->created_at),
                 'signed_in_at' => Rsx_Time::to_iso($row->signed_in_at),
@@ -3702,7 +3817,7 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         // "Sign out everywhere else" also ends every other browser's two-factor trust.
-        \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $login_user_id, true);
+        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $login_user_id, true);
 
         $ended = self::_sign_out_user_sessions(
             self::__terminable_ids((int) $login_user_id, null, true),
@@ -3927,7 +4042,7 @@ class Session extends Rsx_System_Model_Abstract
     // PORTAL SEAMS - FRAMEWORK INTERNAL
     //
     // NOT application API. These exist for exactly one caller,
-    // App\RSpade\Core\Portal\Portal_Session, the facade over the browser's PORTAL
+    // App\RSpade\Lib\Portal\Portal_Session, the facade over the browser's PORTAL
     // pointer, plus Session_Link for "View as Client" on a portal of its own host. There is
     // no portal row and no portal cookie: the browser has ONE session, and its portal
     // sign-in is a user session (REALM_PORTAL) the row points at.
@@ -4703,8 +4818,9 @@ class Session extends Rsx_System_Model_Abstract
      * signed in" stops listing a sign-in that is already over. Answers how many it read (the
      * caller pages until a batch comes back short).
      *
-     * $clock is 'length' (signed_in_at + rsx.sessions.<realm>.max_length_minutes) or 'idle'
-     * (last_page_view_at + max_idle_minutes); a limit of 0 reads nothing. The cutoff carries
+     * $clock is 'length' (signed_in_at + max_length_minutes) or 'idle' (last_page_view_at +
+     * max_idle_minutes), each the realm's limit from get_sign_in_limits() - the same answer
+     * the request check judges by; a limit of 0 reads nothing. The cutoff carries
      * rsx.sessions.ajax_grace_minutes on top of the limit: a page left open past its limit
      * may still save through Ajax for that long, and the sweep must not end it sooner than a
      * request would. Each row is recorded under the reason enforce_timeouts() would have
@@ -4728,12 +4844,12 @@ class Session extends Rsx_System_Model_Abstract
     public static function _end_timed_out_user_sessions(string $realm, string $clock, int $limit): int
     {
         $realm_id = self::__realm_id($realm);
-        [$column, $config_key] = match ($clock) {
+        [$column, $key] = match ($clock) {
             'length' => ['signed_in_at', 'max_length_minutes'],
             'idle' => ['last_page_view_at', 'max_idle_minutes'],
         };
 
-        $minutes = (int) config('rsx.sessions.' . $realm . '.' . $config_key);
+        $minutes = self::get_sign_in_limits($realm)[$key];
 
         if ($minutes <= 0) {
             return 0;
@@ -4984,7 +5100,7 @@ class Session extends Rsx_System_Model_Abstract
     private static function __value_realm_id(?string $realm): int
     {
         if ($realm === null) {
-            return \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request() ? self::REALM_PORTAL : self::REALM_STAFF;
+            return \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request() ? self::REALM_PORTAL : self::REALM_STAFF;
         }
 
         if (!isset(self::VALUE_REALMS[$realm])) {

@@ -366,7 +366,7 @@ public static function get_active_users()
 * php artisan rsx:debug - Test routes with console_debug enabled
 * rsx:man sys_panel - the Debug Flags screen that sets the per-browser override
 * system/config/rsx.php - Main configuration file
-* system/app/RSpade/Core/Debug/Debugger.php - PHP implementation
+* system/app/RSpade/Lib/Developer/Debug/Debugger.php - PHP implementation
 * system/app/RSpade/Core/Js/Debugger.js - JavaScript implementation
 
 ---

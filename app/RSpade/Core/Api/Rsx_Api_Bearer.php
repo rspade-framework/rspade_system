@@ -11,8 +11,8 @@ use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Rsx_Api_Bearer - the ONE implementation of "turn an Authorization: Bearer rsx_... header into

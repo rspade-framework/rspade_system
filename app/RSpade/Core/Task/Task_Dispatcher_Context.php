@@ -10,11 +10,11 @@ namespace App\RSpade\Core\Task;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Task_Dispatcher_Context - a task declared #[Run_As_Dispatcher] runs AS the request that

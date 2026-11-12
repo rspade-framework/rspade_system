@@ -12,8 +12,8 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Locks\RsxLocks;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * Ajax surfaces for Site_Lock_After_Commit_Test: a #[Writer] and a #[Manual_Lock] endpoint that

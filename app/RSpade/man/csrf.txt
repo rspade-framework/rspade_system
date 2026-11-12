@@ -135,7 +135,7 @@ FILES
     system/app/RSpade/Core/Js/Rsx_Csrf.js              Native-form token injection
     system/app/RSpade/Core/Js/Rsx_Jq_Helpers.js        AJAX/upload header attach
     system/app/RSpade/Core/Session/Session.php         Token mint + verify (staff)
-    system/app/RSpade/Core/Portal/Portal_Session.php   Token mint + verify (portal)
+    system/app/RSpade/Lib/Portal/Portal_Session.php   Token mint + verify (portal)
     system/app/RSpade/Core/Providers/Rsx_Bundle_Provider.php
                                                        @csrf directive (realm-aware)
     system/app/RSpade/Core/Exceptions/Rsx_Exception_Handler.php

@@ -630,3 +630,17 @@ Fixture: `tests/tasks/resource/fake_tick.js`, steered by a mode file (ok + next 
 | commit-01 | inside a transaction no worker starts until the commit; the commit starts it | dispatch in DB::transaction, spawning on | registry unchanged inside, changed after | implemented |
 | commit-02 | a rolled-back dispatch starts nothing | dispatch, rollBack | row gone, registry unchanged | implemented |
 | commit-03 | outside a transaction the worker starts at once | dispatch | registry changed on return | implemented |
+
+## #[On_Build] (Task_On_Build_Test, fixture Task_On_Build_Fixture_Service)
+
+| ID | Purpose (what it proves) | Input | Expected (approx) | Status |
+|---|---|---|---|---|
+| onbuild-01 | the fixture is an #[On_Build] declaration in the attribute index | Task_On_Build::declarations() | fixture listed | implemented |
+| onbuild-02 | no recorded key dispatches once per declaration, no params, and records the key | dispatch_for_build('a') on an empty _task_on_build | one PENDING dispatched run each; key 'a' | implemented |
+| onbuild-03 | the recorded key dispatches nothing | 'a' twice | second call [] and no run | implemented |
+| onbuild-04 | a new key dispatches once however many builds came between ticks | 'a', then 'd' twice | one run for 'd'; second call [] | implemented |
+| onbuild-05 | task system off: nothing dispatched, key unchanged; on again: dispatched | disable, 'b', enable, 'b' | [] / key 'a'; then one run, key 'b' | implemented |
+| onbuild-06 | the tick skips the step under the suite | rsx:task:process | no fixture run, nothing recorded | implemented |
+| onbuild-07 | declaration rules (Task_On_Build::declaration_problems(), the judge TASK-ON-BUILD-01 asks) | synthetic method records | well formed: none; each wrong form: one problem | implemented |
+| onbuild-08 | every live declaration passes the rules | the manifest's declarations | no problems | implemented |
+| onbuild-09 | a wrong declaration is a manifest-build FATAL | child rsx:manifest:build over a scratch root plus a resource/ fixture without #[Exclusive]; then with it | non-zero exit naming TASK-ON-BUILD-01 and the method; then exit 0 | implemented |

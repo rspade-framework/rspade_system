@@ -3,7 +3,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use App\RSpade\Core\CodeTemplates\StubProcessor;
+use App\RSpade\Lib\Developer\Scaffolding\StubProcessor;
 
 class Subfeature_Create_Command extends Command
 {

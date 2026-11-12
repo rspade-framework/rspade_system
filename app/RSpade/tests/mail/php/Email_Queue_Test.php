@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
-use App\RSpade\Core\Mail\Mail_Queue_Service;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Mail_Queue_Service;
 
 /**
  * Email_Queue_Test - the queue ROW's own state machine.

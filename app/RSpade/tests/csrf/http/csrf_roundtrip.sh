@@ -112,7 +112,7 @@ echo "[TEST] 5. OK - body-field-token POST passed the csrf seam" >&2
 # so step 7 is skipped in that layout.
 # ---------------------------------------------------------------------------
 SYSTEM_DIR="$(cd "$(dirname "$0")/../../../../.." && pwd)"
-PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Core\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Core\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
+PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Lib\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Lib\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
 PORTAL_SEPARATE="${PORTAL_LAYOUT%% *}"
 PORTAL_PREFIX="${PORTAL_LAYOUT#* }"
 

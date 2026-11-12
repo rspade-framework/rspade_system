@@ -9,7 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Process\Process_Identity;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -20,10 +20,13 @@ use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Kill_Worker;
 use App\RSpade\Core\Task\Task_Notify;
+use App\RSpade\Core\Task\Task_On_Build;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
-use App\RSpade\Core\Health\Rsx_Container_Sizing;
+use App\RSpade\Lib\Operations\Health\Rsx_Container_Sizing;
+use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Task Process Command
@@ -49,11 +52,16 @@ use App\RSpade\Core\Health\Rsx_Container_Sizing;
  *    runs, scheduled for due schedules, kill for due kill requests on this host. It does NOT
  *    become a worker itself. A schedule is due Task_Daemon::SCHEDULE_LEAD_SECONDS early
  *    (Task_Daemon's due rules).
+ * 5. Dispatches every #[On_Build] task once when the running build key is not the one they
+ *    were last dispatched for (Task_On_Build::dispatch_for_build()) - nothing while the task
+ *    system is off, and never under the test suite, whose tests drive it themselves.
  *
  * WHILE THE TASK SYSTEM IS OFF (Task::is_enabled(), read from the database at each spawn) steps 1-3 run as
  * always - a dead run is still settled, a kill request still gets its kill worker, which is
  * what rsx:tasks:disable on another host relies on - and step 4 starts no task worker, so
- * nothing new runs and no schedule produces a run. --once runs nothing.
+ * nothing new runs and no schedule produces a run; step 5 dispatches nothing and records
+ * nothing, so the first tick after rsx:tasks:enable dispatches for the build then running.
+ * --once runs nothing.
  *
  * One try per tick is enough: a worker drains its work until nothing is claimable, and every
  * dispatch tries a spawn of its own. The spawn reads the pool's count first, so a full pool
@@ -85,6 +93,7 @@ class Task_Process_Command extends Command
         $this->recover_kill_requests();
         $this->reconcile_schedules((bool) $this->option('force-scheduled'));
         $this->spawn_workers_for_due_work();
+        $this->dispatch_on_build_tasks();
 
         // The task daemon's question: when is this tick wanted next? One machine-read line on
         // stdout, for rspade-taskd only; cron never passes the flag.
@@ -601,6 +610,26 @@ class Task_Process_Command extends Command
 
         if ($kill_due && Task::spawn_worker(Task_Pool::KILL)) {
             $this->info('[WORKER SPAWN] A kill request is due; spawned a kill worker');
+        }
+    }
+
+    /**
+     * Step 5: the #[On_Build] trigger (Task_On_Build). Last of the steps that change state, so
+     * a dispatch that throws never stops the reaper, the reconciliation or a spawn; each
+     * dispatch spawns and pokes for itself.
+     *
+     * Not under the test suite: a fixture's #[On_Build] would queue a run into every test
+     * class that ticks. Task::spawn_workers() makes the same call for the same reason.
+     */
+    private function dispatch_on_build_tasks(): void
+    {
+        if (Rsx_Test_Abstract::suite_is_running()) {
+            return;
+        }
+
+        $build_key = Manifest::get_build_key();
+        foreach (Task_On_Build::dispatch_for_build($build_key) as $dispatched) {
+            $this->info("[ON BUILD] Build {$build_key}: dispatched {$dispatched['class']}::{$dispatched['method']} (run {$dispatched['run_id']})");
         }
     }
 

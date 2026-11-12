@@ -5,7 +5,9 @@ has, newest first, a page at a time.
 $base_params=({login_user_id: <id>}) - the identity (required); sent with every request
 
 Server half: _Sys_User_Signins_DataGrid.php (each row through
-Login_History::present_record(), plus the badge `tone`; search on IP or user agent).
+Login_History::present_record(), plus the badge `tone` and the address's location,
+ip_address__location, resolved per row of the page and never sorted or searched; search
+on IP or user agent). The screen hosting it places <Geo_Ip_Credit /> beneath it.
 Grid key "signins". The table holds successful sign-ins, passkey enrollment outcomes
 (and any outcome an application records itself) for
 rsx.sessions.login_history_retention_days; framework sign-in failures are never rows.
@@ -24,7 +26,6 @@ rsx.sessions.login_history_retention_days; framework sign-in failures are never 
             <th>Outcome</th>
             <th data-sortby="ip_address">IP</th>
             <th>Device</th>
-            <th>Location</th>
             <th>Email given</th>
         </tr>
     </Slot:header>
@@ -37,9 +38,8 @@ rsx.sessions.login_history_retention_days; framework sign-in failures are never 
                     <span class="_Sys_User_Signins_DataGrid__dim"><%= row.failure_reason %></span>
                 <% } %>
             </td>
-            <td class="_Sys_User_Signins_DataGrid__mono"><%= row.ip_address %></td>
+            <td><_Sys_Ip_Address $ip_address=row.ip_address $location=row.ip_address__location /></td>
             <td><span title="<%= row.user_agent || '' %>"><%= row.user_agent_parsed.summary %></span></td>
-            <td><%= row.location || '' %></td>
             <td><%= row.email %></td>
         </tr>
     </Slot:row>

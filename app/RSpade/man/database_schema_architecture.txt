@@ -262,8 +262,8 @@ _file_attachments
 _ip_addresses
   Purpose: Every recorded client IP address, stored once
   Managed by: Ip_Address (rsx:man ip_addresses)
-  Records: The address plus geocode fields (city, state, country, latitude,
-           longitude), null until a geocoder fills them
+  Records: The address, nothing else - a location is never stored; it is
+           Rsx_Geo_Ip at display time (rsx:man geo_ip)
   Referenced by: _sessions, _login_history, _portal_login_history,
                  _audit_sessions, _file_attachments, _api_request_log,
                  _transactions (ON DELETE RESTRICT)

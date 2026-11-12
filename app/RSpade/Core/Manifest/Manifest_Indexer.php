@@ -8,7 +8,7 @@ use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
+use App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint;
 
 /**
  * Manifest_Indexer - phases 3 to 6 of the build.

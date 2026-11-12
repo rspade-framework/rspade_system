@@ -9,8 +9,8 @@ namespace App\RSpade\Tests\Dispatch\Php;
 
 use RuntimeException;
 use App\RSpade\Core\Dispatch\Route_ManifestSupport;
-use App\RSpade\Core\Portal\Portal_Route_ManifestSupport;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Route_ManifestSupport;
 
 /**
  * ROUTE-VERB-01: a #[Route] / #[Portal_Route] declares GET and/or POST, and nothing else -

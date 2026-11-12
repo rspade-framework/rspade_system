@@ -15,7 +15,9 @@
  * providers want.
  */
 
-export type Recognizer_Kind = 'auth_check' | 'css_class' | 'man_topic' | 'skill';
+import { PHP_ATTRIBUTES, JS_DECORATORS } from './framework_vocabulary';
+
+export type Recognizer_Kind = 'auth_check' | 'css_class' | 'man_topic' | 'skill' | 'php_attribute' | 'js_decorator';
 
 export interface Recognized_Token {
     line: number;
@@ -76,8 +78,8 @@ export type Auth_Realm = 'staff' | 'portal' | 'any';
  */
 const PORTAL_ROOTS = [
     'rsx/portal/',
-    'system/app/RSpade/Core/Portal/',
-    'app/RSpade/Core/Portal/',
+    'system/app/RSpade/Lib/Portal/',
+    'app/RSpade/Lib/Portal/',
 ];
 
 /**
@@ -532,4 +534,280 @@ export function framework_property_gate_is_on(env_text: string | null): boolean 
         return true;
     }
     return value.trim().toLowerCase() !== 'true';
+}
+
+// =========================================================================
+// F. FRAMEWORK ATTRIBUTES AND DECORATORS
+// =========================================================================
+
+/** Line and column of every offset in `text`, by binary search over line starts. */
+function line_locator(text: string): (offset: number) => { line: number; character: number } {
+    const starts = [0];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === '\n') {
+            starts.push(i + 1);
+        }
+    }
+    return (offset: number) => {
+        let low = 0;
+        let high = starts.length - 1;
+        while (low < high) {
+            const mid = (low + high + 1) >> 1;
+            if (starts[mid] <= offset) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return { line: low, character: offset - starts[low] };
+    };
+}
+
+const IDENTIFIER_START = /[A-Za-z_]/;
+const IDENTIFIER_PART = /[A-Za-z0-9_]/;
+
+/** Index just past a quoted string opened at `i` (backslash escapes honoured). */
+function skip_quoted(text: string, i: number): number {
+    const quote = text[i];
+    let j = i + 1;
+    while (j < text.length) {
+        if (text[j] === '\\') {
+            j += 2;
+            continue;
+        }
+        if (text[j] === quote) {
+            return j + 1;
+        }
+        j++;
+    }
+    return text.length;
+}
+
+/**
+ * Index just past a PHP heredoc / nowdoc opened at `i` (`<<<ID`, `<<<"ID"`,
+ * `<<<'ID'`), or -1 when `i` is not one.
+ */
+function skip_php_heredoc(text: string, i: number): number {
+    const opener = /^<<<[ \t]*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\r?\n/.exec(text.substr(i, 200));
+    if (!opener) {
+        return -1;
+    }
+    const closer = new RegExp('^[ \\t]*' + opener[2] + '\\b', 'm');
+    const body_start = i + opener[0].length;
+    const close = closer.exec(text.substring(body_start));
+    return close ? body_start + close.index + close[0].length : text.length;
+}
+
+/**
+ * Every framework attribute NAME in a PHP document: `#[Name]`, `#[\Name(...)]`, and
+ * each name of a grouped list `#[Task('x'), Exclusive]`, also when the group spans
+ * several lines. A token covers the name only (never `#[`, `\` or the arguments).
+ *
+ * Code only: an attribute spelled inside a comment, a string, a heredoc or the
+ * inline HTML outside `<?php ... ?>` is prose, not a declaration. Only names in PHP_ATTRIBUTES (framework_vocabulary.ts) become
+ * tokens; any other attribute is parsed past and left alone.
+ */
+export function recognize_php_attributes(document_text: string): Recognized_Token[] {
+    const text = document_text;
+    const locate = line_locator(text);
+    const tokens: Recognized_Token[] = [];
+    const length = text.length;
+    // Text outside <?php ... ?> is inline HTML, where an apostrophe in prose is not
+    // a string delimiter: skip from each `?>` (and the file's start) to the next tag.
+    const next_php_open = (from: number): number => {
+        const open = /<\?(?:php\b|=)/g;
+        open.lastIndex = from;
+        const match = open.exec(text);
+        return match ? match.index + match[0].length : length;
+    };
+    let i = next_php_open(0);
+
+    while (i < length) {
+        const c = text[i];
+        const two = text.substr(i, 2);
+
+        if (two === '?>') {
+            i = next_php_open(i + 2);
+            continue;
+        }
+        if (two === '/*') {
+            const close = text.indexOf('*/', i + 2);
+            i = close === -1 ? length : close + 2;
+            continue;
+        }
+        if (two === '//' || (c === '#' && text[i + 1] !== '[')) {
+            const close = text.indexOf('\n', i);
+            i = close === -1 ? length : close;
+            continue;
+        }
+        if (c === '\'' || c === '"' || c === '`') {
+            i = skip_quoted(text, i);
+            continue;
+        }
+        if (c === '<' && text.substr(i, 3) === '<<<') {
+            const end = skip_php_heredoc(text, i);
+            if (end !== -1) {
+                i = end;
+                continue;
+            }
+        }
+        if (two === '#[') {
+            i = scan_php_attribute_group(text, i + 2, locate, tokens);
+            continue;
+        }
+        i++;
+    }
+
+    return tokens;
+}
+
+/**
+ * Parse one `#[ ... ]` group from just after `#[`; returns the index after `]`.
+ * Arguments are skipped by paren depth, strings honoured, so a `]` or `,` inside an
+ * argument (`#[Api_Param('x', default: [1, 2])]`) never ends a name.
+ */
+function scan_php_attribute_group(
+    text: string,
+    start: number,
+    locate: (offset: number) => { line: number; character: number },
+    tokens: Recognized_Token[]
+): number {
+    const length = text.length;
+    let i = start;
+    let expecting_name = true;
+    let depth = 0;
+
+    while (i < length) {
+        const c = text[i];
+
+        if (c === '\'' || c === '"') {
+            i = skip_quoted(text, i);
+            continue;
+        }
+        if (depth > 0) {
+            if (c === '(' || c === '[') {
+                depth++;
+            } else if (c === ')' || c === ']') {
+                depth--;
+            }
+            i++;
+            continue;
+        }
+        if (c === '(' || c === '[') {
+            depth++;
+            i++;
+            continue;
+        }
+        if (c === ']') {
+            return i + 1;
+        }
+        if (c === ',') {
+            expecting_name = true;
+            i++;
+            continue;
+        }
+        if (expecting_name && (c === '\\' || IDENTIFIER_START.test(c))) {
+            // A qualified name: \Name or Ns\Name. Only the unqualified and the
+            // leading-backslash spellings are framework attributes - they have no
+            // class, so they live in no namespace.
+            let j = i;
+            let segments = 0;
+            let last_start = i;
+            while (j < length && (text[j] === '\\' || IDENTIFIER_PART.test(text[j]))) {
+                if (text[j] === '\\') {
+                    segments++;
+                    last_start = j + 1;
+                }
+                j++;
+            }
+            const name = text.substring(last_start, j);
+            const leading_slash = text[i] === '\\';
+            const qualified = leading_slash ? segments > 1 : segments > 0;
+            if (!qualified && Object.prototype.hasOwnProperty.call(PHP_ATTRIBUTES, name)) {
+                const position = locate(last_start);
+                tokens.push({
+                    line: position.line,
+                    start: position.character,
+                    end: position.character + name.length,
+                    kind: 'php_attribute',
+                    value: name,
+                });
+            }
+            expecting_name = false;
+            i = j;
+            continue;
+        }
+        i++;
+    }
+
+    return length;
+}
+
+/**
+ * Every framework decorator in a JS/TS document: `@route('/x')`, `@spa(...)`,
+ * `@mutex`, `@debounce(250)`. A token covers `@name` (the `@` included) and its
+ * value is the bare name.
+ *
+ * Code only: JSDoc tags (`@param`, `@decorator`), `@media` in a string and an
+ * address in a template literal are never tokens. The `@` must start a decorator -
+ * not follow an identifier character - and the name must end there, so
+ * `@routes` or `@layout_name` are not `@route` / `@layout`. Only names in
+ * JS_DECORATORS (framework_vocabulary.ts) become tokens.
+ *
+ * Regex literals are not tracked (a `/@route/` pattern would be read as code); no
+ * framework or application source writes one.
+ */
+export function recognize_js_decorators(document_text: string): Recognized_Token[] {
+    const text = document_text;
+    const locate = line_locator(text);
+    const tokens: Recognized_Token[] = [];
+    const length = text.length;
+    let i = 0;
+
+    while (i < length) {
+        const c = text[i];
+        const two = text.substr(i, 2);
+
+        if (two === '/*') {
+            const close = text.indexOf('*/', i + 2);
+            i = close === -1 ? length : close + 2;
+            continue;
+        }
+        if (two === '//') {
+            const close = text.indexOf('\n', i);
+            i = close === -1 ? length : close;
+            continue;
+        }
+        if (c === '\'' || c === '"' || c === '`') {
+            i = skip_quoted(text, i);
+            continue;
+        }
+        if (c === '@') {
+            const preceding = i > 0 ? text[i - 1] : '';
+            let j = i + 1;
+            while (j < length && /[A-Za-z0-9_$]/.test(text[j])) {
+                j++;
+            }
+            const name = text.substring(i + 1, j);
+            if (
+                name !== '' &&
+                !/[A-Za-z0-9_$.@]/.test(preceding) &&
+                Object.prototype.hasOwnProperty.call(JS_DECORATORS, name)
+            ) {
+                const position = locate(i);
+                tokens.push({
+                    line: position.line,
+                    start: position.character,
+                    end: position.character + name.length + 1,
+                    kind: 'js_decorator',
+                    value: name,
+                });
+            }
+            i = j > i + 1 ? j : i + 1;
+            continue;
+        }
+        i++;
+    }
+
+    return tokens;
 }

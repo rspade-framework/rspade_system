@@ -2,8 +2,8 @@
 
 namespace App\RSpade\Core\Files;
 
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Files\Imagick_Policy;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * File attachment icon resource management

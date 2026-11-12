@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Sso\Php;
 
 use RuntimeException;
-use App\RSpade\Core\Sso\Rsx_Sso;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Sso;
 use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
 
 /**

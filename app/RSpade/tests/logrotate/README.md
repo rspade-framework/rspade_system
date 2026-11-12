@@ -66,8 +66,8 @@ Invariants the tests exist to hold:
 
 ## Source under test
 
-- `system/app/RSpade/Core/Logging/Rsx_Logrotate.php`
-- `system/app/RSpade/Core/Logging/Log_Maintenance_Service.php`
+- `system/app/RSpade/Lib/Operations/Logging/Rsx_Logrotate.php`
+- `system/app/RSpade/Lib/Operations/Logging/Log_Maintenance_Service.php`
 - `system/app/RSpade/Commands/Rsx/Log_Rotate_Command.php`
 - `system/config/rsx.php` -> `rsx.logging.rotation`
 

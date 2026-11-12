@@ -2,8 +2,8 @@
 
 namespace App\RSpade\Tests\Logrotate\Php;
 
-use App\RSpade\Core\Logging\Log_Maintenance_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Logging\Log_Maintenance_Service;
 
 /**
  * Log_Maintenance_Service - the scheduled sweep's config gate.

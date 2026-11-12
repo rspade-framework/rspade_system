@@ -195,10 +195,15 @@ static on_app_modules_define() {
 - **`Rsx_Form.MAX_QUESTION_ROUNDS` (5) is a defect detector**, not a duration: a sixth
   question in one submit means the endpoint is ignoring `_answers`.
 - The framework defines **no question kinds** and ships **no dialog**. `confirm` / `select`
-  / `prompt` are a recommended contract - `rsx:man form_conventions`, QUESTIONS.
+  / `prompt` are a recommended contract - `rsx:man form_conventions`, QUESTIONS. A
+  `confirm` may carry `back_label` (the button that stops the call; "Back" when absent).
 - A non-form caller sees `error.code === Ajax.ERROR_QUESTION` with `metadata.key` /
-  `metadata.question`, and may run the same handler with `Rsx_Form.ask()`. In PHP an
-  in-process `Ajax::internal()` raises `AjaxQuestionException`.
+  `metadata.question`, and may run the same handler with `Rsx_Form.ask()` - or let
+  `Rsx_Form.call_answering(Controller.method, params)` run the whole loop (resolves the value,
+  or `Rsx_Form.CANCELLED`; uncapped rounds, but a key asked again after its answer throws). In
+  PHP an in-process `Ajax::internal()` raises `AjaxQuestionException`.
+- **A standard question the framework words for you**: the duplicate-upload question
+  (`Rsx_Duplicate_Upload`, key `duplicate_upload:<id>`) - skill `rspade:file-attachments`.
 
 Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js` and
 `.../reference_app/app/frontend/contacts/contacts_controller.php`.

@@ -10,9 +10,9 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Rsx_Request_Channel::classify() - the one decision about what kind of request this is.

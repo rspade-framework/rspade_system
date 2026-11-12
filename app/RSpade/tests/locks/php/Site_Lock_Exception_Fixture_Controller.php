@@ -12,9 +12,9 @@ use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Locks\Site_Lock;
-use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Response\Rollback_Response;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Messaging\Mail\Email_Blocked_Address_Model;
 
 /**
  * Ajax endpoints for Site_Lock_Hold_Discipline_Test: a write exception recorded from a reader,

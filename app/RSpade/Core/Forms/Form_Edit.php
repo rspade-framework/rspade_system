@@ -13,8 +13,8 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Forms\Form_Questions;
-use App\RSpade\Core\Revisions\Revision_Model;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Revisions\Revision_Model;
 
 /**
  * Form_Edit - the write side of an add/edit form's endpoint.

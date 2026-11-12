@@ -9,11 +9,11 @@ namespace App\RSpade\Tests\SysPanel\Php;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
 use App\RSpade\Sys\App\Sys\Dashboard\_Sys_Dashboard_Controller;
 
 /**

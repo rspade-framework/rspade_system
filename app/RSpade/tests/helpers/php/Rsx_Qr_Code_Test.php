@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Helpers\Php;
 
 use InvalidArgumentException;
-use App\RSpade\Core\Qr\Rsx_Qr_Code;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Ui\Qr\Rsx_Qr_Code;
 
 /**
  * Rsx_Qr_Code::generate() - the one QR code generator.

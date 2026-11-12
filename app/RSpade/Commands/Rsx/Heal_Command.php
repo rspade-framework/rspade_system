@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\RSpade\Core\Health\Heal_Runner;
+use App\RSpade\Lib\Operations\Health\Heal_Runner;
 use Illuminate\Console\Command;
 
 /**

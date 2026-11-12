@@ -4,12 +4,12 @@ namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\Rsx_Page_Query;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Audit_Session - the durable record of an ACTING CONTEXT.

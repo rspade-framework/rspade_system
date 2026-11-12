@@ -24,7 +24,7 @@ SYS="$FX_APP/system"
 
 # ---- The scratch framework repository. -----------------------------------------------
 mkdir -p "$SYS/app/RSpade/Core/Models" "$SYS/app/RSpade/Core/Ui" "$SYS/vendor/acme" "$SYS/node_modules/pkg"
-printf '<?php\nclass Region_Model extends Region_Model_Abstract {}\n' > "$SYS/app/RSpade/Core/Models/Region_Model.php"
+printf '<?php\nclass Region_Model extends Region_Model_Abstract {}\n' > "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php"
 printf '<Define:Probe_Spinner tag="div"></Define:Probe_Spinner>\n' > "$SYS/app/RSpade/Core/Ui/Probe_Spinner.jqhtml"
 printf '.Probe_Spinner { color: red; }\n' > "$SYS/app/RSpade/Core/Ui/Probe_Spinner.scss"
 
@@ -32,11 +32,11 @@ git -C "$SYS" init --quiet
 git -C "$SYS" -c user.email=t@example.com -c user.name=t add -A
 git -C "$SYS" -c user.email=t@example.com -c user.name=t commit --quiet -m fixture
 
-TRACKED_PHP="$(cat "$SYS/app/RSpade/Core/Models/Region_Model.php")"
+TRACKED_PHP="$(cat "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php")"
 
 # The shape an earlier override pass left: the file renamed away (missing), and, for the
 # jqhtml, an archive beside a file a framework update brought back.
-mv "$SYS/app/RSpade/Core/Models/Region_Model.php" "$SYS/app/RSpade/Core/Models/Region_Model.php.upstream"
+mv "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php" "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php.upstream"
 printf 'stale archived copy\n' > "$SYS/app/RSpade/Core/Ui/Probe_Spinner.jqhtml.upstream"
 
 # Never in scope: vendor/ and node_modules/.
@@ -47,9 +47,9 @@ printf 'x\n' > "$SYS/node_modules/pkg/index.js.upstream"
 fx_run "$SCRIPT_NAME"
 fx_assert_rc 0
 
-[ -f "$SYS/app/RSpade/Core/Models/Region_Model.php" ] || fx_fail "the missing tracked file was not restored"
-[ "$(cat "$SYS/app/RSpade/Core/Models/Region_Model.php")" = "$TRACKED_PHP" ] || fx_fail "the restored file is not the tracked content"
-[ -e "$SYS/app/RSpade/Core/Models/Region_Model.php.upstream" ] && fx_fail "the archive of a restored file was not deleted"
+[ -f "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php" ] || fx_fail "the missing tracked file was not restored"
+[ "$(cat "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php")" = "$TRACKED_PHP" ] || fx_fail "the restored file is not the tracked content"
+[ -e "$SYS/app/RSpade/Lib/Geo/Places/Region_Model.php.upstream" ] && fx_fail "the archive of a restored file was not deleted"
 
 [ -e "$SYS/app/RSpade/Core/Ui/Probe_Spinner.jqhtml.upstream" ] && fx_fail "an archive beside its tracked file was not deleted"
 grep -q 'Define:Probe_Spinner' "$SYS/app/RSpade/Core/Ui/Probe_Spinner.jqhtml" || fx_fail "the tracked file lost to its stale archive"

@@ -9,12 +9,12 @@ namespace App\RSpade\Tests\Attachments\Php;
 
 use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\HttpException;
-use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
 
 /**
  * The outline file-type icon: one extension map with two renditions, the outline one a

@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Claude_Skills_Health_Checks;
-use App\RSpade\Core\Health\Heal_Runner;
-use App\RSpade\Core\Health\Health_Check_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Claude_Skills_Health_Checks;
+use App\RSpade\Lib\Operations\Health\Heal_Runner;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
 
 /**
  * The "Claude Skills" health row and the `claude-skills` heal target.

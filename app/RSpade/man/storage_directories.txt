@@ -179,6 +179,12 @@ TMP TREE (<project>/tmp)
                              by the Document_Render_Service background worker
                              and read by /_preview/pdf/:key and by the
                              thumbnail pipeline. rsx:man document_search.
+        geo_ip/              the IP geolocation database (DB-IP City Lite,
+                             dbip-city-lite.mmdb), downloaded, verified and
+                             swapped in by Geo_Ip_Service::update. Removed by
+                             rsx:clean like the rest of tmp/; the #[On_Build]
+                             update after the rebuild downloads it again.
+                             rsx:man geo_ip.
         framework/           whatever Laravel itself composes from
                              storage_path(), created lazily. Views and the
                              event/package caches are NOT here - those

@@ -25,7 +25,7 @@ use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
+use App\RSpade\Lib\Support\Fingerprint\Rsx_Fingerprint;
 use Symfony\Component\Process\Exception\ProcessSignaledException;
 use Symfony\Component\Process\InputStream;
 use Symfony\Component\Process\Process;

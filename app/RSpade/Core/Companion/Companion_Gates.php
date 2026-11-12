@@ -9,9 +9,9 @@ namespace App\RSpade\Core\Companion;
 
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Companion_Gates - who may watch a companion application, and who may act on one. The single

@@ -112,6 +112,7 @@ Related framework capabilities on the file-attachment subsystem:
 - `system/app/RSpade/Core/Files/File_Attachment_Icons.php` (the extension map, both icon renditions)
 - `system/app/RSpade/Core/Events/Event_Registry.php` (`has_handlers()` + the test-handler seam)
 - `system/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php`
+- `system/app/RSpade/Core/Files/Rsx_Duplicate_Upload.php` + `File_Attachment_Model_Abstract::duplicates_on()` / `has_same_content_as()` (the duplicate-upload question; `rsx:man file_upload`, DUPLICATE UPLOADS)
 - `system/app/RSpade/Core/Files/Rsx_Thumbnail_Renderer_Abstract.php` + Imagick/LibreOffice renderers
 - `system/app/RSpade/Commands/Rsx/RsxStorageCleanupCommand.php` (orphan sweep)
 - `system/app/RSpade/Core/Files/File_Disposal_Service.php` (`sweep_unclaimed_uploads`)

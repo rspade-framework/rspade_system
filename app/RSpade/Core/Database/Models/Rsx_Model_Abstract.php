@@ -15,13 +15,14 @@ use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Schema;
+use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emissions;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
-use App\RSpade\Core\Revisions\Revision;
-use App\RSpade\Core\Revisions\Revision_Model;
-use App\RSpade\Core\Revisions\Revision_Parent_Registry;
+use App\RSpade\Lib\Revisions\Revision;
+use App\RSpade\Lib\Revisions\Revision_Model;
+use App\RSpade\Lib\Revisions\Revision_Parent_Registry;
 
 /**
  * Abstract base model for all RSpade models
@@ -2001,17 +2002,17 @@ EXAMPLE;
         // Portal realm. A portal request is a wholly separate identity space - never fall
         // through to the staff facade, which would attribute a client's write to whatever
         // staff cookie happens to be in the same browser.
-        if (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()) {
-            if (!\App\RSpade\Core\Portal\Portal_Session::is_logged_in()) {
+        if (\App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()) {
+            if (!\App\RSpade\Lib\Portal\Portal_Session::is_logged_in()) {
                 return null;
             }
 
-            $portal_user_id = \App\RSpade\Core\Portal\Portal_Session::get_portal_user_id();
+            $portal_user_id = \App\RSpade\Lib\Portal\Portal_Session::get_portal_user_id();
             if (empty($portal_user_id)) {
                 return null;
             }
 
-            if (!$this->__record_site_matches(\App\RSpade\Core\Portal\Portal_Session::get_site_id())) {
+            if (!$this->__record_site_matches(\App\RSpade\Lib\Portal\Portal_Session::get_site_id())) {
                 return null;
             }
 
@@ -2071,12 +2072,12 @@ EXAMPLE;
             return ['type' => self::AUDIT_ACTOR_MODELS['companion'], 'id' => $companion_actor_id];
         }
 
-        if (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()) {
-            if (!\App\RSpade\Core\Portal\Portal_Session::is_logged_in()) {
+        if (\App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()) {
+            if (!\App\RSpade\Lib\Portal\Portal_Session::is_logged_in()) {
                 return null;
             }
 
-            $portal_user_id = \App\RSpade\Core\Portal\Portal_Session::get_portal_user_id();
+            $portal_user_id = \App\RSpade\Lib\Portal\Portal_Session::get_portal_user_id();
 
             if (empty($portal_user_id)) {
                 return null;
@@ -2254,10 +2255,10 @@ EXAMPLE;
         }
 
         $cache_key = implode('|', [
-            \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request() ? 'portal' : 'staff',
+            \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request() ? 'portal' : 'staff',
             (int) \App\RSpade\Core\Session\Session::get_user_id(),
             (int) \App\RSpade\Core\Session\Session::get_login_user_id(),
-            (int) \App\RSpade\Core\Portal\Portal_Session::get_portal_user_id(),
+            (int) \App\RSpade\Lib\Portal\Portal_Session::get_portal_user_id(),
             (string) $type,
             (int) $id,
         ]);
@@ -3131,7 +3132,7 @@ EXAMPLE;
      */
     protected function __attachment_query($query = null)
     {
-        $query = $query ?? \App\RSpade\Core\Files\File_Attachment_Model::query();
+        $query = $query ?? File_Attachment_Model::query();
 
         // Use simple class name (type_ref system stores simple names, not FQCNs)
         return $query->where('fileable_type', class_basename($this))
@@ -3145,7 +3146,7 @@ EXAMPLE;
      * Use this for single-file attachments (e.g., profile_photo, logo).
      *
      * @param string $category Category identifier (e.g., 'profile_photo')
-     * @return \App\RSpade\Core\Files\File_Attachment_Model|null
+     * @return File_Attachment_Model|null
      */
     public function get_attachment(string $category)
     {
@@ -3174,7 +3175,7 @@ EXAMPLE;
      *
      * @param int|string $id_or_key Numeric attachment id, or the 64-hex attachment key
      * @param string $category Category identifier (e.g., 'documents')
-     * @return \App\RSpade\Core\Files\File_Attachment_Model|null
+     * @return File_Attachment_Model|null
      */
     public function find_attachment($id_or_key, string $category)
     {
@@ -3253,7 +3254,7 @@ EXAMPLE;
         // NOTE the orderByDesc is dropped by iteration: Rsx_Result_Set walks by primary
         // key. Recovery lists are small enough to sort in the view, and the whole-set
         // guarantee matters more here than arrival order.
-        return $this->__attachment_query(\App\RSpade\Core\Files\File_Attachment_Model::withTrashed())
+        return $this->__attachment_query(File_Attachment_Model::withTrashed())
             ->whereNotNull('deleted_at')
             ->whereNull('destroyed_at')
             ->where('fileable_category', $category)

@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\LoginRedirect\Php;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Login\Login_Notice;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\SignIn\Redirect\Login_Notice;
 
 /**
  * Login_Notice: a declared code round-trips through the URL to {code, level, text}, an

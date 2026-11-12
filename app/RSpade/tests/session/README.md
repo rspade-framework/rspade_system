@@ -132,6 +132,10 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   reason, never a sign-in suspended behind an impersonation); the daily maintenance step
   makes browsers unused past `unused_session_days` inactive (never an API key's row), signing
   out what is still signed in on them (`SIGN_OUT_BROWSER_UNUSED`).
+- php (`Session_Limits_Hook_Test`): `Session::get_sign_in_limits()` and the `session.limits`
+  resolve hook - a supplied limit shorter or longer than the config moves the request check
+  and the sweep together, an unnamed limit or a declined realm reads the config, a malformed
+  answer throws, and the hook is asked once per realm until the memo is forgotten.
 - php (`Audit_Session_List_Page_Test`): `Audit_Session::list_page_for_user_session()`, the
   display-page reader the session screens page a user session's audit sessions through -
   scope, order, published sorts, the address/agent filter, validation.

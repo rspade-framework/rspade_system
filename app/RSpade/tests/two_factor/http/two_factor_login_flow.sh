@@ -93,7 +93,7 @@ fi
 # A live authenticator code for the enrolled seed, computed by the framework's own Totp so
 # the test never carries a second implementation of RFC 6238.
 live_code() {
-    $ARTISAN tinker --execute="echo \\App\\RSpade\\Core\\TwoFactor\\Totp::code_for('$1', intdiv(time(), 30));" 2>/dev/null | tail -1 | tr -d '[:space:]'
+    $ARTISAN tinker --execute="echo \\App\\RSpade\\Lib\\SignIn\\TwoFactor\\Totp::code_for('$1', intdiv(time(), 30));" 2>/dev/null | tail -1 | tr -d '[:space:]'
 }
 
 sql_value() {

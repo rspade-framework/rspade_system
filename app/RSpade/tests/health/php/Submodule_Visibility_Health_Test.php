@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
-use App\RSpade\Core\Health\Heal_Runner;
-use App\RSpade\Core\Health\Health_Check_Runner;
-use App\RSpade\Core\Health\Submodule_Visibility_Health_Checks;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Heal_Runner;
+use App\RSpade\Lib\Operations\Health\Health_Check_Runner;
+use App\RSpade\Lib\Operations\Health\Submodule_Visibility_Health_Checks;
 
 /**
  * The "Submodule Visibility" health row and the `submodule-ignore-dirty` heal target.

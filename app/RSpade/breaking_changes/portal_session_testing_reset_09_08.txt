@@ -2,7 +2,7 @@ PORTAL_SESSION TEST SEAM RENAMED
 Date: 2026-09-08
 
 IF YOU DO NOTHING: every Portal_Session::reset() call in your own tests fatals with
-    "Call to undefined method App\RSpade\Core\Portal\Portal_Session::reset()", so the
+    "Call to undefined method App\RSpade\Lib\Portal\Portal_Session::reset()", so the
     portal tests your fork inherited from the template - rsx/tests/Portal_*_Test.php -
     fail the moment you run php artisan rsx:test.
 
@@ -42,7 +42,7 @@ CHANGES REQUIRED
     sed -i '/Portal_Session::reset();/d' $(grep -rl 'Portal_Session::reset()' rsx/)
 
     Then delete any teardown() the line was the only statement in, and any
-    `use App\RSpade\Core\Portal\Portal_Session;` the file no longer needs.
+    `use App\RSpade\Lib\Portal\Portal_Session;` the file no longer needs.
 
     The one thing you lose: a single test method can no longer switch to a SECOND
     portal site part-way through, because set_site_id() throws on a different id and

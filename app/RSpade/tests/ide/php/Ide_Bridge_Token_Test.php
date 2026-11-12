@@ -7,13 +7,13 @@
 
 namespace App\RSpade\Tests\Ide\Php;
 
-use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token;
 
 /**
  * Framework test for Ide_Bridge_Token - the local-file grant for the IDE bridge
- * (app/RSpade/Core/Ide/Ide_Bridge_Token.php).
+ * (app/RSpade/Lib/Developer/Ide/Ide_Bridge_Token.php).
  *
  * Each test points the token machinery at a throwaway bridge directory under tmp/
  * (via the rsx.ide_integration.bridge_path config the class reads), so the real

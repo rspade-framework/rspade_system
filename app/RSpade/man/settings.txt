@@ -4,7 +4,7 @@ NAME
     Rsx_Settings - application custom value (settings) store
 
 SYNOPSIS
-    use App\RSpade\Core\Settings\Rsx_Settings;
+    use App\RSpade\Lib\Settings\Rsx_Settings;
 
     // Define a setting (usually from a migration)
     Rsx_Settings::define([
@@ -110,10 +110,10 @@ DEFINING VIA MIGRATIONS
 
         public function up()
         {
-            \App\RSpade\Core\Settings\Rsx_Settings::define([
+            \App\RSpade\Lib\Settings\Rsx_Settings::define([
                 'key'     => 'quickbooks_api_key',
                 'label'   => 'QuickBooks API key',
-                'type'    => \App\RSpade\Core\Settings\Rsx_Settings::TYPE_TEXT,
+                'type'    => \App\RSpade\Lib\Settings\Rsx_Settings::TYPE_TEXT,
                 'is_secret' => true,
                 'group'   => 'integrations',
             ]);

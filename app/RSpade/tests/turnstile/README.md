@@ -34,9 +34,9 @@ Three behaviours define the concern:
 
 ## Source files
 
-- `app/RSpade/Core/Turnstile/Rsx_Turnstile.php` - config accessors, `validate()`, the latch,
+- `app/RSpade/Lib/SignIn/Turnstile/Rsx_Turnstile.php` - config accessors, `validate()`, the latch,
   `_guard_unvalidated_token()`, `__require_keys()`, `__reject()`
-- `app/RSpade/Core/Turnstile/Turnstile_Input.jqhtml` / `.js` / `turnstile_input.scss` - the
+- `app/RSpade/Lib/SignIn/Turnstile/Turnstile_Input.jqhtml` / `.js` / `turnstile_input.scss` - the
   widget component (real hidden `__turnstile` input; not a `Form_Input_Abstract`)
 - `app/RSpade/Core/Js/Turnstile.js` - the one-script loader + callback queue
 - The three `rsx.post_dispatch` seams: `Core/Ajax/Ajax.php` (`execute()`, behind every

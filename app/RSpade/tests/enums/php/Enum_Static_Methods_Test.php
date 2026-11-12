@@ -9,7 +9,7 @@ namespace App\RSpade\Tests\Enums\Php;
 
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
-use App\RSpade\Lib\Flash\Flash_Alert_Model;
+use App\RSpade\Lib\Ui\Flash\Flash_Alert_Model;
 
 /**
  * Tests for the static enum helper methods on Rsx_Model_Abstract.

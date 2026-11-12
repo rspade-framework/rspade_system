@@ -1,0 +1,1255 @@
+<?php
+
+namespace App\RSpade\Lib\Developer\Debug;
+
+use Exception;
+use JsonSerializable;
+use Log;
+use stdClass;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Rsx;
+use App\RSpade\Lib\Developer\Debug\Browser_Log_Budget;
+use App\RSpade\Lib\Developer\Debug\Console_Debug_Override;
+
+/**
+ * Debugger - Development and debugging utilities for the RSpade framework
+ *
+ * Static utility class providing debugging and development tools.
+ * All methods are static as per framework convention.
+ */
+class Debugger
+{
+    /**
+     * Array to batch console debug messages for HTTP output
+     */
+    protected static array $console_messages = [];
+
+    /**
+     * Flag to track if shutdown function has been registered
+     */
+    protected static bool $shutdown_registered = false;
+
+    /**
+     * Flag to disable console HTML output (for AJAX requests)
+     */
+    protected static bool $console_html_disabled = false;
+
+    /**
+     * Request start time for benchmarking
+     */
+    protected static ?float $request_start_time = null;
+
+    /**
+     * Cached console debug configuration
+     */
+    protected static ?array $console_config = null;
+
+    /**
+     * This request's per-browser developer override (Console_Debug_Override), resolved
+     * by apply_session_override(); null when none applies.
+     */
+    protected static ?array $session_override = null;
+
+    /**
+     * Rotate all development logs
+     *
+     * Rotates:
+     * - Laravel log (storage/logs/laravel.log)
+     * - Nginx access log (/var/log/nginx/access.log)
+     * - Nginx error log (/var/log/nginx/error.log)
+     *
+     * @param int $keep_versions Number of historical versions to keep (default 5)
+     * @return void
+     */
+    public static function logrotate(int $keep_versions = 5): void
+    {
+        // Do nothing outside development (a sealed debug/production build owns its logs)
+        if (!Rsx::is_development()) {
+            return;
+        }
+
+        console_debug('DEV_MODE', 'Rotating logs');
+
+        // Rotate Laravel log
+        static::__rotate_file(Rsx_Project_Paths::logs_dir() . '/laravel.log', $keep_versions);
+
+        // Rotate nginx logs
+        static::__rotate_file('/var/log/nginx/access.log', $keep_versions);
+        static::__rotate_file('/var/log/nginx/error.log', $keep_versions);
+
+        // Send USR1 signal to nginx to reopen log files
+        static::__signal_nginx_reopen_logs();
+    }
+
+    /**
+     * Rotate a single log file
+     *
+     * Works like logrotate:
+     * - Moves file to file.1
+     * - Moves file.1 to file.2, etc.
+     * - Keeps only the specified number of historical versions
+     *
+     * @param string $file_path Path to the file to rotate
+     * @param int $keep_versions Number of historical versions to keep
+     * @return void
+     */
+    protected static function __rotate_file(string $file_path, int $keep_versions): void
+    {
+        // If the file doesn't exist, nothing to rotate
+        if (!file_exists($file_path)) {
+            return;
+        }
+
+        // Delete the oldest log if it exists
+        $oldest_log = $file_path . '.' . $keep_versions;
+        if (file_exists($oldest_log)) {
+            @unlink($oldest_log);
+        }
+
+        // Rotate existing numbered logs (move .4 to .5, .3 to .4, etc.)
+        for ($i = $keep_versions - 1; $i >= 1; $i--) {
+            $old_file = $file_path . '.' . $i;
+            $new_file = $file_path . '.' . ($i + 1);
+
+            if (file_exists($old_file)) {
+                @rename($old_file, $new_file);
+            }
+        }
+
+        // Move the current log to .1
+        @rename($file_path, $file_path . '.1');
+
+        // Create a new empty log file
+        @touch($file_path);
+        @chmod($file_path, 0666);
+    }
+
+    /**
+     * Send USR1 signal to nginx to reopen log files
+     *
+     * nginx reopens log files when receiving USR1 signal,
+     * which is the standard way to handle log rotation.
+     *
+     * The master is found by its command line at the moment of signalling, never by a pid read
+     * from /run/nginx.pid: that file outlives nginx, and its pid may since name an unrelated
+     * process (SIGUSR1's default action terminates). Only a master in THIS process's pid
+     * namespace is ours - a container started from this one (the parallel test runner's) is
+     * visible here with an nginx of its own. No nginx master running = nothing to do.
+     *
+     * @return void
+     */
+    protected static function __signal_nginx_reopen_logs(): void
+    {
+        $output = [];
+        $return_var = 0;
+        // pgrep exits 1 when nothing matched, which is not an error here.
+        \exec_safe("pgrep -f '^nginx: master process'", $output, $return_var);
+
+        $own_namespace = @readlink('/proc/self/ns/pid');
+
+        foreach ($output as $line) {
+            $pid = (int) trim($line);
+            if ($pid <= 0 || $own_namespace === false || @readlink('/proc/' . $pid . '/ns/pid') !== $own_namespace) {
+                continue;
+            }
+            $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+            if ($cmdline !== false && str_starts_with($cmdline, 'nginx: master process')) {
+                @posix_kill($pid, SIGUSR1);
+            }
+        }
+    }
+
+    /**
+     * Debug output with detailed information
+     *
+     * Outputs debug information including:
+     * - File and line where rsx_dump_die was called
+     * - Var_dump of all passed values (with toArray() conversion for objects)
+     * - Debug backtrace showing last 10 function calls
+     * Then calls die() to halt execution
+     *
+     * @param mixed ...$values Any number of values to debug
+     * @return void (never returns - calls die())
+     */
+    public static function rsx_dump_die(...$values): void
+    {
+        // Get backtrace
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+
+        // Detect if called via helper function
+        $caller_index = 0;
+        if (isset($trace[0]['function']) && $trace[0]['function'] === 'rsx_dump_die' &&
+            isset($trace[0]['file']) && str_ends_with($trace[0]['file'], '/app/RSpade/helpers.php')) {
+            // Called via helper, skip one level
+            $caller_index = 1;
+        }
+
+        // Get the actual caller info
+        $caller = $trace[$caller_index] ?? [];
+        $file = $caller['file'] ?? 'unknown';
+        $line = $caller['line'] ?? 0;
+
+        // Make path relative to project root
+        $file = str_replace(base_path() . '/', '', $file);
+
+        // Output header with red color for visibility
+        echo "\n";
+        // ANSI color codes: \033[31m = red, \033[0m = reset
+        echo "\033[31mrsx_dump_die() at {$file}:{$line}\033[0m\n";
+        echo str_repeat('-', 80) . "\n";
+
+        // Output values concisely
+        foreach ($values as $index => $value) {
+            if (count($values) > 1) {
+                echo "[{$index}] ";
+            }
+            echo static::__format_value_concise($value);
+            echo "\n";
+        }
+
+        // Output minimal backtrace (first 3 relevant calls)
+        echo "\nTrace: ";
+        $trace_items = [];
+        for ($i = $caller_index + 1; $i < min(count($trace), $caller_index + 4); $i++) {
+            $item = $trace[$i];
+            $file = isset($item['file']) ? basename($item['file']) : '?';
+            $line = $item['line'] ?? 0;
+            $function = $item['function'] ?? '?';
+            $class = $item['class'] ?? '';
+            if ($class) {
+                // Simplify class name to last component
+                $parts = explode('\\', $class);
+                $class = end($parts);
+                $function = $class . '::' . $function;
+            }
+            $trace_items[] = "{$function}({$file}:{$line})";
+        }
+        echo implode(' -> ', $trace_items);
+        echo "\n";
+
+        // Die to halt execution
+        die();
+    }
+
+    /**
+     * Format a value concisely for debugging output
+     *
+     * @param mixed $value The value to format
+     * @param int $depth Current recursion depth
+     * @return string Formatted string representation
+     */
+    protected static function __format_value_concise($value, int $depth = 0): string
+    {
+        // Limit recursion depth
+        if ($depth > 3) {
+            return '...';
+        }
+
+        // Handle scalar values and null
+        if (is_null($value)) {
+            return 'null';
+        }
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+        if (is_string($value)) {
+            // Truncate long strings and escape special characters
+            if (strlen($value) > 100) {
+                $value = substr($value, 0, 97) . '...';
+            }
+            return '"' . addslashes($value) . '"';
+        }
+
+        // Handle arrays
+        if (is_array($value)) {
+            $count = count($value);
+            if ($count === 0) {
+                return '[]';
+            }
+            if ($count > 10) {
+                // For large arrays, show count and first 10 keys
+                $keys = array_slice(array_keys($value), 0, 10);
+                $key_str = implode(', ', array_map(function($k) {
+                    return is_string($k) ? "'{$k}'" : (string)$k;
+                }, $keys));
+                return "array({$count}) [{$key_str}, ...]";
+            }
+            // For small arrays, show compact representation
+            $items = [];
+            foreach ($value as $k => $v) {
+                $formatted = static::__format_value_concise($v, $depth + 1);
+                if (is_string($k)) {
+                    $items[] = "'{$k}' => {$formatted}";
+                } else {
+                    $items[] = $formatted;
+                }
+            }
+            return '[' . implode(', ', $items) . ']';
+        }
+
+        // Handle objects
+        if (is_object($value)) {
+            $class = get_class($value);
+            // Simplify namespace
+            $parts = explode('\\', $class);
+            $simple_class = end($parts);
+
+            // Special handling for common objects
+            if ($value instanceof \Illuminate\Support\Collection) {
+                $count = $value->count();
+                return "Collection({$count})";
+            }
+            if (method_exists($value, 'toArray')) {
+                try {
+                    $array = $value->toArray();
+                    $count = count($array);
+                    return "{$simple_class}({$count} props)";
+                } catch (\Exception $e) {
+                    // Fall through
+                }
+            }
+            if (method_exists($value, 'getKey') && method_exists($value, 'getTable')) {
+                // Likely an Eloquent model
+                try {
+                    $id = $value->getKey();
+                    return "{$simple_class}(id={$id})";
+                } catch (\Exception $e) {
+                    // Fall through
+                }
+            }
+
+            return "Object({$simple_class})";
+        }
+
+        // Resources and other types
+        if (is_resource($value)) {
+            return 'Resource(' . get_resource_type($value) . ')';
+        }
+
+        return gettype($value);
+    }
+
+    /**
+     * Prepare a value for safe display
+     *
+     * Attempts to convert objects to arrays if they have toArray() method
+     * Prevents infinite recursion and handles exceptions
+     *
+     * @param mixed $value Value to prepare
+     * @return mixed Prepared value
+     */
+    protected static function __prepare_value_for_display($value)
+    {
+        // Handle scalar values and null
+        if (is_scalar($value) || is_null($value)) {
+            return $value;
+        }
+
+        // Handle arrays recursively (with depth limit)
+        if (is_array($value)) {
+            return static::__prepare_array_for_display($value, 0, 10);
+        }
+
+        // Handle objects
+        if (is_object($value)) {
+            // Try toArray() method
+            if (method_exists($value, 'toArray')) {
+                try {
+                    $array = $value->toArray();
+
+                    return ['[' . get_class($value) . '::toArray()]' => $array];
+                } catch (Exception $e) {
+                    // Fall through to default handling
+                }
+            }
+
+            // Try jsonSerialize() method (for JsonSerializable objects)
+            if ($value instanceof JsonSerializable) {
+                try {
+                    $data = $value->jsonSerialize();
+
+                    return ['[' . get_class($value) . '::jsonSerialize()]' => $data];
+                } catch (Exception $e) {
+                    // Fall through to default handling
+                }
+            }
+
+            // For Eloquent models, try to get attributes
+            if (method_exists($value, 'getAttributes')) {
+                try {
+                    $attributes = $value->getAttributes();
+
+                    return ['[' . get_class($value) . ' Model]' => $attributes];
+                } catch (Exception $e) {
+                    // Fall through to default handling
+                }
+            }
+
+            // For collections, convert to array
+            if ($value instanceof \Illuminate\Support\Collection) {
+                try {
+                    return ['[Collection]' => $value->toArray()];
+                } catch (Exception $e) {
+                    // Fall through to default handling
+                }
+            }
+
+            // Default object handling - just return class name to avoid recursion
+            return '[Object: ' . get_class($value) . ']';
+        }
+
+        // Resources and other types
+        return $value;
+    }
+
+    /**
+     * Prepare array for display with recursion protection
+     *
+     * @param array $array Array to prepare
+     * @param int $depth Current depth
+     * @param int $max_depth Maximum depth to recurse
+     * @return array Prepared array
+     */
+    protected static function __prepare_array_for_display($array, $depth = 0, $max_depth = 10)
+    {
+        if ($depth >= $max_depth) {
+            return '[Max depth reached]';
+        }
+
+        $result = [];
+        foreach ($array as $key => $value) {
+            if (is_array($value)) {
+                $result[$key] = static::__prepare_array_for_display($value, $depth + 1, $max_depth);
+            } elseif (is_object($value)) {
+                $result[$key] = static::__prepare_value_for_display($value);
+            } else {
+                $result[$key] = $value;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Normalize a channel name for consistent output
+     * - Convert to uppercase
+     * - Replace non-alphanumeric chars with underscore
+     * - Collapse multiple underscores
+     * - Trim underscores from edges
+     * - Strip any brackets that user might have added
+     *
+     * @param string $channel Raw channel name
+     * @return string Normalized channel name
+     */
+    public static function normalize_channel(string $channel): string
+    {
+        // Strip brackets if present
+        $channel = str_replace(['[', ']'], '', $channel);
+
+        // Convert to uppercase
+        $channel = strtoupper($channel);
+
+        // Replace non-alphanumeric with underscore
+        $channel = preg_replace('/[^A-Z0-9]+/', '_', $channel);
+
+        // Collapse multiple underscores
+        $channel = preg_replace('/_+/', '_', $channel);
+
+        // Trim underscores from edges
+        $channel = trim($channel, '_');
+
+        return $channel;
+    }
+
+    /**
+     * Get console debug configuration
+     *
+     * @return array Configuration array
+     */
+    protected static function __get_console_config(): array
+    {
+        if (static::$console_config === null) {
+            $defaults = [
+                'enabled' => true,
+                'outputs' => [
+                    'cli' => false,
+                    'web' => true,
+                    'ajax' => true,
+                    'laravel_log' => false,
+                ],
+                'filter_mode' => 'all', // all, whitelist, blacklist, specific
+                'specific_channel' => null,
+                'whitelist' => [],
+                'blacklist' => [],
+                'include_benchmark' => false,
+            ];
+
+            // Deep merge config with defaults (config takes precedence)
+            $config = array_merge($defaults, config('rsx.console_debug', []));
+
+            // Ensure outputs exists (in case config had partial data)
+            if (!isset($config['outputs']) || !is_array($config['outputs'])) {
+                $config['outputs'] = $defaults['outputs'];
+            }
+
+            // Convert string "true"/"false" to boolean for outputs
+            foreach ($config['outputs'] as $key => $value) {
+                if ($value === 'true') {
+                    $config['outputs'][$key] = true;
+                } elseif ($value === 'false') {
+                    $config['outputs'][$key] = false;
+                }
+            }
+
+            // Check for environment variable overrides (use getenv for runtime putenv support)
+            if (getenv('CONSOLE_DEBUG_CLI') !== false) {
+                $config['outputs']['cli'] = filter_var(getenv('CONSOLE_DEBUG_CLI'), FILTER_VALIDATE_BOOLEAN);
+            }
+            if (getenv('CONSOLE_DEBUG_WEB') !== false) {
+                $config['outputs']['web'] = filter_var(getenv('CONSOLE_DEBUG_WEB'), FILTER_VALIDATE_BOOLEAN);
+            }
+            if (getenv('CONSOLE_DEBUG_AJAX') !== false) {
+                $config['outputs']['ajax'] = filter_var(getenv('CONSOLE_DEBUG_AJAX'), FILTER_VALIDATE_BOOLEAN);
+            }
+
+            // A developer's per-browser override (the /_sys Debug Flags screen) wins over
+            // config and env, for this browser only - see apply_session_override().
+            $config = Console_Debug_Override::overlay($config, static::$session_override);
+
+            static::$console_config = $config;
+        }
+
+        return static::$console_config;
+    }
+
+    /**
+     * The console_debug configuration in force for this process or request: config,
+     * then the environment overrides, then this browser's developer override, then the
+     * rsx:debug harness headers.
+     *
+     * @return array
+     */
+    public static function effective_console_config(): array
+    {
+        return static::__get_console_config();
+    }
+
+    /**
+     * Resolve this request's per-browser developer override and lay it over the
+     * configuration (Console_Debug_Override - the /_sys Debug Flags screen).
+     *
+     * Called by the front controller before a page or Ajax dispatch: the first point at
+     * which the browser's session is known. Output emitted earlier in the request (the
+     * framework boot) followed the configuration alone. Never called for an asset or an
+     * external API request, and a CLI process never reaches it, so neither is affected.
+     * Uses Session READERS only: an anonymous request creates no session here.
+     *
+     * The rsx:debug harness headers are applied again afterwards, so an explicit
+     * per-invocation --console-debug-* flag still beats a stored override.
+     */
+    public static function apply_session_override(): void
+    {
+        $override = Console_Debug_Override::active();
+
+        if ($override === static::$session_override) {
+            return;
+        }
+
+        static::$session_override = $override;
+        static::$console_config = null;
+
+        static::configure_from_headers();
+    }
+
+    /**
+     * This request's resolved per-browser override, or null. The rsxapp.console_debug
+     * block reads it so JS output follows exactly what PHP output follows.
+     *
+     * @return array|null
+     */
+    public static function session_override(): ?array
+    {
+        return static::$session_override;
+    }
+
+    /**
+     * Reset cached console debug configuration
+     *
+     * Call this after modifying environment variables like CONSOLE_DEBUG_FILTER
+     * or CONSOLE_DEBUG_CLI to force reconfiguration on next console_debug() call.
+     *
+     * @return void
+     */
+    public static function reset_console_config(): void
+    {
+        static::$console_config = null;
+    }
+
+    /**
+     * May the X-Playwright-Console-Debug header force console_debug output into a web
+     * response the configuration has switched off?
+     *
+     * Only for the local harness: DEVELOPMENT mode (Rsx::is_development() - RSX_MODE is
+     * the one mode switch, and "not production" would leave this open on a sealed debug
+     * box) and a LOOPBACK caller carrying no forwarded headers. The header itself is
+     * unsigned and proves nothing, so it can never be the gate: without these two
+     * conditions a single header would make a public development box dump its internal
+     * debug channel to anyone who asked.
+     *
+     * @return bool
+     */
+    private static function __playwright_console_debug_header_allowed(): bool
+    {
+        if (!isset($_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG']) || $_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG'] !== '1') {
+            return false;
+        }
+
+        return Rsx::is_development() && is_loopback_ip();
+    }
+
+    /**
+     * Configure console debug based on HTTP headers from rsx:debug
+     *
+     * This allows the Playwright test runner to pass console debug settings
+     * through HTTP headers since environment variables don't propagate through
+     * the Playwright -> Chrome -> HTTP request chain.
+     *
+     * @return void
+     */
+    public static function configure_from_headers(): void
+    {
+        // Never process headers in production or from non-loopback IPs
+        if (app()->environment('production') || !is_loopback_ip()) {
+            return;
+        }
+
+        $request = request();
+        if (!$request) {
+            return;
+        }
+
+        // Only apply header configuration if this is a Playwright test request
+        if (!$request->hasHeader('X-Playwright-Test')) {
+            return;
+        }
+
+        // Get base configuration
+        $config = static::__get_console_config();
+
+        // Check for console debug filter header
+        if ($request->hasHeader('X-Console-Debug-Filter')) {
+            $filter = $request->header('X-Console-Debug-Filter');
+            if ($filter) {
+                $config['filter_mode'] = 'specific';
+                $config['specific_channel'] = strtoupper($filter);
+            }
+        }
+
+        // Check for benchmark header
+        if ($request->hasHeader('X-Console-Debug-Benchmark')) {
+            $config['include_benchmark'] = true;
+        }
+
+        // Check for all channels header
+        if ($request->hasHeader('X-Console-Debug-All')) {
+            $config['filter_mode'] = 'all';
+        }
+
+        // Enable CLI output for Playwright tests if console debugging is enabled
+        if ($request->hasHeader('X-Playwright-Console-Debug')) {
+            $config['outputs']['cli'] = true;
+        }
+
+        // Override the cached configuration
+        static::$console_config = $config;
+    }
+
+    /**
+     * Set request start time for benchmarking
+     *
+     * @param float|null $time Start time or null to use current time
+     * @return void
+     */
+    public static function set_request_start_time(?float $time = null): void
+    {
+        static::$request_start_time = $time ?? microtime(true);
+    }
+
+    /**
+     * Check if console debug is enabled
+     *
+     * @return bool Whether console debug output is enabled
+     */
+    public static function is_console_debug_enabled(): bool
+    {
+        // Get configuration
+        $config = static::__get_console_config();
+
+        // Check if completely disabled
+        if (!$config['enabled']) {
+            return false;
+        }
+
+        // Check if any output is enabled
+        return $config['outputs']['cli'] ||
+               $config['outputs']['web'] ||
+               $config['outputs']['ajax'] ||
+               $config['outputs']['laravel_log'];
+    }
+
+    /**
+     * Get elapsed time since request start
+     *
+     * @return string Formatted time string like "05.1234" or "##.####" for >99 seconds
+     */
+    protected static function __get_benchmark_prefix(): string
+    {
+        if (static::$request_start_time === null) {
+            static::$request_start_time = defined('LARAVEL_START') ? LARAVEL_START : microtime(true);
+        }
+
+        $elapsed = microtime(true) - static::$request_start_time;
+
+        if ($elapsed >= 99.0) {
+            return '[##.####]';
+        }
+
+        return sprintf('[%02d.%04d]', floor($elapsed), ($elapsed - floor($elapsed)) * 10000);
+    }
+
+    /**
+     * Check if a channel should be output based on filter configuration
+     *
+     * @param string $channel Normalized channel name
+     * @param array $config Console configuration
+     * @return bool Whether to output this channel
+     */
+    protected static function __should_output_channel(string $channel, array $config): bool
+    {
+        // Check environment override (use getenv for runtime putenv support)
+        // A developer's per-browser override beats it (it is the more specific statement).
+        // A PRESENT-but-empty CONSOLE_DEBUG_FILTER names no channel, so it passes none - an
+        // environment that carries the key empty gets no console_debug output at all.
+        $env_filter = static::$session_override === null ? getenv('CONSOLE_DEBUG_FILTER') : false;
+        if ($env_filter !== false) {
+            // Split comma-separated values and normalize
+            $channels = array_map('trim', explode(',', $env_filter));
+            $channels = array_map('strtoupper', $channels);
+
+            return in_array($channel, $channels, true);
+        }
+
+        switch ($config['filter_mode']) {
+            case 'specific':
+                $specific = $config['specific_channel'] ?? '';
+                if ($specific) {
+                    // Split comma-separated values and normalize
+                    $channels = array_map('trim', explode(',', $specific));
+                    $channels = array_map('strtoupper', $channels);
+
+                    return in_array($channel, $channels, true);
+                }
+
+                return false;
+
+            case 'whitelist':
+                $whitelist = array_map('strtoupper', $config['whitelist'] ?? []);
+
+                return in_array($channel, $whitelist, true);
+
+            case 'blacklist':
+                $blacklist = array_map('strtoupper', $config['blacklist'] ?? []);
+
+                return !in_array($channel, $blacklist, true);
+
+            case 'all':
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * Console debug output helper with channel categorization
+     *
+     * Outputs debug information to stderr in CLI mode when SHOW_CONSOLE_DEBUG_CLI is enabled.
+     * In HTTP mode, batches messages for browser console output when SHOW_CONSOLE_DEBUG_HTTP is enabled.
+     * Only outputs when the appropriate flag is set and not in production.
+     * Includes file and line number where console_debug was called from.
+     * Messages are prefixed with the journal category in square brackets.
+     *
+     * @param string $channel Channel category for the debug message (e.g., "DISPATCH", "AUTH", "DB")
+     * @param mixed ...$values Values to output - arbitrary arguments like console.log
+     * @return void
+     */
+    /**
+     * Whether PHP console_debug() emits in the current RSX_MODE.
+     *
+     * True in development and debug; false in strict production only. This is the
+     * server-side mirror of Manifest::_should_include_debug_info() / the JS gate,
+     * and the single named place the build-mode console policy lives for PHP.
+     *
+     * @return bool
+     */
+    public static function _console_debug_enabled_for_mode(): bool
+    {
+        return !(\App\RSpade\Core\Rsx::is_production() && !\App\RSpade\Core\Rsx::is_debug());
+    }
+
+    public static function console_debug(string $channel, ...$values): void
+    {
+        // Suppressed only in strict production (RSX_MODE=production, not debug).
+        // Development and debug both emit - mirrors the JS-side gate and the root
+        // CLAUDE.md mode table. RSX_MODE is the only mode switch there is.
+        if (!static::_console_debug_enabled_for_mode()) {
+            return;
+        }
+
+        // Handle BUILD_DEBUG_MODE (check both constant and command-line flag)
+        $build_debug_mode = (defined('BUILD_DEBUG_MODE') && BUILD_DEBUG_MODE) ||
+                           in_array('--build-debug', $_SERVER['argv'] ?? []);
+
+        if ($build_debug_mode) {
+            // Force enable CLI output and filter to BUILD channel only
+            $channel = static::normalize_channel($channel);
+            if ($channel !== 'BUILD') {
+                return;
+            }
+            // Override config for this call
+            $force_cli_output = true;
+            $config = static::__get_console_config(); // Still need config for benchmark
+        } else {
+            $force_cli_output = false;
+
+            // Get configuration
+            $config = static::__get_console_config();
+
+            // Check if completely disabled
+            if (!$config['enabled']) {
+                return;
+            }
+
+            // Normalize channel name
+            $channel = static::normalize_channel($channel);
+
+            // Check if this channel should be output
+            if (!static::__should_output_channel($channel, $config)) {
+                return;
+            }
+        }
+
+        // Get caller information using debug_backtrace
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+
+        // Detect if called via helper function
+        $caller_index = 0;
+        if (isset($trace[0]['function']) && $trace[0]['function'] === 'console_debug' &&
+            isset($trace[0]['file']) && str_ends_with($trace[0]['file'], '/app/RSpade/helpers.php')) {
+            // Called via helper, skip one level
+            $caller_index = 1;
+        }
+
+        $caller = $trace[$caller_index] ?? null;
+
+        // Build location prefix
+        $location_prefix = '';
+        if ($caller && isset($caller['file']) && isset($caller['line'])) {
+            // Get relative path from project root
+            $file = str_replace(base_path() . '/', '', $caller['file']);
+            $location_prefix = "[{$file}:{$caller['line']}] ";
+        }
+
+        // Add benchmark prefix if enabled
+        $benchmark_prefix = '';
+        if ($config['include_benchmark']) {
+            $benchmark_prefix = static::__get_benchmark_prefix() . ' ';
+        }
+
+        // Handle based on context
+        if (app()->runningInConsole()) {
+            // CLI mode - check if CLI output is enabled
+            if (!$force_cli_output && !$config['outputs']['cli']) {
+                return;
+            }
+
+            // Build channel with prefixes
+            $prefix = $benchmark_prefix . $location_prefix . "[{$channel}]";
+
+            // ANSI color codes: \033[36m = light cyan, \033[0m = reset
+            fwrite(STDERR, "\033[36m" . $prefix . "\033[0m");
+
+            // Output each value separately
+            foreach ($values as $value) {
+                if (is_string($value) || is_numeric($value) || is_bool($value) || is_null($value)) {
+                    // Primitives - output directly
+                    $output = is_bool($value) ? ($value ? 'true' : 'false') :
+                             (is_null($value) ? 'null' : (string)$value);
+                    fwrite(STDERR, ' ' . $output);
+                } else {
+                    // Complex types - output as pretty JSON
+                    $json_value = static::_prepare_value_for_json($value);
+                    $json = json_encode($json_value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    fwrite(STDERR, "\n" . $json);
+                }
+            }
+            fwrite(STDERR, "\n");
+        } else {
+            // HTTP mode - check if web output is enabled
+            $is_ajax = request()->ajax() || request()->wantsJson();
+
+            if ($is_ajax && !$config['outputs']['ajax']) {
+                return;
+            }
+
+            if (!$is_ajax && !$config['outputs']['web']) {
+                // X-Playwright-Console-Debug FORCES console_debug output into a web
+                // response that configuration has switched off - a disclosure channel
+                // opened by one unsigned header. It answers the local harness only:
+                // development mode AND a loopback caller with no forwarded headers.
+                // The header alone is never enough; anybody can send it.
+                if (!static::__playwright_console_debug_header_allowed()) {
+                    return;
+                }
+            }
+
+            // Prepare values for JSON encoding
+            $prepared_values = [];
+            foreach ($values as $value) {
+                $prepared_values[] = static::_prepare_value_for_json($value);
+            }
+
+            // Store as structured data: [channel_with_prefixes, [arguments]]
+            $channel_with_prefixes = $benchmark_prefix . $location_prefix . "[{$channel}]";
+            static::$console_messages[] = [$channel_with_prefixes, $prepared_values];
+
+            // Register shutdown function only once and only in non-production
+            if (!static::$shutdown_registered && !app()->environment('production')) {
+                register_shutdown_function([static::class, 'dump_console_debug_messages_to_html']);
+                static::$shutdown_registered = true;
+            }
+        }
+
+        // Also log to Laravel log if enabled
+        if ($config['outputs']['laravel_log']) {
+            // For Laravel log, we need a string representation
+            $log_parts = [$benchmark_prefix . $location_prefix . "[{$channel}]"];
+            foreach ($values as $value) {
+                if (is_string($value) || is_numeric($value)) {
+                    $log_parts[] = $value;
+                } else {
+                    $log_parts[] = json_encode(static::_prepare_value_for_json($value));
+                }
+            }
+            Log::debug(implode(' ', $log_parts));
+        }
+    }
+
+    /**
+     * Prepare a value for JSON encoding
+     *
+     * Converts PHP objects to arrays if they have toArray() method.
+     * This ensures complex objects are properly serialized for JavaScript consumption.
+     *
+     * @param mixed $value The value to prepare
+     * @return mixed The prepared value
+     */
+    protected static function _prepare_value_for_json($value)
+    {
+        // Handle null and scalar types directly
+        if (is_null($value) || is_scalar($value)) {
+            return $value;
+        }
+
+        // Handle arrays recursively
+        if (is_array($value)) {
+            $result = [];
+            foreach ($value as $key => $item) {
+                $result[$key] = static::_prepare_value_for_json($item);
+            }
+
+            return $result;
+        }
+
+        // Handle objects
+        if (is_object($value)) {
+            // Check for toArray method
+            if (method_exists($value, 'toArray')) {
+                return static::_prepare_value_for_json($value->toArray());
+            }
+
+            // Handle stdClass
+            if ($value instanceof stdClass) {
+                return static::_prepare_value_for_json((array)$value);
+            }
+
+            // For other objects, convert to array representation
+            // This will include public properties
+            return static::_prepare_value_for_json(get_object_vars($value));
+        }
+
+        // Resources and other types
+        return (string)$value;
+    }
+
+    /**
+     * Dump console debug messages to HTML for browser console output
+     *
+     * Outputs JavaScript that logs batched messages to the browser console.
+     * Clears the message array after output.
+     * In production mode, outputs nothing.
+     * Also registers a shutdown function to output any remaining messages.
+     *
+     * @return void
+     */
+    public static function dump_console_debug_messages_to_html(): void
+    {
+        // Don't output in production mode
+        if (app()->environment('production')) {
+            return;
+        }
+
+        // Don't output if suppressed (e.g., for IDE service requests)
+        if (defined('SUPPRESS_CONSOLE_DEBUG_OUTPUT') && SUPPRESS_CONSOLE_DEBUG_OUTPUT) {
+            return;
+        }
+
+        // Don't output if console HTML is disabled (e.g., for AJAX requests)
+        if (static::$console_html_disabled) {
+            return;
+        }
+
+        // Output any accumulated messages
+        if (!empty(static::$console_messages)) {
+            // Nonce from the request-scoped static: this runs at SHUTDOWN, with no Response
+            // object left to read a header off, and the value must match the one the CSP
+            // header already carried.
+            echo '<script nonce="' . htmlspecialchars(\App\RSpade\Core\Csp\Rsx_Csp::nonce()) . '">' . "\n";
+            foreach (static::$console_messages as $message) {
+                // Messages are always [channel, [arguments]] format
+                $channel = $message[0];
+                $arguments = $message[1];
+
+                // Build console.log call with channel as first arg, then spread the arguments
+                $js_args = [json_encode($channel)];
+                foreach ($arguments as $arg) {
+                    $js_args[] = json_encode($arg);
+                }
+
+                echo 'console.log(' . implode(', ', $js_args) . ');' . "\n";
+            }
+            echo '</script>';
+
+            // Clear the messages after output
+            static::$console_messages = [];
+        }
+    }
+
+    /**
+     * Get accumulated console debug messages without outputting them
+     *
+     * Internal framework method - not for end developer use.
+     * Used by exception handler to retrieve messages for error output.
+     *
+     * @internal
+     * @return array Array of console debug messages
+     */
+    public static function _get_console_messages(): array
+    {
+        return static::$console_messages;
+    }
+
+    /**
+     * Register the shutdown function for dumping console messages
+     *
+     * This is useful for ensuring console messages are output even after fatal errors.
+     * Only registers once and only in non-production mode.
+     *
+     * @return void
+     */
+    public static function register_console_dump_shutdown(): void
+    {
+        if (!static::$shutdown_registered && !app()->environment('production')) {
+            register_shutdown_function([static::class, 'dump_console_debug_messages_to_html']);
+            static::$shutdown_registered = true;
+        }
+    }
+
+    /**
+     * Disable console HTML output (for AJAX requests)
+     *
+     * Prevents console.log script blocks from being output to the response.
+     * Messages are still collected and can be retrieved with _get_console_messages()
+     *
+     * @return void
+     */
+    public static function disable_console_html_output(): void
+    {
+        static::$console_html_disabled = true;
+    }
+
+    /**
+     * Enable console HTML output (default mode)
+     *
+     * Allows console.log script blocks to be output to the response.
+     *
+     * @return void
+     */
+    public static function enable_console_html_output(): void
+    {
+        static::$console_html_disabled = false;
+    }
+
+    /**
+     * Check if console HTML output is disabled
+     *
+     * @return bool
+     */
+    public static function is_console_html_disabled(): bool
+    {
+        return static::$console_html_disabled;
+    }
+
+    /**
+     * Ajax endpoint to log console_debug messages from JavaScript
+     *
+     * @param \Illuminate\Http\Request $request
+     * @param array $params
+     * @return array
+     */
+    public static function log_console_messages(\Illuminate\Http\Request $request, array $params = []): array
+    {
+        // Check if Laravel log output is enabled
+        $config = config('rsx.console_debug', []);
+        if (!($config['enabled'] ?? true) || !($config['outputs']['laravel_log'] ?? false)) {
+            return ['status' => 'disabled'];
+        }
+
+        // Get messages from request
+        $messages = $request->json('messages', []);
+        if (empty($messages)) {
+            return ['status' => 'no_messages'];
+        }
+
+        // A public log writer: bounded per address, and what it writes is sanitized
+        // (Browser_Log_Budget). Past the budget a call writes nothing.
+        if (!Browser_Log_Budget::spend(Browser_Log_Budget::SINK_CONSOLE)) {
+            return ['status' => 'logged', 'count' => 0];
+        }
+
+        [$messages, $dropped] = Browser_Log_Budget::entries($messages);
+        $logged = 0;
+
+        foreach ($messages as $message) {
+            if (!is_array($message) || !isset($message['channel']) || !isset($message['values']) || !is_array($message['values'])) {
+                continue;
+            }
+
+            $log_parts = ['[CONSOLE_DEBUG][JS][' . Browser_Log_Budget::line($message['channel'], 100) . ']'];
+
+            if (!empty($message['location'])) {
+                $log_parts[] = 'at ' . Browser_Log_Budget::line($message['location'], Browser_Log_Budget::MAX_LOCATION);
+            }
+
+            $log_parts[] = Browser_Log_Budget::line(implode(' ', array_map(
+                fn ($value) => (is_scalar($value) || $value === null) ? (string) $value : json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+                $message['values']
+            )), Browser_Log_Budget::MAX_MESSAGE);
+
+            $log_message = implode(' ', $log_parts);
+
+            if (!empty($message['backtrace']) && is_array($message['backtrace'])) {
+                $log_message .= "\nBacktrace:\n" . Browser_Log_Budget::block(implode("\n", array_map('strval', array_filter($message['backtrace'], 'is_scalar'))), Browser_Log_Budget::MAX_STACK);
+            }
+
+            Log::info($log_message);
+            $logged++;
+        }
+
+        if ($dropped > 0) {
+            Log::info("[CONSOLE_DEBUG][JS] {$dropped} more message(s) in this call were not logged (at most " . Browser_Log_Budget::MAX_ENTRIES_PER_CALL . ' per call)');
+        }
+
+        return ['status' => 'logged', 'count' => $logged];
+    }
+
+    /**
+     * Ajax endpoint to log browser errors from JavaScript
+     *
+     * @param \Illuminate\Http\Request $request
+     * @param array $params
+     * @return array
+     */
+    public static function log_browser_errors(\Illuminate\Http\Request $request, array $params = []): array
+    {
+        // Check if browser error logging is enabled
+        if (!config('rsx.log_browser_errors', false)) {
+            return ['status' => 'disabled'];
+        }
+
+        // Get errors from request
+        $errors = $request->json('errors', []);
+        if (empty($errors)) {
+            return ['status' => 'no_errors'];
+        }
+
+        // A public log writer (an error happens on a sign-in page too): each entry is
+        // sanitized, then written only when Browser_Log_Budget admits it - its first sighting
+        // from this address in 30 minutes, within the quota browser errors share with CSP
+        // reports. Anything else is dropped silently.
+        [$errors, $dropped] = Browser_Log_Budget::entries($errors);
+        $logged = 0;
+
+        foreach ($errors as $error) {
+            if (!is_array($error)) {
+                continue;
+            }
+
+            $log_parts = ['[BROWSER_ERROR]'];
+
+            if (!empty($error['type'])) {
+                $log_parts[] = '[' . Browser_Log_Budget::line($error['type'], 100) . ']';
+            }
+
+            if (!empty($error['message'])) {
+                $log_parts[] = Browser_Log_Budget::line($error['message'], Browser_Log_Budget::MAX_MESSAGE);
+            }
+
+            if (!empty($error['filename']) && !empty($error['lineno'])) {
+                $location = 'at ' . Browser_Log_Budget::line($error['filename'], Browser_Log_Budget::MAX_LOCATION) . ':' . (int) $error['lineno'];
+                if (!empty($error['colno'])) {
+                    $location .= ':' . (int) $error['colno'];
+                }
+                $log_parts[] = $location;
+            }
+
+            if (!empty($error['url'])) {
+                $log_parts[] = 'URL: ' . Browser_Log_Budget::line($error['url'], Browser_Log_Budget::MAX_LOCATION);
+            }
+
+            $error_message = implode(' ', $log_parts);
+
+            if (!empty($error['stack'])) {
+                $error_message .= "\nStack trace:\n" . Browser_Log_Budget::block($error['stack'], Browser_Log_Budget::MAX_STACK);
+            }
+
+            if (!empty($error['userAgent'])) {
+                $error_message .= "\nUser Agent: " . Browser_Log_Budget::line($error['userAgent'], Browser_Log_Budget::MAX_USER_AGENT);
+            }
+
+            if (Browser_Log_Budget::admit(Browser_Log_Budget::SINK_ERRORS, $error_message)) {
+                Log::error($error_message);
+                $logged++;
+            }
+        }
+
+        $dropped_line = "[BROWSER_ERROR] {$dropped} more error(s) in this call were not logged (at most " . Browser_Log_Budget::MAX_ENTRIES_PER_CALL . ' per call)';
+        if ($dropped > 0 && Browser_Log_Budget::admit(Browser_Log_Budget::SINK_ERRORS, $dropped_line)) {
+            Log::error($dropped_line);
+        }
+
+        return ['status' => 'logged', 'count' => $logged];
+    }
+
+}

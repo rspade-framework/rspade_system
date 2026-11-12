@@ -20,8 +20,17 @@ import {
     recognize_auth_checks,
     recognize_css_classes,
     recognize_doc_references,
+    recognize_js_decorators,
+    recognize_php_attributes,
     Recognized_Token,
 } from '../rspade_recognizers';
+import {
+    JS_DECORATORS,
+    PHP_ATTRIBUTES,
+    vocabulary_markdown,
+} from '../framework_vocabulary';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let failures = 0;
 let checks = 0;
@@ -93,11 +102,11 @@ check('realm: application portal root',
     'portal');
 
 check('realm: framework portal root',
-    infer_auth_realm('system/app/RSpade/Core/Portal/Portal_Dispatcher.php', 'class X {}'),
+    infer_auth_realm('system/app/RSpade/Lib/Portal/Portal_Dispatcher.php', 'class X {}'),
     'portal');
 
 check('realm: manifest-relative framework portal root',
-    infer_auth_realm('app/RSpade/Core/Portal/Portal_Dispatcher.php', 'class X {}'),
+    infer_auth_realm('app/RSpade/Lib/Portal/Portal_Dispatcher.php', 'class X {}'),
     'portal');
 
 check('realm: default is staff',
@@ -393,6 +402,114 @@ check('gate: on when 1 (only the literal true disarms it)', framework_property_g
 check('gate: on when empty', framework_property_gate_is_on('IS_FRAMEWORK_DEVELOPER='), true);
 check('gate: on when the key is absent', framework_property_gate_is_on('APP_URL=https://x'), true);
 check('gate: on when .env is unreadable', framework_property_gate_is_on(null), true);
+
+// -------------------------------------------------------------------------
+// F. framework attributes and decorators
+// -------------------------------------------------------------------------
+
+function php(body: string): string[] {
+    return values(recognize_php_attributes('<?php\n' + body));
+}
+
+function js(body: string): string[] {
+    return values(recognize_js_decorators(body));
+}
+
+check('php attr: bare marker', php('#[Writer]\npublic static function x() {}'), ['Writer']);
+check('php attr: with arguments', php("#[Task('Refresh')]"), ['Task']);
+check('php attr: On_Build', php('#[On_Build]'), ['On_Build']);
+check('php attr: leading backslash', php('#[\\Auth_Check]'), ['Auth_Check']);
+check('php attr: a namespaced name is not the framework attribute', php('#[\\App\\Attr\\Writer]'), []);
+check('php attr: a relative namespaced name is not either', php('#[Foo\\Writer]'), []);
+check('php attr: grouped list colours every framework name',
+    php("#[Task('Refresh'), Exclusive, On_Build]"),
+    ['Task', 'Exclusive', 'On_Build']);
+check('php attr: grouped list with a non-framework name in between',
+    php("#[Route('/x'), Deprecated, Writer]"),
+    ['Route', 'Writer']);
+check('php attr: commas and brackets inside arguments end no name',
+    php("#[Api_Param('ids', default: [1, 2], description: 'a, b ] c'), Api_Param('x')]"),
+    ['Api_Param', 'Api_Param']);
+check('php attr: a group spanning lines',
+    php("#[\n    Auth('is_logged_in'),\n    Writer,\n]"),
+    ['Auth', 'Writer']);
+check('php attr: prefix is not the longer name', php('#[Ajax_Endpoint_Model_Fetch]'), ['Ajax_Endpoint_Model_Fetch']);
+check('php attr: unknown name', php('#[Task_Attribute]'), []);
+check('php attr: stale Task_Attribute is not vocabulary', Object.prototype.hasOwnProperty.call(PHP_ATTRIBUTES, 'Task_Attribute'), false);
+check('php attr: in a line comment', php('// #[Writer] goes on the endpoint'), []);
+check('php attr: in a docblock', php('/**\n * Declares #[Writer].\n */'), []);
+check('php attr: in a string', php("$x = '#[Writer]';"), []);
+check('php attr: in a heredoc', php('$x = <<<EOT\n#[Writer]\nEOT;\n#[Reader]'), ['Reader']);
+check('php attr: in inline HTML outside <?php',
+    values(recognize_php_attributes("<p>Don't #[Writer]</p>\n<?php\n#[Reader]")),
+    ['Reader']);
+check('php attr: after ?> and back in',
+    values(recognize_php_attributes("<?php #[Writer] ?>\n<p>it's #[Media]</p>\n<?php #[Reader]")),
+    ['Writer', 'Reader']);
+
+const php_range = recognize_php_attributes("<?php\n    #[\\Auth('x'), Writer]");
+check('php attr: ranges cover the names only',
+    php_range.map(t => [t.line, t.start, t.end, t.kind]),
+    [[1, 7, 11, 'php_attribute'], [1, 18, 24, 'php_attribute']]);
+
+check('js dec: class decorators with arguments',
+    js("@route('/contacts')\n@layout('Frontend_Layout')\n@spa('Frontend_Spa_Controller::index')\n@auth('is_logged_in')\n@title('Contacts')\nclass A extends Spa_Action {}"),
+    ['route', 'layout', 'spa', 'auth', 'title']);
+check('js dec: on one line', js("@route('/x') @spinner_until_ready('always') class A {}"), ['route', 'spinner_until_ready']);
+check('js dec: portal_spa', js("@portal_spa('Portal_Spa_Controller::index')"), ['portal_spa']);
+check('js dec: without arguments', js('    @mutex\n    async save() {}'), ['mutex']);
+check('js dec: method decorator with arguments', js('    @debounce(250)\n    refresh() {}'), ['debounce']);
+check('js dec: JSDoc tags are not decorators', js('/**\n * @param {string} x\n * @decorator\n * @route not code\n */'), []);
+check('js dec: line comment', js('// @route(\'/x\')'), []);
+check('js dec: in strings', js("const a = '@route'; const b = \"@media\"; const c = `@spa ${'@auth'}`;"), []);
+check('js dec: an email address is not a decorator', js('send(user@route.com)'), []);
+check('js dec: a longer name is not the decorator', js('@routes @layout_name @Route'), []);
+check('js dec: unknown decorator', js('@media'), []);
+
+const js_range = recognize_js_decorators("class A {\n  @debounce(250)\n  x() {}\n}");
+check('js dec: range covers @name',
+    js_range.map(t => [t.line, t.start, t.end, t.kind, t.value]),
+    [[1, 2, 11, 'js_decorator', 'debounce']]);
+
+check('vocabulary: markdown names the attribute and its docs',
+    (vocabulary_markdown('php_attribute', 'On_Build') || '').split('\n\n')[0],
+    '**#[On_Build]** - RSpade attribute');
+check('vocabulary: markdown for a decorator',
+    (vocabulary_markdown('js_decorator', 'route') || '').split('\n\n')[0],
+    '**@route** - RSpade decorator');
+check('vocabulary: unknown name has no markdown', vocabulary_markdown('php_attribute', 'Task_Attribute'), undefined);
+check('vocabulary: object prototype names are not vocabulary', vocabulary_markdown('js_decorator', 'constructor'), undefined);
+
+// Every hover cites a man page or skill that SHIPS. The extension lives at
+// system/app/RSpade/resource/vscode_extension; out/test is two levels below it.
+const rspade_dir = path.resolve(__dirname, '..', '..', '..', '..');
+const PUBLISH_STRIPPED = ['code_quality', 'manifest_api', 'manifest_build', 'ast_sourcecode_parsers', 'vs_code_extension'];
+const doc_failures: string[] = [];
+for (const [kind, table] of [['php_attribute', PHP_ATTRIBUTES], ['js_decorator', JS_DECORATORS]] as const) {
+    for (const [name, entry] of Object.entries(table)) {
+        if (entry.docs.length === 0) {
+            doc_failures.push(`${kind} ${name}: no docs`);
+        }
+        for (const reference of entry.docs) {
+            const man = /^rsx:man ([a-z][a-z0-9_]*)$/.exec(reference);
+            const skill = /^skill rspade:([a-z][a-z0-9-]*)$/.exec(reference);
+            if (man) {
+                if (PUBLISH_STRIPPED.includes(man[1])) {
+                    doc_failures.push(`${kind} ${name}: ${reference} is publish-stripped`);
+                } else if (!fs.existsSync(path.join(rspade_dir, 'man', man[1] + '.txt'))) {
+                    doc_failures.push(`${kind} ${name}: ${reference} does not exist`);
+                }
+            } else if (skill) {
+                if (!fs.existsSync(path.join(rspade_dir, 'docs', 'skills', 'shared', skill[1], 'SKILL.md'))) {
+                    doc_failures.push(`${kind} ${name}: ${reference} is not a shipped skill`);
+                }
+            } else {
+                doc_failures.push(`${kind} ${name}: '${reference}' is not spelled rsx:man topic / skill rspade:name`);
+            }
+        }
+    }
+}
+check('vocabulary: every docs reference resolves to a shipped man page or skill', doc_failures, []);
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures > 0) {

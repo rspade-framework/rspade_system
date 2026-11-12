@@ -37,13 +37,13 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   - `__handle_dev_auth()` / `__handle_portal_dev_auth()` - the rsx:debug harness
     identity assertion (signed `X-Dev-Auth-*` headers), one per realm. A PRESENT-but-rejected token names its failure through
     `console_debug('AUTH', ...)`; it never silently renders anonymous without saying so.
-- `app/RSpade/Core/Debug/Dev_Auth_Token.php` - the ONE mint + verifier both realms
+- `app/RSpade/Lib/Developer/Debug/Dev_Auth_Token.php` - the ONE mint + verifier both realms
   use (the staff and portal verifiers differ only by the realm argument), the
   wire format, the grant-keyed signature and the 60-second credential lifetime.
-- `app/RSpade/Core/Ide/Ide_Bridge_Token.php` - `active_secrets()`, the signing key
+- `app/RSpade/Lib/Developer/Ide/Ide_Bridge_Token.php` - `active_secrets()`, the signing key
   source (the `ide` concern owns the store's own behavior).
-- `app/RSpade/Core/Debug/Playwright_Exception_Handler.php` - the plain-text stack
-  trace (it declines an HTTP status, which renders as the page a browser would get), and `app/RSpade/Core/Debug/Debugger.php` - the `X-Playwright-Console-Debug`
+- `app/RSpade/Lib/Developer/Debug/Playwright_Exception_Handler.php` - the plain-text stack
+  trace (it declines an HTTP status, which renders as the page a browser would get), and `app/RSpade/Lib/Developer/Debug/Debugger.php` - the `X-Playwright-Console-Debug`
   override. Two disclosure paths opened by UNSIGNED headers, so both additionally
   require development mode and `is_loopback_ip()` (`app/RSpade/helpers.php`).
 - `app/RSpade/Commands/Rsx/Route_Debug_Command.php` - signs the FRAGMENT-FREE url

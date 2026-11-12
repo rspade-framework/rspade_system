@@ -8,9 +8,9 @@
 namespace App\RSpade\Core\PHP;
 
 use App\RSpade\CodeQuality\RuntimeChecks\ManifestErrors;
-use App\RSpade\Core\Debug\Rsx_File_Exception;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Lib\Developer\Debug\Rsx_File_Exception;
 
 class Php_Parser
 {

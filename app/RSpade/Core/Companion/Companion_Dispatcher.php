@@ -22,12 +22,12 @@ use App\RSpade\Core\Env\Rsx_Install_State;
 use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Response\Rollback_Response;
-use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
+use App\RSpade\Lib\Revisions\Revision;
 
 /**
  * Companion_Dispatcher - the request pipeline of the companion realm (/_companion/...).

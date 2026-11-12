@@ -6,13 +6,13 @@ use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emitter_Service;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Realtime_Emissions

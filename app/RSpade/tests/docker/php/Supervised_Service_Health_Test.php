@@ -7,8 +7,8 @@
 
 namespace App\RSpade\Tests\Docker\Php;
 
-use App\RSpade\Core\Health\Supervised_Service_Health_Checks;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Operations\Health\Supervised_Service_Health_Checks;
 
 /**
  * The rsx:health "Supervised Services" row reads the retry runners' state files: FAIL naming

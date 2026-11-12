@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Tests\Portal\Php;
 
-use App\RSpade\Core\Models\Portal_User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Portal_Session::terminate_session() is a SELF-SERVICE action: it signs out one of the CURRENT

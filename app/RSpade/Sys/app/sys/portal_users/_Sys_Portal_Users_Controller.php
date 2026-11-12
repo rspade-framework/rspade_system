@@ -8,14 +8,15 @@
 namespace App\RSpade\Sys\App\Sys\PortalUsers;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Sso\Rsx_Portal_Sso;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
+use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
+use App\RSpade\Lib\Portal\Portal_Session;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\SignIn\Sso\Rsx_Portal_Sso;
+use App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor;
 use App\RSpade\Sys\App\Sys\PortalUsers\_Sys_Portal_User_Signins_DataGrid;
 use App\RSpade\Sys\App\Sys\PortalUsers\_Sys_Portal_Users_DataGrid;
 use App\RSpade\Sys\App\Sys\Users\_Sys_Audit_Sessions_DataGrid;
@@ -289,7 +290,8 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * (users.id), its login identity (the Users screen's record) and email.
      *
      * @param array $sessions get_sessions_for_user() entries
-     * @return array [{id, device_summary, user_agent, ip_address, first_seen, signed_in_at,
+     * @return array [{id, device_summary, user_agent, ip_address, ip_address__location,
+     *               first_seen, signed_in_at,
      *               last_active, is_signed_in, signed_out_at, sign_out_reason, sign_in_count,
      *               is_current, is_impersonation, impersonator_user_id,
      *               impersonator_login_user_id, impersonator_email, impersonation_started_at,
@@ -313,6 +315,7 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'device_summary' => $session['device_summary'],
                 'user_agent' => $session['user_agent'],
                 'ip_address' => $session['ip_address'],
+                'ip_address__location' => $session['ip_address'] === null ? null : Rsx_Geo_Ip::label((string) $session['ip_address']),
                 'first_seen' => Rsx_Time::to_iso($session['first_seen']),
                 'signed_in_at' => Rsx_Time::to_iso($session['signed_in_at']),
                 'last_active' => Rsx_Time::to_iso($session['last_active']),

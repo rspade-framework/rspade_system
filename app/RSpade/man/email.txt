@@ -77,7 +77,7 @@ WRITING AN EMAIL
 
         namespace Rsx\Emails;
 
-        use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+        use App\RSpade\Lib\Messaging\Mail\Rsx_Email_Abstract;
         use App\RSpade\Core\Models\User_Model;
         use App\RSpade\Core\Rsx;
 
@@ -122,7 +122,7 @@ WRITING AN EMAIL
     The blade (@rsx_id EQUALS the class basename):
 
         @rsx_id('User_Invitation_Email')
-        {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::header($subject ?? 'You\'re Invited') !!}
+        {!! \App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Layout::header($subject ?? 'You\'re Invited') !!}
 
         <p>Hello{{ !empty($name) ? ' ' . e($name) : '' }},</p>
 
@@ -134,7 +134,7 @@ WRITING AN EMAIL
 
         <p>This invitation expires in {{ $expiry_days }} days.</p>
 
-        {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
+        {!! \App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
 
     THE FOUR MANDATORY MEMBERS. A missing const CATEGORY or static sample() is a
     manifest-build FATAL naming the class (Email_ManifestSupport); subject(), data()
@@ -269,7 +269,11 @@ RECIPIENTS AND BLOCKLIST
 
     Pick by what the message IS, not by how much you want it delivered. SECURITY is for
     a message the recipient is waiting for in order to get in, sent because of something
-    they just did - never for a notice the site decides to send.
+    they just did, or for a warning that somebody just acted on the recipient's OWN
+    account (its password was changed, its second factor was failed until the challenge
+    was destroyed) - a notice they must get even if they opted out of everything - never
+    for a notice the site decides to send about anything else. Its body says what to do
+    if it was not them; there is nothing to unsubscribe from.
 
     TWO BLOCK RULES, TWO TABLES. The recipient OPT-OUT is the recipient's choice, set by an
     unsubscribe link, per category, and never applies to transactional or security mail.
@@ -468,7 +472,7 @@ STYLING
     ONE STYLESHEET, and one file wins - there is no merge:
 
         rsx/emails/email.scss                          the application's, when present
-        Core/Mail/resource/email.scss                  the framework default otherwise
+        Lib/Messaging/Mail/resource/email.scss                  the framework default otherwise
 
     It is compiled through the same node sass step the bundle build uses, cached under
     tmp by the SOURCE's content hash, then INLINED onto the elements and ALSO
@@ -522,7 +526,7 @@ LINKS - AND THE RULE THAT ENFORCES THEM
     row already carries the string.
 
     Both are enforced by the code-quality rule EMAIL-TEMPLATE-01 (severity high), which
-    scans blades under any /emails/ directory and the framework's own /Core/Mail/. It flags
+    scans blades under any /emails/ directory and the framework's own /Lib/Messaging/Mail/. It flags
     a bare {{ $something_at }} / {{ $something_date }} read and any Rsx::Route() /
     Rsx_Portal::Route() call not wrapped in rsx_absolute_url(). A deliberate exception
     declares itself on the line or the line above WITH a rationale (a bare marker suppresses
@@ -833,7 +837,7 @@ TEST ADDRESSES
 
     The SMS twin is fixed rather than configured: any North American number whose
     exchange is 555 - (nnn) 555-nnnn, written any way (rsx:man sms). One home for both
-    rules: App\RSpade\Core\Mail\Rsx_Test_Recipients.
+    rules: App\RSpade\Lib\Messaging\Mail\Rsx_Test_Recipients.
 
 THE DEVELOPMENT CATCHER
 

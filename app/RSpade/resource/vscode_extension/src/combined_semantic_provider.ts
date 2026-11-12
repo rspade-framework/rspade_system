@@ -3,6 +3,7 @@ import { JqhtmlLifecycleSemanticTokensProvider } from './jqhtml_lifecycle_provid
 import { CommentFileReferenceSemanticTokensProvider } from './comment_file_reference_provider';
 import { ThatVariableSemanticTokensProvider } from './that_variable_provider';
 import { DocReferenceIndex } from './doc_reference_provider';
+import { recognize_js_decorators } from './rspade_recognizers';
 
 interface DecodedToken {
     line: number;
@@ -13,7 +14,9 @@ interface DecodedToken {
 }
 
 /**
- * Combined semantic tokens provider that merges tokens from multiple providers
+ * Combined semantic tokens provider that merges tokens from multiple providers:
+ * jqhtml lifecycle methods, comment file references, the `that` variable,
+ * framework decorators and man-page / skill references.
  *
  * VS Code only allows one SemanticTokensLegend per language, so we need to
  * combine all our providers into one to avoid conflicts.
@@ -48,6 +51,18 @@ export class CombinedSemanticTokensProvider implements vscode.DocumentSemanticTo
 
         // Decode 'that' tokens (type 2 = macro, dark blue #569CD6 like 'this')
         this.decode_tokens(that_tokens.data, 2, decoded_tokens);
+
+        // Framework decorators - @route, @spa, @auth, @mutex, ... (type 0, amber).
+        // The same tokens FrameworkVocabularyHoverProvider describes.
+        for (const token of recognize_js_decorators(document.getText())) {
+            decoded_tokens.push({
+                line: token.line,
+                char: token.start,
+                length: token.end - token.start,
+                type: 0,
+                modifiers: 0
+            });
+        }
 
         // Resolvable man-page and skill references in comments (type 0, amber).
         // Merged in here rather than registered as their own provider because VS

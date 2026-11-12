@@ -23,16 +23,16 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The map comes from a SCRATCH build root (the internal --_rsx-build-root flag, set in the
  * child's flag global before composer loads), and the overrides are probe classes under tmp/,
  * so neither the real build tree nor the framework tree is touched. The framework classes they
- * override are real ones composer maps: App\RSpade\Core\Qr\Rsx_Qr_Code (a copy-and-replace
- * override) and App\RSpade\Core\Models\Region_Model (a split model, overridden by extending
+ * override are real ones composer maps: App\RSpade\Lib\Ui\Qr\Rsx_Qr_Code (a copy-and-replace
+ * override) and App\RSpade\Lib\Geo\Places\Region_Model (a split model, overridden by extending
  * Region_Model_Abstract).
  */
 class Override_Loader_Cli_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    const QR = 'App\\RSpade\\Core\\Qr\\Rsx_Qr_Code';
-    const REGION = 'App\\RSpade\\Core\\Models\\Region_Model';
+    const QR = 'App\\RSpade\\Lib\\Ui\\Qr\\Rsx_Qr_Code';
+    const REGION = 'App\\RSpade\\Lib\\Geo\\Places\\Region_Model';
     const PROBE_NAMESPACE = 'Rsx\\Override_Loader_Cli_Probe';
 
     /** Write the probe overrides and a build root whose map names them. Returns the scratch dir. */
@@ -44,18 +44,18 @@ class Override_Loader_Cli_Test extends Rsx_Test_Abstract
         file_put_contents($dir . '/probes/rsx_qr_code.php', "<?php\nnamespace " . self::PROBE_NAMESPACE . ";\n\n"
             . "class Rsx_Qr_Code\n{\n    const PROBE = 'override';\n}\n");
         file_put_contents($dir . '/probes/region_model.php', "<?php\nnamespace " . self::PROBE_NAMESPACE . ";\n\n"
-            . "class Region_Model extends \\App\\RSpade\\Core\\Models\\Region_Model_Abstract\n{\n    const PROBE = 'override';\n}\n");
+            . "class Region_Model extends \\App\\RSpade\\Lib\\Geo\\Places\\Region_Model_Abstract\n{\n    const PROBE = 'override';\n}\n");
 
         $map = [
             self::QR => [
                 'by_fqcn' => self::PROBE_NAMESPACE . '\\Rsx_Qr_Code',
                 'by_file' => $dir . '/probes/rsx_qr_code.php',
-                'file' => 'app/RSpade/Core/Qr/Rsx_Qr_Code.php',
+                'file' => 'app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php',
             ],
             self::REGION => [
                 'by_fqcn' => self::PROBE_NAMESPACE . '\\Region_Model',
                 'by_file' => $dir . '/probes/region_model.php',
-                'file' => 'app/RSpade/Core/Models/Region_Model.php',
+                'file' => 'app/RSpade/Lib/Geo/Places/Region_Model.php',
             ],
         ];
 
@@ -124,9 +124,9 @@ class Override_Loader_Cli_Test extends Rsx_Test_Abstract
             . '    "qr" => (new ReflectionClass(' . var_export(self::QR, true) . '))->getName(),' . "\n"
             . '    "qr_probe" => constant(' . var_export(self::QR . '::PROBE', true) . '),' . "\n"
             . '    "region" => (new ReflectionClass(' . var_export(self::REGION, true) . '))->getName(),' . "\n"
-            . '    "region_is_model" => is_subclass_of(' . var_export(self::REGION, true) . ', "App\\\\RSpade\\\\Core\\\\Models\\\\Region_Model_Abstract"),' . "\n"
-            . '    "qr_shell_included" => $shell_included("app/RSpade/Core/Qr/Rsx_Qr_Code.php"),' . "\n"
-            . '    "region_shell_included" => $shell_included("app/RSpade/Core/Models/Region_Model.php"),' . "\n"
+            . '    "region_is_model" => is_subclass_of(' . var_export(self::REGION, true) . ', "App\\\\RSpade\\\\Lib\\\\Geo\\\\Places\\\\Region_Model_Abstract"),' . "\n"
+            . '    "qr_shell_included" => $shell_included("app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php"),' . "\n"
+            . '    "region_shell_included" => $shell_included("app/RSpade/Lib/Geo/Places/Region_Model.php"),' . "\n"
             . ']) . "\n";';
     }
 
@@ -189,7 +189,7 @@ class Override_Loader_Cli_Test extends Rsx_Test_Abstract
         try {
             $body = 'spl_autoload_unregister([\\App\\RSpade\\Core\\Overrides\\Class_Override_Loader::class, "load"]);' . "\n"
                 . 'try { class_exists(' . var_export(self::QR, true) . '); $message = "NO THROW"; } catch (\\LogicException $e) { $message = $e->getMessage(); }' . "\n"
-                . 'echo json_encode(["message" => $message, "declared" => class_exists(' . var_export(self::QR, true) . ', false), "shell" => $shell_included("app/RSpade/Core/Qr/Rsx_Qr_Code.php")]) . "\n";';
+                . 'echo json_encode(["message" => $message, "declared" => class_exists(' . var_export(self::QR, true) . ', false), "shell" => $shell_included("app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php")]) . "\n";';
 
             [$rc, $output] = static::__run(static::__script($dir, 'tripwire', $body));
             static::__assert_equals(0, $rc, 'the child must succeed: ' . $output);

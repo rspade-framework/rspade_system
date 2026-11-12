@@ -8,9 +8,9 @@
 namespace App\RSpade\Tests\Revisions\Php;
 
 use RuntimeException;
-use App\RSpade\Core\Revisions\Revision_Codec;
-use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Revisions\Revision_Codec;
+use App\RSpade\Lib\Revisions\Revision_Dictionary;
 
 /**
  * Pins the STORAGE FORMAT of a revision document: the two-byte prefix, the size rule

@@ -10,9 +10,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\CodeQuality\Rules\PHP\TaskRunAsDispatcher_CodeQualityRule;
-use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
@@ -21,6 +19,8 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Portal\Portal_User_Model;
+use App\RSpade\Lib\Portal\Rsx_Portal;
 use App\RSpade\Tests\Tasks\Php\Task_Run_As_Fixture_Service;
 
 /**
@@ -468,8 +468,8 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
         $portal_user = static::__portal_user();
 
         Rsx_Portal::set_portal_request(true);
-        \App\RSpade\Core\Portal\Portal_Session::set_site_id(1);
-        \App\RSpade\Core\Portal\Portal_Session::set_portal_user_id((int) $portal_user->id);
+        \App\RSpade\Lib\Portal\Portal_Session::set_site_id(1);
+        \App\RSpade\Lib\Portal\Portal_Session::set_portal_user_id((int) $portal_user->id);
 
         try {
             $run = Task::internal(self::SERVICE, 'as_dispatcher');
@@ -568,7 +568,7 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
     private static function __portal_user(): Portal_User_Model
     {
         Rsx_Portal::set_portal_request(true);
-        \App\RSpade\Core\Portal\Portal_Session::set_site_id(1);
+        \App\RSpade\Lib\Portal\Portal_Session::set_site_id(1);
 
         try {
             $portal_user = new Portal_User_Model();

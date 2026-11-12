@@ -12,7 +12,7 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Lib\Portal\Rsx_Portal_Url;
 
 /**
  * Proxority_Routes - the whitelist Proxority refreshes from the application:

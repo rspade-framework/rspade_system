@@ -263,6 +263,6 @@ FILE LOCATION
 
 SEE ALSO
     Flash Alert system (uses Rsx_Storage for queue persistence)
-    See system/app/RSpade/Lib/Flash/CLAUDE.md
+    See system/app/RSpade/Lib/Ui/Flash/CLAUDE.md
 
 RSPADE                           January 2025                    RSX_STORAGE(1)

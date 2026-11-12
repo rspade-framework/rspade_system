@@ -9,11 +9,11 @@ namespace App\RSpade\Tests\Mail\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Mail\Rsx_Mail;
-use App\RSpade\Core\Models\Email_Attachment_Model;
-use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Messaging\Mail\Email_Attachment_Model;
+use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
+use App\RSpade\Lib\Messaging\Mail\Rsx_Mail;
 
 /**
  * Rsx_Mail_Displayable_Html_Test - a stored message body made displayable from the

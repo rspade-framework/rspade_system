@@ -10,6 +10,7 @@ namespace App\RSpade\Sys\App\Sys\Users;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
 use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
 
 /**
@@ -29,7 +30,8 @@ use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
  *
  * Each row: Login_History::present_record()'s keys, created_at as ISO UTC, plus `tone` -
  * the _Sys_Status_Badge tone its outcome is drawn in (TONES below; anything else is a
- * failure).
+ * failure) - and `ip_address__location`, where the address is (Rsx_Geo_Ip::label()),
+ * resolved for the rows of the page served and never stored, sorted or searched.
  */
 class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
 {
@@ -87,6 +89,7 @@ class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
             $presented['id'] = (int) $presented['id'];
             $presented['created_at'] = Rsx_Time::to_iso($presented['created_at']);
             $presented['tone'] = self::TONES[$presented['status']] ?? 'fail';
+            $presented['ip_address__location'] = $presented['ip_address'] === null ? null : Rsx_Geo_Ip::label($presented['ip_address']);
 
             return $presented;
         }, $records);
