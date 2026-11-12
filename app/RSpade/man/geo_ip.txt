@@ -39,12 +39,22 @@ DESCRIPTION
 
     THREE RULES FOR CALLERS:
 
-    1. CALL IT WHENEVER A LOCATION IS SHOWN, AND NEVER STORE THE ANSWER.
-       Not in a column, not in a JSON blob, not in a history row. The answer
-       may be null the first times it is asked (until a database has been
-       acquired on this box), and a later call may answer differently when
-       the database updates - which is the point. Lookups are cached for you
-       (below), so calling it per row per load is the intended use.
+    1. CALL IT WHENEVER A LOCATION IS SHOWN, AND NEVER STORE THE ANSWER AS
+       DATA. Not in a column, not in a JSON or meta field, not in a history
+       or audit row, not in a cached payload - nothing the application reads
+       back. The answer may be null the first times it is asked (until a
+       database has been acquired on this box), and a later call may answer
+       differently when the database updates - which is the point. Lookups
+       are cached for you (below), so calling it per row per load is the
+       intended use.
+
+       A MESSAGE COMPOSED FOR A PERSON MAY PRINT IT. An email, an SMS or a
+       PDF generated for sending may print the location resolved when it is
+       composed ("from 203.0.113.7 - Denver, Colorado, USA"): the message
+       states what was true when it was sent, like its timestamp, and nothing
+       reads it back as a location - even though an email's rendered body
+       sits in the mail queue. Resolve it while composing (an email's data()),
+       and treat a null answer as "no location" - print the address alone.
 
     2. IT IS NEVER A SECURITY CONTROL. An address's location is approximate,
        often wrong for mobile and corporate networks, and spoofable by
@@ -56,6 +66,19 @@ DESCRIPTION
        "IP geolocation by DB-IP" linking to https://db-ip.com.
        <Geo_Ip_Credit /> (in every bundle) is that line; place it once near
        the list or field, not once per row.
+
+       A sent message carries the same credit. In an email, put it in the
+       message's footer area, once: HTML
+
+           IP geolocation by <a href="https://db-ip.com">DB-IP</a>
+
+       and in the plain-text rendition spell the URL out, since a text reader
+       has no link:
+
+           IP geolocation by DB-IP (https://db-ip.com)
+
+       An SMS, which has no footer, appends "(location: DB-IP, db-ip.com)" or
+       leaves the location out.
 
 API REFERENCE
 

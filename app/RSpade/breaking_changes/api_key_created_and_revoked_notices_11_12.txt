@@ -1,0 +1,128 @@
+API KEY EVENTS: EVERY KEY MINTED OR ENDED IS REPORTED, RECORDED ON ITS HOLDER'S HISTORY, AND ANNOUNCED BY A SECURITY EMAIL
+Date: 2026-11-12
+
+IF YOU DO NOTHING: every API key your application mints or ends now fires api_key.created / api_key.revoked after it commits, and a key minted by rsx:api:key:temp is marked is_temporary - but with no handler of yours nothing is recorded and nobody is told. One case breaks outright: an Api_Key_Model override that REDECLARES generate() with the old parameter list no longer matches the base's signature and fails to load (PHP "Declaration ... must be compatible"); add the new last parameter (below).
+
+SUMMARY
+    Category 3. An API key's life is now an EVENT the framework fires from the
+    key model, so an application can audit and announce every key from one
+    handler instead of from each screen and command:
+
+      - the FRAMEWORK gained the actions api_key.created / api_key.revoked
+        {api_key, user, actor, audit_session_id, ip_address} (+ how: revoked |
+        deleted), fired after the write commits (Api_Key_Event), and the
+        _api_keys.is_temporary column, set by rsx:api:key:temp through
+        generate(..., $is_temporary);
+      - the REFERENCE APPLICATION records every key created or ended as an
+        action-log row on the holder's history (with the address it came
+        from) and mails the holder a SECURITY "an API key was created on your
+        account" / "...was revoked" notice - skipping temporary keys.
+
+    Your /rsx/ receives none of the application half. Port what you want.
+
+WHAT YOU ALREADY HAVE
+    - The two events. Fired from Api_Key_Model's `created`, `updated` and
+      `deleted` hooks through afterCommit(): inside a transaction they wait
+      for the commit and a rollback drops them. api_key.revoked fires only
+      for a key that was LIVE (not revoked, not expired) - revoke(), or the
+      row deleted (rsx:api:key:delete --purge). A key reaching its expiry
+      fires nothing. actor is the identity acting on the request (the
+      impersonator while impersonating), null from a command. Store
+      audit_session_id to say where it came from. rsx:man external_api (KEY
+      EVENTS) and rsx:man event_hooks (API Key Events).
+    - _api_keys.is_temporary (migration
+      2026_11_12_231138_add_is_temporary_to_api_keys; keys already named
+      'Temporary (CLI)' are marked by it). rsx:api:key:temp sets it;
+      rsx:api:key:* --json reports it. A handler skips announcing a key on
+      this flag - never by comparing the key's name to
+      Api_Key_Temp_Command::KEY_NAME, which is only a label.
+    - Api_Key_Model (likely-overridden): an override that EXTENDS the base
+      inherits all of this. An override that redeclares generate() must take
+      the new parameter and pass it on:
+
+          public static function generate(
+              int $user_id,
+              string $name,
+              string $environment = 'live',
+              ?int $user_role_id = null,
+              ?\Carbon\Carbon $expires_at = null,
+              ?string $scopes = null,
+              bool $read_only = false,
+              bool $is_temporary = false
+          ): array {
+              // your additions
+              return parent::generate($user_id, $name, $environment, $user_role_id,
+                  $expires_at, $scopes, $read_only, $is_temporary);
+          }
+
+      An override that redeclares booted() already chains parent::booted()
+      (PHP-PARENT-CHAIN-01), which is where the events are wired. An override
+      that announced keys from its own model hook can drop that hook and
+      handle the events instead.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    - Nothing records a key created or revoked against its holder.
+    - The holder is not told a key was created on, or revoked from, their
+      account - by themself, an administrator (impersonating or not) or the
+      command line.
+
+THE REFERENCE IMPLEMENTATION AND PORTING IT
+    Every path below is under system/app/RSpade/resource/reference_app/ (your
+    disk, release-current).
+
+    1. ONE HANDLER, ONE TASK. The handler skips a temporary key and dispatches
+       a task carrying the key's facts (a deleted key's row is gone by the
+       time it runs); the task writes the row under the holder's site's write
+       lock (the handler may run under another site's lock, or none) and
+       queues the email:
+           handlers/Api_Key_Event_Handlers.php
+           services/api_key_audit_service.php
+       Remove any recording or mailing your key screens or commands do
+       themselves.
+
+    2. THE ACTION LOG. Two types beside the password types (needing the
+       action_logs.audit_session_id column and the explicit $actor /
+       $audit_session_id on Action_Log::record() from
+       password_audit_and_security_notices_11_12.txt): TYPE_API_KEY_CREATED
+       (52) and TYPE_API_KEY_REVOKED (53), metadata api_key_id, name,
+       key_prefix, read_only, scopes, expires_at (+ how), and their renderers,
+       which name the key and print the address. The feed icon bucket 5 (50-59)
+       already covers them:
+           models/action_log_model.php
+           lib/action_log/action_log_renderer.php (api_key_created,
+               api_key_revoked, api_key_name())
+       The rows appear on the holder's User Management History (and the
+       administrator's) with no further change.
+
+    3. THE NOTICE. Api_Key_Notice_Email (SECURITY): the key's name and
+       prefix (never the key), when, by whom (you / an administrator, named /
+       an operator from the command line), from which address with its
+       location resolved as the message is composed and the DB-IP credit at
+       the foot when one is printed (rsx:man geo_ip), for a creation its
+       access, scopes and expiry, and "If this wasn't you, contact an
+       administrator." tag() is created, revoked or deleted:
+           emails/api_key_notice_email.php (+ .blade.php)
+
+    THE CATEGORY. SECURITY ignores the recipient opt-out AND the site block
+    list: the notice is the account reporting on itself (rsx:man email,
+    RECIPIENTS AND BLOCKLIST). An application whose operator must be able to
+    silence it for a blocked address sends it TRANSACTIONAL instead, knowing
+    a blocked holder then hears nothing. SECURITY carries no unsubscribe
+    link, so keep rsx.mail.branding.footer_text free of
+    notification-preferences wording.
+
+    WHICH PATHS NOTIFY. Every mint and end of a key that is not temporary:
+    Settings > API Keys (create, revoke), User Management's revoke, the
+    /apidocs tester's one-hour key (minted from a browser session without a
+    password confirmation, so its holder is told), rsx:api:key:create and
+    rsx:api:key:delete (revoke, or --purge of a live key). Not
+    rsx:api:key:temp, and not a key expiring.
+
+VERIFICATION
+    - Create a key in Settings > API Keys and revoke it: the holder's page in
+      User Management lists "created API key ..." and "revoked their API key
+      ...", and php artisan rsx:mail:queue --tag=created / --tag=revoked
+      shows one Api_Key_Notice_Email each, to the holder.
+    - php artisan rsx:api:key:create --user=<a test user> then
+      rsx:api:key:delete <id> --force: two rows "... from the command line",
+      two notices. rsx:api:key:temp --user=<the same> adds neither.

@@ -20,6 +20,7 @@ use App\RSpade\Core\Session\Site_Sign_In_History;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
+use App\RSpade\Lib\Portal\Portal_User_Model;
 
 /**
  * Session model - handles both authentication sessions and static session management
@@ -3351,6 +3352,31 @@ class Session extends Rsx_System_Model_Abstract
         $impersonator = self::__user_session(self::REALM_STAFF)?->impersonator_login_user_id;
 
         return $impersonator === null ? null : (int) $impersonator;
+    }
+
+    /**
+     * The PERSON acting on this request, as the identity a security event names as its actor:
+     * on a portal request the signed-in portal user; otherwise the staff identity signed in on
+     * the browser (or the API key's holder) - the IMPERSONATOR while one is impersonating,
+     * since that is the person who acted. Null with nobody signed in (a reset link, a command,
+     * a task).
+     *
+     * FRAMEWORK INTERNAL - the actor of the password-change events (Password_Change) and the
+     * API key events (Api_Key_Event).
+     *
+     * @return Login_User_Model|\App\RSpade\Lib\Portal\Portal_User_Model|null
+     */
+    public static function _acting_identity(): ?\App\RSpade\Core\Database\Models\Rsx_Model_Abstract
+    {
+        if (!self::is_api_request() && \App\RSpade\Lib\Portal\Rsx_Portal::is_portal_request()) {
+            $portal_user_id = \App\RSpade\Lib\Portal\Portal_Session::get_portal_user_id();
+
+            return $portal_user_id ? Portal_User_Model::find((int) $portal_user_id) : null;
+        }
+
+        $login_user_id = self::get_impersonator_login_user_id() ?: self::get_login_user_id();
+
+        return $login_user_id ? Login_User_Model::find((int) $login_user_id) : null;
     }
 
     /**

@@ -19,7 +19,7 @@ Rsx_Geo_Ip::label('81.2.69.142');   // 'London, England, GBR' - else the place; 
 
 ## The three rules
 
-1. **Call it whenever a location is shown; NEVER store the answer** - no column, no JSON, no history row. It may be null the first times (no database acquired yet on this box), and a later call may answer differently when the monthly database updates. Answers are cached for a day in Redis, so calling it per row per load is the intended use.
+1. **Call it whenever a location is shown; NEVER store the answer as data** - no column, no JSON or meta field, no history or audit row, no cached payload: nothing the application reads back. **A message composed for a person - an email, an SMS, a PDF generated for sending - MAY print the location resolved when it is composed** (it states what was true when sent, like its timestamp; nothing reads it back), with the DB-IP credit in the footer: HTML `IP geolocation by <a href="https://db-ip.com">DB-IP</a>`, plain text `IP geolocation by DB-IP (https://db-ip.com)`; a null answer prints the address alone. It may be null the first times (no database acquired yet on this box), and a later call may answer differently when the monthly database updates. Answers are cached for a day in Redis, so calling it per row per load is the intended use.
 2. **Never a security control** - approximate, often wrong for mobile and corporate networks, spoofable by a VPN. Never gate, block, score or alert on it.
 3. **Credit DB-IP wherever a location or network name is shown**: `<Geo_Ip_Credit />` (in every bundle), once per region (below the table, under the field group), never per row. CC BY 4.0 requires it.
 

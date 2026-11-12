@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use Illuminate\Support\Str;
+use App\RSpade\Core\Api\Api_Key_Event;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
 use App\RSpade\Core\Models\User_Model;
@@ -20,6 +21,10 @@ use App\RSpade\Core\Models\User_Model;
  * - A key may be READ-ONLY: read_only = 1 means it may execute GET requests only, and every
  *   non-GET request with it is refused 403 read_only_key by Api_Dispatcher, before its scopes
  *   are even consulted. The flag is set at mint and never changes - see generate().
+ * - A key may be TEMPORARY: is_temporary = 1 marks a short-lived key minted for one run of a
+ *   script (rsx:api:key:temp), set at mint. It changes nothing about what the key may do; it
+ *   is reported on the key events so a handler can tell such a key from a standing credential
+ *   without comparing names.
  * - A key may be SCOPED below its holder's authority: the scopes column carries one bare
  *   path-pattern grant per line, whose entire meaning lives in Api_Scopes. NULL means
  *   unrestricted; any scope makes the key deny-by-default. Scopes subtract only - they never
@@ -38,6 +43,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property \Carbon\Carbon|null $expires_at
  * @property bool $is_revoked
  * @property bool $read_only
+ * @property bool $is_temporary
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
  *
@@ -59,6 +65,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property string $expires_at
  * @property int $id
  * @property int $is_revoked
+ * @property int $is_temporary
  * @property string $key_hash
  * @property string $key_prefix
  * @property string $last_used_at
@@ -93,9 +100,40 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
 
     public static $enums = [];
 
+    /**
+     * A key's life is reported by the framework, whatever wrote it (Api_Key_Event):
+     *
+     *   - api_key.created once an inserted key has COMMITTED;
+     *   - api_key.revoked once a write that ENDED a live key has committed - a save setting
+     *     is_revoked (revoke()), or the row's deletion (rsx:api:key:delete --purge). A key that
+     *     was already revoked or past its expiry fires nothing.
+     *
+     * Both run on a model write only; a write that bypasses the model (raw SQL, ->raw_bulk())
+     * gets none of them.
+     */
+    protected static function booted()
+    {
+        parent::booted();
+
+        static::created(function ($model) {
+            Api_Key_Event::_after_created($model);
+        });
+
+        static::updated(function ($model) {
+            if ($model->wasChanged('is_revoked') && (bool) $model->is_revoked) {
+                Api_Key_Event::_after_ended($model, Api_Key_Event::HOW_REVOKED);
+            }
+        });
+
+        static::deleted(function ($model) {
+            Api_Key_Event::_after_ended($model, Api_Key_Event::HOW_DELETED);
+        });
+    }
+
     protected $casts = [
         'is_revoked' => 'boolean',
         'read_only' => 'boolean',
+        'is_temporary' => 'boolean',
         'last_used_at' => 'datetime',
         'expires_at' => 'datetime',
     ];
@@ -121,6 +159,10 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      *                        read_only is fixed at mint, because widening a credential already
      *                        in service would change what it can do under the integration
      *                        holding it, silently. Revoke and mint a replacement instead.
+     * @param bool $is_temporary True marks a short-lived key minted for one run of a script
+     *                           (rsx:api:key:temp). It grants and limits nothing; it rides the
+     *                           api_key.created / api_key.revoked events so a handler can skip
+     *                           announcing such a key. Fixed at mint, like read_only.
      * @return array{key: string, model: Api_Key_Model} Plaintext key and saved model
      *
      * @throws Api_Scope_Validation_Exception when $scopes carries a scope that does not
@@ -134,7 +176,8 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         ?int $user_role_id = null,
         ?\Carbon\Carbon $expires_at = null,
         ?string $scopes = null,
-        bool $read_only = false
+        bool $read_only = false,
+        bool $is_temporary = false
     ): array {
         // {prefix}{env}_{32 random chars}, e.g. rsx_live_xxxxx. The leading token is
         // config('rsx.api.key_prefix') so a product's keys read as its own; lookup is by
@@ -167,6 +210,7 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         // Stored explicitly, exactly as every other field is - the column's DEFAULT 0 is for
         // the rows that already existed, never a substitute for saying what this key is.
         $model->read_only = $read_only;
+        $model->is_temporary = $is_temporary;
         // Normalized before the row is written, so what is stored is what Api_Scopes reads
         // back - and a malformed scope throws here rather than at first request.
         $model->scopes = Api_Scopes::canonicalize($scopes);

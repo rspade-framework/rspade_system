@@ -39,7 +39,9 @@ class Api_Key_Temp_Command extends Command
 {
     /**
      * The name every key minted here carries. A constant so the string in the docs, the
-     * string in the UI and the string in the code cannot drift apart.
+     * string in the UI and the string in the code cannot drift apart. It is a LABEL for
+     * people: what marks the key as temporary is is_temporary, set on every key minted here
+     * and reported on the api_key.created / api_key.revoked events.
      */
     public const KEY_NAME = 'Temporary (CLI)';
 
@@ -74,7 +76,8 @@ class Api_Key_Temp_Command extends Command
             null,
             $expires_at,
             $scopes,
-            (bool) $this->option('read-only')
+            (bool) $this->option('read-only'),
+            true
         );
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 

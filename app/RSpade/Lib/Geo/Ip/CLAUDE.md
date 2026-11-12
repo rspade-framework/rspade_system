@@ -41,7 +41,10 @@ and what must stay true when editing it.
   Listed ranges never expire; Anthropic's are refreshed before each release
   (docs.dev/audits/framework_internal_audit_checklist.md).
   Keys are strings (`'AS16509'`, a CIDR) because the config merge appends numeric keys.
-- **Answers are never stored in MySQL** - not by the framework, not by an application. No
+- **Answers are never stored as data** (MySQL, a JSON or meta field, a history row, a cached
+  payload) - not by the framework, not by an application. A message composed for a person (an
+  email, an SMS, a PDF for sending) may print the location resolved when it is composed, with
+  the DB-IP credit (`rsx:man geo_ip`, rule 1 and 3). No
   framework table has a location column, and no framework reader (`Ip_Address`, the session
   listings, `Login_History`, `Audit_Session`) answers one: a screen's endpoint adds
   `ip_address__location` itself (the template's `Session_Listing::row()`, the `/_sys` Users and

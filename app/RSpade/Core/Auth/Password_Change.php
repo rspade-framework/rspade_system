@@ -8,12 +8,8 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Lib\Portal\Portal_Session;
-use App\RSpade\Lib\Portal\Portal_User_Model;
-use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * Password_Change - the CAUSE vocabulary of a password change and the one event that reports
@@ -114,7 +110,7 @@ class Password_Change
         $payload = [
             'identity' => $identity,
             'cause' => $cause ?? self::CAUSE_UNKNOWN,
-            'actor' => static::__acting_identity(),
+            'actor' => Session::_acting_identity(),
             'audit_session_id' => null,
             'ip_address' => Session::get_client_ip(),
         ];
@@ -124,26 +120,5 @@ class Password_Change
 
             Rsx::trigger_action($event, $payload);
         });
-    }
-
-    /**
-     * Who is acting on this request: on a portal request the signed-in portal user; otherwise
-     * the staff identity signed in on the browser - the IMPERSONATOR while one is impersonating,
-     * since that is the person who acted. Null with nobody signed in (a reset link, the forced
-     * change before its sign-in, a command).
-     *
-     * @return Login_User_Model|Portal_User_Model|null
-     */
-    private static function __acting_identity(): ?Rsx_Model_Abstract
-    {
-        if (!Session::is_api_request() && Rsx_Portal::is_portal_request()) {
-            $portal_user_id = Portal_Session::get_portal_user_id();
-
-            return $portal_user_id ? Portal_User_Model::find((int) $portal_user_id) : null;
-        }
-
-        $login_user_id = Session::get_impersonator_login_user_id() ?: Session::get_login_user_id();
-
-        return $login_user_id ? Login_User_Model::find((int) $login_user_id) : null;
     }
 }

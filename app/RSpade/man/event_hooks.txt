@@ -704,6 +704,46 @@ FRAMEWORK EVENT CATALOG
                      rsx:man session (PASSWORD CHANGES).
             Write the event name as a LITERAL in #[OnEvent] - never a class constant.
 
+    API Key Events (action)
+
+        api_key.created (action)    a key was minted
+        api_key.revoked (action)    a LIVE key was ended
+            Fired from: Api_Key_Model's own hooks (Api_Key_Model_Abstract
+                        booted(), through Api_Key_Event) - `created` for a
+                        new row (Api_Key_Model::generate()); `updated` when a
+                        save set is_revoked (revoke()) and `deleted` when the
+                        row was deleted (rsx:api:key:delete --purge), each
+                        only for a key that was not already revoked or past
+                        its expiry. AFTER the write commits (afterCommit():
+                        inside a transaction it waits for the commit and a
+                        rollback drops it; with none open it fires at once).
+                        A key reaching its expiry fires nothing; a raw write
+                        (SQL, ->raw_bulk()) fires nothing.
+            Data: {api_key: Api_Key_Model, user: User_Model|null,
+                   actor: Login_User_Model|Portal_User_Model|null,
+                   audit_session_id: int|null, ip_address: string|null}
+                  plus, on api_key.revoked, how: revoked | deleted
+                  (Api_Key_Event::HOW_*).
+                  api_key is the model, never the plaintext: name,
+                  key_prefix, scopes, read_only, expires_at and is_temporary
+                  are read off it (a deleted key still carries them).
+                  user is the holder's users row. actor, audit_session_id
+                  and ip_address mean what they mean on the password events:
+                  the identity acting on the request (the impersonator while
+                  impersonating), null from a command; the audit session
+                  resolved after the commit - store it, never the address.
+                  is_temporary is set on every key rsx:api:key:temp mints:
+                  the events fire for it, flagged, so a handler announcing
+                  keys skips it on the flag rather than the name.
+            Return: ignored (it is an action). A throw after the commit is
+                    reported, never answered: the key stands.
+            Use for: recording the key on its holder's history and telling
+                     the holder. A handler runs under whatever lock the write
+                     was made under - another site's, or none - so one
+                     writing site-scoped rows dispatches a task. See
+                     rsx:man external_api (KEY EVENTS).
+            Write the event name as a LITERAL in #[OnEvent] - never a class constant.
+
     Initial User Events (action)
 
         user.initial.created (action)

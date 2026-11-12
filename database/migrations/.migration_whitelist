@@ -851,6 +851,11 @@
             "created_at": "2026-11-12T04:30:37+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe drop_stored_ip_geolocation_columns"
+        },
+        "2026_11_12_231138_add_is_temporary_to_api_keys.php": {
+            "created_at": "2026-11-12T23:11:38+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_is_temporary_to_api_keys"
         }
     }
 }

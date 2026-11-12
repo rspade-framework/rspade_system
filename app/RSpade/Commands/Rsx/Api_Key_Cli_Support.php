@@ -357,6 +357,8 @@ class Api_Key_Cli_Support
             // True for a key that may execute GET requests only. Fixed at mint, like the
             // scopes - a script reading this is reading what the key IS, not a setting.
             'read_only' => (bool) $key->read_only,
+            // True for a key rsx:api:key:temp minted for one script run.
+            'is_temporary' => (bool) $key->is_temporary,
             'expires_at' => $key->expires_at ? Rsx_Time::to_iso($key->expires_at) : null,
             'last_used_at' => $key->last_used_at ? Rsx_Time::to_iso($key->last_used_at) : null,
             'created_at' => Rsx_Time::to_iso($key->created_at),

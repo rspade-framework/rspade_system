@@ -647,7 +647,8 @@ API KEYS
 
         ['key' => $plaintext, 'model' => $model] = Api_Key_Model::generate(
             $user_id, 'My integration', 'live', $user_role_id = null,
-            $expires_at = null, $scopes = null, $read_only = false
+            $expires_at = null, $scopes = null, $read_only = false,
+            $is_temporary = false
         );  // returns ['key' => 'rsx_live_...', 'model' => Api_Key_Model]
 
         Api_Key_Model::find_by_key($plaintext)   // sha256 lookup, non-revoked,
@@ -657,8 +658,9 @@ API KEYS
     Columns: user_id, name, key_hash, key_prefix ({prefix}{env}_ + first chars,
     for display), user_role_id (RESERVED - see below), scopes (TEXT NULL, the
     key's own scope set - see KEY SCOPES), read_only (TINYINT(1) NOT NULL
-    DEFAULT 0 - GET requests only; see READ-ONLY KEYS), last_used_at, expires_at,
-    is_revoked, timestamps.
+    DEFAULT 0 - GET requests only; see READ-ONLY KEYS), is_temporary (TINYINT(1)
+    NOT NULL DEFAULT 0 - minted by rsx:api:key:temp; see KEY EVENTS),
+    last_used_at, expires_at, is_revoked, timestamps.
 
     KEY PREFIX. config('rsx.api.key_prefix'), default 'rsx_', is the leading
     token on newly minted keys: {prefix}{environment}_{random} -> rsx_live_xxx.
@@ -687,6 +689,38 @@ API KEYS
     endpoint, because narrowing a credential already in service would change
     what it can do under the integration holding it, silently and with no
     deploy. To change a key's scope, revoke it and mint a replacement.
+
+    KEY EVENTS. A key's life is announced by the framework, from the model's
+    own hooks (Api_Key_Event), so no path that mints or ends a key can skip it
+    - Settings > API Keys, an administrator, the /apidocs tester, the CLI:
+
+        api_key.created    a key was minted (generate())
+        api_key.revoked    a LIVE key was ended: revoke() (how: revoked), or
+                           its row deleted (rsx:api:key:delete --purge;
+                           how: deleted)
+
+    Payload {api_key, user, actor, audit_session_id, ip_address} (+ how on
+    revoked): the key MODEL (never the plaintext - read name, key_prefix,
+    scopes, read_only, expires_at, is_temporary off it), its holder's users
+    row, the identity acting on the request (the impersonator while one is
+    impersonating; null from a command), the audit session (store it, never
+    the address) and the address. Both fire AFTER COMMIT: a rolled-back mint
+    fires nothing. Ending a key already revoked or expired fires nothing, and
+    so does a key reaching its expiry - nothing is written, and the expiry
+    was stated at mint. A raw write (SQL, ->raw_bulk()) fires nothing.
+
+    TEMPORARY KEYS. rsx:api:key:temp sets is_temporary = 1 on every key it
+    mints (generate(..., $is_temporary = true)); it grants and limits
+    nothing. The events still fire for such a key, flagged, so an auditor can
+    record it; a handler announcing keys to their holder skips it on the
+    flag, never on the name. The /apidocs tester's one-hour key is NOT
+    temporary in this sense: it is minted from a browser session, which is
+    exactly the case its holder must hear about.
+
+    The framework tells nobody itself. The reference application's handler
+    records an action-log row on the holder's history and mails the holder a
+    SECURITY notice for every key that is not temporary (rsx:man email,
+    RECIPIENTS AND BLOCKLIST; rsx:man event_hooks, API Key Events).
 
     THE PRESETS ARE THE APPLICATION'S, not the framework's - see PRESETS ARE APP
     DATA under KEY SCOPES. The reference implementation is
@@ -743,7 +777,9 @@ API KEYS
     to remember to revoke it, and a job that dies half way leaves a credential
     that stops working by itself. Every key it mints is named "Temporary (CLI)"
     verbatim, in rsx:api:key:list and in Settings > API Keys, so what it is and
-    whether it can go are answerable without reading the expiry column.
+    whether it can go are answerable without reading the expiry column. The
+    name is a label for people; what marks the key is is_temporary = 1 (in
+    --json as "is_temporary"), which the key events report (KEY EVENTS).
 
     --scope IS REPEATABLE, one path pattern per value - a scope set is a list,
     and a list is what a shell can build:
@@ -862,7 +898,8 @@ API KEYS
     throwaway for itself (_Apidocs_Controller::mint_temporary_key): a live key
     for the signed-in user, named 'API Tester (temporary)', expiring in one
     hour. It is gated on the same Session::has_api_access() the page is, and it
-    is the browser twin of rsx:api:key:temp.
+    is the browser twin of rsx:api:key:temp - except that it is not marked
+    is_temporary, so its holder is told of it like any other key (KEY EVENTS).
 
     ROLE OVERRIDE - RESERVED, NOT ENFORCED. user_role_id is intended to let a
     key run at a REDUCED role. It is NOT honored: a key always runs at the
@@ -2062,6 +2099,8 @@ SEE ALSO
     rsx:man request_history  _request_ref replay, timing fields
     rsx:man auth_gates       the mandatory #[Auth] gate on every endpoint
     rsx:man session          API KEY SESSIONS, audit sessions, Session accessors
+    rsx:man event_hooks      api_key.created / api_key.revoked (API Key Events)
+    rsx:man email            the SECURITY category a key notice is sent in
     rsx:man acls             Permission:: checks, role_id, the reserved override
     rsx:man model_fetch      redacting toArray(), enum magic properties
     rsx:man text_types       declared text columns: plain vs encoded writes

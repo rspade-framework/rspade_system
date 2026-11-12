@@ -3,7 +3,9 @@ Geo_Ip_Credit
 
 The attribution DB-IP's IP to City Lite licence (CC BY 4.0) requires wherever a location from
 Rsx_Geo_Ip is shown: "IP geolocation by DB-IP", linking to https://db-ip.com. Place one near
-every list or field that shows a location - once per screen region, not once per row.
+every list or field that shows a location - once per screen region, not once per row. A
+message composed for a person (an email, an SMS) carries the same credit as text in its footer
+instead - rsx:man geo_ip, rule 3.
 
     <Geo_Ip_Credit />
 

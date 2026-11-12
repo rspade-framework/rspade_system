@@ -89,8 +89,13 @@ the one point every answer passes, which also adds the timing fields.
   ONE validator every write path runs, `matches()` the ONE matcher; scopes only subtract, and a
   malformed stored scope still counts, so the key fails closed.
 - `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display), revoke, expiry,
-  `read_only` fixed at mint, `scopes`. `Api_Request_Log_Model(_Abstract).php` — the request
-  log (bodies through `Request_Payload_Redactor`). Both are base + shell (`Core/Models/CLAUDE.md`).
+  `read_only` and `is_temporary` fixed at mint, `scopes`. Its `booted()` hooks hand every
+  insert, revocation and deletion of a live key to `Api_Key_Event.php`, which fires
+  `api_key.created` / `api_key.revoked` after commit with the acting identity
+  (`Session::_acting_identity()`, shared with the password events) - the only place a key's
+  life is announced, so no path that writes a key may bypass the model.
+  `Api_Request_Log_Model(_Abstract).php` — the request log (bodies through
+  `Request_Payload_Redactor`). Both are base + shell (`Core/Models/CLAUDE.md`).
 - `Api_Route_Usage.php` — last call per route PATTERN, at most one write a minute: answers
   "is anything still calling v1?".
 - `Api_Catalog.php`, `Api_Openapi.php` — read model over the catalog (version display rule,

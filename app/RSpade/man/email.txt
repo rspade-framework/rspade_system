@@ -270,10 +270,21 @@ RECIPIENTS AND BLOCKLIST
     Pick by what the message IS, not by how much you want it delivered. SECURITY is for
     a message the recipient is waiting for in order to get in, sent because of something
     they just did, or for a warning that somebody just acted on the recipient's OWN
-    account (its password was changed, its second factor was failed until the challenge
-    was destroyed) - a notice they must get even if they opted out of everything - never
-    for a notice the site decides to send about anything else. Its body says what to do
+    account (its password was changed, an API key was created on it or revoked, its
+    second factor was failed until the challenge was destroyed) - a notice they must get
+    even if they opted out of everything - never for a notice the site decides to send
+    about anything else. Its body says what to do
     if it was not them; there is nothing to unsubscribe from.
+
+    A WARNING ABOUT THE ACCOUNT IS SECURITY, EVEN FOR A BLOCKED ADDRESS. The site block
+    list is the site's ruling about correspondence IT initiates; a notice that somebody
+    acted on the recipient's own sign-in or credentials is the account reporting on
+    itself, and suppressing it hides exactly the event its owner most needs to see. So
+    the recommendation is SECURITY, and no category exists for "unstoppable by the
+    opt-out, stopped by the block list". An application whose operator must be able to
+    silence such a notice for an address sends it TRANSACTIONAL instead (ignores the
+    opt-out, honours the block list) - deliberately, knowing a blocked owner then hears
+    nothing.
 
     TWO BLOCK RULES, TWO TABLES. The recipient OPT-OUT is the recipient's choice, set by an
     unsubscribe link, per category, and never applies to transactional or security mail.
