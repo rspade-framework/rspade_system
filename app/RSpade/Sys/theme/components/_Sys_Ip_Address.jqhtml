@@ -3,7 +3,8 @@ _Sys_Ip_Address - an IP address in the monospace face, with where it is as a mut
 line when that is known.
 
 $ip_address - the address (null renders the muted em-dash)
-$location   - the server's Rsx_Geo_Ip::label() for it, shipped beside the address as
+$location   - the server's Rsx_Geo_Ip::label() for it ("City, State, USA", or a listed
+              network's name such as "AWS"), shipped beside the address as
               ip_address__location; null shows the address alone
 
 The endpoint resolves the location on every load and never stores it (rsx:man geo_ip). A

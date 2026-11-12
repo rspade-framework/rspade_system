@@ -355,12 +355,17 @@ FRAMEWORK INVENTORY
                                  a scheme APP_URL's rule refuses, malformed, a prefix
                                  claiming a framework path). OK with a note while
                                  APP_URL is not configured yet. See rsx:man portal.
-        IP Geolocation           the DB-IP City Lite database (rsx:man geo_ip). OK
-                                 names the installed release month; INFO before it
-                                 is first acquired; WARN when the last finished
-                                 Geo_Ip_Service::update run failed or was killed,
-                                 when the file is older than 62 days, or when a
-                                 file is there but does not open.
+        IP Geolocation           the DB-IP City Lite and ASN Lite databases and
+                                 the notable-network list (rsx:man geo_ip), at the
+                                 worst state of the three. OK names each installed
+                                 release month and the number of listed networks;
+                                 INFO while a database is not acquired yet; WARN
+                                 when a database has EXPIRED (183 days after its
+                                 release: lookups answer without it), the last
+                                 finished Geo_Ip_Service::update run failed or was
+                                 killed, a file is older than 62 days, a file is
+                                 there but does not open, or rsx.geo_ip.networks
+                                 is invalid.
         Ignition Read-Only       Laravel's debug page cannot act: ignition's
                                  enable_runnable_solutions and enable_share_button
                                  are both false (system/config/ignition.php ships

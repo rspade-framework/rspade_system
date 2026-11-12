@@ -1,7 +1,8 @@
 GEO_IP(1)                        RSpade Manual                         GEO_IP(1)
 
 NAME
-    geo_ip - where an IP address is: Rsx_Geo_Ip and the DB-IP City Lite database
+    geo_ip - where an IP address is and whose network it is: Rsx_Geo_Ip and the
+    DB-IP City Lite and ASN Lite databases
 
 TAGS
     sessions, tasks
@@ -10,10 +11,12 @@ SYNOPSIS
     use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
 
     Rsx_Geo_Ip::lookup('8.8.8.8');
-    // ['city' => 'Mountain View', 'state' => 'California', 'country' => 'United States']
+    // ['city' => 'Mountain View', 'state' => 'California', 'country' => 'USA',
+    //  'org' => 'Google']
 
-    Rsx_Geo_Ip::label('8.8.8.8');
-    // 'Mountain View, California, United States'   (null when nothing is known)
+    Rsx_Geo_Ip::label('8.8.8.8');      // 'Google'   (a listed network: its name)
+    Rsx_Geo_Ip::label('81.2.69.142');  // 'London, England, GBR'
+                                       // (null when nothing is known)
 
     // An endpoint ships the location beside the address, resolved on every load:
     'ip_address' => $row['ip_address'],
@@ -24,11 +27,15 @@ SYNOPSIS
 
 DESCRIPTION
     Rsx_Geo_Ip answers the city, state (first subdivision) and country of a
-    public IP address, in English, from DB-IP's IP to City Lite database - a
-    free monthly MMDB release the framework downloads, verifies and keeps
+    public IP address from DB-IP's IP to City Lite database, and - when the
+    address belongs to a NOTABLE network (a cloud, a hosting company, a CDN,
+    a security proxy, an AI provider) - that network's short name, from
+    DB-IP's IP to ASN Lite database and a curated list. Both databases are
+    free monthly MMDB releases the framework downloads, verifies and keeps
     current by itself. It is for DISPLAY: the approximate place beside an
     address on a "where you're signed in" list, an audit trail, a session
-    page.
+    page - and "AWS" or "Anthropic" in place of a data-centre town when the
+    address is a server, a crawler or a proxy rather than a person.
 
     THREE RULES FOR CALLERS:
 
@@ -44,23 +51,43 @@ DESCRIPTION
        whoever controls the routing behind it (a VPN, a proxy). Never gate,
        block, score or alert on it.
 
-    3. CREDIT DB-IP WHERE A LOCATION IS SHOWN. The data is licensed CC BY
-       4.0: every screen showing a location carries "IP geolocation by
-       DB-IP" linking to https://db-ip.com. <Geo_Ip_Credit /> (in every
-       bundle) is that line; place it once near the list or field, not once
-       per row.
+    3. CREDIT DB-IP WHERE A LOCATION IS SHOWN. Both databases are licensed
+       CC BY 4.0: every screen showing a location or network name carries
+       "IP geolocation by DB-IP" linking to https://db-ip.com.
+       <Geo_Ip_Credit /> (in every bundle) is that line; place it once near
+       the list or field, not once per row.
 
 API REFERENCE
 
     Rsx_Geo_Ip::lookup(string $ip): array
-        ['city' => ?string, 'state' => ?string, 'country' => ?string] - always
-        those three keys, any of them null. Values are plain strings from a
-        downloaded file: untrusted text, capped at 100 characters, escaped
-        on output like any other string.
+        ['city' => ?string, 'state' => ?string, 'country' => ?string,
+         'org' => ?string] - always those four keys, any of them null.
+
+        city, state  English names; state is the first subdivision.
+        country      the ISO 3166-1 ALPHA-3 code ('USA', 'GBR'), mapped from
+                     DB-IP's alpha-2 code through the countries table
+                     (Country_Model). A code with no row answers null and is
+                     reported to the log, once per process.
+        org          the listed name of the network the address belongs to
+                     (NOTABLE NETWORKS, below), else null. It supplements the
+                     place: city, state and country are answered either way.
+
+        Values are plain strings from downloaded files and configuration:
+        untrusted text, capped at 100 characters, escaped on output like any
+        other string.
 
     Rsx_Geo_Ip::label(string $ip): ?string
-        lookup() joined for display, unknown parts left out; null when
-        nothing is known.
+        The display line: the org when set ('AWS'); otherwise the place,
+        'City, State, USA', unknown parts left out; null when nothing is
+        known. This is what an endpoint ships as ip_address__location.
+
+    Rsx_Geo_Ip::networks(): array
+        The effective notable-network list, key => name (entries set to null
+        left out). Throws naming the entry when the configuration is invalid.
+
+    Rsx_Geo_Ip::network_name(string $ip, ?int $asn): ?string
+        The listed name for a canonical address: the most specific listed
+        CIDR range containing it, else its ASN's entry, else null.
 
     Rsx_Geo_Ip::canonical_public_ip(string $ip): ?string
         The address in canonical form when it is a valid GLOBAL address,
@@ -71,6 +98,54 @@ API REFERENCE
         The attribution line (a <small>, block). Under a flush card body it
         takes the card's padding.
 
+NOTABLE NETWORKS
+
+    The list is config('rsx.geo_ip.networks') - its shipped default in the
+    framework's config/rsx.php is the ONE place the curated entries live.
+    It is DEFAULT-DENY: an address on an unlisted network answers org null.
+    ISPs, mobile carriers and backbones are never listed, so a person's home,
+    office or phone connection always shows a place. The shipped entries
+    are clearly-notable cloud, hosting, CDN, security-proxy and AI networks,
+    each checked against the ASN database: AWS, Microsoft Azure, Google
+    Cloud, Google, Oracle Cloud, IBM Cloud, Alibaba Cloud, Tencent Cloud,
+    Huawei Cloud, Anthropic, Cloudflare, Fastly, Akamai, Sucuri, Imperva,
+    Zscaler, Gcore, DigitalOcean, Linode, Vultr, Hetzner, OVHcloud, Scaleway,
+    Contabo, Leaseweb, IONOS, GoDaddy, Hostinger, M247, Rackspace, Liquid
+    Web, Namecheap, Kamatera, Hivelocity, UpCloud and Fly.io.
+
+    A key is either:
+
+        'AS16509'          an autonomous system, matched against the ASN
+                           database's answer for the address
+        '160.79.104.0/21'  an IPv4 or IPv6 CIDR range ('2607:6bc0::/48'),
+                           matched against the address itself - no database
+                           needed
+
+    PRECEDENCE: a listed range containing the address wins over its ASN
+    entry, and among several ranges the most specific (longest prefix) wins.
+    Ranges cover networks the ASN database attributes to someone else or
+    not at all: Anthropic's published ranges
+    (https://docs.anthropic.com/en/api/ip-addresses) are listed as ranges
+    because the database attributes part of them to Amazon's ASN and omits
+    the rest. Ranges are matched by Symfony's IpUtils::checkIp(), the
+    matcher the trusted-proxy list runs on.
+
+    EXTENDING IT. An application adds an entry, renames a shipped one (same
+    key, its own name) or unlists one (null) in rsx/resource/config/rsx.php;
+    the two files deep-merge key by key:
+
+        'geo_ip' => [
+            'networks' => [
+                'AS64500' => 'Example Cloud',
+                '203.0.113.0/24' => 'Example Cloud',
+                'AS15169' => null,
+            ],
+        ],
+
+    A key that is neither form, or a name that is empty or over 100
+    characters, is a configuration error: every lookup reports it and
+    answers org null (uncached), and the health row says WARN.
+
 THE ORDER OF A LOOKUP
 
     1. An invalid address, or one outside the global range - private,
@@ -78,54 +153,105 @@ THE ORDER OF A LOOKUP
        answers all-null at once: no cache, no file.
     2. A cached answer is the answer. The cache is RsxCache's persistent
        namespace (Redis database 0), one entry per address, kept ONE DAY.
-    3. The installed database answers, and the answer is cached for a day -
-       an address the database does not know (all-null) included.
-    4. No usable database - not acquired yet, removed by rsx:clean, a file
-       that will not open - answers all-null, NOT cached, and may dispatch
-       the update task (below).
-    5. Anything that throws while reading the database or dispatching the
-       update is REPORTED through the exception handler (it reaches the
-       log) and answers all-null, NOT cached. A lookup never throws: a
-       location is decoration beside an address, never a reason a page
-       fails.
+    3. Each database answers its own part - the city database city, state
+       and country; the ASN database the autonomous system - and org is
+       resolved from the list (NOTABLE NETWORKS). When every part answered,
+       the answer is cached for a day - an address the databases do not know
+       (all-null) included.
+    4. A database that is not usable - not acquired yet, removed by
+       rsx:clean, a file that will not open, or EXPIRED (DATA LIFETIME,
+       below) - leaves its part null, the
+       answer is NOT cached, and the update task may be dispatched (below).
+       The two are independent: one missing never blanks the other's part,
+       and a listed range still answers org with no ASN database.
+    5. Anything that throws while reading a database, mapping its answer,
+       resolving org or dispatching the update is REPORTED through the
+       exception handler (it reaches the log), leaves that part null, and
+       the answer is NOT cached. A lookup never throws: a location is
+       decoration beside an address, never a reason a page fails.
 
-    A long-running process (a task worker) reopens the file when the update
+    A long-running process (a task worker) reopens a file when the update
     replaces it.
 
-    THE TRIGGER. With no usable database a lookup dispatches
+    THE TRIGGER. With a database not usable a lookup dispatches
     Geo_Ip_Service::update - unless a run of it was created in the last
     6 hours (any outcome), or its pending run or its schedule is due within
     5 minutes. A process considers this once.
+
+DATA LIFETIME
+
+    Every external source can stop working - a download page that changes
+    shape, a provider that retires its free release, a box that can no
+    longer reach it, an install that never updates its framework again. So
+    the data degrades in two steps, and the address itself is never lost:
+
+    1. THE PREVIOUS RELEASE KEEPS ANSWERING. A failed update leaves the
+       installed file in place, and lookups keep reading it. The update
+       keeps trying (the maintenance schedule, every new build, and the
+       lookup trigger), and the health row says WARN.
+
+    2. A DATABASE EXPIRES 183 DAYS AFTER ITS OWN RELEASE - its build epoch,
+       the moment DB-IP built it, read from the file's metadata; never the
+       day it was downloaded. From then on lookups treat that database as
+       ABSENT, exactly as if its file were missing: its part of the answer
+       is null, nothing is cached, and the update is triggered as for a
+       missing file. The other database is unaffected until its own release
+       ages out. A later successful update installs a new release and the
+       lookups answer again.
+
+    183 days (Rsx_Geo_Ip::DATA_VALIDITY_DAYS, the one place it is defined)
+    is a validity window on the DATA, ruled by the owner - not a timeout on
+    any operation. DB-IP publishes monthly, so a healthy box replaces each
+    file about five months before it would expire; only a box whose updates
+    have failed for half a year reaches it.
+
+    WHAT THE USER SEES then is the bare address: label() answers null once
+    both databases have expired, and a screen shows the IP address with no
+    location beside it - the address stands on its own. The listed CIDR
+    ranges (NOTABLE NETWORKS) need no database and still answer org; ASN
+    entries answer nothing without the ASN database.
+
+    A cached answer stored while a database was valid may outlive it by at
+    most the cache's one day.
 
 THE UPDATE TASK
 
     Geo_Ip_Service::update is a #[Task] declared #[Exclusive('maintenance')]
     #[Schedule('maintenance')] #[On_Build]: it runs in the maintenance window
     every day, once after every new build (rsx:man tasks, ON BUILD), and when
-    a lookup finds no database. Run it by hand with:
+    a lookup finds a database not usable. Run it by hand with:
 
         php artisan rsx:task:run Geo_Ip_Service update
+
+    It updates both databases by the same scheme, INDEPENDENTLY: one failing
+    never blocks the other. The run updates each, then fails naming every
+    database that failed (the other is installed all the same).
+
+        database          page (db-ip.com/db/download/...)  type
+        DB-IP City Lite   ip-to-city-lite                   DBIP-City-Lite
+        DB-IP ASN Lite    ip-to-asn-lite                    DBIP-ASN-Lite
+                                                            (compat=GeoLite2-ASN)
 
     1. The cheap local check: the installed file is this month's release
        (the UTC month of its build epoch) - "current", no network. In
        development the task is dispatched after every source change, and
        this check is all it does.
-    2. The download page (https://db-ip.com/db/download/ip-to-city-lite) is
-       read for the MMDB release and the SHA1 DB-IP publishes for its
-       UNPACKED file. This month's release is taken, else the previous
-       month's (a month's release appears some days into it); neither
-       listed fails the run. The installed file already being that release
-       ends the run.
-    3. dbip-city-lite-YYYY-MM.mmdb.gz (about 60 MB) is downloaded beside the
-       installed file and unpacked with PHP's own zlib stream (about 130 MB).
+    2. The database's download page is read for the MMDB release and the
+       SHA1 DB-IP publishes for its UNPACKED file. This month's release is
+       taken, else the previous month's (a month's release appears some days
+       into it); neither listed fails that database's update. The installed
+       file already being that release ends it.
+    3. dbip-city-lite-YYYY-MM.mmdb.gz (about 60 MB; about 130 MB unpacked)
+       or dbip-asn-lite-YYYY-MM.mmdb.gz (about 10 MB unpacked) is downloaded
+       beside the installed file and unpacked with PHP's own zlib stream.
        Both are capped at 1 GB - a SIZE bound. There is no time bound of
        ours: the run heartbeats as data arrives, so a stalled transfer is
        ended by the task silence limit (rsx.tasks.silent_timeout); libcurl's
        own built-in default bounds only establishing the connection.
     4. Verification, every check required: the SHA1 matches the published
-       one; the reader opens the file; its database_type is DBIP-City-Lite;
+       one; the reader opens the file; its database_type is the one above;
        its build epoch falls in the release's month (UTC); 8.8.8.8 answers
-       country US.
+       country US (city) or autonomous system 15169 (ASN).
     5. One rename() swaps it into place. Any failure discards the staged
        files, leaves the installed file as it was, and fails the run with
        the reason (rsx:tasks:list, /_sys Tasks, the health row).
@@ -133,25 +259,32 @@ THE UPDATE TASK
     The download is https only, follows at most 5 redirects, and identifies
     itself as "RSpade IP geolocation update".
 
-WHERE THE FILE LIVES
+WHERE THE FILES LIVE
 
-    tmp/geo_ip/dbip-city-lite.mmdb (Rsx_Project_Paths::geo_ip_database_file()).
-    It is a downloaded CACHE, not user data: rsx:clean removes it, and the
-    rebuild that follows dispatches the update (#[On_Build]), so it heals
-    itself. Never commit it, never back it up.
+    tmp/geo_ip/dbip-city-lite.mmdb (Rsx_Project_Paths::geo_ip_city_database_file())
+    tmp/geo_ip/dbip-asn-lite.mmdb  (Rsx_Project_Paths::geo_ip_asn_database_file())
+
+    They are downloaded CACHES, not user data: rsx:clean removes them, and
+    the rebuild that follows dispatches the update (#[On_Build]), so they
+    heal themselves. Never commit them, never back them up.
 
     The reader is maxmind-db/reader, the PURE-PHP MMDB reader - by design:
     no libmaxminddb C extension parses downloaded data in this process.
 
 HEALTH
 
-    rsx:health, row "IP Geolocation" (never a FAIL - a missing database costs
-    locations and nothing else):
+    rsx:health, row "IP Geolocation", one row for both databases and the
+    list, at the worst state of its parts (never a FAIL - a missing database
+    costs locations and nothing else):
 
-        OK    DB-IP City Lite, <YYYY-MM> release
-        INFO  not acquired yet
-        WARN  the last finished update run failed or was killed; the file is
-              older than 62 days; or a file is there but does not open
+        OK    DB-IP City Lite, <YYYY-MM> release; DB-IP ASN Lite, <YYYY-MM>
+              release; <n> notable networks listed
+        INFO  a database not acquired yet
+        WARN  a database EXPIRED - "DB-IP City Lite, <YYYY-MM> release -
+              EXPIRED <date> (183 days after its release)": lookups answer
+              without it (DATA LIFETIME); the last finished update run failed
+              or was killed; a file is older than 62 days; a file is there
+              but does not open; or rsx.geo_ip.networks is invalid
 
     The remediation is the rsx:task:run line above.
 
@@ -160,10 +293,18 @@ TROUBLESHOOTING
     Every location is null
         rsx:health's IP Geolocation row says why. "not acquired yet" on a box
         whose task system is running resolves itself within minutes; a box
-        that cannot reach db-ip.com shows the failed run's error.
+        that cannot reach db-ip.com shows the failed run's error; "EXPIRED"
+        means no update has succeeded for six months (DATA LIFETIME) - fix
+        what the failed run names, or update the framework when the source
+        itself has changed.
 
     A private or loopback address shows no location
         By design: only global addresses are looked up.
+
+    A cloud address shows a town, not the provider
+        Its network is not listed. Add its ASN or range to rsx.geo_ip.networks
+        (NOTABLE NETWORKS). Until the ASN database is acquired only listed
+        ranges answer org.
 
 SEE ALSO
     tasks - #[Task], #[Schedule('maintenance')], #[On_Build], rsx:task:run

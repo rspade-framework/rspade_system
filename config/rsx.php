@@ -2751,6 +2751,107 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | IP Geolocation - notable networks
+    |--------------------------------------------------------------------------
+    |
+    | Rsx_Geo_Ip::lookup() answers 'org' for an address whose autonomous system
+    | (from DB-IP's IP to ASN Lite database) is listed here, and label() shows
+    | that name in place of the city/state/country. The list is DEFAULT-DENY: an
+    | unlisted network answers org null - ISPs, mobile carriers and backbones are
+    | never listed, so a person's home or phone connection always shows a place.
+    | It names clearly-notable cloud, hosting, CDN, security-proxy and AI
+    | networks: traffic from one of them is a server, a crawler or a proxy, not a
+    | person at a desk. Each ASN was checked against the database.
+    |
+    | A key is an autonomous system ('AS16509') or an IPv4 / IPv6 CIDR range
+    | ('160.79.104.0/21', '2607:6bc0::/48'); the value is the short display name.
+    | A range wins over the address's ASN (the most specific range among several),
+    | for networks the ASN database attributes to someone else or not at all.
+    | An application adds or renames an entry under the same key in
+    | rsx/resource/config/rsx.php, and removes a shipped one by setting it to null:
+    |
+    |     'geo_ip' => ['networks' => [
+    |         'AS64500' => 'Example Cloud',
+    |         '203.0.113.0/24' => 'Example Cloud',
+    |         'AS15169' => null,
+    |     ]],
+    |
+    | See: php artisan rsx:man geo_ip
+    |
+    */
+    'geo_ip' => [
+        'networks' => [
+            // Hyperscale clouds
+            'AS16509' => 'AWS',
+            'AS14618' => 'AWS',
+            'AS8987' => 'AWS',
+            'AS8075' => 'Microsoft Azure',
+            'AS396982' => 'Google Cloud',
+            'AS15169' => 'Google',
+            'AS31898' => 'Oracle Cloud',
+            'AS36351' => 'IBM Cloud',
+            'AS45102' => 'Alibaba Cloud',
+            'AS134963' => 'Alibaba Cloud',
+            'AS132203' => 'Tencent Cloud',
+            'AS136907' => 'Huawei Cloud',
+            'AS55990' => 'Huawei Cloud',
+
+            // AI
+            'AS399358' => 'Anthropic',
+            // Anthropic's published inbound and outbound ranges ("will not change without
+            // notice"): https://docs.anthropic.com/en/api/ip-addresses - checked 2026-11-12.
+            // The ASN database attributes part of them to AWS and omits the rest.
+            '160.79.104.0/21' => 'Anthropic',
+            '160.79.104.0/23' => 'Anthropic',
+            '153.61.208.0/20' => 'Anthropic',
+            '153.61.224.0/22' => 'Anthropic',
+            '2607:6bc0::/48' => 'Anthropic',
+
+            // CDN and security proxies
+            'AS13335' => 'Cloudflare',
+            'AS209242' => 'Cloudflare',
+            'AS54113' => 'Fastly',
+            'AS20940' => 'Akamai',
+            'AS16625' => 'Akamai',
+            'AS30148' => 'Sucuri',
+            'AS19551' => 'Imperva',
+            'AS22616' => 'Zscaler',
+            'AS53813' => 'Zscaler',
+            'AS62044' => 'Zscaler',
+            'AS199524' => 'Gcore',
+
+            // Hosting and VPS
+            'AS14061' => 'DigitalOcean',
+            'AS393406' => 'DigitalOcean',
+            'AS63949' => 'Linode',
+            'AS20473' => 'Vultr',
+            'AS24940' => 'Hetzner',
+            'AS213230' => 'Hetzner',
+            'AS16276' => 'OVHcloud',
+            'AS12876' => 'Scaleway',
+            'AS51167' => 'Contabo',
+            'AS40021' => 'Contabo',
+            'AS141995' => 'Contabo',
+            'AS60781' => 'Leaseweb',
+            'AS28753' => 'Leaseweb',
+            'AS8560' => 'IONOS',
+            'AS26496' => 'GoDaddy',
+            'AS398101' => 'GoDaddy',
+            'AS47583' => 'Hostinger',
+            'AS9009' => 'M247',
+            'AS27357' => 'Rackspace',
+            'AS33070' => 'Rackspace',
+            'AS32244' => 'Liquid Web',
+            'AS22612' => 'Namecheap',
+            'AS36007' => 'Kamatera',
+            'AS29802' => 'Hivelocity',
+            'AS202053' => 'UpCloud',
+            'AS40509' => 'Fly.io',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Content Security Policy
     |--------------------------------------------------------------------------
     |

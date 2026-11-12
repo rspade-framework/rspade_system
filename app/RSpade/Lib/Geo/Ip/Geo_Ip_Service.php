@@ -15,50 +15,77 @@ use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip;
 
 /**
- * Geo_Ip_Service - keeps the IP geolocation database (DB-IP City Lite) current.
+ * Geo_Ip_Service - keeps the IP geolocation databases current: DB-IP City Lite (the place)
+ * and DB-IP ASN Lite (the network an address belongs to).
  *
  * update() runs in the maintenance window, once per build (#[On_Build] - so rsx:clean, which
- * removes the file with the rest of tmp/, heals itself), and when Rsx_Geo_Ip::lookup() finds
- * no usable database (Rsx_Geo_Ip::maybe_trigger_update()). It is #[Exclusive('maintenance')]:
+ * removes the files with the rest of tmp/, heals itself), and when Rsx_Geo_Ip::lookup() finds
+ * a database not usable - missing, unreadable, or expired (Rsx_Geo_Ip::DATA_VALIDITY_DAYS past
+ * its release) - (Rsx_Geo_Ip::maybe_trigger_update()). It is #[Exclusive('maintenance')]:
  * never two runs at once, never beside another maintenance task.
+ *
+ * Each database is updated INDEPENDENTLY, by the same scheme - one failing never blocks the
+ * other: the run updates both, then fails naming every database that failed.
  *
  *   1. THE CHEAP LOCAL CHECK. The installed file is this month's release (the UTC month of
  *      its build epoch): "current", no network.
- *   2. THE DOWNLOAD PAGE (DOWNLOAD_PAGE_URL) names the published MMDB release and the SHA1 of
- *      its UNPACKED file. This month's release is taken, else the previous month's (a new
- *      month's release appears some time after the month begins); neither listed is a
- *      failure. The installed file already being that release ends the run.
- *   3. THE DOWNLOAD of dbip-city-lite-YYYY-MM.mmdb.gz into the database's own directory,
+ *   2. THE DOWNLOAD PAGE (DATABASES[...]['page']) names the published MMDB release and the
+ *      SHA1 of its UNPACKED file. This month's release is taken, else the previous month's (a
+ *      new month's release appears some time after the month begins); neither listed is a
+ *      failure. The installed file already being that release ends that database's update.
+ *   3. THE DOWNLOAD of <file>-YYYY-MM.mmdb.gz into the databases' own directory,
  *      heartbeating as data arrives. No timeout of ours: a stalled transfer stops the
  *      heartbeats and the task silence limit (rsx.tasks.silent_timeout) ends the run.
  *      (libcurl's own connect-phase default, 300 s, bounds establishing the connection only;
  *      nothing here sets or extends it.) The download and the unpacked file are both capped
  *      at MAX_BYTES - a size bound, never a time bound.
  *   4. VERIFICATION (verify_candidate()): the SHA1 of the unpacked file is the published one;
- *      the reader opens it; its database_type is DATABASE_TYPE; its build epoch falls in the
- *      release's month (UTC); SANITY_IP answers SANITY_COUNTRY_ISO.
+ *      the reader opens it; its database_type is the database's 'type'; its build epoch falls
+ *      in the release's month (UTC); SANITY_IP answers the database's sanity value (the
+ *      city database: country US; the ASN database: autonomous system 15169).
  *   5. One rename() swaps it into place. Any failure discards the staged files, leaves the
  *      installed file as it was, and fails the run with the reason.
  */
 class Geo_Ip_Service extends Rsx_Service_Abstract
 {
-    /** The page naming the current release and its checksums. */
-    public const DOWNLOAD_PAGE_URL = 'https://db-ip.com/db/download/ip-to-city-lite';
+    /**
+     * The databases, keyed like Rsx_Geo_Ip::DATABASES:
+     *   name   how a report names it
+     *   page   the page naming the current release and its checksums
+     *   file   the release file's stem (<file>-YYYY-MM.mmdb.gz)
+     *   type   the metadata database_type of its MMDB
+     */
+    public const DATABASES = [
+        Rsx_Geo_Ip::DATABASE_CITY => [
+            'name' => 'DB-IP City Lite',
+            'page' => 'https://db-ip.com/db/download/ip-to-city-lite',
+            'file' => 'dbip-city-lite',
+            'type' => 'DBIP-City-Lite',
+        ],
+        Rsx_Geo_Ip::DATABASE_ASN => [
+            'name' => 'DB-IP ASN Lite',
+            'page' => 'https://db-ip.com/db/download/ip-to-asn-lite',
+            'file' => 'dbip-asn-lite',
+            'type' => 'DBIP-ASN-Lite (compat=GeoLite2-ASN)',
+        ],
+    ];
 
-    /** The release file; %s is the release month, YYYY-MM. */
-    public const DOWNLOAD_URL = 'https://download.db-ip.com/free/dbip-city-lite-%s.mmdb.gz';
+    /** A release file; the stem and the release month (YYYY-MM) fill it. */
+    public const DOWNLOAD_URL = 'https://download.db-ip.com/free/%s-%s.mmdb.gz';
 
-    /** The metadata database_type of a DB-IP City Lite MMDB. */
-    public const DATABASE_TYPE = 'DBIP-City-Lite';
-
-    /** A well-known public address, and the country it must answer, checked before a swap. */
+    /** A well-known public address checked in every candidate before a swap ... */
     public const SANITY_IP = '8.8.8.8';
+
+    /** ... which the city database must place in this country ... */
     public const SANITY_COUNTRY_ISO = 'US';
 
-    /** The size cap on the download and on the unpacked file (the release is ~130 MB unpacked). */
+    /** ... and the ASN database in this autonomous system (Google). */
+    public const SANITY_ASN = 15169;
+
+    /** The size cap on a download and on its unpacked file (the city release is ~130 MB unpacked). */
     public const MAX_BYTES = 1024 * 1024 * 1024;
 
-    /** The size cap on the download page. */
+    /** The size cap on a download page. */
     public const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 
     /** Unpacking reads the gzip stream this many bytes at a time. */
@@ -67,36 +94,84 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
     /** Downloaded bytes between two stop-request checks. */
     private const STOP_CHECK_BYTES = 8 * 1024 * 1024;
 
-    /** Test seam: the HTML the download page answers, in place of fetching it. */
-    private static ?string $download_page_for_tests = null;
+    /** Test seam: the HTML each database's download page answers, in place of fetching it. */
+    private static array $download_pages_for_tests = [];
 
-    #[Task('Download the IP geolocation database (DB-IP City Lite) when a newer release is published')]
+    #[Task('Download the IP geolocation databases (DB-IP City Lite and ASN Lite) when a newer release is published')]
     #[Exclusive('maintenance')]
     #[Schedule('maintenance')]
     #[On_Build]
     public static function update(Task_Instance $task, array $params = [])
     {
-        $target = Rsx_Geo_Ip::database_file();
-        $this_month = gmdate('Y-m');
-        $previous_month = gmdate('Y-m', strtotime(gmdate('Y-m-01') . ' -1 month'));
-
         // The task is exclusive, so a staged file found now is an orphan of a run that died.
-        foreach (glob(dirname($target) . '/.{download,staged}-*', GLOB_BRACE) ?: [] as $orphan) {
+        $directory = dirname(Rsx_Geo_Ip::database_file(Rsx_Geo_Ip::DATABASE_CITY));
+        foreach (glob($directory . '/.{download,staged}-*', GLOB_BRACE) ?: [] as $orphan) {
             unlink($orphan);
             $task->stdout('Removed ' . basename($orphan) . ', left behind by an earlier run that did not finish.');
         }
 
-        $task->status('Checking the installed IP geolocation database');
-        $installed = static::installed_release($task);
-        if ($installed === $this_month) {
-            $task->stdout("The installed IP geolocation database is the {$installed} release, this month's; nothing to do.");
-            $task->summary("Current ({$installed} release).");
+        $summaries = [];
+        $failures = [];
+        foreach (array_keys(self::DATABASES) as $database) {
+            $name = self::DATABASES[$database]['name'];
 
-            return null;
+            // The owner-ruled independence of the two databases: a failure of one is recorded
+            // and the other still updates; the run then fails naming every failure.
+            try {
+                $summary = static::update_database($database, $task);
+            } catch (Throwable $e) {
+                $task->stdout("{$name}: FAILED - " . $e->getMessage() . ' The installed file was left as it was.');
+                $failures[] = [$name, $e];
+                continue;
+            }
+
+            if ($summary === null) {
+                $task->stdout('Stop requested - the download was discarded and the installed database left as it was.');
+                $task->summary(implode(' ', [...$summaries, "{$name}: stopped before installing."]));
+
+                return null;
+            }
+
+            $summaries[] = "{$name}: {$summary}";
         }
 
-        $task->status('Reading the DB-IP download page');
-        $published = static::parse_published_releases(static::__download_page($task));
+        if ($failures !== []) {
+            $task->summary(implode(' ', [...$summaries, ...array_map(fn ($failure) => "{$failure[0]}: failed.", $failures)]));
+
+            throw new Exception(
+                implode(' ', array_map(fn ($failure) => "{$failure[0]}: " . $failure[1]->getMessage(), $failures)),
+                0,
+                $failures[0][1]
+            );
+        }
+
+        $task->summary(implode(' ', $summaries));
+
+        return null;
+    }
+
+    /**
+     * Bring one database up to date. Answers the summary sentence, or null when a stop was
+     * requested during the download; throws on any failure, leaving the installed file as it was.
+     */
+    public static function update_database(string $database, Task_Instance $task): ?string
+    {
+        $spec = self::DATABASES[$database];
+        $name = $spec['name'];
+        $target = Rsx_Geo_Ip::database_file($database);
+        $this_month = gmdate('Y-m');
+        $previous_month = gmdate('Y-m', strtotime(gmdate('Y-m-01') . ' -1 month'));
+
+        $task->status("Checking the installed {$name} database");
+        $installed = static::installed_release($database, $task);
+        if ($installed === $this_month) {
+            $task->stdout("{$name}: the installed database is the {$installed} release, this month's; nothing to do.");
+
+            return "Current ({$installed} release).";
+        }
+
+        $task->status("Reading the {$name} download page");
+        $published = static::parse_published_releases(static::__download_page($database, $task), $database);
         $release = null;
         foreach ([$this_month, $previous_month] as $month) {
             if (isset($published[$month])) {
@@ -106,16 +181,15 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
         }
         if ($release === null) {
             throw new Exception(
-                "The DB-IP download page (" . self::DOWNLOAD_PAGE_URL . ") lists no MMDB release for {$this_month} or {$previous_month}"
+                "The {$name} download page ({$spec['page']}) lists no MMDB release for {$this_month} or {$previous_month}"
                 . ($published === [] ? ' (it lists no MMDB release at all - the page format may have changed).' : ' (it lists ' . implode(', ', array_keys($published)) . ').')
             );
         }
 
         if ($installed === $release) {
-            $task->stdout("The installed IP geolocation database is the {$installed} release, the latest DB-IP has published; nothing to do.");
-            $task->summary("Current ({$installed} release; {$this_month} is not published yet).");
+            $task->stdout("{$name}: the installed database is the {$installed} release, the latest DB-IP has published; nothing to do.");
 
-            return null;
+            return "Current ({$installed} release; {$this_month} is not published yet).";
         }
 
         $directory = dirname($target);
@@ -125,44 +199,37 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
 
         $staged_gz = $directory . '/.download-' . bin2hex(random_bytes(6)) . '.mmdb.gz';
         try {
-            $url = sprintf(self::DOWNLOAD_URL, $release);
-            $task->status("Downloading the {$release} release");
+            $url = sprintf(self::DOWNLOAD_URL, $spec['file'], $release);
+            $task->status("Downloading the {$release} release of {$name}");
             $bytes = static::__download_to_file($url, $staged_gz, $task);
-            if ($bytes !== null) {
-                $task->stdout("Downloaded {$url} (" . bytes_to_human($bytes) . ').');
-            }
-
             if ($bytes === null || $task->is_stop_requested()) {
-                $task->stdout('Stop requested - the download was discarded and the installed database left as it was.');
-                $task->summary('Stopped before installing.');
-
                 return null;
             }
+            $task->stdout("Downloaded {$url} (" . bytes_to_human($bytes) . ').');
 
-            $task->status("Unpacking and verifying the {$release} release");
-            static::install_from_gz($staged_gz, $release, $published[$release], $task);
+            $task->status("Unpacking and verifying the {$release} release of {$name}");
+            static::install_from_gz($database, $staged_gz, $release, $published[$release], $task);
         } finally {
             if (is_file($staged_gz)) {
                 unlink($staged_gz);
             }
         }
 
-        $task->stdout("Installed the {$release} release of DB-IP City Lite" . ($installed !== null ? " (replacing the {$installed} release)." : '.'));
-        $task->summary("Installed the {$release} release.");
+        $task->stdout("Installed the {$release} release of {$name}" . ($installed !== null ? " (replacing the {$installed} release)." : '.'));
 
-        return null;
+        return "Installed the {$release} release.";
     }
 
     /**
-     * The installed database's release month, or null when none is installed. A file that is
+     * The installed $database's release month, or null when none is installed. A file that is
      * there but does not open is reported on the run and treated as none, so it is replaced.
      */
-    public static function installed_release(?Task_Instance $task = null): ?string
+    public static function installed_release(string $database, ?Task_Instance $task = null): ?string
     {
         try {
-            $metadata = Rsx_Geo_Ip::installed_metadata();
+            $metadata = Rsx_Geo_Ip::installed_metadata($database);
         } catch (Throwable $e) {
-            $task?->stdout('The installed IP geolocation database does not open (' . $e->getMessage() . '); it will be replaced.');
+            $task?->stdout('The installed ' . self::DATABASES[$database]['name'] . ' database does not open (' . $e->getMessage() . '); it will be replaced.');
 
             return null;
         }
@@ -171,16 +238,18 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Every MMDB release the download page lists, with the SHA1 it publishes for the unpacked
-     * file: ['2026-11' => '<40 hex>']. Read from each card holding a dbip-city-lite-YYYY-MM.mmdb.gz
-     * link: the card must say Format MMDB and carry a SHA1SUM. A release without one is not listed.
+     * Every MMDB release of $database the download page lists, with the SHA1 it publishes for
+     * the unpacked file: ['2026-11' => '<40 hex>']. Read from each card holding a
+     * <file>-YYYY-MM.mmdb.gz link: the card must say Format MMDB and carry a SHA1SUM. A
+     * release without one is not listed.
      *
      * @return array<string, string>
      */
-    public static function parse_published_releases(string $html): array
+    public static function parse_published_releases(string $html, string $database): array
     {
         $releases = [];
-        if (!preg_match_all('~https://download\.db-ip\.com/free/dbip-city-lite-(\d{4}-\d{2})\.mmdb\.gz~', $html, $links, PREG_OFFSET_CAPTURE)) {
+        $stem = preg_quote(self::DATABASES[$database]['file'], '~');
+        if (!preg_match_all('~https://download\.db-ip\.com/free/' . $stem . '-(\d{4}-\d{2})\.mmdb\.gz~', $html, $links, PREG_OFFSET_CAPTURE)) {
             return [];
         }
 
@@ -203,18 +272,18 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Unpack a downloaded release beside the installed database, verify it, and rename it into
-     * place. Throws, leaving the installed file untouched and no staged file behind, on any
-     * failure.
+     * Unpack a downloaded release of $database beside the installed file, verify it, and
+     * rename it into place. Throws, leaving the installed file untouched and no staged file
+     * behind, on any failure.
      */
-    public static function install_from_gz(string $gz_path, string $release, string $expected_sha1, ?Task_Instance $task = null): void
+    public static function install_from_gz(string $database, string $gz_path, string $release, string $expected_sha1, ?Task_Instance $task = null): void
     {
-        $target = Rsx_Geo_Ip::database_file();
+        $target = Rsx_Geo_Ip::database_file($database);
         $staged = dirname($target) . '/.staged-' . bin2hex(random_bytes(6)) . '.mmdb';
 
         try {
             $sha1 = static::unpack_gz($gz_path, $staged, self::MAX_BYTES, $task);
-            static::verify_candidate($staged, $release, $expected_sha1, $sha1);
+            static::verify_candidate($database, $staged, $release, $expected_sha1, $sha1);
 
             if (!rename($staged, $target)) {
                 throw new Exception("Cannot move the verified IP geolocation database into place at {$target}.");
@@ -282,57 +351,78 @@ class Geo_Ip_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Refuse a candidate database file unless it is the expected release: its SHA1 (computed
+     * Refuse a candidate $database file unless it is the expected release: its SHA1 (computed
      * here when not given), its type, its build month and a sanity lookup. Throws naming the
      * failed check.
      */
-    public static function verify_candidate(string $path, string $release, string $expected_sha1, ?string $actual_sha1 = null): void
+    public static function verify_candidate(string $database, string $path, string $release, string $expected_sha1, ?string $actual_sha1 = null): void
     {
+        $spec = self::DATABASES[$database];
+        $name = $spec['name'];
+
         $actual_sha1 ??= sha1_file($path);
         if (!hash_equals(strtolower($expected_sha1), (string) $actual_sha1)) {
-            throw new Exception("The downloaded IP geolocation database's SHA1 is {$actual_sha1}, but DB-IP publishes {$expected_sha1} for the {$release} release; refused.");
+            throw new Exception("The downloaded {$name} database's SHA1 is {$actual_sha1}, but DB-IP publishes {$expected_sha1} for the {$release} release; refused.");
         }
 
         $reader = new Reader($path);
         try {
             $metadata = $reader->metadata();
-            if ($metadata->databaseType !== self::DATABASE_TYPE) {
-                throw new Exception("The downloaded IP geolocation database is of type '{$metadata->databaseType}', not '" . self::DATABASE_TYPE . "'; refused.");
+            if ($metadata->databaseType !== $spec['type']) {
+                throw new Exception("The downloaded {$name} database is of type '{$metadata->databaseType}', not '{$spec['type']}'; refused.");
             }
 
             $built = gmdate('Y-m', (int) $metadata->buildEpoch);
             if ($built !== $release) {
-                throw new Exception("The downloaded IP geolocation database was built " . gmdate('Y-m-d', (int) $metadata->buildEpoch) . ", outside its {$release} release month; refused.");
+                throw new Exception("The downloaded {$name} database was built " . gmdate('Y-m-d', (int) $metadata->buildEpoch) . ", outside its {$release} release month; refused.");
             }
 
             $record = $reader->get(self::SANITY_IP);
-            $country = is_array($record) ? ($record['country']['iso_code'] ?? null) : null;
-            if ($country !== self::SANITY_COUNTRY_ISO) {
-                throw new Exception('The downloaded IP geolocation database places ' . self::SANITY_IP . ' in ' . var_export($country, true) . ', not ' . self::SANITY_COUNTRY_ISO . '; refused.');
+            if ($database === Rsx_Geo_Ip::DATABASE_CITY) {
+                $country = is_array($record) ? ($record['country']['iso_code'] ?? null) : null;
+                if ($country !== self::SANITY_COUNTRY_ISO) {
+                    throw new Exception("The downloaded {$name} database places " . self::SANITY_IP . ' in ' . var_export($country, true) . ', not ' . self::SANITY_COUNTRY_ISO . '; refused.');
+                }
+            } else {
+                $asn = is_array($record) ? ($record['autonomous_system_number'] ?? null) : null;
+                if ($asn !== self::SANITY_ASN) {
+                    throw new Exception("The downloaded {$name} database places " . self::SANITY_IP . ' in autonomous system ' . var_export($asn, true) . ', not ' . self::SANITY_ASN . '; refused.');
+                }
             }
         } finally {
             $reader->close();
         }
     }
 
-    /** Answer the download page from $html instead of the network (null restores it). Tests only. */
-    public static function _set_download_page_for_tests(?string $html): void
+    /** Answer $database's download page from $html instead of the network (null restores it). Tests only. */
+    public static function _set_download_page_for_tests(string $database, ?string $html): void
     {
-        self::$download_page_for_tests = $html;
+        if ($html === null) {
+            unset(self::$download_pages_for_tests[$database]);
+        } else {
+            self::$download_pages_for_tests[$database] = $html;
+        }
     }
 
-    /** The download page's HTML. */
-    private static function __download_page(Task_Instance $task): string
+    /** Restore every download page to the network. Tests only. */
+    public static function _reset_download_pages_for_tests(): void
     {
-        if (self::$download_page_for_tests !== null) {
-            return self::$download_page_for_tests;
+        self::$download_pages_for_tests = [];
+    }
+
+    /** $database's download page HTML. */
+    private static function __download_page(string $database, Task_Instance $task): string
+    {
+        if (isset(self::$download_pages_for_tests[$database])) {
+            return self::$download_pages_for_tests[$database];
         }
 
+        $url = self::DATABASES[$database]['page'];
         $html = '';
-        static::__fetch(self::DOWNLOAD_PAGE_URL, function (string $data) use (&$html, $task) {
+        static::__fetch($url, function (string $data) use (&$html, $task, $url) {
             $html .= $data;
             if (strlen($html) > self::MAX_PAGE_BYTES) {
-                throw new Exception('The DB-IP download page is larger than ' . bytes_to_human(self::MAX_PAGE_BYTES) . '; refused.');
+                throw new Exception("The DB-IP download page {$url} is larger than " . bytes_to_human(self::MAX_PAGE_BYTES) . '; refused.');
             }
             $task->heartbeat();
 

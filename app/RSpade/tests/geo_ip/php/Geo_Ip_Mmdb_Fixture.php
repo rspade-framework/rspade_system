@@ -39,6 +39,14 @@ class Geo_Ip_Mmdb_Fixture
     }
 
     /**
+     * A DB-IP-ASN-shaped record.
+     */
+    public static function asn_record(int $asn, string $organization): array
+    {
+        return ['autonomous_system_number' => ['__uint32', $asn], 'autonomous_system_organization' => $organization];
+    }
+
+    /**
      * Write an IPv4 MMDB file.
      *
      * @param string $path

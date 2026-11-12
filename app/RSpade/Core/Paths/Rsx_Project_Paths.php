@@ -485,14 +485,22 @@ class Rsx_Project_Paths
     }
 
     /**
-     * The installed IP geolocation database (DB-IP City Lite, MMDB). A DOWNLOADED cache, not
-     * user data: rsx:clean removes it and Geo_Ip_Service::update - an #[On_Build] task -
-     * downloads it again after the rebuild that follows. The update stages its download in
-     * this file's directory, so the swap into place is one rename. rsx:man geo_ip.
+     * The installed IP geolocation databases, both DOWNLOADED caches, not user data: DB-IP
+     * City Lite (city, state, country) and DB-IP ASN Lite (the network an address belongs to),
+     * MMDB files side by side in one directory. rsx:clean removes them and
+     * Geo_Ip_Service::update - an #[On_Build] task - downloads them again after the rebuild
+     * that follows. The update stages each download in this directory, so the swap into place
+     * is one rename. rsx:man geo_ip.
      */
-    public static function geo_ip_database_file(): string
+    public static function geo_ip_city_database_file(): string
     {
         return self::tmp_path('geo_ip/dbip-city-lite.mmdb');
+    }
+
+    /** The DB-IP ASN Lite database, beside the city database (geo_ip_city_database_file()). */
+    public static function geo_ip_asn_database_file(): string
+    {
+        return self::tmp_path('geo_ip/dbip-asn-lite.mmdb');
     }
 
     // -----------------------------------------------------------------------

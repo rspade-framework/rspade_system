@@ -1,0 +1,64 @@
+RSX_GEO_IP ANSWERS THE NETWORK (org) AND AN ALPHA-3 COUNTRY CODE
+Date: 2026-11-12
+
+IF YOU DO NOTHING: code of yours that reads Rsx_Geo_Ip::lookup($ip)['country'] gets 'USA' where it got 'United States', and every label() you show reads 'City, State, USA' - or a network name such as 'AWS' or 'Anthropic' instead of a place when the address belongs to a listed cloud, hosting, CDN, security or AI network. Nothing throws. The framework also downloads a second database (DB-IP ASN Lite, about 10 MB) into tmp/geo_ip/.
+
+SUMMARY
+    Category 2 (a public API answer changed shape). Affects only code that
+    calls Rsx_Geo_Ip::lookup() itself, or compares or parses label()'s text.
+    Endpoints that ship Rsx_Geo_Ip::label() as ip_address__location - the
+    template's pattern - need no change: the field is still the label()
+    string, and Ip_Address_Display renders it as before.
+
+THE CHANGE
+    Rsx_Geo_Ip::lookup($ip) now answers FOUR keys:
+
+        ['city' => 'Ashburn', 'state' => 'Virginia', 'country' => 'USA', 'org' => 'AWS']
+
+    - country is the ISO 3166-1 ALPHA-3 code ('USA', 'GBR'), mapped from
+      DB-IP's alpha-2 code through the countries table; it was the English
+      country name. A code with no countries row answers null.
+    - org is new: the short name of the notable network the address belongs
+      to, from DB-IP's IP to ASN Lite database and the curated, default-deny
+      list config('rsx.geo_ip.networks') (ASNs and CIDR ranges; a range
+      beats the ASN, the most specific range wins). Any other network - every
+      ISP and mobile carrier - answers null. city, state and country are
+      answered either way.
+
+    Rsx_Geo_Ip::label($ip) answers org when it is set, else
+    "City, State, USA" (unknown parts left out), else null.
+
+ACTION REQUIRED (only if you call lookup() yourself)
+    1. Find every reader of the answer's country:
+
+           grep -rn "Rsx_Geo_Ip::lookup" rsx/
+
+       A comparison or display of ['country'] against a country NAME now
+       sees the alpha-3 code. To show a name, map it yourself:
+
+           Country_Model::findByAlpha3($answer['country'])?->name
+
+    2. Where you build your own display line from lookup(), decide what a
+       listed network shows. The framework's choice is label(): the network
+       name in place of the place. To keep the place, ignore ['org']; to do
+       what the framework does, call label() instead of joining the parts.
+
+    3. To list a network of your own, rename one, or unlist a shipped one,
+       add entries in rsx/resource/config/rsx.php (rsx:man geo_ip, NOTABLE
+       NETWORKS):
+
+           'geo_ip' => ['networks' => [
+               'AS64500' => 'Example Cloud',
+               '203.0.113.0/24' => 'Example Cloud',
+               'AS15169' => null,
+           ]],
+
+    The reference application calls label() only (Session_Listing::row(),
+    the user-management activity endpoints) and needed no change; see
+    system/app/RSpade/resource/reference_app/lib/sessions/session_listing.php.
+
+VERIFICATION
+    php artisan rsx:health shows "IP Geolocation" OK naming both databases
+    (DB-IP City Lite and DB-IP ASN Lite) and the number of listed networks;
+    php artisan tinker --execute='dump(\App\RSpade\Lib\Geo\Ip\Rsx_Geo_Ip::lookup("52.94.236.248"));'
+    answers country 'USA' and org 'AWS'.
