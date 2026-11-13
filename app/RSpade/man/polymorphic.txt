@@ -8,7 +8,9 @@ SYNOPSIS
 
         class Activity_Model extends Rsx_Model_Abstract
         {
-            protected static $type_ref_columns = ['eventable_type'];
+            public static $columns = [
+                'eventable_type' => ['type_ref' => true],
+            ];
 
             #[Relationship]
             public function eventable()
@@ -36,8 +38,8 @@ SYNOPSIS
 THE PAIR STANDARD
     A polymorphic reference is ALWAYS a pair, both columns BIGINT:
 
-        {relation}_type   the type-ref discriminator, declared in the owning
-                          model's $type_ref_columns
+        {relation}_type   the type-ref discriminator, declared
+                          ['type_ref' => true] in the owning model's $columns
         {relation}_id     the row id
 
     Two parallel nullable FK columns ("either project_id or client_id is set")
@@ -53,10 +55,10 @@ THE PAIR STANDARD
     updated_by_type / updated_by_id. They are the standard pair, not a special
     case - the `_id` suffix on the id column is what makes them one. They are
     declared on Rsx_Model_Abstract (so every model casts them) and stamped
-    automatically by save(); see model_normalization(7), AUDIT AUTHORSHIP.
+    automatically by save(); see rsx:man model_normalization, AUDIT AUTHORSHIP.
 
     Do not confuse a `*_type` type ref with a `type_id` ENUM column. `type_id`
-    is an integer enum defined in $enums (see enum(7)); it names a case, not a
+    is an integer enum column (rsx:man enums); it names a case, not a
     table. Nothing in this page applies to it.
 
     POLY-01 (a manifest-build-FATAL code-quality rule) enforces the standard:
@@ -100,7 +102,9 @@ TYPE REFERENCE SYSTEM
 
             class File_Attachment_Model extends Rsx_Model_Abstract
             {
-                protected static $type_ref_columns = ['fileable_type'];
+                public static $columns = [
+                    'fileable_type' => ['type_ref' => true],
+                ];
 
                 #[Relationship]
                 public function fileable()
@@ -259,9 +263,9 @@ BOUNDARIES
         at all (hand-written SQL, a restore from another environment, a registry
         row somebody deleted).
 
-        The column inventory is the manifest's: every model's _type_ref_columns()
-        - its own $type_ref_columns declaration UNIONed with the framework audit
-        pairs (created_by_type / updated_by_type / deleted_by_type, type refs on
+        The column inventory is the manifest's: every model's type_ref_columns()
+        - its own type_ref entries plus the framework audit pairs Rsx_Model_Abstract
+        declares (created_by_type / updated_by_type / deleted_by_type, type refs on
         every table) - intersected with the columns each table actually has.
 
         Sample output:
@@ -323,7 +327,7 @@ BOUNDARIES
 
     Pivot-table morphs (morphToMany / morphedByMany) are not supported.
         Their discriminator lives on a pivot table that no model owns, so no
-        $type_ref_columns declaration can apply to it and the column would be a
+        type_ref declaration can apply to it and the column would be a
         VARCHAR class name. Model the join table as a real model with its own
         {relation}_type / {relation}_id pair. POLY-01 flags these.
 
@@ -344,10 +348,10 @@ CODE QUALITY RULE
         Manifest-build FATAL, AST-based, cross-file. It flags Laravel's
         string-morph pattern:
 
-        - morphTo() whose type column is not in the DECLARING model's
-          $type_ref_columns
-        - morphOne() / morphMany() whose type column is not in the RELATED
-          model's $type_ref_columns (the related model owns that table)
+        - morphTo() whose type column is not declared type_ref in the
+          DECLARING model's $columns
+        - morphOne() / morphMany() whose type column is not declared type_ref
+          in the RELATED model's $columns (the related model owns that table)
         - morphToMany() / morphedByMany() - always (see BOUNDARIES)
         - a morph type column whose name does not end in `_type`
 
@@ -575,10 +579,9 @@ COMPLETE EXAMPLE
 
         class Activity_Model extends Rsx_Model_Abstract
         {
-            protected static $type_ref_columns = ['eventable_type'];
-
-            public static $enums = [];
-            public static $rel = [];
+            public static $columns = [
+                'eventable_type' => ['type_ref' => true],
+            ];
 
             protected $table = 'activities';
 
@@ -661,13 +664,13 @@ RSX VS LARAVEL
         - Faster queries (integer comparison vs string comparison)
         - Indexable without concerns about string length
         - Consistent with RSX simple class name conventions
-        - Zero configuration - just declare $type_ref_columns
+        - Zero configuration - just declare the column type_ref
 
 CONVERTING EXISTING COLUMNS
     To convert a VARCHAR polymorphic column to a type ref:
 
     1. Migration: seed the registry, map the data, widen the column
-    2. Model: declare the column in $type_ref_columns
+    2. Model: declare the column ['type_ref' => true] in $columns
     3. Model: the relation becomes a plain morphTo()/morphMany()
 
     With data to preserve:

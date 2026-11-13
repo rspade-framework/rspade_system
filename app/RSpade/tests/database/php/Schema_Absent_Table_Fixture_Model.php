@@ -22,6 +22,4 @@ class Schema_Absent_Table_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'rsx_schema_absent_table_fixtures';
 
     protected $fillable = [];
-
-    public static $enums = [];
 }

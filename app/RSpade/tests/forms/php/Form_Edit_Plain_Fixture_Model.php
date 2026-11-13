@@ -17,6 +17,4 @@ class Form_Edit_Plain_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'form_edit_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 }

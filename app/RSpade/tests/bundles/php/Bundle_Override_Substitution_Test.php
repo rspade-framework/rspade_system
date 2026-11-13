@@ -140,8 +140,8 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
         return [
             $model => "<?php\n\nnamespace {$namespace};\n\n"
                 . "use {$base_namespace}\\{$p}_Model_Abstract;\n\n"
-                . "class {$p}_Model extends {$p}_Model_Abstract\n{\n    public static \$enums = [\n"
-                . "        'kind_id' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_{$upper}', 'label' => 'Override'],\n        ],\n    ];\n}\n",
+                . "class {$p}_Model extends {$p}_Model_Abstract\n{\n    public static \$columns = [\n"
+                . "        'kind_id' => ['enum' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_{$upper}', 'label' => 'Override'],\n        ]],\n    ];\n}\n",
             "{$root}/styles/{$f}_panel.scss" => ".{$p}_Panel {\n    &__application_marker {\n        display: block;\n    }\n}\n",
         ];
     }
@@ -462,8 +462,8 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
                     . "class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract\n{\n}\n",
                 "{$application_models}/bo_gadget_model.php" => "<?php\n\nnamespace {$override_namespace};\n\n"
                     . "use {$base_namespace}\\Bo_Gadget_Model_Abstract;\n\n"
-                    . "class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract\n{\n    public static \$enums = [\n"
-                    . "        'kind_id' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_OVERRIDE', 'label' => 'Override'],\n        ],\n    ];\n}\n",
+                    . "class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract\n{\n    public static \$columns = [\n"
+                    . "        'kind_id' => ['enum' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_OVERRIDE', 'label' => 'Override'],\n        ]],\n    ];\n}\n",
                 $application_js => "class Bo_Gadget_Model extends Base_Bo_Gadget_Model {\n    static marker() {\n        return 'BO_APPLICATION_GADGET_JS';\n    }\n}\n",
                 $bundles['Bo_Framework_Model_Bundle'] => $bundle_php($bundles['Bo_Framework_Model_Bundle'], 'Bo_Framework_Model_Bundle', [$framework_models]),
                 $bundles['Bo_Application_Model_Bundle'] => $bundle_php($bundles['Bo_Application_Model_Bundle'], 'Bo_Application_Model_Bundle', [$framework_models, $application_models]),

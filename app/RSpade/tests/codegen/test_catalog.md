@@ -2,7 +2,7 @@
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| CODEGEN-01 | Hand-written property between brace and first fence survives (`$realtime`, `$type_ref_columns`) | php | CR fixture | both present in result | implemented | 2026-07-15 |
+| CODEGEN-01 | Hand-written property between brace and first fence survives (`$realtime`, `$columns`) | php | CR fixture | both present in result | implemented | 2026-07-15 |
 | CODEGEN-02 | Hand-written method after the fences survives | php | CR fixture | `hello()` + body present | implemented | 2026-07-15 |
 | CODEGEN-03 | Trailing / inline hand-written comments survive | php | CR fixture | both comments present | implemented | 2026-07-15 |
 | CODEGEN-04 | Hand-written bytes are byte-identical after a rewrite (strict) | php | CR fixture | strip(orig) === strip(result) | implemented | 2026-07-15 |
@@ -29,7 +29,9 @@
 | CODEGEN-31 | Outside framework-developer mode the fixer writes nothing under app/RSpade/, even an import it would otherwise correct | php | same map, framework consumer importing the rsx/ FQCN, `is_framework_developer` off | fix() returns false; content unchanged | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-10-14 |
 | CODEGEN-32 | B-108: an APPLICATION file importing the framework FQCN of a class rsx/ overrides is pointed at the rsx/ FQCN (rewritten, never dropped), whatever order the file map is iterated in | php | rsx/ consumer, file map in both orders | `use Rsx\Models\...;` present, framework FQCN gone, type hint untouched | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-10-14 |
 | CODEGEN-26 | Command output spans CTI detail columns `(detail: <table>)`, emits BEM/typed enum members, and DATE/DATETIME as `string` not Carbon | php | `build_metadata(Party_Model)` | detail lines + `type_id__label` + `string $created_at` present, no `\Carbon\Carbon` | implemented (Constants_Regenerate_Metadata_Test) | 2026-07-30 |
-| CODEGEN-ORDER-01 | Generated `@property` lines are sorted by column NAME within the base group and within each `(detail: <table>)` group, base group first | php | Column_Order_Fixture_Model tables built by CREATE TABLE in non-alphabetical order | both groups in byte order, no detail column in the base group | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
+| CODEGEN-KINDS-01 | Each column's `@property` line states its declared kind: enum (constants, capped at five + "and N more", plus the `__*` pointer), text type (typed as the FQCN value-object class), type ref (`string`), derived (`@property-read`, method + `from`, "never assigned"), never exported, not recorded in revisions, and combinations joined by `; ` | php | `build_metadata(Column_Kinds_Fixture_Model)` on a table the test creates | one exact line per column | implemented (Constants_Regenerate_Metadata_Test) | 2026-11-13 |
+| CODEGEN-KINDS-02 | The `@property` type is what a read returns: DECIMAL `string` noted `decimal`, JSON without an array cast `string` noted `json`, TINYINT(1) `bool` | php | same fixture (`amount`, `total`, `payload`, `is_open`) | exact lines | implemented (Constants_Regenerate_Metadata_Test) | 2026-11-13 |
+| CODEGEN-ORDER-01 | Generated `@property` lines (kind notes allowed after the name) are sorted by column NAME within the base group and within each `(detail: <table>)` group, base group first | php | Column_Order_Fixture_Model tables built by CREATE TABLE in non-alphabetical order | both groups in byte order, no detail column in the base group | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
 | CODEGEN-ORDER-02 | One schema reached by two histories (CREATE TABLE vs CREATE + ALTER TABLE ADD COLUMN) generates byte-identical docblock and constants block | php | same fixture, rebuilt with ALTER-appended columns | physical orders differ (precondition); build_metadata() output identical | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
 
 Php_Fixer source safety (backlog B-68 + the relationship-attribute defect), via
@@ -75,8 +77,9 @@ Deliberately one-directional, like guard 2: rewrites and additions still run.
 
 ## Model_Stub_Appends_Test (php)
 
-The generated Base_*_Model.js DECLARES a model's derived properties ($appends). Without it a
-derived property arrives on the fetched record with no declared surface on the stub at all - no
+The generated Base_*_Model.js DECLARES a model's appended properties ($appends), each as
+`@property {*} name - appended property (computed by the PHP model); read-only`. Without it an
+appended property arrives on the fetched record with no declared surface on the stub at all - no
 autocomplete, and nothing telling a reader the property exists. Fixtures: Appends_Fixture_Model
 (two appended names, no table) and No_Appends_Fixture_Model (the negative case).
 
@@ -93,3 +96,16 @@ CODEGEN-SPLIT-* pin B-109's codegen half. A core model carries its members on an
 and ships a three-line concrete an application replaces, so everything the build derives from a
 model is a function of the whole lineage. Fixtures: Split_Fixture_Model_Abstract (the base, with
 an appended property and two constants) and Split_Fixture_Model (the shell).
+## Model_Stub_Derived_Test (php)
+
+The generated stub declares a model's DERIVED columns (`$columns` entries with `derived`): a
+JSDoc `@property` naming the `from` columns, and a baked `static __DERIVED_COLUMNS` (dependency
+order) read by `Rsx_Js_Model.is_derived_column()`, emitted only when there are any. Fixtures:
+`Derived_Chain_Fixture_Model` (tests/derived_columns), No_Appends_Fixture_Model.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CODEGEN-DERIVED-DECLARED | each derived column is a docblock @property naming its sources, and `__DERIVED_COLUMNS` lists them in dependency order; no getter is emitted | php | Derived_Chain_Fixture_Model | both lines, `["doubled","quadrupled"]` | implemented | 2026-11-13 |
+| CODEGEN-DERIVED-NONE | a model with no derived columns bakes no `__DERIVED_COLUMNS` and no derived line | php | No_Appends_Fixture_Model | absent | implemented | 2026-11-13 |
+| CODEGEN-DERIVED-JS-ACCESSOR | Rsx_Js_Model.js defines `is_derived_column()` over the baked list | php | the source | present | implemented | 2026-11-13 |
+

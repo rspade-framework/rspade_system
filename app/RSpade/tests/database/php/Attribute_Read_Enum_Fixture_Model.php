@@ -39,17 +39,17 @@ class Attribute_Read_Enum_Fixture_Model extends Rsx_Model_Abstract
     const PRIORITY_MEDIUM = 2;
     const PRIORITY_LOW = 3;
 
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'badge' => 'bg-success'],
             2 => ['constant' => 'STATUS_PROSPECT', 'label' => 'Prospect', 'badge' => 'bg-info'],
             3 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'badge' => 'bg-warning'],
             4 => ['constant' => 'STATUS_CLOSED', 'label' => 'Closed', 'badge' => 'bg-secondary'],
-        ],
-        'priority_id' => [
+        ]],
+        'priority_id' => ['enum' => [
             1 => ['constant' => 'PRIORITY_HIGH', 'label' => 'High'],
             2 => ['constant' => 'PRIORITY_MEDIUM', 'label' => 'Medium'],
             3 => ['constant' => 'PRIORITY_LOW', 'label' => 'Low'],
-        ],
+        ]],
     ];
 }

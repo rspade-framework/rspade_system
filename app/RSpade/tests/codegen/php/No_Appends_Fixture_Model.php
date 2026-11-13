@@ -10,13 +10,11 @@ namespace App\RSpade\Tests\Codegen\Php;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 
 /**
- * Test fixture: the negative case for Model_Stub_Appends_Test - a model declaring no derived
+ * Test fixture: the negative case for Model_Stub_Appends_Test - a model declaring no appended
  * properties, whose stub must therefore declare none. No table backs it.
  */
 class No_Appends_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'codegen_no_appends_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 }

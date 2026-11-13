@@ -347,7 +347,7 @@ class Form_Input_Abstract extends Component {
                 shouldnt_happen(
                     `${this.constructor.name} ($name="${this.args.name}") edits ${accepts_name} values, ` +
                     `but was given ${is_text_value ? value.constructor.name : typeof value}. ` +
-                    `Check the model's $text_types declaration for this column.`
+                    `Check the column's text_type in the model's $columns declaration.`
                 );
             }
 

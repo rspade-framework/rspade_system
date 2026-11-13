@@ -39,19 +39,19 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * @property string $content
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $error
  * @property string $extraction_method
  * @property int $extractor_version
  * @property int $id
  * @property int $indexable_id
- * @property int $indexable_type
+ * @property string $indexable_type type ref: a model class name, stored as a type-ref id
  * @property string $indexed_at
- * @property array $metadata
- * @property int $status_id
+ * @property string $metadata json
+ * @property int $status_id enum: STATUS_EXTRACTED, STATUS_FAILED, STATUS_UNSUPPORTED (also $status_id__label and the other $status_id__* properties)
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -82,20 +82,19 @@ abstract class Search_Index_Model_Abstract extends Rsx_Model_Abstract
     public static $realtime_silent = true;
 
     /**
-     * Enum field definitions.
+     * Column declarations (see rsx:man model).
      *
      * status_id is the outcome of the last extraction attempt. There is NO stored PENDING state:
      * a row is written only after an attempt, so status_id is always one of these three, and a
      * blob with no row has not been attempted yet.
-     *
-     * @var array
      */
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_EXTRACTED', 'label' => 'Extracted', 'badge' => 'bg-success', 'order' => 1],
             2 => ['constant' => 'STATUS_FAILED', 'label' => 'Failed', 'badge' => 'bg-danger', 'order' => 2],
             3 => ['constant' => 'STATUS_UNSUPPORTED', 'label' => 'Unsupported', 'badge' => 'bg-secondary', 'order' => 3],
-        ],
+        ]],
+        'indexable_type' => ['type_ref' => true],
     ];
     public static $rel = [];
 
@@ -119,14 +118,6 @@ abstract class Search_Index_Model_Abstract extends Rsx_Model_Abstract
      * @var string
      */
     protected $table = '_search_indexes';
-
-    /**
-     * Polymorphic type reference columns
-     *
-     * indexable_type stores integer ID in database but exposes class name string
-     * @var array
-     */
-    protected static $type_ref_columns = ['indexable_type'];
 
     /**
      * Get decoded metadata JSON

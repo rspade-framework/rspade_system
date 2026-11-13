@@ -39,14 +39,14 @@ Lower id = higher privilege. IDs are 100-based to leave room for insertion.
 Roles are declared as an ordinary model enum on `User_Model`, with two custom properties the ACL layer reads:
 
 ```php
-public static $enums = ['role_id' => [
+public static $columns = ['role_id' => ['enum' => [
     300 => [
         'constant'        => 'ROLE_SITE_OWNER',
         'label'           => 'Site Owner',
         'permissions'     => [2, 3, 4, 5, 6, 7],
         'can_admin_roles' => [300, 400, 500, 600, 700],
     ],
-]];
+]]];
 ```
 
 Read them through the usual BEM-style magic properties: `$user->role_id__label`, `$user->role_id__permissions`, `$user->role_id__can_admin_roles`.

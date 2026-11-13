@@ -8,7 +8,6 @@
 namespace App\RSpade\Lib\Revisions;
 
 use Illuminate\Support\Facades\DB;
-use ReflectionClass;
 use RuntimeException;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Manifest\Manifest;
@@ -166,7 +165,7 @@ class Revision_Dictionary
      *
      * The three sources, coldest to hottest:
      *
-     *   1. Every enum label declared by any model's $enums. Read from the manifest by
+     *   1. Every enum label declared by any model's enum columns. Read from the manifest by
      *      reflection - static properties only, nothing is instantiated.
      *   2. Every column name in this database, from information_schema, in ONE query.
      *      Emitted in the shape a revision document actually contains, `"name":[`.
@@ -296,9 +295,8 @@ class Revision_Dictionary
     }
 
     /**
-     * Every distinct enum label declared by any model, read from the manifest's record of
-     * which classes declare a static $enums and then by reflection on the class itself.
-     * Nothing is instantiated: a model constructor touches the database.
+     * Every distinct enum label declared by any model, read through each model class's
+     * enum_columns(). Nothing is instantiated: a model constructor touches the database.
      *
      * @return array<int, string>
      */
@@ -306,30 +304,10 @@ class Revision_Dictionary
     {
         $labels = [];
 
-        foreach (Manifest::get_all() as $entry) {
-            if (($entry['extension'] ?? null) !== 'php') {
-                continue;
-            }
+        foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false) as $class_name) {
+            $fqcn = Manifest::php_get_metadata_by_class($class_name)['fqcn'];
 
-            if (!isset($entry['static_properties']['enums'])) {
-                continue;
-            }
-
-            // Visibility comes from the manifest rather than from a reflection probe:
-            // getStaticPropertyValue() throws on a non-public property, and a model that
-            // hid its $enums is not declaring a vocabulary for anybody.
-            if (($entry['static_properties']['enums']['visibility'] ?? null) !== 'public') {
-                continue;
-            }
-
-            $enums = (new ReflectionClass($entry['fqcn']))->getStaticPropertyValue('enums');
-
-            // The abstract model bases declare the property with no map in it.
-            if (!is_array($enums)) {
-                continue;
-            }
-
-            foreach ($enums as $definitions) {
+            foreach ($fqcn::enum_columns() as $definitions) {
                 if (!is_array($definitions)) {
                     continue;
                 }

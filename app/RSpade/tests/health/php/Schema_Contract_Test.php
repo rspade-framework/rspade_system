@@ -304,7 +304,7 @@ class Schema_Contract_Test extends Rsx_Test_Abstract
         // The one PHP-side probe: the roles the whole permission layer resolves against.
         static::__assert_null(
             Schema_Contract_Health_Checks::_role_enum_finding(),
-            "User_Model::\$enums['role_id'] is declared with permissions and can_admin_roles on every entry"
+            "User_Model's role_id enum is declared with permissions and can_admin_roles on every entry"
         );
     }
 

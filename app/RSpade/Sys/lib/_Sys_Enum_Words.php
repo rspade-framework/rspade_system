@@ -13,7 +13,7 @@ use App\RSpade\Core\Models\Site_Model;
  * Enum columns as lowercase WORDS, plus the small shared lookups the panel's screens
  * read beside them.
  *
- * The panel speaks an enum value as its model's $enums label, lowercased (status_id 1
+ * The panel speaks an enum value as its model's enum label, lowercased (status_id 1
  * -> 'pending'), so a link can address a filtered grid readably and one badge
  * vocabulary (_Sys_Status_Badge.TONES) serves every screen. Every method takes the
  * model class, so the rule lives once here: the Email & SMS screen reads its two
@@ -29,7 +29,7 @@ class _Sys_Enum_Words
      */
     public static function enum_word(string $model_class, string $column, int $value): string
     {
-        return strtolower($model_class::$enums[$column][$value]['label']);
+        return strtolower($model_class::enum_values($column)[$value]['label']);
     }
 
     /**
@@ -39,7 +39,7 @@ class _Sys_Enum_Words
      */
     public static function enum_value(string $model_class, string $column, string $word): ?int
     {
-        foreach ($model_class::$enums[$column] as $value => $definition) {
+        foreach ($model_class::enum_values($column) as $value => $definition) {
             if (strtolower($definition['label']) === strtolower($word)) {
                 return (int) $value;
             }
@@ -58,7 +58,7 @@ class _Sys_Enum_Words
     {
         $options = [];
 
-        foreach ($model_class::$enums[$column] as $value => $definition) {
+        foreach ($model_class::enum_values($column) as $value => $definition) {
             $options[] = ['value' => static::enum_word($model_class, $column, (int) $value), 'label' => $definition['label']];
         }
 
@@ -80,7 +80,7 @@ class _Sys_Enum_Words
         foreach ($status_counts as $status_id => $count) {
             $tiles[] = [
                 'status' => static::enum_word($model_class, 'status_id', (int) $status_id),
-                'label' => $model_class::$enums['status_id'][$status_id]['label'],
+                'label' => $model_class::enum_values('status_id')[$status_id]['label'],
                 'count' => (int) $count,
             ];
         }

@@ -22,10 +22,10 @@ class Column_Order_Fixture_Model extends Rsx_Model_Abstract
 
     const TYPE_WIDGET = 1;
 
-    public static $enums = [
-        'type_id' => [
+    public static $columns = [
+        'type_id' => ['enum' => [
             1 => ['constant' => 'TYPE_WIDGET', 'label' => 'Widget'],
-        ],
+        ]],
     ];
 
     public static $detail_tables = [

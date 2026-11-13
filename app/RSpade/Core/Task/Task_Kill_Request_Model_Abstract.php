@@ -27,21 +27,21 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property string $completed_at
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $explanation
  * @property string $host
  * @property int $id
  * @property string $kill_after_at
- * @property int $mode_id
+ * @property int $mode_id enum: MODE_FORCE_STOP, MODE_FORCE_KILL (also $mode_id__label and the other $mode_id__* properties)
  * @property string $outcome
  * @property int $requested_by_id
- * @property int $requested_by_type
- * @property int $status_id
+ * @property string $requested_by_type type ref: a model class name, stored as a type-ref id
+ * @property int $status_id enum: STATUS_PENDING, STATUS_CLAIMED, STATUS_DONE, STATUS_MOOT (also $status_id__label and the other $status_id__* properties)
  * @property int $target_pid
  * @property int $task_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $worker_generation
  * @property int $worker_id
  * @property int $worker_pid
@@ -80,21 +80,20 @@ abstract class Task_Kill_Request_Model_Abstract extends Rsx_Model_Abstract
     protected $table = '_task_kill_requests';
     protected $fillable = [];
 
-    protected static $type_ref_columns = ['requested_by_type'];
-
-    public static $enums = [
-        'mode_id' => [
+    public static $columns = [
+        'requested_by_type' => ['type_ref' => true],
+        'mode_id' => ['enum' => [
             1 => ['constant' => 'MODE_FORCE_STOP', 'label' => 'Force stop'],
             2 => ['constant' => 'MODE_FORCE_KILL', 'label' => 'Force kill'],
-        ],
-        'status_id' => [
+        ]],
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_PENDING', 'label' => 'Pending'],
             2 => ['constant' => 'STATUS_CLAIMED', 'label' => 'Claimed'],
             // The worker was killed and the run settled KILLED.
             3 => ['constant' => 'STATUS_DONE', 'label' => 'Done'],
             // Nothing to kill: the run ended first, or runs where it may not be signalled.
             4 => ['constant' => 'STATUS_MOOT', 'label' => 'Moot'],
-        ],
+        ]],
     ];
 
     /**

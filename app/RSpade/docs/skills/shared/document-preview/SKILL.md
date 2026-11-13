@@ -268,7 +268,7 @@ Ask the attachment, never the extraction status: **`$attachment->should_show_tex
 
 **It is advice about display, never authorization** — extraction still runs for every one of these, the text stays searchable, and `get_extracted_text()` returns it whatever the flag says.
 
-**`$attachment->can_open_inline()`** is the neighbouring question an "Open in Browser" link asks, and it is NOT the same one: it reads `config('rsx.preview.browser_inline')` — what a BROWSER can display in a tab of its own — so it disagrees with the viewer registry on purpose (a `.docx` previews here because the worker converts it, and downloads in a browser tab). It cannot come from `file_type_id` either, since `text/*`, Word and Excel are all `FILE_TYPE_DOCUMENT` and disagree. It ships to JS as a derived property alongside `is_image` / `is_video` / `is_document` (`rsx:man model`, DERIVED PROPERTIES).
+**`$attachment->can_open_inline()`** is the neighbouring question an "Open in Browser" link asks, and it is NOT the same one: it reads `config('rsx.preview.browser_inline')` — what a BROWSER can display in a tab of its own — so it disagrees with the viewer registry on purpose (a `.docx` previews here because the worker converts it, and downloads in a browser tab). It cannot come from `file_type_id` either, since `text/*`, Word and Excel are all `FILE_TYPE_DOCUMENT` and disagree. It ships to JS as an appended property alongside `is_image` / `is_video` / `is_document` (`rsx:man model`, APPENDED PROPERTIES).
 
 ---
 

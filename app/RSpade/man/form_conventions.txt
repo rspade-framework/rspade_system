@@ -156,6 +156,15 @@ THE SUBMISSION PIPELINE
             throw {f: msg}     rendered as validation on those fields
             throw an Error     rendered as a single alert
 
+        A field shown but not to be written is REMOVED here. The worked case is
+        a model DERIVED COLUMN with an editable source column (rsx:man
+        derived_columns, ONE VALUE, TWO COLUMNS): while a rule supplies the
+        value, the page disables the source column's input and shows the
+        derived value in it, and its before_submit deletes that field from the
+        payload; the endpoint writes the source column only when the key is
+        present, so the stored choice survives. A derived column itself is never
+        a form field - Form_Edit::set() of one throws.
+
     EVENTS
 
         'submitted'     (result)   a successful submit; the payload is exactly

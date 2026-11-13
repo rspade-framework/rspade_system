@@ -27,11 +27,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   3. should_show_text_preview() answers the presentation question once, so a host with a
  *      text pane stops keying off the extraction status: a .txt would show the same
  *      characters twice and a spreadsheet's extraction is search fodder, not prose.
- *   4. is_image / is_video / is_document / can_open_inline are DERIVED PROPERTIES - declared
+ *   4. is_image / is_video / is_document / can_open_inline are APPENDED PROPERTIES - declared
  *      in $appends, serialized by toArray(), and therefore present on the JS record. And
  *      can_open_inline is the one that cannot be derived from file_type_id at all.
  */
-class Text_Preview_And_Derived_Properties_Test extends Rsx_Test_Abstract
+class Text_Preview_And_Appended_Properties_Test extends Rsx_Test_Abstract
 {
     /** @var array<int> ids of attachments created during the class, cleaned up in teardown. */
     private static $created_attachment_ids = [];
@@ -193,7 +193,7 @@ class Text_Preview_And_Derived_Properties_Test extends Rsx_Test_Abstract
         );
         static::__assert_array_has_key(
             File_Attachment_Model::FILE_TYPE_TEXT,
-            File_Attachment_Model::$enums['file_type_id'],
+            File_Attachment_Model::enum_values('file_type_id'),
             'and a valid enum row - an enum value is not removed by moving rows off it'
         );
     }
@@ -262,7 +262,7 @@ class Text_Preview_And_Derived_Properties_Test extends Rsx_Test_Abstract
     }
 
     // ============================================================================================
-    // DERIVED PROPERTIES
+    // APPENDED PROPERTIES
     // ============================================================================================
 
     // DOCUMENTS-TEXTVIEW-INLINE: can_open_inline consults the browser-native mime list, NOT
@@ -293,9 +293,9 @@ class Text_Preview_And_Derived_Properties_Test extends Rsx_Test_Abstract
         );
     }
 
-    // DOCUMENTS-TEXTVIEW-APPENDS: the four derived properties ride toArray(), so they reach the
+    // DOCUMENTS-TEXTVIEW-APPENDS: the four appended properties ride toArray(), so they reach the
     // JS record on every payload the model produces - not just on the one fetch() builds.
-    public static function test_to_array_carries_the_derived_properties()
+    public static function test_to_array_carries_the_appended_properties()
     {
         $png = static::__make_png_attachment('appends_picture');
         $docx = static::__make_attachment('appends_docx', 'appends_word.docx');

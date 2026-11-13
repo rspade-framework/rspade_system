@@ -77,9 +77,9 @@ MIGRATION RULES
        - Just use INT for integers (becomes BIGINT automatically)
        - Just use TEXT for long content (becomes LONGTEXT automatically)
        - What a column HOLDS is declared on the MODEL, never in the migration:
-         an enum column is BIGINT here and mapped by $enums there; a TEXT column
-         holding rich text or a custom notation is TEXT here and typed by
-         $text_types there (rsx:man text_types). Converting an existing plain-text
+         the model's $columns entry says it is an enum (BIGINT here), a text type
+         (TEXT here; rsx:man text_types), a type ref, a secret or a derived
+         column (rsx:man model, COLUMN DECLARATIONS). Converting an existing plain-text
          column to a type is two acts: a raw-SQL migration that re-encodes the
          rows into the type's storage form, then the declaration on the model
        - Just use FLOAT for decimals (becomes DOUBLE automatically)
@@ -133,22 +133,10 @@ MIGRATION RULES
        AN EXCEPTION IS ESSENTIALLY NEVER JUSTIFIED. A table name and raw SQL always
        suffice - including for a BACKFILL, which is the case people most often reach
        for a model to do. SELECT the rows and UPDATE them; a migration has the whole
-       of SQL and the rows are just rows. The only shape that has ever earned an
-       exception is data seeding that needs model BEHAVIOUR no SQL can reproduce -
-       bytes that must travel through the file-upload pipeline, a value that must be
-       written through an encryption cast.
+       of SQL and the rows are just rows. A model WRITE is never possible in any
+       case: it throws (Migrations Never Write Through a Model, below).
 
-       THE SECOND HAZARD, for any migration that does write through a model: THE CODE
-       CAN BE AHEAD OF THE DATABASE. A model is the code as it is deployed - its casts,
-       its hooks, the columns its save() stamps - while a migration runs at one fixed
-       point in the schema's history, possibly several migrations before the columns
-       that code expects exist. A write through the model then fails on an unknown
-       column, part-way through the run, on the box where a half-applied migration
-       costs the most. Raw SQL against a table name describes the schema AT THAT POINT
-       IN HISTORY and cannot drift.
-
-       A migration that needs model behaviour anyway says so in its docblock, and the
-       rationale owns both hazards:
+       A reference that genuinely cannot be avoided says so in its docblock:
 
            /**
             * @MIGRATION-MODEL-01-EXCEPTION <why raw SQL cannot do this>
@@ -161,6 +149,47 @@ MIGRATION RULES
        runner's own file list, so every migration directory and nested subdirectory is
        covered. Detection is over the PHP token stream: a class name in a comment or a
        string literal is never a violation.
+
+   Migrations Never Write Through a Model
+       While a migration's up() executes, a model save() or delete() and a bulk
+       builder update() or delete() - ->raw_bulk() included - THROW a
+       RuntimeException:
+
+           Task_Model::save() refused: a migration is executing. A migration
+           manipulates records with direct SQL - DB::statement() or the DB::table query builder -
+           never through a model: a model is current code, and a migration is a
+           historical record that must replay unchanged forever. To recompute a
+           model's derived columns after changing what they are computed from, call
+           Rsx_Rederive::enqueue('<table>'); migrate rederives the table in its
+           final step. See: php artisan rsx:man migrations
+
+       The bulk forms name where(...)->update(), where(...)->delete() or
+       delete($id). THE CODE CAN BE AHEAD OF THE DATABASE: a model is the code as
+       deployed - its columns, casts, derive methods, hooks, the authorship its
+       save() stamps - while a migration runs at one fixed point in the schema's
+       history, possibly several migrations before the columns that code expects
+       exist. A write that works today breaks the replay the day the model moves on;
+       raw SQL against a table name cannot drift. Reads through a model are not
+       refused (they carry the same hazard; prefer DB::table()).
+
+       Only the execution of the migration file itself is guarded. Schema
+       normalization, the post-normalize hook, the initial user, the revision
+       dictionary and the rederive step (POST-MIGRATE STEPS) run outside it, with
+       current code against the final schema.
+
+   Recomputing Derived Columns
+       A model's derived columns (rsx:man derived_columns) are computed by its
+       save(), which a migration cannot call. A migration that changes what a
+       derived column is computed from - adds or rewrites a source column, rewrites
+       data a derive method reads - writes the derived values itself in SQL, or
+       queues the table:
+
+           \App\RSpade\Core\Database\Rsx_Rederive::enqueue('tasks');
+
+       enqueue() takes a TABLE name (a model class name throws), is a plain
+       DB::table() write that works inside the guard, and is idempotent. The queue
+       is drained as migrate's LAST step (POST-MIGRATE STEPS). A change to a derive
+       method's logic ships with a migration whose up() only enqueues the table.
 
    down() Method Removal
        The migration system automatically removes down() methods from migration files.
@@ -978,7 +1007,25 @@ POST-MIGRATE STEPS
           tip. Skipped on a --framework-only run, which migrates a schema-only subset
           with none of the application's tables in it.
 
-       5. THE PURGE - every run, snapshot-protected, dump-protected or bare, discards
+       5. THE REDERIVE QUEUE - every run, --framework-only included, the LAST step:
+          each table a migration queued with Rsx_Rederive::enqueue() is walked in
+          batches of 100 (every site, soft-deleted rows included) and each record is
+          rederive()d by current model code, saving only stale records (no
+          updated_at, no updated_by, no revision) and sending no realtime frames:
+
+              Rederiving cached values for tasks.....
+              Done rederiving cached values
+
+          one dot per batch; silent when nothing is queued. While a pass changes any
+          record every queued table gets another pass, up to N + 2 for N queued
+          tables, then a [WARNING] names the tables still changing and the run
+          continues. A queued table with no model, no derived columns, or a declared
+          column missing from the database leaves the queue silently. A derive
+          method that throws fails the run - "Rederiving cached values failed: ..."
+          - and rolls it back where protection is engaged; unfinished tables stay
+          queued. rsx:man derived_columns.
+
+       6. THE PURGE - every run, snapshot-protected, dump-protected or bare, discards
           the cached schema state before it starts and after it ends, however it ends
           (A MIGRATION NEVER REBUILDS, above).
 
@@ -1114,6 +1161,15 @@ ERROR MESSAGES
        the exact docker compose invocation to use instead. A deployed application
        migrates in place normally; this refusal is development mode only.
 
+   "<Model>::save() refused: a migration is executing."
+       The migration writes through a model. Rewrite the write as DB::statement() /
+       DB::table(); for derived values, Rsx_Rederive::enqueue('<table>').
+
+   "Rederiving cached values failed: <message>"
+       A derive method threw while the final step rederived a queued table. The run
+       rolled back where protection is engaged; fix the derive method or the data
+       the migration wrote.
+
    "Snapshot restore is not available here: <reason>"
        migrate:restore found an interrupted migration but this environment cannot
        perform the restore (see SNAPSHOT PROTECTION). The migration flag and the
@@ -1188,6 +1244,9 @@ SEE ALSO
        rsx:man rsx_git - The git proxy, which key-union merges a conflicted
                                   .migration_whitelist and completes the pull
        rsx:man database_schema_architecture - Database system overview
+       rsx:man derived_columns - Derived columns and the rederive queue
+       rsx:man model - COLUMN DECLARATIONS: what a column holds
+       skill rspade:migrations - Writing a migration
        rsx:man site_locks - Which commands are enforced, and why migrate is not
        rsx:man coding_standards - General coding standards
        rsx:man error_handling - Error handling patterns

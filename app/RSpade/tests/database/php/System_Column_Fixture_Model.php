@@ -29,10 +29,10 @@ class System_Column_Fixture_Model extends Rsx_Model_Abstract
 
     public $timestamps = false;
 
-    public static $enums = [
-        'state_id' => [
+    public static $columns = [
+        'state_id' => ['enum' => [
             1 => ['constant' => 'STATE_OPEN', 'label' => 'Open', 'tone' => 'green'],
             2 => ['constant' => 'STATE_SHUT', 'label' => 'Shut', 'tone' => 'red'],
-        ],
+        ]],
     ];
 }

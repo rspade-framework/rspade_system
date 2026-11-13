@@ -20,8 +20,6 @@ class Lifecycle_Cycle_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'lifecycle_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     /**
      * Number of times after_update() fired.
      */

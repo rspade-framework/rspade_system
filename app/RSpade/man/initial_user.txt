@@ -106,7 +106,7 @@ THE THREE CREATION PATHS (plus a direct call)
                     after the provisioning migrate finishes, against the 'test'
                     connection: test-user-1@rspade.test, site 1, at the most
                     privileged role this application declares (derived from
-                    User_Model::$enums). The event fires here too (see TEST MODE
+                    User_Model::role_id__enum()). The event fires here too (see TEST MODE
                     below).
 
     manual          An operator or an application command calling create() directly.

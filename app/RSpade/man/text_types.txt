@@ -7,9 +7,9 @@ NAME
 SYNOPSIS
     php artisan rsx:man text_types
 
-    public static $text_types = [
-        'description' => Rich_Text::class,
-        'notes'       => Raw_Text::class,
+    public static $columns = [
+        'description' => ['text_type' => Rich_Text::class],
+        'notes'       => ['text_type' => Raw_Text::class],
     ];
 
     $project->description                      a Rich_Text, not a string
@@ -113,11 +113,16 @@ THE CONTRACT
        default, a hand-built payload), and the throw is what finds it.
 
 DECLARING A COLUMN
-    Beside $enums on the model:
+    A 'text_type' entry in the model's $columns (rsx:man model, COLUMN
+    DECLARATIONS):
 
-        public static $text_types = [
-            'description' => Rich_Text::class,
+        public static $columns = [
+            'description' => ['text_type' => Rich_Text::class],
         ];
+
+    A text type is one kind per column: never beside 'enum' or 'type_ref'
+    on the same entry (MODEL-COLUMNS-01). Model::text_type_columns() answers
+    every declared column.
 
     From then on:
 
@@ -569,7 +574,7 @@ CHANGING A COLUMN'S TYPE
        Type::from_plain_text() produces rather than calling it. from_plain_text() is
        the reference the SQL must match, and the path for a conversion made
        in code.
-    2. The one-line change to $text_types.
+    2. The one-line 'text_type' entry in $columns.
 
     Declaring without re-encoding leaves every row claiming an encoding it
     does not have.
@@ -766,7 +771,7 @@ HOW IT WORKS INSIDE
 
 SEE ALSO
     rsx:man jqhtml - ADVANCED: VALUE PRINTERS, ADVANCED: DYNAMIC COMPONENT TAGS
-    rsx:man model - $enums and the model's other column declarations
+    rsx:man model - COLUMN DECLARATIONS: the $columns grammar
     rsx:man form_input - the input value contract
     rsx:man csv_exports - where to_plain_text() lands in an export
     rsx:man external_api - param types, the 422 validation envelope

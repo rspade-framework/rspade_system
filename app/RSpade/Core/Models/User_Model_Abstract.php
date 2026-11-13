@@ -45,27 +45,27 @@ use App\RSpade\Lib\Settings\Has_Preference_Variables;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property string $first_name
  * @property int $id
- * @property string $invite_accepted_at
- * @property string $invite_code
- * @property string $invite_expires_at
- * @property int $is_api_access_enabled
- * @property int $is_enabled
+ * @property string $invite_accepted_at never exported to the browser
+ * @property string $invite_code never exported to the browser
+ * @property string $invite_expires_at never exported to the browser
+ * @property bool $is_api_access_enabled
+ * @property bool $is_enabled
  * @property string $last_name
  * @property string $last_seen
  * @property int $login_user_id
  * @property string $phone
- * @property int $role_id
+ * @property int $role_id enum: ROLE_ROOT_ADMIN, ROLE_SITE_OWNER, ROLE_SITE_ADMIN, ROLE_MANAGER, ROLE_USER, ROLE_VIEWER (also $role_id__label and the other $role_id__* properties)
  * @property int $site_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $role_id__label
  * @property-read string $role_id__constant
@@ -111,7 +111,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const INVITATION_ACCEPTED = 'accepted';
     const INVITATION_EXPIRED = 'expired';
 
-    // Permission constants - must match integer values used in $enums['role_id']['permissions']
+    // Permission constants - must match integer values used in the role_id enum's 'permissions'
     // 1 is retired: it was an installation-wide permission, which no role may hold - authority
     // over every site is a developer's. Never reuse it.
     const PERM_MANAGE_SITE_BILLING = 2;
@@ -182,44 +182,23 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     ];
 
     /**
-     * Columns toArray() never sends to the browser (window.rsxapp.user, model fetch,
-     * relationship and list payloads, the external API).
+     * Column declarations (see rsx:man model).
      *
-     * invite_code is a bearer credential: whoever holds a pending user's code can accept
-     * the invitation and claim the account. The two invite dates travel with it - the
-     * invitation lifecycle is server-side state that no client code reads.
+     * invite_code is a bearer credential: whoever holds a pending user's code can accept the
+     * invitation and claim the account. The two invite dates travel with it - the invitation
+     * lifecycle is server-side state that no client code reads - so none of the three is ever
+     * sent to the browser (window.rsxapp.user, model fetch, relationship and list payloads, the
+     * external API).
      *
-     * @var string[]
+     * role_id carries each role's ACL permissions and can_admin_roles. A static property
+     * initializer cannot name self:: constants here, so the values are literals that must match
+     * the ROLE_* and PERM_* constants defined above.
      */
-    public static $neverExport = ['invite_code', 'invite_accepted_at', 'invite_expires_at'];
-
-    /**
-     * Cached supplementary permissions for this user (avoids repeated DB queries)
-     * @var array|null
-     */
-    protected $_supplementary_permissions = null;
-
-    /**
-     * Cache generation the cached supplementary permissions were loaded at.
-     * When User_Permission_Model advances the generation for this user (via
-     * grant/deny/remove), the cache is stale and reloaded on next access.
-     * @var int|null
-     */
-    protected ?int $_supplementary_permissions_generation = null;
-
-    /** A staff user is edited through Form_Edit, which reads what another editor changed here. */
-    public static $revisions = true;
-
-    /**
-     * Enum field definitions with ACL permissions and can_admin_roles
-     *
-     * NOTE: Cannot use self:: constants in static property initialization (PHP limitation).
-     * Values must match the ROLE_* and PERM_* constants defined above.
-     *
-     * @var array
-     */
-    public static $enums = [
-        'role_id' => [
+    public static $columns = [
+        'invite_code' => ['never_export' => true],
+        'invite_accepted_at' => ['never_export' => true],
+        'invite_expires_at' => ['never_export' => true],
+        'role_id' => ['enum' => [
             // ROLE_ROOT_ADMIN = 200
             200 => [
                 'constant' => 'ROLE_ROOT_ADMIN',
@@ -263,8 +242,25 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
                 'permissions' => [7], // VIEW(7) only
                 'can_admin_roles' => [],
             ],
-        ],
+        ]],
     ];
+
+    /**
+     * Cached supplementary permissions for this user (avoids repeated DB queries)
+     * @var array|null
+     */
+    protected $_supplementary_permissions = null;
+
+    /**
+     * Cache generation the cached supplementary permissions were loaded at.
+     * When User_Permission_Model advances the generation for this user (via
+     * grant/deny/remove), the cache is stale and reloaded on next access.
+     * @var int|null
+     */
+    protected ?int $_supplementary_permissions_generation = null;
+
+    /** A staff user is edited through Form_Edit, which reads what another editor changed here. */
+    public static $revisions = true;
 
     /**
      * UNBOUNDED: this table's row count grows with customer activity, not with the
@@ -749,7 +745,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 
         $roles_granting = [];
 
-        foreach (static::$enums['role_id'] as $role_id => $role) {
+        foreach (static::enum_values('role_id') as $role_id => $role) {
             if (in_array($permission_id, $role['permissions'] ?? [], true)) {
                 $roles_granting[] = (int) $role_id;
             }

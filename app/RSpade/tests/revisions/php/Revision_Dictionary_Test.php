@@ -94,10 +94,10 @@ class Revision_Dictionary_Test extends Rsx_Test_Abstract
     {
         $tokens = Revision_Dictionary::build_tokens();
 
-        $enums = Login_User_Model::$enums;
-        static::__assert_greater_than(0, count($enums), 'Login_User_Model must declare enums for this test to mean anything');
+        $enum_map = Login_User_Model::enum_columns();
+        static::__assert_greater_than(0, count($enum_map), 'Login_User_Model must declare enums for this test to mean anything');
 
-        foreach ($enums as $definitions) {
+        foreach ($enum_map as $definitions) {
             foreach ($definitions as $definition) {
                 static::__assert_true(
                     in_array('"' . $definition['label'] . '"', $tokens, true),

@@ -24,10 +24,12 @@ use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
  *   - Invalid class names throw an exception
  *
  * Usage in model:
- *   protected static $type_ref_columns = ['fileable_type'];
+ *   public static $columns = [
+ *       'fileable_type' => ['type_ref' => true],
+ *   ];
  *
- * The cast is automatically applied by Rsx_Model_Abstract based on the
- * $type_ref_columns declaration.
+ * The cast is automatically applied by Rsx_Model_Abstract to every column
+ * type_ref_columns() answers.
  */
 #[Instantiatable]
 class Rsx_Type_Ref_Cast implements CastsAttributes

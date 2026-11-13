@@ -29,10 +29,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Authorization is self-or-can_admin_role: an actor may always manage their own device
  * list, and otherwise only a role named in their own role's can_admin_roles whitelist
- * (User_Model $enums). A subordinate reaching upward therefore refuses, and a PEER is
+ * (User_Model role_id enum). A subordinate reaching upward therefore refuses, and a PEER is
  * permitted exactly when the role names itself in that list (equal-or-lower
  * administration) - both fall out of the list without a rule of their own. The roles are derived
- * from the application's own $enums at runtime (Rsx_Test_Abstract::role_triple()), never
+ * from the application's own role_id enum at runtime (Rsx_Test_Abstract::role_triple()), never
  * named as role constants, so the class is portable to an application whose User_Model
  * declares an entirely different role vocabulary.
  *

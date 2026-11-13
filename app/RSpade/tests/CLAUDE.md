@@ -83,7 +83,7 @@ every test here must pass in an application that overrides `User_Model` with its
 and declares none of the reference app's models. A framework test therefore references
 framework types ONLY: no class declared under `rsx/`, no `ROLE_*` / `PERM_*` constant (roles
 and permissions are application vocabulary - derive them at runtime from
-`User_Model::$enums` through `Rsx_Test_Abstract::most_privileged_role_id()` /
+the `role_id` enum through `Rsx_Test_Abstract::most_privileged_role_id()` /
 `role_triple()`, or from `role_id__enum()` directly), and no reference-app route, table or
 bundle name. Fixture models and fixture routes declared under `tests/` are the way to get a
 concrete record or surface to test against. A test whose SUBJECT is the template application
@@ -134,7 +134,7 @@ Running below.
 
 **The baseline carries exactly one user.** The migrated test baseline is provisioned
 with a single account - `users` id 1, `site_id` 1, at the most privileged role this
-application declares (derived from `User_Model::$enums`),
+application declares (derived from `User_Model::role_id__enum()`),
 email `test-user-1@rspade.test`, with an activated + verified `login_users`
 credential behind it. It exists because the first-user migration creates nobody
 unless `RSPADE_DEFAULT_*` are configured, while `__acting_as_user(1)` is how a test

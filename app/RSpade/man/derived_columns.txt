@@ -1,0 +1,316 @@
+DERIVED_COLUMNS(1)                RSpade Manual                DERIVED_COLUMNS(1)
+
+NAME
+    derived_columns - stored columns a model computes on save and nobody assigns
+
+TAGS
+    models, schema
+
+SYNOPSIS
+    // The declaration: the column, its derive method, the columns of THIS
+    // record the method reads.
+    public static $columns = [
+        'project_id' => ['derived' => 'derive_project_id', 'from' => ['taskable_type', 'taskable_id', 'direct_project_id']],
+    ];
+
+    public function derive_project_id(): ?int
+    {
+        return $this->resolve_chain_project_id() ?? $this->direct_project_id;
+    }
+
+    // save() derives it. Nobody assigns it.
+    $task->taskable_id = $other_task->id;
+    $task->save();                  // project_id recomputed
+
+    // What the method reads elsewhere moved: recompute, save only if different.
+    $task->rederive();
+
+    // A migration that changed what it is computed from:
+    \App\RSpade\Core\Database\Rsx_Rederive::enqueue('tasks');
+
+    php artisan rsx:derived:check tasks       // report drift
+    php artisan rsx:derived:rebuild tasks     // repair it
+
+DESCRIPTION
+    A derived column is an ordinary STORED column - queryable, indexable,
+    sortable, filterable - whose value is computed by a public method of its
+    model and written by the framework. No code, form, API call or migration
+    assigns it. It exists for values that are a function of other data and
+    must still be queried: the project a task's parent chain reaches, a total
+    kept for sorting, a normalized search key. A computed value that only has
+    to reach the browser is an appended property instead (rsx:man model,
+    APPENDED PROPERTIES).
+
+    Storing a computed value risks it going stale. The framework closes the
+    paths it can see - every save that changes a source column of the same
+    record recomputes it, every hand write is refused - and gives the rest a
+    single tool, rederive(), plus a migration queue and two commands for the
+    whole table.
+
+DECLARATION
+    A derived column is an entry of the model's $columns (rsx:man model,
+    COLUMN DECLARATIONS) carrying two keys:
+
+    derived
+        The name of a public, non-static method of the model taking no
+        required argument. It returns the column's value. It may read other
+        tables; its site-scoped reads see the site declared for the request
+        or task. It should be deterministic: the same stored data, the same
+        answer.
+
+    from
+        The list of columns of THIS record the method reads. May be [] (the
+        value depends only on other tables). May name another derived column
+        - derived columns are computed in dependency order. Never names the
+        column itself.
+
+    The column may also be an enum, text type or type ref, and may be
+    never_export: the computed value is assigned through setAttribute(), so
+    the column's kind applies. It never carries revision_exclude (a derived
+    column is never recorded already).
+
+    Checked at manifest build by MODEL-COLUMNS-01 (FATAL): derived and from
+    together, the method's shape, from a list of distinct names not naming
+    the column, and no cycle among derived columns. A cycle also throws at
+    run time:
+
+        X_Model::$columns declares derived columns that depend on each other
+        in a cycle: a -> b -> a.
+
+    Every from column must exist on the table (MODEL-ENUM-01 in rsx:check;
+    the first save of the model throws otherwise).
+
+    The generated model header marks the column read-only:
+
+        * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
+
+    JavaScript: Model.is_derived_column('project_id') answers true, and the
+    model stub documents the column as read-only. Nothing in the browser
+    writes a record, so nothing is enforced there.
+
+WHEN SAVE() DERIVES
+    INSERT
+        Every derived column is computed.
+
+    UPDATE
+        A derived column is computed when one of its from columns is dirty
+        (a derived column computed earlier in the same save counts as a
+        changed from column for those after it). A computed value equal to
+        the stored one leaves the column clean.
+
+    rederive()
+        Every derived column is computed.
+
+    The framework sees only THIS record's from columns. A change to another
+    row the method reads - in another table, or another row of the same
+    table - recomputes nothing by itself (CROSS-RECORD DEPENDENCIES).
+
+ASSIGNMENT IS REFUSED
+    save()
+        On a new record, ANY presence of a derived column - even null or the
+        value it would compute - and on an existing record a dirty one,
+        throws a LogicException:
+
+        Task_Model::project_id is a derived column - Task_Model::derive_project_id()
+        computes it from [taskable_type, taskable_id, direct_project_id] on save.
+        It is never assigned. Assign its source column(s), or call rederive().
+
+    Form_Edit::set()
+        A field whose column is derived throws:
+
+        Form_Edit::set('project_id'): Task_Model::project_id is a derived column
+        (derive_project_id(), from [taskable_type, taskable_id, direct_project_id]);
+        a form never writes it. Write its source column(s).
+
+    Bulk update()
+        Model::where(...)->update([...]) naming a derived column throws,
+        ->raw_bulk() included. A raw SQL expression (DB::raw(...)) written
+        to a from column throws too, ->raw_bulk() included: it can only run
+        as one statement and would leave the derived column stale. A PLAIN
+        value written to a from column is allowed: a model with a derived
+        column always takes the per-record path, so each record derives in
+        its own save(). ->raw_bulk()->update() with plain values on a from
+        column writes no derived value; the caller then rederives each
+        affected record.
+
+    rsx:check
+        MODEL-DERIVED-01 reports $record->col = ... where the record's class
+        is evident in the same function (new X, X::find(), a typed
+        parameter, a @var docblock) and col is derived. The save-time guard
+        is the enforcement; the rule is the early warning.
+
+REDERIVE()
+    $record->rederive(): bool
+
+    Recomputes every derived column from the record as stored and saves it
+    when, and only when, a value differs. Answers whether it saved; false
+    for a model with no derived columns.
+
+    It throws on an unsaved record (an unsaved one is derived by its first
+    save()) and with a LogicException on a record with unsaved changes,
+    which would otherwise ride the same save unasked:
+
+        Task_Model #12::rederive() refused: the record has unsaved changes
+        (title). Save them, or discard them with refresh(), first.
+
+    The save is the model's own save(): a save() override, site-scope checks
+    and site-lock enforcement all apply, so a site-scoped record is
+    rederived inside a #[Writer] endpoint, a Site_Lock::write() section or
+    a task's per-item section (rsx:man site_locks).
+
+A DERIVED-ONLY SAVE
+    A save in which the only changed columns are derived ones - every
+    rederive() that changes something, every cascade - is the framework
+    keeping a record consistent, not somebody editing it:
+
+    - updated_at is held where it was (against MySQL's ON UPDATE
+      CURRENT_TIMESTAMP too) and the updated_by pair is not stamped.
+    - No revision is written.
+    - The realtime notice is sent and after_update() fires, as for any
+      committed write.
+
+    Derived columns never appear in revision history in any save:
+    revision_excluded_columns() includes every derived column.
+
+CROSS-RECORD DEPENDENCIES
+    There is NO cross-record trigger. When record B's derived value reads
+    record A, the model whose change moves it - A's - rederives B itself, so
+    no caller can forget. The pattern is a save() override that saves, then
+    rederives every dependent, inside one transaction:
+
+        public function save(array $options = [])
+        {
+            if (!$this->exists || !$this->isDirty(['taskable_type', 'taskable_id'])) {
+                return parent::save($options);
+            }
+
+            return DB::transaction(function () use ($options) {
+                $result = parent::save($options);
+
+                if ($result) {
+                    $this->__rederive_descendants();   // $child->rederive() for each task below
+                }
+
+                return $result;
+            });
+        }
+
+    Visit every dependent, also one whose own value does not change - its
+    own dependents may. A dependent's rederive() touches none of its from
+    columns, so it cascades nothing further by itself; the walk does. The
+    worked example is Task_Model::save() and __rederive_descendants() in
+    the reference app.
+
+ONE VALUE, TWO COLUMNS
+    Derivation is never conditional: a column is derived always or never. A
+    value a person chooses unless a rule supplies it is TWO columns - the
+    person's editable source column, and the derived column that prefers the
+    rule and falls back to the source:
+
+        direct_project_id    plain; the project a user chose
+        project_id           derived; the chain's project, else direct_project_id
+
+    The person's choice survives while the rule applies and returns when it
+    stops. Reads, filters and lists use the derived column; forms and write
+    APIs write the source.
+
+    In a form, the source column's input is disabled and shows the derived
+    value while the rule applies; the page's form.before_submit hook removes
+    that field from the submission while it is disabled, and the endpoint
+    writes the source column only when its key is present (rsx:man
+    form_conventions). In the external API the derived column is a response
+    field and a filter, never a write parameter, so sending it is answered
+    422 "Unknown parameter".
+
+MIGRATIONS
+    A migration never writes through a model: while its up() runs, a model
+    save() or delete() and a bulk builder update() or delete() throw
+    (rsx:man migrations, Migrations Never Write Through a Model). A
+    migration that changes what a derived column is computed from - adds or
+    rewrites a source column, rewrites data a derive method reads - either
+    writes the derived values itself in SQL, or queues the table:
+
+        \App\RSpade\Core\Database\Rsx_Rederive::enqueue('tasks');
+
+    enqueue() takes a TABLE name; a model class name throws. It is a plain
+    DB::table() write, idempotent per table.
+
+    migrate drains the queue as its LAST step, on every run, after the
+    schema has reached the tip and every other step has run, so current
+    model code runs against the schema it was written for. Each queued
+    table's records are walked in batches of 100 by primary key - every
+    site, soft-deleted rows included - and rederive()d: only stale records
+    are saved, as derived-only saves, and no realtime frames are sent.
+    Output:
+
+        Rederiving cached values for tasks.....
+        Done rederiving cached values
+
+    one heading per table per pass and one dot per batch. A derive method
+    may read another record's derived value, so while a pass changes any
+    record every queued table gets another pass, up to N + 2 passes for N
+    queued tables; tables still changing on the last pass are named in a
+    [WARNING] (a cycle among derived values, or a non-deterministic derive
+    method) and the run continues. A queued table with no model, a model
+    with no derived columns, or a declared column the database lacks, is
+    removed from the queue silently: a migration replays forever, long
+    after the model it was written for changed. A derive method that throws
+    fails the run ("Rederiving cached values failed: ...") and the
+    migration's snapshot or dump rolls it back; a table that did not
+    complete stays queued for the next migrate.
+
+    CHANGING A DERIVE METHOD. A change to a derive method's logic changes
+    every value it ever stored. Ship it with a migration whose up() only
+    calls Rsx_Rederive::enqueue('<table>'), so every environment recomputes
+    on its next migrate; or run rsx:derived:rebuild.
+
+COMMANDS
+    php artisan rsx:derived:check <table> | --all
+        Report records whose stored derived values differ from what the
+        model computes now, changing nothing: per table, the records
+        examined, how many drift, and up to five as
+        "#id column: stored -> computed". --all checks every table whose
+        model declares derived columns. Exit 1 when anything drifts (or a
+        table cannot be checked), else 0.
+
+    php artisan rsx:derived:rebuild <table> | --all
+        Recompute and save every record whose values differ, with the same
+        engine, passes and output as the migrate step; each site's batch is
+        saved inside one Site_Lock::write() section, and realtime frames
+        are sent. Exit 1 when a table is still changing after the last
+        pass, else 0.
+
+    Both refuse a table no model owns, or whose model declares no derived
+    columns.
+
+TROUBLESHOOTING
+    "... is a derived column - ... It is never assigned."
+        Code assigned the column. Assign its from columns, or call
+        rederive() when what the method reads lives elsewhere.
+
+    "... rederive() refused: the record has unsaved changes"
+        Save or refresh() the record first.
+
+    "A bulk update() never writes it, raw_bulk() included."
+        Update the source columns instead, or rederive() each record.
+
+    "a raw SQL expression cannot be written to <col>, which the derived
+    column <x> is computed from"
+        Write plain values, or ->raw_bulk() with plain values and rederive()
+        each affected record.
+
+    A stored value is wrong although nothing assigned it
+        What the derive method reads moved somewhere save() cannot see: a
+        cross-record dependency without the dependents pattern, a raw SQL
+        write, or a changed derive method shipped without an enqueue.
+        rsx:derived:check finds the records; rsx:derived:rebuild repairs
+        them; then close the path that left them stale.
+
+SEE ALSO
+    rsx:man model - COLUMN DECLARATIONS, the $columns grammar
+    rsx:man migrations - the migration guard and the rederive step
+    rsx:man revisions - what a revision records
+    rsx:man form_conventions - Form_Edit and before_submit
+    rsx:man site_locks - the write lock rederive() needs
+    skill rspade:models - writing a model, derived columns in depth
+    skill rspade:migrations - writing a migration

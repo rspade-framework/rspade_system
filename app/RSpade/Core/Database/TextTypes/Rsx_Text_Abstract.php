@@ -16,9 +16,9 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * Declaring the column's type on the model moves that knowledge to one place and lets the
  * value carry it:
  *
- *     public static $text_types = [
- *         'description' => Rich_Text::class,
- *         'notes'       => Raw_Text::class,
+ *     public static $columns = [
+ *         'description' => ['text_type' => Rich_Text::class],
+ *         'notes'       => ['text_type' => Raw_Text::class],
  *     ];
  *
  * A value is IMMUTABLE and carries its own storage form. The constructor is private, and
@@ -493,7 +493,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
                 throw new \LogicException(
                     "{$expected}::from_request() was handed a value the client submitted as "
                     . "'{$value->claimed_type()}'. The endpoint and the form disagree about what "
-                    . 'this field is - check the model\'s $text_types declaration and the input '
+                    . 'this field is - check the column\'s text_type in the model\'s $columns and the input '
                     . 'component wired to it.'
                 );
             }

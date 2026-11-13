@@ -10,7 +10,7 @@ namespace App\RSpade\Tests\Codegen\Php;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 
 /**
- * Test fixture: a model whose only interesting feature is a DERIVED PROPERTY.
+ * Test fixture: a model whose only interesting feature is an APPENDED PROPERTY.
  *
  * $appends plus a getXAttribute() accessor delegating to the public method that defines the
  * value is the sanctioned route for a computed value that must reach JavaScript. The stub
@@ -21,8 +21,6 @@ class Appends_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'codegen_appends_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 
     protected $appends = ['display_id', 'is_flagged'];
 

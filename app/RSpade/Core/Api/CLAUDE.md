@@ -88,8 +88,8 @@ the one point every answer passes, which also adds the timing fields.
   document's path is granted to every key. `validate()` is the
   ONE validator every write path runs, `matches()` the ONE matcher; scopes only subtract, and a
   malformed stored scope still counts, so the key fails closed.
-- `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display; `key_hash` in
-  `$neverExport`), revoke, expiry, `read_only` and `is_temporary` fixed at mint, `scopes`,
+- `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display; `key_hash`
+  `never_export`), revoke, expiry, `read_only` and `is_temporary` fixed at mint, `scopes`,
   and `tester_session_id` (see Tester keys below). Deleting a key signs its listed user
   session out (`SIGN_OUT_API_KEY_DELETED`, the `deleting` hook; the session rows are kept,
   `_sessions.api_key_id` is `ON DELETE SET NULL`). Its `booted()` hooks hand every

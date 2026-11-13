@@ -226,6 +226,13 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      handling never sees these files, since they do not go through `check_file()`.)
    - Severity: High
 
+### Model Rules (`Rules/Models/`) - column declarations
+
+- **ModelColumns_CodeQualityRule** (MODEL-COLUMNS-01) - the `$columns` grammar; manifest-time FATAL (see Current Manifest-Time Rules)
+- **ModelColumnsRead_CodeQualityRule** (MODEL-COLUMNS-02) - a direct `::$columns` read (token stream: `::` then `$columns`) answers one class's declaration and misses inherited entries; read through `columns()` and its kind views. `Rsx_Model_Abstract.php` is exempt; `@MODEL-COLUMNS-02-EXCEPTION`. rsx:check, high
+- **ModelDerivedAssignment_CodeQualityRule** (MODEL-DERIVED-01) - `$x->col = ...` where `col` is a derived column and the receiver's class is evident in the same function (`$this` in the model, `new X`, `X::find()`-style factories, a builder chain ending `first`/`find`/`sole`, a typed parameter, a `@var` docblock). The save-time guard is the enforcement; this is the early warning. `@MODEL-DERIVED-01-EXCEPTION`. rsx:check, high
+- **ModelEnumColumns_CodeQualityRule** (MODEL-ENUM-01) - every declared `$columns` entry and every `from` column exists on the model's table (live schema). rsx:check
+
 ### Common Rules (`Rules/Common/`)
 
 1. **FilenameCaseRule** (FILE-CASE-01)
@@ -313,7 +320,7 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
 
 6. **MorphStringPattern_CodeQualityRule** (POLY-01)
    - Rejects Laravel's string-morph pattern on a polymorphic relation
-   - `morphTo()` -> the DECLARING model must declare the `*_type` column in `$type_ref_columns`;
+   - `morphTo()` -> the DECLARING model must declare the `*_type` column `type_ref` in `$columns`;
      `morphOne()`/`morphMany()` -> the RELATED model must (its table carries the column)
    - `morphToMany()`/`morphedByMany()` always flagged: a pivot's discriminator is owned by no
      model, so no declaration can cover it
@@ -884,7 +891,7 @@ Approved for manifest-time execution, by rule directory:
 - `Manifest/` - ABSTRACT-ATTR-01, ACTOR-01, MANIFEST-CTRL-01, MANIFEST-INST-01,
   MANIFEST-MONO-01, PHP-PARENT-CHAIN-01, PHP-SPA-01, POLY-01, RELATIONSHIP-OVERRIDE-01,
   REVISION-01, ROUTE-ATTR-01, SCSS-SCOPE-01, SEALED-01, TEST-AUTH-01
-- `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01, TEXT-TYPE-01
+- `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-COLUMNS-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01, TEXT-TYPE-01
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,
   TASK-ON-BUILD-01, TASK-RUN-AS-01
@@ -898,7 +905,9 @@ The heaviest of these deserves its own note:
 
 - **REVISION-01** (RevisionParent_CodeQualityRule): an incoherent `#[Revision_Parent]`. The attribute says "a revision on this child belongs to that parent's history", and the root pair it produces is written into every `_revisions` row AT WRITE TIME - so an incoherent declaration is never an error, it is a history that is quietly missing rows long after the change that caused it. Three checks: the child must declare `$revisions = true` (otherwise the attribute is inert and its author believes something that is not happening), the method must return a `belongsTo` (only a belongsTo names exactly one parent row, and a revision has exactly one root), and the parent must declare `$revisions = true` too (otherwise the child's writes are filed under a record whose own writes are never recorded - a half history). Cross-file (`kind() = KIND_CROSS_FILE`), AST-based, and deliberately silent on a target it cannot resolve statically. Full contract: `rsx:man revisions`.
 
-- **TEXT-TYPE-01** (TextTypeDeclaration_CodeQualityRule): a `$text_types` declaration the cast cannot honour. Three checks: every entry names a class extending `Rsx_Text_Abstract`; that type has a JS twin of the same simple name extending the JS `Rsx_Text_Abstract`; and no `$casts` default or `casts()` answer names a declared column - the text cast is attached only where no cast exists, so such an entry SHADOWS it and the column stores request markup unfiltered, a stored-XSS path with no error. Every mode is silent at runtime, hence fatal. Cross-file, REFLECTION-based over loaded classes (the entries and casts are values, not syntax); checks 1-2 reported at the class that declares `$text_types`, check 3 on every concrete model inheriting one. Deliberately silent on a `casts()` body that cannot be evaluated without a booted model; honors `@TEXT-TYPE-01-EXCEPTION` file-wide. Seam `evaluate_class($fqcn, $abs_file, $is_abstract)` (abstractness comes from the manifest, which cannot answer for a temp-loaded fixture); test `Text_Type_Declaration_Rule_Test`. Full contract: `rsx:man text_types`.
+- **MODEL-COLUMNS-01** (ModelColumns_CodeQualityRule): the `$columns` grammar (docblock on `Rsx_Model_Abstract::$columns`). Known keys only, flags the literal `true`, one of `enum`/`text_type`/`type_ref` per column, well-formed enum maps, `derived` + `from` together with a public non-static zero-required-argument method, `from` never naming its own column, no `derived` beside `revision_exclude`, no cycle among derived columns, a replacing entry never dropping an inherited `never_export` or an audit `type_ref`, and no model declaring `$enums` / `$text_types` / `$type_ref_columns` / `$neverExport` / `$revision_exclude` (the framework reads none of them, so a secret listed there would ship). Every mode is silent at runtime, hence fatal and not suppressible. Cross-file, REFLECTION-based over loaded classes, reported at the class that declares the entry. Full contract: `rsx:man model`, COLUMN DECLARATIONS.
+
+- **TEXT-TYPE-01** (TextTypeDeclaration_CodeQualityRule): a `text_type` declaration the cast cannot honour. Three checks: every entry names a class extending `Rsx_Text_Abstract`; that type has a JS twin of the same simple name extending the JS `Rsx_Text_Abstract`; and no `$casts` default or `casts()` answer names a declared column - the text cast is attached only where no cast exists, so such an entry SHADOWS it and the column stores request markup unfiltered, a stored-XSS path with no error. Every mode is silent at runtime, hence fatal. Cross-file, REFLECTION-based over loaded classes (the entries and casts are values, not syntax); checks 1-2 reported at the class that declares the `text_type` entry, check 3 on every concrete model inheriting one. Deliberately silent on a `casts()` body that cannot be evaluated without a booted model; honors `@TEXT-TYPE-01-EXCEPTION` file-wide. Seam `evaluate_class($fqcn, $abs_file, $is_abstract)` (abstractness comes from the manifest, which cannot answer for a temp-loaded fixture); test `Text_Type_Declaration_Rule_Test`. Full contract: `rsx:man text_types`.
 
 All other rules must return `false` from `is_called_during_manifest_scan()`. Adding to this set
 needs explicit framework-maintainer approval - every manifest-time rule runs on every file change

@@ -73,38 +73,38 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * @property string $blob_accessed_at
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_ip_address_id
- * @property int $created_by_type
+ * @property int $created_by_ip_address_id never exported to the browser
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property string $destroyed_at
  * @property int $duration
  * @property string $file_extension
  * @property string $file_name
  * @property int $file_size
  * @property int $file_storage_id
- * @property int $file_type_id
+ * @property int $file_type_id enum: FILE_TYPE_IMAGE, FILE_TYPE_ANIMATED_IMAGE, FILE_TYPE_VIDEO, FILE_TYPE_ARCHIVE, FILE_TYPE_TEXT and 2 more (also $file_type_id__label and the other $file_type_id__* properties)
  * @property string $file_type_label
  * @property string $fileable_category
  * @property int $fileable_id
  * @property string $fileable_meta
  * @property int $fileable_order
- * @property int $fileable_type
+ * @property string $fileable_type type ref: a model class name, stored as a type-ref id
  * @property string $fileable_type_meta
  * @property int $frame_count
  * @property string $handler_class
  * @property array $handler_ref
  * @property int $height
  * @property int $id
- * @property int $is_animated
+ * @property bool $is_animated
  * @property string $key
  * @property string $mime_type
- * @property int $preview_unavailable
+ * @property bool $preview_unavailable
  * @property int $site_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $width
  *
  * @property-read string $file_type_id__label
@@ -172,18 +172,18 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     use Blob_Referencing;
 
     /**
-     * DERIVED PROPERTIES - computed here, serialized into toArray() and therefore present on the
+     * APPENDED PROPERTIES - computed here, serialized into toArray() and therefore present on the
      * JS record after Model.fetch(), with no column behind any of them.
      *
      * THIS IS WHY THEY ARE DECLARED RATHER THAN COPIED. Recomputing "is this an image" at each
      * call site is how the answers drift: "is this a document" is file_type_id ==
      * FILE_TYPE_DOCUMENT here, and a page's JavaScript that spells it `!is_image && !is_video`
-     * silently counts archives and unknown files as documents. A derived property has ONE
+     * silently counts archives and unknown files as documents. An appended property has ONE
      * definition, in the model, and every reader gets that one.
      *
      * Laravel applies $appends inside parent::toArray(), which Rsx_Model_Abstract::toArray()
      * calls first, so these ride the standard fetch() payload for free, and the JS model stub
-     * generator declares each name on Base_File_Attachment_Model as a read-only derived property.
+     * generator declares each name on Base_File_Attachment_Model as a read-only appended property.
      *
      * Each accessor delegates to the public predicate of the same name; the method is the
      * definition and the property is only its serialization, so the two can never disagree.
@@ -193,22 +193,18 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     protected $appends = ['is_image', 'is_video', 'is_document', 'can_open_inline'];
 
     /**
-     * Never sent to a browser. The uploader's address is audit metadata for server code
-     * ($attachment->created_by_ip_address); every viewer of an attachment would otherwise
-     * receive it with the record.
+     * Column declarations (see rsx:man model).
      *
-     * @var array
+     * created_by_ip_address_id is never sent to a browser. The uploader's address is audit
+     * metadata for server code ($attachment->created_by_ip_address); every viewer of an
+     * attachment would otherwise receive it with the record.
+     *
+     * fileable_type is the polymorphic half of the owner pair: a BIGINT type-ref id in the
+     * database, read and written as the class basename.
      */
-    public static $neverExport = [
-        'created_by_ip_address_id',
-    ];
-
-    /**
-     * Enum field definitions
-     * @var array
-     */
-    public static $enums = [
-        'file_type_id' => [
+    public static $columns = [
+        'created_by_ip_address_id' => ['never_export' => true],
+        'file_type_id' => ['enum' => [
             1 => [
                 'constant' => 'FILE_TYPE_IMAGE',
                 'label' => 'Image',
@@ -237,7 +233,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
                 'constant' => 'FILE_TYPE_OTHER',
                 'label' => 'Other',
             ],
-        ],
+        ]],
+        'fileable_type' => ['type_ref' => true],
     ];
 
     /**
@@ -289,14 +286,6 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     protected $casts = [
         'handler_ref' => 'array',
     ];
-
-    /**
-     * Polymorphic type reference columns
-     *
-     * fileable_type stores integer ID in database but exposes class name string
-     * @var array
-     */
-    protected static $type_ref_columns = ['fileable_type'];
 
     /**
      * Queue the render pipeline for every newly created attachment whose bytes are a convertible
@@ -375,7 +364,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * what makes the property form work.
      *
      * The integer discriminator in fileable_type is transparent here: it is declared in
-     * $type_ref_columns below, so the framework's morph-map registration resolves the id like
+     * $columns (type_ref), so the framework's morph-map registration resolves the id like
      * any other alias and stock morphTo() is correct. Never hand-roll a resolver.
      *
      * @return \Illuminate\Database\Eloquent\Relations\MorphTo
@@ -2739,7 +2728,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * The client address the attachment was uploaded from -
      * `$attachment->created_by_ip_address`, null when it was created outside a request.
      * The row stores created_by_ip_address_id; the address lives once in _ip_addresses
-     * (see Ip_Address). Not part of the browser payload ($neverExport).
+     * (see Ip_Address). Not part of the browser payload (never_export in $columns).
      *
      * @return string|null
      */

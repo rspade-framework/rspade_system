@@ -99,34 +99,27 @@ class ModelColumnMethodConflict_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             // Also check enum definitions - they shouldn't reference methods
-            if ($reflection->hasProperty('enums')) {
-                $enums_prop = $reflection->getProperty('enums');
-                $enums_prop->setAccessible(true);
-                $enums = $enums_prop->getValue();
-
-                if (is_array($enums)) {
-                    foreach ($enums as $enum_field => $definitions) {
-                        // Check if this enum field name matches a method
-                        if (method_exists($class_name, $enum_field)) {
-                            // Find where this enum is defined
-                            $line_number = 1;
-                            foreach ($lines as $i => $line) {
-                                if (preg_match('/[\'"]' . preg_quote($enum_field) . '[\'"\s]*=>/', $line)) {
-                                    $line_number = $i + 1;
-                                    break;
-                                }
-                            }
-
-                            $this->add_violation(
-                                $file_path,
-                                $line_number,
-                                "Enum field '{$enum_field}' conflicts with method '{$enum_field}()' on the model",
-                                $lines[$line_number - 1] ?? '',
-                                'Either rename the method or remove the enum definition',
-                                'critical'
-                            );
+            $fqcn = $reflection->getName();
+            foreach ($fqcn::enum_columns() as $enum_field => $definitions) {
+                // Check if this enum field name matches a method
+                if (method_exists($class_name, $enum_field)) {
+                    // Find where this enum is defined
+                    $line_number = 1;
+                    foreach ($lines as $i => $line) {
+                        if (preg_match('/[\'"]' . preg_quote($enum_field) . '[\'"\s]*=>/', $line)) {
+                            $line_number = $i + 1;
+                            break;
                         }
                     }
+
+                    $this->add_violation(
+                        $file_path,
+                        $line_number,
+                        "Enum field '{$enum_field}' conflicts with method '{$enum_field}()' on the model",
+                        $lines[$line_number - 1] ?? '',
+                        'Either rename the method or remove the enum definition',
+                        'critical'
+                    );
                 }
             }
         } catch (Exception $e) {

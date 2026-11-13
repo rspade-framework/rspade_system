@@ -49,14 +49,14 @@ use App\RSpade\Core\Models\User_Model;
  * @property string $bio
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $department
  * @property int $id
  * @property int $site_id
  * @property string $title
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_id
  *
  * @mixin \Eloquent
@@ -77,13 +77,6 @@ abstract class User_Profile_Model_Abstract extends Rsx_Site_Model_Abstract
      * @var bool
      */
     protected $use_soft_delete = false;
-
-    /**
-     * Enumeration definitions for fields ending in _id
-     *
-     * @var array
-     */
-    public static $enums = [];
 
     /**
      * Get the user that owns this profile

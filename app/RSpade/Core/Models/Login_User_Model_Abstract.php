@@ -40,26 +40,26 @@ use App\RSpade\Lib\Settings\Has_Preference_Variables;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
- * @property int $dark_mode
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
+ * @property int $dark_mode enum: DARK_MODE_LIGHT, DARK_MODE_DARK, DARK_MODE_AUTO (also $dark_mode__label and the other $dark_mode__* properties)
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property int $id
- * @property int $is_activated
- * @property int $is_developer
- * @property int $is_verified
+ * @property bool $is_activated
+ * @property bool $is_developer
+ * @property bool $is_verified enum: 2 values, no constants (also $is_verified__label and the other $is_verified__* properties)
  * @property string $last_login
  * @property string $last_seen
- * @property string $password
- * @property int $password_reset_required
- * @property string $remember_token
- * @property int $status_id
+ * @property string $password never exported to the browser
+ * @property bool $password_reset_required
+ * @property string $remember_token never exported to the browser
+ * @property int $status_id enum: STATUS_ACTIVE, STATUS_INACTIVE, STATUS_SUSPENDED (also $status_id__label and the other $status_id__* properties)
  * @property string $timezone
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -195,18 +195,15 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     use Has_Preference_Variables;
 
     /**
-     * Enum field definitions
+     * Column declarations (see rsx:man model).
      *
-     * Define enums for fields that have predefined values.
-     * This provides:
-     * - Constants: User_Model::STATUS_ACTIVE, User_Model::ROLE_ADMIN
-     * - Magic properties: $user->status_label, $user->role_label
-     * - Static methods: User_Model::status_enum_select(), User_Model::role_enum_ids()
-     *
-     * @var array
+     * password is the credential hash and remember_token a persistent credential; neither has a
+     * client-side reader, so neither is ever sent to the browser (window.rsxapp, model fetch,
+     * relationship and list payloads, the external API). An override that redeclares either
+     * column keeps never_export on it (MODEL-COLUMNS-01).
      */
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => [
                 'constant' => 'STATUS_ACTIVE',
                 'label' => 'Active',
@@ -223,19 +220,19 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
                 'order' => 3,
                 'selectable' => false,  // Won't appear in dropdown selects
             ],
-        ],
-        'is_verified' => [
+        ]],
+        'is_verified' => ['enum' => [
             0 => [
                 'label' => 'Not Verified',
             ],
             1 => [
                 'label' => 'Verified',
             ],
-        ],
+        ]],
         // The per-identity theme preference. AUTO is the default and means "follow the
         // operating system" - it is a real stored choice, not the absence of one, which
         // is why it is an enum value rather than a null.
-        'dark_mode' => [
+        'dark_mode' => ['enum' => [
             0 => [
                 'constant' => 'DARK_MODE_LIGHT',
                 'label' => 'Light',
@@ -251,7 +248,9 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
                 'label' => 'Auto (match system)',
                 'order' => 3,
             ],
-        ],
+        ]],
+        'password' => ['never_export' => true],
+        'remember_token' => ['never_export' => true],
     ];
 
     /**
@@ -274,18 +273,6 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      * @var string
      */
     protected $table = 'login_users';
-
-    /**
-     * Columns toArray() never sends to the browser (window.rsxapp, model fetch, relationship
-     * and list payloads, the external API). password is the credential hash and
-     * remember_token a persistent credential; neither has a client-side reader.
-     *
-     * An override's own $neverExport is UNIONED with this list, never a replacement for it
-     * (see Rsx_Model_Abstract::never_exported_columns()).
-     *
-     * @var string[]
-     */
-    public static $neverExport = ['password', 'remember_token'];
 
     /**
      * Get all site-specific user records for this login identity
@@ -472,7 +459,7 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      * This implementation:
      * - Requires authentication (the declarative 'is_logged_in' gate)
      * - Only allows users to fetch their own login record (record-level, below)
-     * - Sensitive columns (password, remember_token) are stripped by $neverExport
+     * - Sensitive columns (password, remember_token) are stripped because $columns declares them never_export
      *
      * @param int $id Single ID
      * @return static|false Single model object or false if not found

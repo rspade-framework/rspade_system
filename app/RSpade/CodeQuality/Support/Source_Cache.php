@@ -254,7 +254,13 @@ class Source_Cache
      *                        'attributes' => [...], 'exceptions' => [...],
      *                        'has_default', 'default' => scalar|string[]|null,
      *                     ]],
+     *     'type_ref_columns' => null | [column => bool],
      *   ]
+     *
+     * `type_ref_columns` is read from the class's OWN `$columns` literal: null when the class
+     * does not declare `$columns`, otherwise every column it declares mapped to whether its
+     * entry carries `'type_ref' => true` - false included, because an entry without it
+     * REPLACES a parent's type_ref entry for that column (the overlay is per column).
      *
      * WHY IT IS NOT BOUND BY $capacity, when the AST and the token stream are.
      *
@@ -284,7 +290,7 @@ class Source_Cache
             return $this->members[$key][$lower];
         }
 
-        $summary = ['methods' => [], 'properties' => []];
+        $summary = ['methods' => [], 'properties' => [], 'type_ref_columns' => null];
         $node = $this->class_node($path, $class_name, $hash);
 
         if ($node !== null) {
@@ -334,6 +340,10 @@ class Source_Cache
                         'has_default' => $prop->default !== null,
                         'default' => $this->__literal_default($prop->default),
                     ];
+
+                    if ($name === 'columns' && $property->isStatic()) {
+                        $summary['type_ref_columns'] = self::type_ref_entries($prop->default);
+                    }
                 }
             }
         }
@@ -469,12 +479,53 @@ class Source_Cache
     }
 
     /**
+     * The column => is-type-ref map of one `$columns` literal: every string-keyed entry, true
+     * when its array literal carries `'type_ref' => true`. A non-literal default (or none)
+     * answers [] - only literal declarations are judged.
+     *
+     * @return array<string, bool>
+     */
+    public static function type_ref_entries(?object $default): array
+    {
+        $entries = [];
+
+        if (!$default instanceof \PhpParser\Node\Expr\Array_) {
+            return $entries;
+        }
+
+        foreach ($default->items as $item) {
+            if ($item === null || !$item->key instanceof \PhpParser\Node\Scalar\String_) {
+                continue;
+            }
+
+            $is_type_ref = false;
+
+            if ($item->value instanceof \PhpParser\Node\Expr\Array_) {
+                foreach ($item->value->items as $kind) {
+                    if ($kind !== null
+                        && $kind->key instanceof \PhpParser\Node\Scalar\String_
+                        && $kind->key->value === 'type_ref'
+                        && $kind->value instanceof \PhpParser\Node\Expr\ConstFetch
+                        && strtolower($kind->value->name->toString()) === 'true') {
+                        $is_type_ref = true;
+                    }
+                }
+            }
+
+            $entries[$item->key->value] = $is_type_ref;
+        }
+
+        return $entries;
+    }
+
+    /**
      * The LITERAL default of a property, when it is one this summary can carry:
      * a bool/int/float/string scalar, or a flat list of scalars. Anything else is null.
      *
-     * The three ancestry questions asked of a default are `$revisions = true`,
-     * `$type_ref_columns = ['a', 'b']` and `$table = '...'`; none of them needs an
-     * expression, and a summary that carried one would be carrying AST again.
+     * The ancestry questions asked of a default are `$revisions = true` and
+     * `$table = '...'`; neither needs an expression, and a summary that carried one would be
+     * carrying AST again. The nested `$columns` declaration is summarized separately
+     * (type_ref_entries()).
      */
     private function __literal_default(?object $default)
     {

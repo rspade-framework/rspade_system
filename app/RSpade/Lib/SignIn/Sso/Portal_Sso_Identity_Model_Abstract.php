@@ -39,7 +39,7 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property string $avatar_url
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property int $id
  * @property string $last_login_at
@@ -50,7 +50,7 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property int $site_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -62,13 +62,6 @@ abstract class Portal_Sso_Identity_Model_Abstract extends Rsx_System_Model_Abstr
      * @var bool
      */
     public static $unbounded = true;
-
-    /**
-     * Declared and EMPTY: provider_key is a registry string, exactly as on the staff table.
-     *
-     * @var array
-     */
-    public static $enums = [];
 
     protected $table = '_portal_sso_identities';
 }

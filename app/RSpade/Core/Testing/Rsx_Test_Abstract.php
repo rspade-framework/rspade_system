@@ -1142,7 +1142,7 @@ abstract class Rsx_Test_Abstract
      * The most privileged role id declared by this application's User_Model.
      *
      * The role contract is NOT integer ordering: administration authority is the
-     * explicit `can_admin_roles` whitelist each role declares in $enums (read by
+     * explicit `can_admin_roles` whitelist each role declares in its enum entry (read by
      * User_Model::can_admin_role()). "Most privileged" is therefore the role that can
      * administer the most other roles; ties break on the lowest id, and an application
      * whose roles declare no administration relation at all yields its lowest id.

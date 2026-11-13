@@ -47,7 +47,7 @@ Related framework capabilities on the file-attachment subsystem:
 
 6. **The polymorphic parent + the staff read seam** - `fileable()`, a `#[Relationship]`
    `morphTo()` on `File_Attachment_Model`. The framework owns `fileable_type`/`fileable_id`
-   and already declared `fileable_type` in `$type_ref_columns`, but shipped no accessor for
+   and already declared `fileable_type` a type ref, but shipped no accessor for
    its own polymorphic parent, so every app hand-rolled one - a hand-rolled morph accessor
    being one of the reasons an app ends up cloning the whole model. The integer
    discriminator is transparent: the morph map registers the type-ref id as an alias, so

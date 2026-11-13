@@ -145,24 +145,24 @@ use App\RSpade\Lib\Portal\Portal_User_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _sessions
  *
- * @property int $active
+ * @property bool $active
  * @property int $api_key_id
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
- * @property string $csrf_token
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
+ * @property string $csrf_token never exported to the browser
  * @property string $first_signed_in_at
  * @property int $id
- * @property int $ip_address_id
+ * @property int $ip_address_id never exported to the browser
  * @property string $last_active
  * @property int $portal_user_session_id
- * @property string $previous_token_hash
- * @property string $session_token
+ * @property string $previous_token_hash never exported to the browser
+ * @property string $session_token never exported to the browser
  * @property int $staff_user_session_id
- * @property int $type_id
+ * @property int $type_id enum: TYPE_WEB, TYPE_PLAYWRIGHT, TYPE_API, TYPE_CLI (also $type_id__label and the other $type_id__* properties)
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_agent_id
  * @property int $version
  *
@@ -186,20 +186,28 @@ class Session extends Rsx_System_Model_Abstract
     const TYPE_API = 3;
     const TYPE_CLI = 4;
     /**
-     * Session type - stamped by the writer at creation, NEVER inferred from a header or the
+     * Column declarations (see rsx:man model).
+     *
+     * type_id is stamped by the writer at creation, NEVER inferred from a header or the
      * user-agent afterwards: TYPE_WEB by __activate(), TYPE_PLAYWRIGHT only by the signed
      * dev-auth path (_use_harness_session()), TYPE_API only by an API key's first call
      * (_set_api_identity()). TYPE_CLI names no row any more - a process with no browser runs a
-     * virtual session - and stays in the enum because the audit sessions recorded before
-     * that carry it.
+     * virtual session - and stays in the enum because the audit sessions recorded before that
+     * carry it.
+     *
+     * The tokens and the address id never leave the server in a payload.
      */
-    public static $enums = [
-        'type_id' => [
+    public static $columns = [
+        'type_id' => ['enum' => [
             1 => ['constant' => 'TYPE_WEB', 'label' => 'Web', 'order' => 1],
             2 => ['constant' => 'TYPE_PLAYWRIGHT', 'label' => 'Playwright', 'order' => 2],
             3 => ['constant' => 'TYPE_API', 'label' => 'API', 'order' => 3],
             4 => ['constant' => 'TYPE_CLI', 'label' => 'CLI', 'order' => 4],
-        ],
+        ]],
+        'session_token' => ['never_export' => true],
+        'previous_token_hash' => ['never_export' => true],
+        'csrf_token' => ['never_export' => true],
+        'ip_address_id' => ['never_export' => true],
     ];
 
     // =========================================================================
@@ -484,17 +492,6 @@ class Session extends Rsx_System_Model_Abstract
         'portal_user_session_id' => 'integer',
         'version' => 'integer',
         'last_active' => 'datetime',
-    ];
-
-    /**
-     * Columns that should never be exported to JavaScript
-     * @var array
-     */
-    public static $neverExport = [
-        'session_token',
-        'previous_token_hash',
-        'csrf_token',
-        'ip_address_id',
     ];
 
     /**
@@ -3729,7 +3726,7 @@ class Session extends Rsx_System_Model_Abstract
      *      allowed and needs no role at all.
      *   2. The actor's role may ADMINISTER the target's role - Permission::can_admin_role()
      *      on the target's per-site users.role_id. That list is "my role and the roles
-     *      BELOW it" (User_Model::$enums role_id.can_admin_roles, equal-or-lower
+     *      BELOW it" (User_Model's role_id enum, can_admin_roles, equal-or-lower
      *      administration), so a SUPERIOR refuses for free and by construction, and a PEER
      *      is permitted exactly because the role names itself - two Site Admins may sign
      *      each other out, as they may edit each other.

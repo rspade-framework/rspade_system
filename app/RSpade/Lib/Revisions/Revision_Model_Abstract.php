@@ -16,7 +16,7 @@ use App\RSpade\Lib\Revisions\Transaction_Model;
  * Revision_Model_Abstract - one row per recorded write to a revisioned record.
  *
  * The document itself lives in `changes`, a COMPRESSED blob produced by Revision_Codec
- * from the JSON `{"field":[before,after], ...}`. It is never exposed raw: $neverExport
+ * from the JSON `{"field":[before,after], ...}`. It is never exposed raw: never_export
  * strips it from every payload, and diff() is the only reader.
  *
  * TWO POLYMORPHIC PAIRS, and they answer different questions:
@@ -45,23 +45,23 @@ use App\RSpade\Lib\Revisions\Transaction_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _revisions
  *
- * @property mixed $changes
+ * @property mixed $changes never exported to the browser
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
- * @property int $operation_id
+ * @property int $operation_id enum: OPERATION_CREATE, OPERATION_UPDATE, OPERATION_DELETE, OPERATION_UNDELETE (also $operation_id__label and the other $operation_id__* properties)
  * @property int $record_id
- * @property int $record_type
+ * @property string $record_type type ref: a model class name, stored as a type-ref id
  * @property string $record_updated_at
  * @property int $root_id
- * @property int $root_type
+ * @property string $root_type type ref: a model class name, stored as a type-ref id
  * @property int $sequence
  * @property int $site_id
  * @property int $transaction_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $operation_id__label
  * @property-read string $operation_id__constant
@@ -99,31 +99,25 @@ abstract class Revision_Model_Abstract extends Rsx_Model_Abstract
     protected $fillable = []; // No mass assignment - always explicit
 
     /**
-     * Both polymorphic halves: BIGINT type-ref ids in the database, class basenames in PHP.
-     */
-    protected static $type_ref_columns = ['record_type', 'root_type'];
-
-    /**
-     * NEVER exported. `changes` is a compressed binary blob - serializing it would put
-     * unreadable bytes in a JSON payload and hand the storage format to the client.
-     * A consumer wants diff(), which is the decoded document.
+     * Column declarations (see rsx:man model).
      *
-     * @var array
-     */
-    public static $neverExport = ['changes'];
-
-    /**
-     * What the write DID to the record.
+     * record_type and root_type are both polymorphic halves: BIGINT type-ref ids in the
+     * database, class basenames in PHP.
      *
-     * `delete` covers both a hard delete and a soft delete: from the record's point of
-     * view the row left, and the diff is empty either way. `undelete` is the restore of a
-     * soft-deleted row, and its diff carries the deleted_at / deleted_by columns going
-     * back to null.
+     * `changes` is NEVER exported: it is a compressed binary blob - serializing it would put
+     * unreadable bytes in a JSON payload and hand the storage format to the client. A consumer
+     * wants diff(), which is the decoded document.
      *
-     * @var array
+     * operation_id is what the write DID to the record. `delete` covers both a hard delete and a
+     * soft delete: from the record's point of view the row left, and the diff is empty either
+     * way. `undelete` is the restore of a soft-deleted row, and its diff carries the deleted_at /
+     * deleted_by columns going back to null.
      */
-    public static $enums = [
-        'operation_id' => [
+    public static $columns = [
+        'record_type' => ['type_ref' => true],
+        'root_type' => ['type_ref' => true],
+        'changes' => ['never_export' => true],
+        'operation_id' => ['enum' => [
             1 => [
                 'constant' => 'OPERATION_CREATE',
                 'label' => 'Created',
@@ -144,7 +138,7 @@ abstract class Revision_Model_Abstract extends Rsx_Model_Abstract
                 'label' => 'Restored',
                 'order' => 4,
             ],
-        ],
+        ]],
     ];
 
     /**

@@ -10,10 +10,13 @@ namespace App\RSpade\Tests\Session\Php;
 use App\RSpade\Tests\Session\Php\Never_Export_Fixture_Base_Model_Abstract;
 
 /**
- * Test fixture: the leaf of a three-class chain. Its own $neverExport names one column; the
- * effective list must still carry its parent's. Built unsaved only - its table does not exist.
+ * Test fixture: the leaf of a three-class chain. Its own $columns never-exports one column;
+ * the effective declaration must still carry its parent's entry for the other. Built unsaved
+ * only - its table does not exist.
  */
 class Never_Export_Fixture_Model extends Never_Export_Fixture_Base_Model_Abstract
 {
-    public static $neverExport = ['leaf_secret_column'];
+    public static $columns = [
+        'leaf_secret_column' => ['never_export' => true],
+    ];
 }

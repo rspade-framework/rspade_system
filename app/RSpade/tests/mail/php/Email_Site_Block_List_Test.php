@@ -150,7 +150,7 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
         ];
 
         foreach ($rows as $row) {
-            $label = Email_Queue_Model::$enums['category_id'][(int) $row->category_id]['label'];
+            $label = Email_Queue_Model::enum_values('category_id')[(int) $row->category_id]['label'];
 
             static::__assert_equals(Email_Queue_Model::STATUS_BLOCKED, (int) $row->status_id, "{$label} is Blocked");
             static::__assert_equals(Email_Queue_Model::BLOCK_CAUSE_SITE_BLOCK_LIST, (int) $row->block_cause_id, "{$label} names the site list");

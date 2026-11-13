@@ -33,7 +33,7 @@ class Task_Definition_Test extends Rsx_Test_Abstract
     {
         static::__assert_equals(
             [1 => 'STATUS_PENDING', 2 => 'STATUS_RUNNING', 3 => 'STATUS_COMPLETED', 4 => 'STATUS_FAILED', 5 => 'STATUS_STOPPED', 6 => 'STATUS_KILLED', 7 => 'STATUS_CANCELLED'],
-            array_map(fn ($enum) => $enum['constant'], Task_Run_Model::$enums['status_id'])
+            array_map(fn ($enum) => $enum['constant'], Task_Run_Model::enum_values('status_id'))
         );
         static::__assert_equals(1, Task_Run_Model::STATUS_PENDING);
         static::__assert_equals(7, Task_Run_Model::STATUS_CANCELLED);
@@ -43,7 +43,7 @@ class Task_Definition_Test extends Rsx_Test_Abstract
     {
         static::__assert_equals([Task_Run_Model::STATUS_PENDING, Task_Run_Model::STATUS_RUNNING], Task_Run_Model::LIVE_STATUSES);
 
-        foreach (Task_Run_Model::$enums['status_id'] as $id => $enum) {
+        foreach (Task_Run_Model::enum_values('status_id') as $id => $enum) {
             $run = new Task_Run_Model();
             $run->status_id = $id;
             $live = in_array($id, Task_Run_Model::LIVE_STATUSES, true);

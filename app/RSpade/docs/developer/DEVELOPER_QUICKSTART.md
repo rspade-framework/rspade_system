@@ -594,16 +594,18 @@ Four rules that will catch you if you arrive from Laravel:
 
 ### Enums
 
-Enums are integer columns mapped at the model to constants, labels and any extra
-properties you want. You define the integers and NAME the constant; the constant
-itself is generated for you:
+A model says what each of its columns holds in one `$columns` property - an enum,
+a text type, a polymorphic type ref, a secret, a derived value (`rsx:man model`,
+COLUMN DECLARATIONS). Enums are integer columns mapped at the model to constants,
+labels and any extra properties you want. You define the integers and NAME the
+constant; the constant itself is generated for you:
 
 ```php
-public static $enums = [
-    'status_id' => [
+public static $columns = [
+    'status_id' => ['enum' => [
         1 => ['constant' => 'STATUS_ACTIVE',   'label' => 'Active'],
         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive'],
-    ],
+    ]],
 ];
 ```
 

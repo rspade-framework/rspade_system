@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: "Writing and running migrations - make:migration:safe, raw SQL via DB::statement() (the Schema builder is prohibited), forward-only, no model class in a migration (MIGRATION-MODEL-01), automatic audit columns, the snapshot rollback, migrate --dump-rollback, and column kinds (BIGINT + $enums, a type-ref pair, TEXT + $text_types). Use when adding a table, column or index, or a migrate fails or reports every migration as unauthorized."
+description: "Writing and running migrations - make:migration:safe, raw SQL via DB::statement() (the Schema builder is prohibited), forward-only, no model class in a migration (MIGRATION-MODEL-01) and no model write while up() runs, Rsx_Rederive::enqueue() and the rederive step that closes every migrate, rsx:derived:check / rsx:derived:rebuild, automatic audit columns, the snapshot rollback, migrate --dump-rollback, and the column kinds a model declares in $columns (enum, type_ref, text_type, derived). Use when adding a table, column or index, backfilling data, changing what a derived column is computed from, or on 'refused: a migration is executing', 'Rederiving cached values', 'Rederiving cached values failed', or a migrate that fails or reports every migration as unauthorized."
 ---
 
 # RSX Database Migrations
@@ -157,7 +157,7 @@ DB::statement("UPDATE activities SET eventable_type = {$contact_id} WHERE eventa
 
 Ids are still never hardcoded - the closure resolves or creates the row at replay time, so it is correct on a fresh install and in every environment.
 
-**An exception is essentially never justified.** A table name and raw SQL always suffice - including for a BACKFILL, which is the case people most often reach for a model to do: SELECT the rows and UPDATE them. The only shape that has ever earned one is data seeding that needs model BEHAVIOUR no SQL can reproduce (bytes that must travel through the file-upload pipeline, a value that must be written through an encryption cast). It declares itself in the file docblock, and the rationale is required - a bare marker is itself a violation:
+**An exception is essentially never justified.** A table name and raw SQL always suffice - including for a BACKFILL, which is the case people most often reach for a model to do: SELECT the rows and UPDATE them. A reference that genuinely cannot be avoided declares itself in the file docblock, and the rationale is required - a bare marker is itself a violation:
 
 ```php
 /**
@@ -165,30 +165,68 @@ Ids are still never hardcoded - the closure resolves or creates the row at repla
  */
 ```
 
-Schema work, type-ref lookups and backfills are never the exception; convert those.
+Schema work, type-ref lookups and backfills are never the exception; convert those. The marker silences the lint only: it never makes a model WRITE possible (next section).
 
-**The second hazard, for any migration that does write through a model: THE CODE CAN BE AHEAD OF THE DATABASE.** A model is the code as deployed - its casts, its hooks, the columns its `save()` stamps - while a migration runs at one fixed point in the schema's history, possibly several migrations before the columns that code expects exist. A write through the model then fails on an unknown column, part-way through the run, on the box where a half-applied migration costs the most. Raw SQL against a table name describes the schema AT THAT POINT IN HISTORY and cannot drift.
+## A Migration Never Writes Through a Model - it THROWS
+
+**While a migration's `up()` executes, a model `save()` / `delete()` and a bulk builder `update()` / `delete()` (`->raw_bulk()` included) THROW** (`Migration_Guard`):
+
+```
+Task_Model::save() refused: a migration is executing. A migration manipulates records with direct SQL - DB::statement() or the DB::table query builder - never through a model: a model is current code, and a migration is a historical record that must replay unchanged forever. To recompute a model's derived columns after changing what they are computed from, call Rsx_Rederive::enqueue('<table>'); migrate rederives the table in its final step. See: php artisan rsx:man migrations
+```
+
+(The bulk forms name `where(...)->update()` / `where(...)->delete()` / `delete($id)`.) The reason: a model is the code as deployed - its columns, casts, derive methods, hooks, the authorship its `save()` stamps - while a migration runs at one fixed point in the schema's history, possibly several migrations before the columns that code expects exist. **THE CODE CAN BE AHEAD OF THE DATABASE**, and a model write that works today breaks the replay the day the model moves on. Raw SQL against a table name describes the schema AT THAT POINT IN HISTORY and cannot drift.
+
+Reads through a model are not refused, but they carry the same drift hazard - prefer `DB::table()`. Only the window of the migration file itself is guarded: schema normalization, the post-normalize hook, the initial user and the rederive step run outside it, with current code against the final schema.
+
+## Recomputing derived columns: `Rsx_Rederive::enqueue()`
+
+A model's derived columns (`$columns` `derived` + `from`, skill `rspade:models`) are computed by its `save()` - which a migration cannot call. When a migration changes what a derived column is computed from (adds or backfills a source column, rewrites data a derive method reads), it either writes the derived values itself in SQL, or queues the table:
+
+```php
+public function up()
+{
+    DB::statement("ALTER TABLE tasks ADD COLUMN direct_project_id BIGINT NULL DEFAULT NULL AFTER taskable_id");
+    DB::statement("UPDATE tasks SET direct_project_id = project_id, updated_at = updated_at WHERE ...");
+
+    \App\RSpade\Core\Database\Rsx_Rederive::enqueue('tasks');     // a TABLE name, never a model class
+}
+```
+
+**`migrate` drains the queue as its LAST step, on every run** - with the schema at the tip and every other step done, each queued table's records are rederived by CURRENT model code: batches of 100, every site, soft-deleted rows included, only stale records saved (a derived-only save: no `updated_at`, no `updated_by`, no revision), no realtime frames. Output:
+
+```
+Rederiving cached values for tasks.....
+Done rederiving cached values
+```
+
+One dot per batch. While a pass changes any record, every queued table gets another pass (a derive method may read another record's derived value), up to N + 2 passes for N queued tables; tables still changing then are named in a `[WARNING]` and the run continues. A queued table with no model, or whose model declares no derived columns (or a declared column the database lacks), is dropped from the queue silently - a migration replays forever, long after the model it was written for changed. **A derive method that THROWS fails the run** ("Rederiving cached values failed: ...") and the snapshot / dump rolls it back; whatever did not finish stays queued for the next `migrate`.
+
+**Changing a derive METHOD's logic** changes every value it ever stored: ship a migration whose `up()` only calls `Rsx_Rederive::enqueue('<table>')`, so every environment recomputes on its next `migrate`. Passing a model class (`'Task_Model'`, anything with a backslash) throws.
+
+`php artisan rsx:derived:check <table> | --all` reports records whose stored derived values differ from what the model computes now (exit 1 on drift, changes nothing); `php artisan rsx:derived:rebuild <table> | --all` repairs them with the same engine and output (realtime frames sent).
 
 ---
 
 ## What a column holds is declared on the model
 
-The migration carries the STORAGE type only. What the column means is a model declaration,
-and each kind has its own skill:
+The migration carries the STORAGE type only. What the column means is the model's `$columns` entry - **every new column is considered for each kind** (the checklist and full grammar: skill `rspade:models`):
 
-| Column | Migration | Model | Skill |
+| Column | Migration | Model (`$columns` entry) | Skill |
 |---|---|---|---|
-| enum (status, type, role) | `BIGINT` | `public static $enums` | `rspade:model-enums` |
-| polymorphic reference | `BIGINT` `_type` + `_id` pair | `$type_ref_columns` | `rspade:polymorphic` |
-| rich text / custom notation | `TEXT` | `public static $text_types` | `rspade:text-types` |
-| type-specific 1:1 fields | a detail table | `$detail_tables` | `rspade:detail-tables` |
+| enum (status, type, role) | `BIGINT` | `'status_id' => ['enum' => [...]]` | `rspade:model-enums` |
+| polymorphic reference | `BIGINT` `_type` + `_id` pair | `'owner_type' => ['type_ref' => true]` | `rspade:polymorphic` |
+| rich text / custom notation | `TEXT` | `'body' => ['text_type' => Rich_Text::class]` | `rspade:text-types` |
+| secret (hash, token) | any | `'api_token' => ['never_export' => true]` | `rspade:models` |
+| computed and stored | the value's type | `'total' => ['derived' => 'derive_total', 'from' => [...]]` | `rspade:models` |
+| type-specific 1:1 fields | a detail table | `$detail_tables` (not `$columns`) | `rspade:detail-tables` |
 
 A text type exists so the encoding of a TEXT column (sanitized HTML from a WYSIWYG, an
 `{{Entity:id}}` notation) is stated once and every print, edit, export and index asks the
 value instead of remembering. **Converting an existing plain-text column is two acts**: a
 raw-SQL migration that re-encodes the rows into the type's storage form (this rule forbids
 calling the type class here; reproduce what its `from_plain_text()` produces), then the
-`$text_types` declaration.
+`text_type` declaration.
 
 ---
 
@@ -353,6 +391,9 @@ Violations show clear error messages with remediation advice.
 | "Found forbidden Schema builder usage" | Replace with `DB::statement()` |
 | "Validation failed" | Check migration for prohibited patterns |
 | MIGRATION-MODEL-01 from `rsx:check` | Drop the model / registry reference - resolve type-ref ids with the `_type_refs` closure above |
+| "`X_Model::save() refused: a migration is executing`" | Rewrite the write as `DB::statement()` / `DB::table()`; for derived values, `Rsx_Rederive::enqueue('<table>')` |
+| "Rederiving cached values failed: ..." | A derive method threw against the migrated data - the run rolled back; fix the method or the data the migration wrote |
+| `[WARNING] Cached values were still changing after N passes` | Derived values that depend on each other in a cycle, or a non-deterministic derive method; `rsx:derived:check <table>` shows the drift |
 | Foreign key constraint fails | Ensure column types match exactly |
 
 ## More Information

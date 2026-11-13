@@ -4,11 +4,11 @@
 
 The model enum system: integer-stored fields mapped, at the model level, to
 constants, labels, and arbitrary custom properties (badge, order, selectable,
-...) via the static `$enums` array on a model. Magic BEM-style accessors
+...) via `enum` entries of the model's static `$columns`. Magic BEM-style accessors
 (`$model->field_id__label`, `field_id__badge`) and static helpers
 (`field__enum()`, `field__enum_select()`, `field__enum_labels()`,
 `field__enum_ids()`) expose this to PHP and, via generated stubs, to JS.
-`toArray()` auto-exports the derived properties. Used pervasively for status
+`toArray()` auto-exports the `field_id__*` properties. Used pervasively for status
 fields, types, and dropdowns across every model, so the resolution and ordering
 rules must stay exact.
 
@@ -16,7 +16,7 @@ rules must stay exact.
 
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - enum resolution,
   `__get`/`__isset` magic, `toArray` export, the `field__enum*` static methods
-- Real models exercised by the tests (read their `$enums` for expected values),
+- Real models exercised by the tests (read their enum entries for expected values),
   e.g. a model with label/badge/order/selectable and a `Flash_Alert` model.
 
 ## Man page(s)
@@ -34,7 +34,7 @@ rules must stay exact.
 - `toArray()` export of label/constant/custom props/model id, current value
   reflected, raw integer preserved. (php, no DB)
 
-All enum behavior is derived from static `$enums` arrays - no DB rows needed, so
+All enum behavior is derived from the static `$columns` declarations - no DB rows needed, so
 every class sets `$use_database_transactions = false`.
 
 ## Documents

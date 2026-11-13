@@ -7,7 +7,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-def-01 | the seven run statuses and their constants | Task_Run_Model::$enums['status_id'] | PENDING..CANCELLED = 1..7 | implemented |
+| task-def-01 | the seven run statuses and their constants | Task_Run_Model::enum_values('status_id') | PENDING..CANCELLED = 1..7 | implemented |
 | task-def-02 | only pending and running are live; the enum's terminal flag agrees | each status | is_live / is_terminal / 'terminal' | implemented |
 | task-def-03 | origin, pool constants and the pool roster | constants | 1/2/3, 1/2, on_demand/scheduled/kill | implemented |
 | task-def-04 | cron parser accepts a daily expression | "0 3 * * *" | expression kept | implemented |

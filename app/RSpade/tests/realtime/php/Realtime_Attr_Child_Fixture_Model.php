@@ -21,8 +21,6 @@ class Realtime_Attr_Child_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_attr_children';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     #[Realtime_Touch]

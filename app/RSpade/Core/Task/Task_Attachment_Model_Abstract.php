@@ -31,7 +31,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $file_name
  * @property int $id
  * @property string $mime_type
@@ -41,7 +41,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property int $temp_file_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -59,8 +59,6 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
     protected $table = '_task_attachments';
 
     protected $fillable = [];
-
-    public static $enums = [];
 
     /**
      * The run that produced the file.

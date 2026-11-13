@@ -22,8 +22,6 @@ class Form_Edit_Grouped_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'form_edit_grouped_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $fact_groups = [
         'when' => ['label' => 'Date and time', 'columns' => ['all_day_date', 'starts_at', 'ends_at']],
     ];

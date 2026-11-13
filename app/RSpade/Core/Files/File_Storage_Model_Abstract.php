@@ -35,21 +35,21 @@ use App\RSpade\Core\Search\Search_Index_Model;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $hash
  * @property int $id
- * @property int $is_indexed
+ * @property bool $is_indexed
  * @property int $process_attempt_count
  * @property string $process_due_at
  * @property string $process_last_attempt_at
  * @property int $process_soft_failure_count
  * @property string $render_error
- * @property int $render_status_id
+ * @property int $render_status_id enum: RENDER_STATUS_NOT_REQUIRED, RENDER_STATUS_PENDING, RENDER_STATUS_RENDERED, RENDER_STATUS_FAILED (also $render_status_id__label and the other $render_status_id__* properties)
  * @property string $rendered_at
  * @property int $size
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $render_status_id__label
  * @property-read string $render_status_id__constant
@@ -71,7 +71,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     const RENDER_STATUS_RENDERED = 3;
     const RENDER_STATUS_FAILED = 4;
     /**
-     * Enum field definitions.
+     * Column declarations (see rsx:man model).
      *
      * render_status_id is the DOCUMENT RENDER lifecycle, driven by Document_Render_Service. It
      * lives on the blob rather than the attachment because both products of a render - the PDF
@@ -89,16 +89,14 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      *                 process_due_at is waiting for its next attempt, one without is failed for
      *                 good and re-renders only on an operator's rsx:documents:rerender. Either
      *                 way every screen shows the failed-document preview, never "preparing".
-     *
-     * @var array
      */
-    public static $enums = [
-        'render_status_id' => [
+    public static $columns = [
+        'render_status_id' => ['enum' => [
             1 => ['constant' => 'RENDER_STATUS_NOT_REQUIRED', 'label' => 'Not Required', 'badge' => 'bg-secondary', 'order' => 1],
             2 => ['constant' => 'RENDER_STATUS_PENDING', 'label' => 'Pending', 'badge' => 'bg-warning', 'order' => 2],
             3 => ['constant' => 'RENDER_STATUS_RENDERED', 'label' => 'Rendered', 'badge' => 'bg-success', 'order' => 3],
             4 => ['constant' => 'RENDER_STATUS_FAILED', 'label' => 'Failed', 'badge' => 'bg-danger', 'order' => 4],
-        ],
+        ]],
     ];
     public static $rel = [];
 

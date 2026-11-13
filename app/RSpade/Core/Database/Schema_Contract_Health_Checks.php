@@ -310,10 +310,10 @@ class Schema_Contract_Health_Checks
      */
     public static function _role_enum_finding(): ?string
     {
-        $roles = User_Model::$enums['role_id'] ?? [];
+        $roles = User_Model::enum_columns()['role_id'] ?? [];
 
         if (empty($roles)) {
-            return "User_Model::\$enums['role_id'] is empty - has_permission() grants nothing and"
+            return "User_Model's role_id enum is empty - has_permission() grants nothing and"
                 . ' the test suite cannot pick a privileged role';
         }
 

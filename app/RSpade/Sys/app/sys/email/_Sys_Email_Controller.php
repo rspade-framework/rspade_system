@@ -28,7 +28,7 @@ use App\RSpade\Sys\Lib\_Sys_Enum_Words;
  * nothing about which tenant queued a message.
  *
  * Status and category travel as lowercase WORDS (pending, failed, marketing), derived
- * from the model's $enums labels by _Sys_Enum_Words (shared with the SMS tab's
+ * from the model's enum labels by _Sys_Enum_Words (shared with the SMS tab's
  * _Sys_Sms_Controller), so a link can address a filtered grid readably:
  * Rsx.Route('_Sys_Email_Action', {}, {tab: 'email', mail_f_status: 'pending'}).
  */

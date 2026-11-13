@@ -14,6 +14,13 @@ validation, and schema normalization.
   `migrate:normalize_schema`, invoked pre-migration, between each migration, and
   post-migration to add framework-required columns and correct drift.
 
+- `app/RSpade/Core/Database/Migration_Guard.php` - the migration window: while one file's
+  `up()` runs (`Migration_Guard::run()` around `runPending()`), a model `save()` / `delete()`
+  and the builder's bulk `update()` / `delete()` throw; `allow()` is the framework helpers'
+  exception (`File_Mime_Repair`).
+- `app/RSpade/Core/Database/Rsx_Rederive.php` - the rederive queue (`_rederive_queue`,
+  `enqueue()`) and `drain()`, the last step of `execute_migrations()` on every run.
+
 - `app/RSpade/Core/Database/Migrate_Dump_Rollback.php` - `migrate --dump-rollback`: the
   gzipped mysqldump, the restore (drop + recreate, else empty object by object), the
   `_migration_runs` record and marker, the migrate lock, and `decide()` - what a later run
@@ -96,6 +103,10 @@ validation, and schema normalization.
   firings measured against a real loop run, the two in `execute_migrations()` pinned by
   source structure (`Post_Normalize_Hook_Per_Migration_Test`,
   `Migrate_Normalize_Complete_Event_Test`).
+- **php** (implemented): the migration window refuses model writes and closes however
+  `up()` ends (`Migration_Guard_Test`); the rederive queue and drain - output, stale-only
+  saves, every site and trashed row, no realtime, the N + 2 pass cap, a failed table staying
+  queued, and the step's position (`Rederive_Queue_Drain_Test`).
 - **php** (implemented): the whitelist mode policy and the constants-regeneration scope
   (`Whitelist_Prod_Mode_Test`, `Constants_Regenerate_Scope_Test`).
 - **cli / integration** (deferred): end-to-end proof that a normalize failure during

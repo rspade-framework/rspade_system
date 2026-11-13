@@ -1,8 +1,8 @@
-
 OVERVIEW
 
 All RSX models must extend Rsx_Model_Abstract, which provides:
-- Enum system with magic properties and methods
+- Column declarations: one $columns property says what each column holds
+  (enum, text type, type ref, secret, revision exclusion, derived value)
 - Mass assignment prevention (explicit field assignment only)
 - Eager loading prevention (explicit queries only)
 - Ajax ORM fetch() system
@@ -10,20 +10,153 @@ All RSX models must extend Rsx_Model_Abstract, which provides:
 - Relationship management via #[Relationship] attribute
 - Fact groups: columns that hold one fact, for edit conflict detection
 
-ENUM SYSTEM
+The how-to, including a checklist for choosing a column's kind, is skill
+rspade:models.
 
-Define enums using public static $enums property:
+COLUMN DECLARATIONS
 
-    public static $enums = [
-        'status_id' => [
-            1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'order' => 1],
-            2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'order' => 2]
-        ],
-        'role_id' => [
-            1 => ['constant' => 'ROLE_ADMIN', 'label' => 'Administrator'],
-            2 => ['constant' => 'ROLE_USER', 'label' => 'User']
-        ]
+A model declares what KIND of value each of its columns holds in ONE static
+property, one entry per column:
+
+    public static $columns = [
+        'status_id'     => ['enum' => [
+            1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
+            2 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'selectable' => false],
+        ]],
+        'description'   => ['text_type' => Rich_Text::class],
+        'fileable_type' => ['type_ref' => true],
+        'api_secret'    => ['never_export' => true],
+        'view_count'    => ['revision_exclude' => true],
+        'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id']],
     ];
+
+Keys of an entry (anything else is an error):
+
+    enum              integer-keyed map of value => properties (ENUM COLUMNS)
+    text_type         class name of an Rsx_Text_Abstract subclass (TEXT TYPE COLUMNS)
+    type_ref          true - the _type column of a polymorphic pair (TYPE REF COLUMNS)
+    never_export      true - never sent in any payload (NEVER EXPORT COLUMNS)
+    revision_exclude  true - not recorded in revision history (REVISION EXCLUDED COLUMNS)
+    derived, from     derive method + this record's source columns (DERIVED COLUMNS)
+
+Rules of the grammar:
+- A flag is the literal true or absent; false is an error.
+- At most one of enum, text_type, type_ref per column. never_export combines
+  with anything; revision_exclude with anything except derived (a derived
+  column is never recorded already). A derived column may also be an enum,
+  text type or type ref: its computed value is assigned through
+  setAttribute(), so the kind applies.
+- derived and from appear together.
+- 'column' => [] declares an explicitly plain column.
+- A model with nothing to declare declares nothing: no empty $columns.
+
+Every declared column, and every column a from list names, must be a column
+of the model's table. rsx:check reports one that is not (MODEL-ENUM-01), and
+the write side throws the first time it asks - a save of a model with derived
+columns, rederive(), Form_Edit::run():
+
+    X_Model::$columns declares 'col', which is not a column of the model's
+    table. Add the column with a migration, or correct the declaration.
+
+A model READ never checks, so a model read during a migration that has not
+yet added a declared column still works.
+
+The framework reads column declarations from $columns ONLY. A model class
+declaring a static $enums, $text_types, $type_ref_columns, $neverExport or
+$revision_exclude property fails the manifest build - such a property would
+declare nothing, and a secret listed there would be sent to every browser.
+
+   Inheritance
+       The effective declaration overlays every class from Rsx_Model_Abstract
+       down to the model, base first. A class's entry for a column REPLACES its
+       parent's entry for that column wholesale; entries are never merged key by
+       key, so an override that changes one key of an inherited entry restates
+       the rest. A replacing entry may never drop a protection: one replacing an
+       entry that carries never_export carries it too, and the audit type
+       columns Rsx_Model_Abstract declares type_ref (created_by_type,
+       updated_by_type, deleted_by_type) keep type_ref. A class override of a
+       core model declares only the columns it adds or changes
+       (rsx:man class_override).
+
+   Enforcement
+       MODEL-COLUMNS-01 (manifest build, FATAL): unknown keys, non-true flags,
+       two kinds on one column, malformed enum maps and text types, derived
+       without from (or the reverse), a derive method that is not a public,
+       non-static method of the class taking no required argument, a from list
+       naming the column itself, derived beside revision_exclude, derived
+       columns depending on each other in a cycle, a replacing entry dropping
+       never_export or an audit type_ref, and the property names above.
+       MODEL-COLUMNS-02 (rsx:check): a direct Model::$columns read.
+       MODEL-DERIVED-01 (rsx:check): an assignment of a derived column.
+       MODEL-ENUM-01 (rsx:check): a declared or from column missing from the
+       table.
+
+   Reading the declaration
+       Model::$columns answers ONE class's declaration and misses everything
+       inherited; it is never read directly (MODEL-COLUMNS-02). Read:
+
+       columns()                     every effective entry, overlaid
+       enum_columns()                column => value map, every enum column
+       enum_values('col')            one column's value map; throws
+                                     "X_Model::col is not an enum column"
+                                     for any other column
+       text_type_columns()           column => text type class
+       text_type_or_null('col')      the column's text type, or null
+       type_ref_columns()            every type-ref column, audit ones included
+       never_exported_columns()      every never_export column
+       revision_excluded_columns()   revision_exclude columns plus every
+                                     derived column
+       derived_columns()             column => ['method' => ..., 'from' => [...]],
+                                     in dependency order
+
+       All are static and memoized per class. JavaScript: the enum helpers
+       below, and Model.is_derived_column('col').
+
+   Not declared in $columns
+       Dates, datetimes and TINYINT(1) booleans are read from the live schema
+       (AUTOMATIC BOOLEAN CASTING; dates stay ISO strings). Relationships are
+       #[Relationship] methods. A computed value that is not stored is an
+       APPENDED PROPERTY. One fact stored in several columns is $fact_groups.
+       Per-type fields are $detail_tables (rsx:man detail_tables). The audit
+       authorship pairs are stamped by save() and never declared
+       (rsx:man actors). A `_`-prefixed column is a framework system column
+       (rsx:man database_schema_architecture).
+
+   The generated header
+       rsx:constants:regenerate (run by migrate in development) rewrites each
+       model's _AUTO_GENERATED_ docblock and enum constants from the live table
+       and $columns; never edit them by hand. Each @property line states the
+       type a read returns and the column's kind:
+
+       * @property int $status enum: STATUS_PENDING, STATUS_DONE (also $status__label and the other $status__* properties)
+       * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description text type: a value object, filtered on write
+       * @property string $taskable_type type ref: a model class name, stored as a type-ref id
+       * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
+       * @property string $password never exported to the browser
+       * @property string $last_seen_at not recorded in revisions
+       * @property string $hour_estimate decimal
+
+       DECIMAL and JSON columns without an array cast read as strings (noted
+       decimal / json), TINYINT(1) as bool, dates and datetimes as strings.
+
+ENUM COLUMNS
+
+An enum column is a BIGINT whose integer values carry constants, labels and
+any custom properties:
+
+    public static $columns = [
+        'status_id' => ['enum' => [
+            1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'order' => 1],
+            2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'order' => 2],
+        ]],
+        'role_id' => ['enum' => [
+            1 => ['constant' => 'ROLE_ADMIN', 'label' => 'Administrator'],
+            2 => ['constant' => 'ROLE_USER', 'label' => 'User'],
+        ]],
+    ];
+
+Each 'constant' becomes a class constant (Model::STATUS_ACTIVE), written into
+the model by rsx:constants:regenerate.
 
 Magic Properties (Instance):
 - $model->status_id__label - Get label for current enum value
@@ -35,25 +168,28 @@ Magic Methods (Static):
 - Model::status_id__enum_select() - Get key/label pairs for dropdowns
 - Model::status_id__enum_ids() - Get all possible enum values
 
-Enum properties in $enums can include any custom keys (label, order, constant,
+Enum value properties can include any custom keys (label, order, constant,
 color, icon, etc.). All properties are exported to JavaScript via toArray().
+The raw map is Model::enum_values('status_id').
 
 Optional 'selectable' property (default true) controls dropdown visibility:
     2 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'selectable' => false]
 
-DECLARED TEXT TYPES
+Full treatment: rsx:man enums.
 
-The sibling of $enums for TEXT columns. An enum says what an integer column
-MEANS; a text type says what KIND of string a TEXT column holds - plain text,
-sanitized HTML from a WYSIWYG, or an application notation such as
-{{Client_Model:42}} - so that the encoding is stated once, on the column, and
-every place that prints, edits, exports or indexes it asks the value instead of
-remembering. Without it each call site independently chooses an escape, a widget
-and a sanitizer, and when two disagree the result is markup shown as literal
-text or user input rendered unescaped, silently.
+TEXT TYPE COLUMNS
 
-    public static $text_types = [
-        'description' => Rich_Text::class,
+An enum says what an integer column MEANS; a text type says what KIND of
+string a TEXT column holds - plain text, sanitized HTML from a WYSIWYG, or an
+application notation such as {{Client_Model:42}} - so that the encoding is
+stated once, on the column, and every place that prints, edits, exports or
+indexes it asks the value instead of remembering. Without it each call site
+independently chooses an escape, a widget and a sanitizer, and when two
+disagree the result is markup shown as literal text or user input rendered
+unescaped, silently.
+
+    public static $columns = [
+        'description' => ['text_type' => Rich_Text::class],
     ];
 
 A declared column is read as a VALUE OBJECT: filtered by the type's sanitizer
@@ -80,6 +216,100 @@ same name naming the PRINTER and EDITOR components. The contract, two worked
 types and the security design are rsx:man text_types; the how-to is skill
 rspade:text-types.
 
+TYPE REF COLUMNS
+
+A polymorphic reference is the BIGINT pair {relation}_type + {relation}_id.
+The _type column is declared a type ref:
+
+    public static $columns = [
+        'fileable_type' => ['type_ref' => true],
+    ];
+
+It stores a _type_refs integer id and reads and writes as a model class
+basename ('Client_Model'), so stock morphTo() / morphMany() work over it. A
+morph relation over an undeclared _type column fails the manifest build
+(POLY-01). Rsx_Model_Abstract declares the audit type columns
+(created_by_type, updated_by_type, deleted_by_type). Full treatment:
+rsx:man polymorphic.
+
+NEVER EXPORT COLUMNS
+
+A column that must never leave the server is declared never_export:
+
+    public static $columns = [
+        'api_token'     => ['never_export' => true],
+        'client_secret' => ['never_export' => true],
+    ];
+
+toArray() - the one serializer behind fetch(), relationship and list payloads,
+window.rsxapp.user and the external API - unsets every never-exported column
+AFTER Laravel has built the array, so nothing (makeVisible(), $visible) can
+put one back.
+
+An override can never drop never_export from an inherited entry (see
+Inheritance above): a subclass - a class override of a core model included -
+only adds secrets. The framework identity models already withhold theirs:
+Login_User_Model password and remember_token, Portal_User_Model password and
+metadata, User_Model the invite columns.
+
+Which control to use: anything whose disclosure would be a security event (a
+password hash, a token, a secret, an open key/value bag) is never_export.
+Laravel's $hidden is advisory - makeVisible() removes a column from it - and is
+for tidiness only. getAttributes() and attribute reads ($model->password)
+bypass both: they are server-side raw access, never a payload.
+
+The same declaration covers the REVISION lane. On a model with $revisions, a
+change to a never-exported column is recorded with BOTH sides replaced by
+Revision::REDACTED, so a history still says the column changed and the stored
+document never holds its value (rsx:man revisions, REDACTED COLUMNS). A secret
+therefore needs no revision_exclude; a column carrying both is not recorded at
+all.
+
+A column named password, token or secret (or ending _password, _token,
+_secret) that is not never_export is flagged by rsx:check
+(MODEL-NEVER-EXPORT-01, read from the live schema). A column exported on
+purpose is declared in the model's file with its reason:
+
+    // @MODEL-NEVER-EXPORT-01-EXCEPTION display_token - a public badge token
+
+REVISION EXCLUDED COLUMNS
+
+On a model with $revisions, a revision_exclude column is not recorded:
+
+    public static $columns = [
+        'view_count' => ['revision_exclude' => true],
+    ];
+
+For values that change without anybody changing them: counters, last-seen
+stamps, cached aggregates. The column is still stored; it is not a security
+control (a secret is never_export). updated_at, the updated_by pair, every
+`_`-prefixed system column and every derived column are excluded
+automatically. rsx:man revisions.
+
+DERIVED COLUMNS
+
+A derived column is a STORED column whose value a public method of the model
+computes, and which nobody assigns:
+
+    public static $columns = [
+        'project_id' => ['derived' => 'derive_project_id', 'from' => ['taskable_type', 'taskable_id', 'direct_project_id']],
+    ];
+
+    public function derive_project_id(): ?int { ... }
+
+save() computes it on an INSERT and on every UPDATE in which a from column
+changed; $record->rederive() recomputes it when what the method reads lives
+elsewhere and has moved. An assignment throws:
+
+    Task_Model::project_id is a derived column - Task_Model::derive_project_id()
+    computes it from [taskable_type, taskable_id, direct_project_id] on save. It
+    is never assigned. Assign its source column(s), or call rederive().
+
+A save that changes only derived columns leaves updated_at and the updated_by
+pair untouched and records no revision. The complete contract - when save()
+derives, rederive(), the refusals, cross-record dependents, migrations and the
+rsx:derived:check / rsx:derived:rebuild commands - is rsx:man derived_columns.
+
 FACT GROUPS
 
 One fact a person edits as one thing is sometimes stored across several
@@ -88,7 +318,7 @@ worked case is an activity's "when": an all-day activity keeps its day in
 date_start / date_end with the times null, a timed one keeps its day inside
 time_start / time_end with date_start null, and its form shows one Date box
 either way. Other shapes: a polymorphic type/id pair edited as one field, an
-amount derived from quantity x rate.
+amount stored with the quantity and rate it is the product of.
 
 THE TRAP. Form_Edit finds a conflict per column: another editor's save is a
 conflict only with a submission of a field stored in the column that save
@@ -227,56 +457,17 @@ state key) to detect boolean columns at runtime.
 
 Manual $casts entries take precedence over automatic detection.
 
-NEVER EXPORT FIELDS
+APPENDED PROPERTIES ($appends)
 
-Columns that must never leave the server are declared in $neverExport:
-
-    public static $neverExport = ['api_token', 'client_secret'];
-
-toArray() - the one serializer behind fetch(), relationship and list payloads,
-window.rsxapp.user and the external API - unsets every listed column AFTER
-Laravel has built the array, so nothing can put one back.
-
-The effective list is the UNION of every $neverExport declared up the
-inheritance chain (Model::never_exported_columns() answers it). A subclass -
-a class override of a core model included - lists only the columns it ADDS;
-it can never drop one its parent protects. The framework identity models
-already withhold their secrets: Login_User_Model password and remember_token,
-Portal_User_Model password and metadata, User_Model the invite columns.
-
-Which control to use: anything whose disclosure would be a security event (a
-password hash, a token, a secret, an open key/value bag) goes in $neverExport.
-Laravel's $hidden is advisory - makeVisible() removes a column from it - and is
-for tidiness only. getAttributes() and attribute reads ($model->password)
-bypass both: they are server-side raw access, never a payload.
-
-The same declaration covers the REVISION lane. On a model with $revisions, a
-change to a never-exported column is recorded with BOTH sides replaced by
-Revision::REDACTED, so a history still says the column changed and the stored
-document never holds its value (rsx:man revisions, REDACTED COLUMNS). A secret
-therefore needs no $revision_exclude entry; one named in both lists is not
-recorded at all.
-
-A column named password, token or secret (or ending _password, _token,
-_secret) that is missing from the effective list is flagged by rsx:check
-(MODEL-NEVER-EXPORT-01, read from the live schema). A column exported on
-purpose is declared in the model's file with its reason:
-
-    // @MODEL-NEVER-EXPORT-01-EXCEPTION display_token - a public badge token
-
-$neverExport is a STATIC property: a subclass declaring it non-static
-(protected $neverExport) fails at class load ("Cannot redeclare static ...
-as non static").
-
-DERIVED PROPERTIES ($appends)
-
-A computed value that must reach JavaScript is DECLARED, not hand-copied onto a
-payload. The declaration is Laravel's $appends plus an accessor per name, and the
+A computed value that must reach JavaScript, and is not stored, is an APPENDED
+PROPERTY: DECLARED, not hand-copied onto a payload. (A computed value that must
+be stored - queried, sorted, indexed - is a DERIVED COLUMN instead.) The
+declaration is Laravel's $appends plus an accessor per name, and the
 accessor DELEGATES to the public method that defines the value:
 
     COST. An accessor runs on every serialization - a single fetch, a batch
     fetch, any toArray() over a list. One that reads other rows is therefore
-    paid once per record; keep such derivations to what a single-record view
+    paid once per record; keep such computations to what a single-record view
     needs, and let a list select the columns it wants rather than serialize.
 
     protected $appends = ['party_id_formatted'];
@@ -313,18 +504,18 @@ WHAT THE JS SIDE GETS. The model stub generator reads $appends and declares each
 Base_<Model>_Model.js as a JSDoc @property - a documented, read-only surface an editor
 completes and a reader of the stub can see:
 
-     * @property {*} party_id_formatted - derived (appended by the PHP model); read-only
+     * @property {*} party_id_formatted - appended property (computed by the PHP model); read-only
 
 It is declared as documentation rather than as a real class member on purpose: the ORM
 ASSIGNS a fetched record's fields onto the instance, and a class-level getter would
-shadow that assignment. A derived property is not a column, so field_length() answers
+shadow that assignment. An appended property is not a column, so field_length() answers
 null for it exactly as it does for any non-varchar, and it gets no enum treatment.
 
 Adding or removing a name changes the stub, so $appends is part of the model metadata
 hash that decides when a stub is regenerated.
 
 NAMING. The property name is the method name - no aliasing, at any layer (see NEVER
-EXPORT FIELDS above and the no-field-aliasing convention): one string in PHP, JSON and
+EXPORT COLUMNS above and the no-field-aliasing convention): one string in PHP, JSON and
 JavaScript, so grep finds every usage.
 
 WORKED EXAMPLES. system/app/RSpade/resource/reference_app/models/party_model.php
@@ -441,8 +632,10 @@ Example Implementation:
         use Users_Model_Relationships;
 
         protected $table = 'users';
-        public static $enums;
-        public static $neverExport = ['api_token'];
+
+        public static $columns = [
+            'api_token' => ['never_export' => true],
+        ];
     }
 
 Manifest Integration:
@@ -886,7 +1079,10 @@ REVISION HISTORY
 Opt a model into per-write revision recording:
 
     public static $revisions = true;                      // record every save()/delete()
-    protected static $revision_exclude = ['view_count'];  // columns not worth recording
+
+    public static $columns = [
+        'view_count' => ['revision_exclude' => true],     // a column not worth recording
+    ];
 
 Instance methods this adds:
 - revisions() - every revision recorded for THIS record, newest first
@@ -895,15 +1091,20 @@ Instance methods this adds:
 - revisions_including_children() - the same, plus every record declaring this
   one as its #[Revision_Parent], resolved by one indexed query on the root pair.
 
-updated_at, the updated_by pair and every `_`-prefixed system column are
-excluded automatically. Full treatment: rsx:man revisions.
+updated_at, the updated_by pair, every `_`-prefixed system column and every
+derived column are excluded automatically. Full treatment: rsx:man revisions.
 
 SEE ALSO
 
 rsx:man model_fetch - Ajax ORM fetch system
+rsx:man derived_columns - Derived columns: declaration, save, rederive(), migrations
+rsx:man text_types - Text type columns
+rsx:man polymorphic - Type-ref columns and polymorphic relations
+rsx:man class_override - Overriding a core model's column declarations
 rsx:man model_normalization - Database normalization process
 rsx:man enums - Complete enum system documentation
 rsx:man migrations - Migration system and safety
 rsx:man revisions - Per-model revision history
 rsx:man form_conventions - EDITING A RECORD: how Form_Edit applies fact groups
 rsx:man conformance_audits - the unbounded-query audit (unbounded_queries)
+skill rspade:models - Writing a model; choosing a kind for a new column

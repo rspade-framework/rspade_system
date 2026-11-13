@@ -152,7 +152,7 @@ class Mail_Unsubscribe_Controller extends Rsx_Controller_Abstract
             return null;
         }
 
-        return Email_Queue_Model::$enums['category_id'][$category_id]['label'];
+        return Email_Queue_Model::enum_values('category_id')[$category_id]['label'];
     }
 
     /**

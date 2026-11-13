@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading revision history - $revisions = true, $revision_exclude, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
+description: "Recording and reading revision history - $revisions = true, the revision_exclude column kind in $columns, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
 ---
 
 # Revision history
@@ -21,26 +21,31 @@ class Client_Model extends Rsx_Site_Model_Abstract
     public static $revisions = true;
 
     // Columns that move without the user having changed anything.
-    protected static $revision_exclude = ['open_task_count', 'last_seen_at'];
+    public static $columns = [
+        'open_task_count' => ['revision_exclude' => true],
+        'last_seen_at'    => ['revision_exclude' => true],
+    ];
 }
 ```
 
 That is the whole wiring - shaped exactly like `$realtime`, and off costs one static read.
 
-`updated_at`, the `updated_by` pair and every `_`-prefixed system column are excluded
-automatically. `created_at` and the `created_by` pair are NOT: they appear once, on the
+`updated_at`, the `updated_by` pair, every `_`-prefixed system column and every DERIVED
+column (computed by the model, never edited - skill `rspade:models`) are excluded
+automatically; a save that changes only derived columns writes no revision at all. `created_at` and the `created_by` pair are NOT: they appear once, on the
 create, where they are the record's provenance.
 
-**`$revision_exclude` is not a security control.** An excluded column is still stored in
+**`revision_exclude` is not a security control.** An excluded column is still stored in
 the record. To keep a value out of the database, do not put it there.
 
-**Secrets are redacted by `$neverExport`, not excluded.** A change to a column in the
-model's never-export list is recorded as `[Revision::REDACTED, Revision::REDACTED]`
+**Secrets are redacted by `never_export`, not excluded.** A change to a `never_export`
+column is recorded as `[Revision::REDACTED, Revision::REDACTED]`
 (`'__RSX_REDACTED__'`) - on a create, an update and a clear - so the history says the
 column changed and the stored document never holds the old or new value (a declared text
 type included: the marker replaces the value before anything encodes it). One declaration
-covers payloads and revisions; don't repeat a secret in `$revision_exclude` unless even
-"it changed" is noise, in which case that list wins and nothing is recorded.
+covers payloads and revisions; don't add `revision_exclude` to a secret unless even
+"it changed" is noise, in which case it wins and nothing is recorded. (Both are entries of
+the model's `$columns` - grammar: skill `rspade:models`.)
 
 ## Filing a child under its parent
 
@@ -78,7 +83,7 @@ app is the worked example of a model that opts in and deliberately declares no p
 foreach ($client->revisions() as $revision) {              // this record only
     $revision->operation_id__label;                        // Created/Updated/Deleted/Restored
     $revision->diff();                                     // ['name' => ['Acme', 'Acme Ltd']]
-    Revision_Model::is_redacted($after);                   // a $neverExport column: show "changed", never the marker
+    Revision_Model::is_redacted($after);                   // a never_export column: show "changed", never the marker
     $revision->transaction->actor;                         // who
     $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test/Companion
     $revision->transaction->endpoint;                      // 'Clients_Controller::save'

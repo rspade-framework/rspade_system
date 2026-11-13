@@ -175,7 +175,7 @@ class Scm_Properties
 
     public static $realtime = false;
 
-    public static $type_ref_columns = ['owner_type', 'target_type'];
+    public static $labels = ['owner', 'target'];
 
     #[Sealed]
     public static $locked = 1;
@@ -196,8 +196,8 @@ PHP);
             static::__assert_false($properties['realtime']['default']);
             static::__assert_true($properties['realtime']['static']);
             static::__assert_equals(
-                ['owner_type', 'target_type'],
-                $properties['type_ref_columns']['default'],
+                ['owner', 'target'],
+                $properties['labels']['default'],
                 'a flat list of string literals is carried whole'
             );
             static::__assert_array_has_key('sealed', $properties['locked']['attributes']);
@@ -207,6 +207,56 @@ PHP);
             );
             static::__assert_true($properties['computed']['has_default']);
             static::__assert_false($properties['undecided']['has_default']);
+        } finally {
+            self::__cleanup();
+        }
+    }
+
+    /**
+     * The class's own $columns literal, summarized per column for POLY-01: every declared
+     * column, true when its entry carries type_ref - false included, since an entry without
+     * it replaces a parent's type_ref entry. A class without $columns answers null.
+     */
+    public static function test_type_ref_columns_summary()
+    {
+        $path = self::__fixture(<<<'PHP'
+<?php
+
+class Scm_Columns
+{
+    public static $columns = [
+        'owner_type' => ['type_ref' => true],
+        'status_id' => ['enum' => [1 => ['label' => 'Open']]],
+        'created_by_type' => [],
+        'target_type' => ['type_ref' => true, 'never_export' => true],
+        'flagged_type' => ['type_ref' => false],
+    ];
+}
+
+class Scm_No_Columns
+{
+    public static $revisions = true;
+}
+PHP);
+
+        try {
+            $cache = new Source_Cache(4);
+
+            static::__assert_equals(
+                [
+                    'owner_type' => true,
+                    'status_id' => false,
+                    'created_by_type' => false,
+                    'target_type' => true,
+                    'flagged_type' => false,
+                ],
+                $cache->declared_members($path, 'Scm_Columns')['type_ref_columns'],
+                'every declared column, true only for a literal type_ref => true'
+            );
+            static::__assert_null(
+                $cache->declared_members($path, 'Scm_No_Columns')['type_ref_columns'],
+                'a class that declares no $columns has nothing to overlay'
+            );
         } finally {
             self::__cleanup();
         }

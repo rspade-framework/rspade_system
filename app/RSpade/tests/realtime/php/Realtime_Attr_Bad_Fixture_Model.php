@@ -19,8 +19,6 @@ class Realtime_Attr_Bad_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_attr_bad';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     #[Realtime_Touch]

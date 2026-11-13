@@ -88,7 +88,7 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
      *
      * Permissions are APPLICATION vocabulary - an application's User_Model declares its
      * own set and no PERM_ constant is portable - so the ids are read out of
-     * $enums['role_id'][n]['permissions'] at runtime. Which permission a row names is
+     * enum_values('role_id')[n]['permissions'] at runtime. Which permission a row names is
      * irrelevant here: the subject is the refresh push on an ACL row CHANGE.
      *
      * @return array<int, int>

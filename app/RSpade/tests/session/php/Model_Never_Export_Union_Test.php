@@ -14,7 +14,7 @@ use App\RSpade\Tests\Session\Php\Never_Export_Fixture_Base_Model_Abstract;
 use App\RSpade\Tests\Session\Php\Never_Export_Fixture_Model;
 
 /**
- * $neverExport is the one export control, and its effective list is the UNION of the chain.
+ * never_export in $columns is the one export control, and its effective set is the overlay of the chain.
  *
  * Three promises are pinned here. A subclass declaring its own list ADDS to its parent's
  * (the shape of a class override of a core model) rather than replacing it. Laravel's

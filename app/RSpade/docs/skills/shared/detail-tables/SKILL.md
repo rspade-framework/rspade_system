@@ -115,7 +115,7 @@ Detail columns are merged into the base model's column map when it is read from 
 - `Model.field_length('first_name')` resolves detail columns - a form binds `$max_length=Party_Model.field_length('first_name')` even though the column lives on a detail.
 - `rsx:constants:regenerate` documents detail columns in the base model's `@property` docblock, each annotated `(detail: <table>)`.
 - The JS stub bakes the discriminator plus the value->accessor map and emits the embed-resolving accessors.
-- `$enums` on a detail column work like any column - the detail model is a real model and casts its own columns.
+- `$columns` entries (an enum, a text type, ...) on a detail column work like any column - the detail model is a real model and casts its own columns.
 
 ## 7. DETAIL-01
 

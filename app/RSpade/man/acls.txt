@@ -180,8 +180,8 @@ MODEL IMPLEMENTATION
             const PERM_API_ACCESS = 8;
             const PERM_DATA_EXPORT = 9;
 
-            public static $enums = [
-                'role_id' => [
+            public static $columns = [
+                'role_id' => ['enum' => [
                     300 => [
                         'constant' => 'ROLE_SITE_OWNER',
                         'label' => 'Site Owner',
@@ -189,7 +189,7 @@ MODEL IMPLEMENTATION
                         'can_admin_roles' => [300, 400, 500, 600, 700],
                     ],
                     // ... additional roles
-                ],
+                ]],
             ];
 
             // Get all resolved permissions (role + supplementary applied)
@@ -712,7 +712,7 @@ ADDING NEW PERMISSIONS
             ],
         ];
 
-    2. Add to role definitions in $enums if role should grant it:
+    2. Add to the role_id enum definitions if the role should grant it:
 
         400 => [  // ROLE_SITE_ADMIN
             'permissions' => [
@@ -735,7 +735,7 @@ ADDING NEW ROLES
 
         const ROLE_SUPERVISOR = 450;  // Between Admin (400) and Manager (500)
 
-    2. Add to $enums with permissions and can_admin_roles:
+    2. Add to the role_id enum with permissions and can_admin_roles:
 
         450 => [
             'constant' => 'ROLE_SUPERVISOR',
@@ -766,7 +766,7 @@ FRAMEWORK IMPLEMENTATION DETAILS
 
         system/app/RSpade/Core/Models/User_Model.php
             Role and permission constants
-            $enums definition with role metadata
+            the role_id enum ($columns) with role metadata
             has_permission(), has_role(), can_admin_role() methods
             Supplementary permission lookup + per-request instance cache
 
@@ -815,7 +815,7 @@ FRAMEWORK IMPLEMENTATION DETAILS
 
     Enum Integration
 
-        The $enums system provides magic properties:
+        The enum system provides magic properties:
 
             $user->role_id__permissions     // Array from enum definition
             $user->role_id__can_admin_roles // Array from enum definition
@@ -826,14 +826,14 @@ FRAMEWORK IMPLEMENTATION DETAILS
     Permission Metadata As Enum
 
         The enum system is fully generic and is NOT restricted to the users
-        table or to the label/constant keys. You can attach an $enums entry to
+        table or to the label/constant keys. You can declare an enum entry on
         User_Permission_Model (a non-users-table, pivot-style model) keyed on
         permission_id, with arbitrary app-defined metadata keys beyond
         constant/label, and that metadata reaches both PHP and JS:
 
             // On User_Permission_Model (app override) or User_Model
-            public static $enums = [
-                'permission_id' => [
+            public static $columns = [
+                'permission_id' => ['enum' => [
                     User_Model::PERM_API_ACCESS => [
                         'constant'    => 'PERM_API_ACCESS',
                         'label'       => 'API Access',
@@ -842,7 +842,7 @@ FRAMEWORK IMPLEMENTATION DETAILS
                         'switch_role' => true,            // custom key
                     ],
                     // ...
-                ],
+                ]],
             ];
 
         Custom keys pass through with no allowlist:
@@ -853,7 +853,7 @@ FRAMEWORK IMPLEMENTATION DETAILS
                    $column . '__' . $key present in the definition)
 
             JS:   Permission_Model.permission_id__enum(id).category
-                  (Database_BundleIntegration exports the whole $enums array to
+                  (Database_BundleIntegration exports every enum map to
                    the model's JS stub verbatim, so every custom key is present)
 
         One confirmed caveat - IDE autocomplete only, not runtime:

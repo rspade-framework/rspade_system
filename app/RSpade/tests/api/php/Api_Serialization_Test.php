@@ -16,7 +16,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * Api_Dispatcher::serialize() and build_response() - the shared bare-JSON serializer.
  *
- * A model becomes its redacting toArray(): enum __label + __MODEL present, $neverExport
+ * A model becomes its redacting toArray(): enum __label + __MODEL present, never_export
  * columns absent. Collections and nested arrays recurse; scalars and null pass through.
  * build_response() maps array->200, null->204 (the companion channel's empty answer; the
  * external API refuses it - Api_Response_Contract_Test), JsonResponse->passthrough, and
@@ -56,7 +56,7 @@ class Api_Serialization_Test extends Rsx_Test_Abstract
 
     public static function test_model_serialization_redacts_never_export_columns()
     {
-        // The _sessions model declares $neverExport = [session_token, csrf_token, ip_address_id];
+        // The _sessions model declares session_token, csrf_token and ip_address_id never_export;
         // the address itself is an accessor and is never serialized.
         $session = new Session();
         $session->session_token = 'secret-token';

@@ -29,6 +29,13 @@ class Normalize_Schema_Timestamp_Index_Test extends Rsx_Test_Abstract
     // Real DDL, which auto-commits and cannot participate in the per-test transaction.
     protected static $use_database_transactions = false;
 
+    /** The fixed-shape framework tables the normalize pass leaves alone. */
+    private const NORMALIZE_EXCLUDED = [
+        '_migrations',
+        \App\RSpade\Core\Database\Migrate_Dump_Rollback::RUNS_TABLE,
+        \App\RSpade\Core\Database\Rsx_Rederive::QUEUE_TABLE,
+    ];
+
     private const COVERED = '_normalize_ts_covered_probe';
     private const CONTAINED = '_normalize_ts_contained_probe';
 
@@ -142,10 +149,10 @@ class Normalize_Schema_Timestamp_Index_Test extends Rsx_Test_Abstract
                 AND s.column_name = c.column_name
             WHERE t.table_schema = DATABASE()
                 AND t.table_type = 'BASE TABLE'
-                AND t.table_name <> '_migrations'
+                AND t.table_name NOT IN (?, ?, ?)
             GROUP BY t.table_name, c.column_name
             HAVING COUNT(s.index_name) = 0
-        ");
+        ", self::NORMALIZE_EXCLUDED);
 
         static::__assert_empty(
             array_map(static fn ($row) => "{$row->table_name}.{$row->column_name}", $offenders),

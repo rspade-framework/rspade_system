@@ -13,7 +13,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * TEXT-TYPE-01: a $text_types declaration the cast cannot honour is a build failure.
+ * TEXT-TYPE-01: a `text_type` column declaration the cast cannot honour is a build failure.
  *
  * Every mistake it catches is silent at runtime, which is why the rule exists: a $casts
  * entry shadowing the text cast stores request markup unfiltered, a non-type entry throws
@@ -61,7 +61,7 @@ class Text_Type_Declaration_Rule_Test extends Rsx_Test_Abstract
     {
         $violations = static::__evaluate('Text_Rule_Fixture_Shadowed_Model', "    protected \$table = 'fixture';\n"
             . "    protected \$casts = ['body' => 'string'];\n"
-            . "    public static \$text_types = ['body' => " . self::PLAIN_TYPE . "];");
+            . "    public static \$columns = ['body' => ['text_type' => " . self::PLAIN_TYPE . "]];");
 
         $messages = implode("\n", array_map(fn ($v) => $v->message, $violations));
 
@@ -73,7 +73,7 @@ class Text_Type_Declaration_Rule_Test extends Rsx_Test_Abstract
     {
         $violations = static::__evaluate('Text_Rule_Fixture_Casts_Method_Model', "    protected \$table = 'fixture';\n"
             . "    protected function casts(): array { return ['body' => 'string']; }\n"
-            . "    public static \$text_types = ['body' => " . self::PLAIN_TYPE . "];");
+            . "    public static \$columns = ['body' => ['text_type' => " . self::PLAIN_TYPE . "]];");
 
         $messages = implode("\n", array_map(fn ($v) => $v->message, $violations));
 
@@ -83,7 +83,7 @@ class Text_Type_Declaration_Rule_Test extends Rsx_Test_Abstract
     public static function test_an_entry_that_is_not_a_text_type_is_fatal()
     {
         $violations = static::__evaluate('Text_Rule_Fixture_Not_A_Type_Model', "    protected \$table = 'fixture';\n"
-            . "    public static \$text_types = ['body' => \\ArrayObject::class];");
+            . "    public static \$columns = ['body' => ['text_type' => \\ArrayObject::class]];");
 
         static::__assert_count(1, $violations, 'one violation for the one bad entry');
         static::__assert_contains('not a class extending Rsx_Text_Abstract', $violations[0]->message, 'naming the problem');
@@ -92,7 +92,7 @@ class Text_Type_Declaration_Rule_Test extends Rsx_Test_Abstract
     public static function test_a_type_without_a_js_twin_is_fatal()
     {
         $violations = static::__evaluate('Text_Rule_Fixture_No_Twin_Model', "    protected \$table = 'fixture';\n"
-            . "    public static \$text_types = ['body' => " . self::PLAIN_TYPE . "];");
+            . "    public static \$columns = ['body' => ['text_type' => " . self::PLAIN_TYPE . "]];");
 
         static::__assert_count(1, $violations, 'the missing twin is the only problem');
         static::__assert_contains('has no JavaScript twin', $violations[0]->message, 'naming the problem');
@@ -106,12 +106,55 @@ class Text_Type_Declaration_Rule_Test extends Rsx_Test_Abstract
         static::__assert_count(0, $violations, 'a cast on an undeclared column is ordinary');
     }
 
+    /**
+     * Checks 1 and 2 judge the entries a class's OWN $columns literal declares: a subclass
+     * that inherits a text-type entry - with or without a $columns of its own - is not
+     * re-reported for it.
+     */
+    public static function test_an_inherited_entry_is_judged_only_where_it_is_declared()
+    {
+        $parent = 'Text_Rule_Fixture_Declaring_Parent_Model';
+        $child = 'Text_Rule_Fixture_Inheriting_Child_Model';
+        $path = Rsx_Project_Paths::tmp_path('text_type_rule_' . $child . '.php');
+
+        if (!class_exists($child, false)) {
+            file_put_contents($path, "<?php\n"
+                . "abstract class {$parent} extends \\App\\RSpade\\Core\\Database\\Models\\Rsx_Model_Abstract\n"
+                . "{\n    protected \$table = 'fixture';\n"
+                . "    public static \$columns = ['body' => ['text_type' => " . self::PLAIN_TYPE . "]];\n}\n"
+                . "class {$child} extends {$parent}\n"
+                . "{\n    public static \$columns = ['notes' => []];\n}\n");
+            require $path;
+        }
+
+        try {
+            $collector = new ViolationCollector();
+            $rule = new TextTypeDeclaration_CodeQualityRule($collector);
+
+            $rule->evaluate_class($child, $path);
+            static::__assert_count(
+                0,
+                $collector->get_by_rule(self::RULE_ID),
+                'the child declares no text type of its own, so the missing twin is not its finding'
+            );
+
+            $rule->evaluate_class($parent, $path, true);
+            static::__assert_count(
+                1,
+                $collector->get_by_rule(self::RULE_ID),
+                'the declaring parent carries the finding'
+            );
+        } finally {
+            @unlink($path);
+        }
+    }
+
     public static function test_the_exception_marker_suppresses_the_file()
     {
         $violations = static::__evaluate('Text_Rule_Fixture_Excepted_Model', "    // @TEXT-TYPE-01-EXCEPTION fixture\n"
             . "    protected \$table = 'fixture';\n"
             . "    protected \$casts = ['body' => 'string'];\n"
-            . "    public static \$text_types = ['body' => " . self::PLAIN_TYPE . "];");
+            . "    public static \$columns = ['body' => ['text_type' => " . self::PLAIN_TYPE . "]];");
 
         static::__assert_count(0, $violations, 'the marker suppresses every check');
     }

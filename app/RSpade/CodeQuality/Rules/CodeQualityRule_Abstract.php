@@ -325,7 +325,7 @@ abstract class CodeQualityRule_Abstract
      *
      * A rule that reads a declaration out of the file in front of it is asking the right
      * question only while every class is one file. A model is not: a core model carries
-     * `$table`, `$enums` and the rest on an abstract base and ships a three-line concrete an
+     * `$table`, `$columns` and the rest on an abstract base and ships a three-line concrete an
      * application replaces, and an application's own override declares only what it changes.
      * So "this file does not declare it" is not "this class does not have it".
      *

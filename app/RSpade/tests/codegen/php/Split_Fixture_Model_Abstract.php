@@ -12,7 +12,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 /**
  * Test fixture: the BASE half of a split model.
  *
- * A framework model carries every member here - table, enums, constants, derived properties -
+ * A framework model carries every member here - table, enums, constants, appended properties -
  * and ships a three-line concrete an application replaces. Everything the build generates
  * from a model is therefore a function of this file, not of the concrete's, which is what
  * Model_Stub_Appends_Test asserts on both sides: the stub REFLECTS these members, and the
@@ -27,8 +27,6 @@ abstract class Split_Fixture_Model_Abstract extends Rsx_Model_Abstract
 
     protected $table = 'codegen_split_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 
     protected $appends = ['base_display_id'];
 

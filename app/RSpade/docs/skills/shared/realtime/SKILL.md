@@ -181,7 +181,7 @@ Site_Lock::write($site_id, function () use ($ids) {             // one chunk of 
 
 ## Emitters (derived and computed values)
 
-A model frame says a ROW changed. An emitter says a COMPUTED value changed.
+A model frame says a ROW changed. An emitter says a COMPUTED value changed. (A model's DERIVED COLUMN - stored, declared `derived` in `$columns`, skill `rspade:models` - is part of its row: its save and `rederive()` send the row's own frame and need no emitter.)
 
 ```php
 #[Emitter('Dashboard_Kpi_Topic', 'Invoice_Model')]     // 2nd arg = model constraint

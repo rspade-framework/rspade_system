@@ -47,7 +47,9 @@ class Constants_Regenerate_Order_Test extends Rsx_Test_Abstract
         $detail = [];
 
         foreach (explode("\n", $doc_block) as $line) {
-            if (!preg_match('/^ \* @property \S+ \$(\w+)( \(detail: (\w+)\))?$/', $line, $m)) {
+            // A column line may carry a kind note after the name (`$type_id enum: ...`); the
+            // enum accessor hints (`$type_id__label`) are not column lines.
+            if (!preg_match('/^ \* @property(?:-read)? \S+ \$(\w+)( \(detail: (\w+)\))?(?: [a-z].*)?$/', $line, $m) || str_contains($m[1], '__')) {
                 continue;
             }
 
@@ -60,7 +62,7 @@ class Constants_Regenerate_Order_Test extends Rsx_Test_Abstract
             }
         }
 
-        static::__assert_true(in_array('zeta_code', $base, true) && in_array('alpha_note', $base, true), 'Base columns missing from the docblock');
+        static::__assert_true(in_array('zeta_code', $base, true) && in_array('alpha_note', $base, true) && in_array('type_id', $base, true), 'Base columns missing from the docblock');
         static::__assert_empty(array_intersect(['aardvark_label', 'mid_size', 'omega_flag'], $base), 'A detail column leaked into the base group');
 
         $sorted_base = $base;

@@ -245,7 +245,7 @@ PARAMETERS AND VALIDATION
         bool   truthy: 1 true yes on       falsy: 0 false no off
         string passthrough, except an ENCODED TEXT VALUE (below)
 
-    DECLARED TEXT COLUMNS. A model column declared in $text_types
+    DECLARED TEXT COLUMNS. A model column declared 'text_type' in $columns
     (Rich_Text and the like) is written through an ordinary 'string' param,
     in one of two forms:
 
@@ -385,8 +385,8 @@ RESPONSE CONTRACT
 SERIALIZATION
     A returned model is serialized with the SAME redacting toArray() the
     fetch() system uses - never a hand-rolled transformer:
-        - $neverExport columns (password hashes, tokens, ...) are stripped,
-          unioned up the model's inheritance chain
+        - never_export columns (password hashes, tokens, ...) are stripped,
+          inherited declarations included
         - enum columns gain BEM-style magic properties: status_id__label, etc.
         - a __MODEL key identifies the model class
       Never alias enum fields to shorter names; the double-underscore forms are
@@ -662,7 +662,7 @@ API KEYS
         $key->delete();     // signs its user session out (API key deleted)
         $key->is_tester_key();   // an /apidocs tester key (TESTER KEYS)
 
-    key_hash is in Api_Key_Model's $neverExport: no serializer carries it. A
+    key_hash is never_export on Api_Key_Model: no serializer carries it. A
     screen listing keys returns the fields it renders, never the record - a
     browser refuses an Api_Key_Model record (there is no JS model for it).
 
@@ -2061,7 +2061,7 @@ RSX VS LARAVEL
                  validation AND the generated docs/tester/samples.
     Serialization:
         Laravel: an API Resource / transformer per model.
-        RSX:     the model's redacting toArray() (neverExport + enum labels).
+        RSX:     the model's redacting toArray() (never_export + enum labels).
     Docs:
         Laravel: hand-write OpenAPI or bolt on a generator.
         RSX:     /apidocs and GET /api/vN/openapi.json are generated from the manifest.
@@ -2130,7 +2130,7 @@ TROUBLESHOOTING
         means a declared param failed validation. They are different failures.
 
     A model return leaks / omits a field
-        Serialization is the model's toArray(): neverExport columns are stripped
+        Serialization is the model's toArray(): never_export columns are stripped
         and enum fields appear as status_id__label etc. Adjust the model's
         redaction, not the endpoint.
 

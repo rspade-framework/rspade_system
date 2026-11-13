@@ -7,7 +7,7 @@ can be stored as a BIGINT rather than a repeated VARCHAR class name, while devel
 working with human-readable simple class names.
 
 **The pair standard**: a polymorphic reference is ALWAYS `{relation}_type` (BIGINT, declared
-in the owning model's `$type_ref_columns`) + `{relation}_id` (BIGINT). Two parallel nullable
+`['type_ref' => true]` in the owning model's `$columns`) + `{relation}_id` (BIGINT). Two parallel nullable
 FKs is the forbidden shape. A `type_id` enum column is NOT a type ref - different concept,
 different suffix.
 
@@ -54,8 +54,10 @@ Never query `_type_refs` directly instead.
 Eloquent cast that handles transparent conversion:
 
 ```php
-// In model, declare type_ref_columns
-protected static $type_ref_columns = ['fileable_type'];
+// In the model, declare the column a type ref
+public static $columns = [
+    'fileable_type' => ['type_ref' => true],
+];
 
 // Then use normally - cast handles conversion
 $attachment->fileable_type = 'Contact_Model';  // Stored as integer
@@ -197,7 +199,7 @@ relation object, which is what you want for `withTrashed()`.
   throws (relation, cast, `whereHasMorph($rel, '*')`), and a write is refused. Prefer
   explicit type lists.
 - **Pivot morphs (`morphToMany`/`morphedByMany`) are unsupported**: the discriminator lives
-  on a pivot table no model owns, so no `$type_ref_columns` declaration can cover it. Model
+  on a pivot table no model owns, so no `type_ref` declaration can cover it. Model
   the join table as a real model with its own pair. POLY-01 flags them.
 
 ## Retired type refs (a model class that no longer exists)
@@ -254,8 +256,8 @@ shared_items.item_type - 4 rows
 
 `Type_Ref_Orphan_Report` is the engine (`scan()`, `resolvable_ids()`, `registry_map()`,
 `type_ref_columns_by_table()`, `format_select()`). The column inventory reads every model's
-`_type_ref_columns()` - the model's own declaration UNIONed with the framework audit pairs,
-which are type refs on every table. **Nothing is ever loaded into memory**: every number is
+`type_ref_columns()` - the model's own `type_ref` entries plus the framework audit pairs
+`Rsx_Model_Abstract` declares, which are type refs on every table. **Nothing is ever loaded into memory**: every number is
 a `COUNT(*) ... GROUP BY`, and the SELECT is text for the operator.
 
 ## A table rename follows itself into _type_refs
@@ -350,7 +352,9 @@ Parameters:
 1. Migration: `{relation}_type BIGINT NULL`, `{relation}_id BIGINT NULL`, indexed as a pair.
 2. Declare the column:
    ```php
-   protected static $type_ref_columns = ['attachable_type'];
+   public static $columns = [
+       'attachable_type' => ['type_ref' => true],
+   ];
    ```
 3. Relate with stock Eloquent:
    ```php
@@ -368,8 +372,8 @@ EXISTING COLUMNS.
 
 **POLY-01** (`CodeQuality/Rules/Manifest/MorphStringPattern_CodeQualityRule.php`) is
 manifest-build FATAL, AST-based and cross-file. It flags Laravel's string-morph pattern: a
-`morphTo()` whose type column is not in the DECLARING model's `$type_ref_columns`, a
-`morphOne()`/`morphMany()` whose type column is not in the RELATED model's, any
+`morphTo()` whose type column is not declared `type_ref` in the DECLARING model's `$columns`,
+a `morphOne()`/`morphMany()` whose type column is not declared in the RELATED model's, any
 `morphToMany()`/`morphedByMany()`, and any morph type column not ending in `_type`. It skips
 calls whose owning model cannot be resolved statically (the rule is fatal; it never guesses).
 Migrations are not covered - the manifest does not scan them - so a VARCHAR `*_type` column

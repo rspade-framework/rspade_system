@@ -27,8 +27,6 @@ class Model_Fetch_Fixture_Model extends Rsx_Model_Abstract
 
     protected $fillable = [];
 
-    public static $enums = [];
-
     /**
      * The malformed return the endpoint must reject: an array with no __MODEL.
      *

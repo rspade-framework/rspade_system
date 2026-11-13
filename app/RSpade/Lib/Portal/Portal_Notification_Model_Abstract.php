@@ -65,18 +65,18 @@ use App\RSpade\Lib\Portal\Portal_Session;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
  * @property array $payload
  * @property int $portal_user_id
  * @property string $read_at
  * @property int $site_id
  * @property int $subject_id
- * @property int $subject_type
+ * @property string $subject_type type ref: a model class name, stored as a type-ref id
  * @property string $type
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -85,11 +85,17 @@ abstract class Portal_Notification_Model_Abstract extends Rsx_Site_Model_Abstrac
 {
     use Portal_Authorizable;
 
-    // No enums: `type` is a free-form string key owned by the emitting feature
-    // (e.g. 'announcement', 'request_opened', 'request_revision'). Keeping it a
-    // string keeps the primitive open - features add their own types without
-    // editing this core model.
-    public static $enums = [];
+    /**
+     * subject_type is a polymorphic type reference: it stores a BIGINT type-ref id in the
+     * database and reads/writes as the class basename string transparently.
+     *
+     * `type` is deliberately NOT an enum: it is a free-form string key owned by the emitting
+     * feature (e.g. 'announcement', 'request_opened', 'request_revision'). Keeping it a string
+     * keeps the primitive open - features add their own types without editing this core model.
+     */
+    public static $columns = [
+        'subject_type' => ['type_ref' => true],
+    ];
     /**
      * UNBOUNDED: this table's row count grows with customer activity, not with the
      * codebase, so no reader may assume the set is small.
@@ -107,12 +113,6 @@ abstract class Portal_Notification_Model_Abstract extends Rsx_Site_Model_Abstrac
 
     protected $table = '_portal_notifications';
     protected $fillable = []; // No mass assignment - always explicit
-
-    /**
-     * subject_type is a polymorphic type reference: it stores a BIGINT type-ref id
-     * in the database and reads/writes as the class basename string transparently.
-     */
-    protected static $type_ref_columns = ['subject_type'];
 
     protected $casts = [
         'payload' => 'array',

@@ -18,8 +18,6 @@ class Realtime_Silent_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_emissions_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = false;
     public static $realtime_silent = true;
 }

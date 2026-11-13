@@ -59,30 +59,30 @@ use App\RSpade\Lib\Revisions\Revision_Model;
  * Table: _transactions
  *
  * @property int $actor_id
- * @property int $actor_type
+ * @property string $actor_type type ref: a model class name, stored as a type-ref id
  * @property int $api_request_log_id
  * @property int $audit_session_id
  * @property string $completed_at
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $description
  * @property int $duration_ms
  * @property string $endpoint
  * @property int $id
  * @property int $ip_address_id
  * @property string $request_fingerprint
- * @property int $request_history_held
- * @property string $request_payload
+ * @property bool $request_history_held
+ * @property string $request_payload never exported to the browser
  * @property string $request_ref
- * @property string $response_body
+ * @property string $response_body never exported to the browser
  * @property int $response_status
  * @property int $revision_count
  * @property int $site_id
- * @property int $source_id
+ * @property int $source_id enum: SOURCE_WEB, SOURCE_AJAX, SOURCE_API, SOURCE_TASK, SOURCE_CLI and 2 more (also $source_id__label and the other $source_id__* properties)
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $source_id__label
  * @property-read string $source_id__constant
@@ -121,29 +121,23 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
     protected $table = '_transactions';
 
     /**
-     * What a request was sent and what it answered are kept to serve a replay and for
-     * debugging, never shown: a screen that lists transactions reads the columns it needs.
+     * Column declarations (see rsx:man model).
      *
-     * @var string[]
-     */
-    public static $neverExport = ['request_payload', 'response_body'];
-
-    protected $fillable = []; // No mass assignment - always explicit
-
-    /**
+     * What a request was sent and what it answered (request_payload, response_body) are kept to
+     * serve a replay and for debugging, never shown: a screen that lists transactions reads the
+     * columns it needs.
+     *
      * actor_type is the polymorphic half of the actor pair: a BIGINT type-ref id in the
      * database, read and written as the class basename.
-     */
-    protected static $type_ref_columns = ['actor_type'];
-
-    /**
-     * Where the run came from. This is the CONTEXT of the write, not the identity - a
-     * task and a CLI script can both be running as the same user.
      *
-     * @var array
+     * source_id is where the run came from. This is the CONTEXT of the write, not the identity -
+     * a task and a CLI script can both be running as the same user.
      */
-    public static $enums = [
-        'source_id' => [
+    public static $columns = [
+        'request_payload' => ['never_export' => true],
+        'response_body' => ['never_export' => true],
+        'actor_type' => ['type_ref' => true],
+        'source_id' => ['enum' => [
             1 => [
                 'constant' => 'SOURCE_WEB',
                 'label' => 'Web',
@@ -179,8 +173,10 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
                 'label' => 'Companion',
                 'order' => 7,
             ],
-        ],
+        ]],
     ];
+
+    protected $fillable = []; // No mass assignment - always explicit
 
     /**
      * The revisions recorded under this transaction, in the order they happened.

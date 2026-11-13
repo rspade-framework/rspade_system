@@ -23,14 +23,13 @@ class Form_Edit_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'form_edit_fixtures';
     protected $fillable = [];
 
-    public static $enums = [
-        'level_id' => [
+    public static $columns = [
+        'level_id' => ['enum' => [
             self::LEVEL_LOW => ['constant' => 'LEVEL_LOW', 'label' => 'Low'],
             self::LEVEL_HIGH => ['constant' => 'LEVEL_HIGH', 'label' => 'High'],
-        ],
+        ]],
+        'secret_token' => ['never_export' => true],
     ];
-
-    public static $neverExport = ['secret_token'];
 
     public static $revisions = true;
 }

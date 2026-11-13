@@ -7,7 +7,7 @@ here is split in two, and what must stay true when editing it.
 ## The split: an abstract base plus an empty shell
 
 Every model here is TWO files. `X_Model_Abstract.php` carries the whole implementation (table,
-`$enums`, relationships, methods); `X_Model.php` is a shell and nothing else:
+`$columns`, relationships, methods); `X_Model.php` is a shell and nothing else:
 
     class User_Model extends User_Model_Abstract
     {
@@ -60,7 +60,7 @@ hard-deleted, and its override keeps extending the base so the actor layer stays
 
 - Behaviour goes on the base, never on the shell; the shell stays empty.
 - An identity's timezone and dark mode live on `login_users`, set only by the person.
-- The common model machinery (site scope, audit stamping, `$neverExport`, revisions) is
+- The common model machinery (site scope, audit stamping, the `$columns` declarations, derived columns, revisions) is
   `Core/Database/Models/Rsx_Model_Abstract` / `Rsx_Site_Model_Abstract`, not here.
 
 ## References

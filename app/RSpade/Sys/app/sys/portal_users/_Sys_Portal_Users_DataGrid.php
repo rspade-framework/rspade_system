@@ -80,7 +80,7 @@ class _Sys_Portal_Users_DataGrid extends _Sys_DataGrid_Abstract
             $row['printed_name'] = isset($models[$row['id']]) ? $models[$row['id']]->get_printed_name() : $row['email'];
             $row['status_id'] = (int) $row['status_id'];
             $row['status'] = _Sys_Enum_Words::enum_word(Portal_User_Model::class, 'status_id', $row['status_id']);
-            $row['status_label'] = Portal_User_Model::$enums['status_id'][$row['status_id']]['label'];
+            $row['status_label'] = Portal_User_Model::enum_values('status_id')[$row['status_id']]['label'];
             $row['is_verified'] = (bool) $row['is_verified'];
             $row['password_reset_required'] = (bool) $row['password_reset_required'];
             $row['last_login'] = Rsx_Time::to_iso($row['last_login']);

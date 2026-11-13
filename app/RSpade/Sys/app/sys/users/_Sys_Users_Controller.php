@@ -117,7 +117,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'email' => $login_user->email,
                 'status_id' => $status_id,
                 'status' => _Sys_Enum_Words::enum_word(Login_User_Model::class, 'status_id', $status_id),
-                'status_label' => Login_User_Model::$enums['status_id'][$status_id]['label'],
+                'status_label' => Login_User_Model::enum_values('status_id')[$status_id]['label'],
                 'is_developer' => (bool) $login_user->is_developer,
                 'is_verified' => (bool) $login_user->is_verified,
                 'is_activated' => (bool) $login_user->is_activated,
@@ -328,7 +328,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
 
         return [
             'status' => _Sys_Enum_Words::enum_word(Login_User_Model::class, 'status_id', $status_id),
-            'status_label' => Login_User_Model::$enums['status_id'][$status_id]['label'],
+            'status_label' => Login_User_Model::enum_values('status_id')[$status_id]['label'],
         ];
     }
 
@@ -750,7 +750,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'sign_in_count' => (int) $session['sign_in_count'],
                 'is_current' => (bool) $session['is_current'],
                 'is_api' => (bool) $session['is_api'],
-                'type_label' => Session::$enums['type_id'][$session['type_id']]['label'] ?? ('Type ' . $session['type_id']),
+                'type_label' => Session::enum_values('type_id')[$session['type_id']]['label'] ?? ('Type ' . $session['type_id']),
                 'site_id' => $site_id,
                 'site_name' => $site_id === null ? null : ($site_names[$site_id] ?? null),
                 'impersonator_login_user_id' => $impersonator_id,

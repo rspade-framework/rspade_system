@@ -19,7 +19,7 @@ use App\RSpade\Tests\Attachments\Php\Attachment_Fileable_Policy_Fixture;
  * THE POLYMORPHIC PARENT AND THE STAFF READ SEAM on File_Attachment_Model.
  *
  * The framework owns fileable_type / fileable_id and declares fileable_type in
- * $type_ref_columns, but shipped no accessor for its own polymorphic parent, so every
+ * $columns (type_ref), but shipped no accessor for its own polymorphic parent, so every
  * application hand-rolled one - and a hand-rolled morph accessor is one of the reasons an
  * application ends up cloning the whole model. fileable() is the framework's own, and the
  * integer discriminator is transparent through it: the morph map registers the type-ref id

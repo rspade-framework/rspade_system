@@ -60,27 +60,27 @@ class Model_Never_Export_Rule_Test extends Rsx_Test_Abstract
 
         static::__assert_count(1, $violations, 'the one secret column is reported');
         static::__assert_contains("'api_token'", $violations[0]->message, 'naming the column');
-        static::__assert_contains('$neverExport', $violations[0]->suggestion, 'and the declaration that fixes it');
+        static::__assert_contains("'api_token' => ['never_export' => true]", $violations[0]->suggestion, 'and the declaration that fixes it');
     }
 
     public static function test_a_listed_secret_column_passes()
     {
         $violations = static::__evaluate(
             'Never_Export_Rule_Fixture_Listed_Model',
-            "    public static \$neverExport = ['api_token'];",
+            "    public static \$columns = ['api_token' => ['never_export' => true]];",
             ['id', 'name', 'api_token']
         );
 
         static::__assert_count(0, $violations, 'a declared column is clean');
     }
 
-    public static function test_a_column_the_parent_lists_passes_through_the_union()
+    public static function test_a_column_the_parent_declares_passes_through_the_overlay()
     {
         // Login_User_Model_Abstract never-exports password and remember_token; the subclass
-        // declares only its own column and is judged against the union.
+        // declares only its own column and is judged against the overlaid declaration.
         $violations = static::__evaluate(
             'Never_Export_Rule_Fixture_Override_Model',
-            "    public static \$neverExport = ['backup_secret'];",
+            "    public static \$columns = ['backup_secret' => ['never_export' => true]];",
             ['id', 'email', 'password', 'remember_token', 'backup_secret'],
             '\\App\\RSpade\\Core\\Models\\Login_User_Model'
         );

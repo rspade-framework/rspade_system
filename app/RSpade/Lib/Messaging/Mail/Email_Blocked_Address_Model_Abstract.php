@@ -47,14 +47,14 @@ use App\RSpade\Core\Database\Rsx_Result_Set;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property int $id
  * @property string $reason
  * @property int $site_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -65,8 +65,6 @@ abstract class Email_Blocked_Address_Model_Abstract extends Rsx_Site_Model_Abstr
 
     protected $table = '_email_blocked_addresses';
     protected $fillable = [];
-
-    public static $enums = [];
 
     /**
      * The one spelling of an address on this list, the same as _email_recipients and

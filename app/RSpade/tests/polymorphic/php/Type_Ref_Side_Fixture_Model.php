@@ -17,6 +17,4 @@ class Type_Ref_Side_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'type_ref_side_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 }

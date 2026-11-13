@@ -8,7 +8,7 @@ use App\RSpade\Core\Manifest\Manifest;
 /**
  * Prevents use of Laravel's native enum features in RSpade models
  *
- * RSpade uses its own enum system via public static $enums property
+ * RSpade uses its own enum system - an `enum` entry in the model's public static $columns -
  * instead of Laravel's enum casting system to provide:
  * - Magic properties like $model->field_label
  * - Static methods like Model::field_enum_select()
@@ -76,11 +76,11 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                 "Laravel's AsEnum cast is not allowed in RSpade models",
                 $lines[$line_number - 1] ?? '',
                 "Remove the AsEnum import and use RSpade's enum system instead:\n\n" .
-                "public static \$enums = [\n" .
-                "    'status_id' => [\n" .
+                "public static \$columns = [\n" .
+                "    'status_id' => ['enum' => [\n" .
                 "        1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],\n" .
-                "        2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive']\n" .
-                "    ]\n" .
+                "        2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive'],\n" .
+                "    ]],\n" .
                 "];\n\n" .
                 'This provides magic properties like $model->status_label and methods like Model::status_enum_select()',
                 'high'
@@ -97,10 +97,10 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                 'Laravel enum classes are not allowed in RSpade models',
                 $lines[$line_number - 1] ?? '',
                 "Remove the enum class import and define enums directly in the model using:\n\n" .
-                "public static \$enums = [\n" .
-                "    'field_id' => [\n" .
-                "        1 => ['constant' => 'CONSTANT_NAME', 'label' => 'Display Name']\n" .
-                "    ]\n" .
+                "public static \$columns = [\n" .
+                "    'field_id' => ['enum' => [\n" .
+                "        1 => ['constant' => 'CONSTANT_NAME', 'label' => 'Display Name'],\n" .
+                "    ]],\n" .
                 '];',
                 'high'
             );
@@ -115,7 +115,7 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                 $line_number,
                 'Laravel enum casting is not allowed in RSpade models',
                 $lines[$line_number - 1] ?? '',
-                "Remove enum casting from \$casts and use RSpade's \$enums property instead.\n\n" .
+                "Remove enum casting from \$casts and declare the column as an `enum` entry in the model's \$columns instead.\n\n" .
                 "RSpade's enum system provides automatic type casting and additional features " .
                 "like magic properties and dropdown helpers without using Laravel's casting.",
                 'high'
@@ -131,13 +131,13 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                 $line_number,
                 'PHP native enum declarations are not allowed in RSpade model files',
                 $lines[$line_number - 1] ?? '',
-                "Move enum definitions to the model's \$enums property:\n\n" .
-                "public static \$enums = [\n" .
-                "    'field_id' => [\n" .
+                "Move enum definitions to an `enum` entry in the model's \$columns:\n\n" .
+                "public static \$columns = [\n" .
+                "    'field_id' => ['enum' => [\n" .
                 "        // Integer keys with constant and label\n" .
                 "        1 => ['constant' => 'VALUE_ONE', 'label' => 'Value One'],\n" .
-                "        2 => ['constant' => 'VALUE_TWO', 'label' => 'Value Two']\n" .
-                "    ]\n" .
+                "        2 => ['constant' => 'VALUE_TWO', 'label' => 'Value Two'],\n" .
+                "    ]],\n" .
                 "];\n\n" .
                 'Then run: php artisan rsx:constants:regenerate',
                 'high'
@@ -154,7 +154,7 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                 'PHP enum interfaces are not allowed in RSpade models',
                 $lines[$line_number - 1] ?? '',
                 'RSpade models should not implement enum interfaces. ' .
-                'Use the $enums property for enum functionality.',
+                'Declare an `enum` entry in the model\'s $columns for enum functionality.',
                 'high'
             );
         }
@@ -176,7 +176,7 @@ class NoLaravelEnums_CodeQualityRule extends CodeQualityRule_Abstract
                     "Use Rule::in() with the enum IDs instead:\n\n" .
                     "use Illuminate\\Validation\\Rule;\n\n" .
                     "'field_id' => ['required', Rule::in(Model::field_enum_ids())]\n\n" .
-                    'This validates against the integer keys defined in your $enums property.',
+                    'This validates against the integer keys of the column\'s `enum` entry in $columns.',
                     'medium'
                 );
             }

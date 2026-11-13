@@ -85,7 +85,7 @@ class Tasks_List_Command extends Command
                 $rows->map(fn ($r) => [
                     $r->id,
                     class_basename($r->class) . '::' . $r->method,
-                    Task_Run_Model::$enums['origin_id'][(int) $r->origin_id]['label'],
+                    Task_Run_Model::enum_values('origin_id')[(int) $r->origin_id]['label'],
                     $r->worker_pid ?? '-',
                     $r->started_at ?? '-',
                     $this->progress_text($r),

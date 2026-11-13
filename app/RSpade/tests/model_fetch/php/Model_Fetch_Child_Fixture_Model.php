@@ -28,9 +28,9 @@ class Model_Fetch_Child_Fixture_Model extends Rsx_Model_Abstract
 
     protected $fillable = [];
 
-    public static $enums = [];
-
-    protected static $type_ref_columns = ['subject_type'];
+    public static $columns = [
+        'subject_type' => ['type_ref' => true],
+    ];
 
     #[Ajax_Endpoint_Model_Fetch]
     #[Auth('is_logged_in')]

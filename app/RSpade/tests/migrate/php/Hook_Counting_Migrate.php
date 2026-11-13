@@ -27,9 +27,23 @@ class Hook_Counting_Migrate extends Maint_Migrate
     /**
      * Run the real loop over $paths with a fake migrator.
      */
-    public function drive_migration_loop(array $paths): void
+    public function drive_migration_loop(array $paths, ?Fake_Migrator $migrator = null): void
     {
-        $this->run_migrations_with_normalization(new Fake_Migrator(), $paths, false, []);
+        $this->run_migrations_with_normalization($migrator ?? new Fake_Migrator(), $paths, false, []);
+    }
+
+    /** Everything the rederive drain wrote, verbatim. */
+    public string $raw_output = '';
+
+    /** Run the real rederive step of execute_migrations(). */
+    public function drive_rederive_step(): bool
+    {
+        return $this->drain_rederive_queue();
+    }
+
+    protected function write_raw(string $text): void
+    {
+        $this->raw_output .= $text;
     }
 
     /**

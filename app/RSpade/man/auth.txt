@@ -50,7 +50,7 @@ IDENTITY MODEL
 
             id              Login identity primary key
             email           Authentication email (unique)
-            password        Bcrypt hash ($neverExport)
+            password        Bcrypt hash (never_export)
             is_activated    Account activation flag
             is_verified     Email-verification flag (enum: 0 Not Verified,
                             1 Verified)
@@ -61,7 +61,7 @@ IDENTITY MODEL
                             installation. Set by hand in the database only;
                             read with Session::is_developer(). Never a role,
                             never a hostname - see rsx:man session.
-            remember_token  ($neverExport)
+            remember_token  (never_export)
             last_login      Last successful login (set only on real login)
             created_at / updated_at / created_by_id / created_by_type /
             updated_by_id / updated_by_type

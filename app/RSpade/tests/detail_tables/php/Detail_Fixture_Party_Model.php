@@ -20,12 +20,12 @@ class Detail_Fixture_Party_Model extends Rsx_Model_Abstract
     const TYPE_COMPANY = 2;
     const TYPE_GROUP = 3;
 
-    public static $enums = [
-        'type_id' => [
+    public static $columns = [
+        'type_id' => ['enum' => [
             1 => ['constant' => 'TYPE_PERSON', 'label' => 'Person'],
             2 => ['constant' => 'TYPE_COMPANY', 'label' => 'Company'],
             3 => ['constant' => 'TYPE_GROUP', 'label' => 'Group'],
-        ],
+        ]],
     ];
 
     public static $detail_tables = [

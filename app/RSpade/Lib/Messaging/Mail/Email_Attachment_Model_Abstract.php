@@ -38,8 +38,8 @@ use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
  * @property string $cid
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
- * @property int $disposition_id
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
+ * @property int $disposition_id enum: DISPOSITION_ATTACHMENT, DISPOSITION_INLINE (also $disposition_id__label and the other $disposition_id__* properties)
  * @property int $email_queue_id
  * @property string $file_name
  * @property int $file_storage_id
@@ -48,7 +48,7 @@ use App\RSpade\Lib\Messaging\Mail\Email_Queue_Model;
  * @property int $sort_order
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $disposition_id__label
  * @property-read string $disposition_id__constant
@@ -86,11 +86,11 @@ abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
     protected $table = '_email_attachments';
     protected $fillable = [];
 
-    public static $enums = [
-        'disposition_id' => [
+    public static $columns = [
+        'disposition_id' => ['enum' => [
             1 => ['constant' => 'DISPOSITION_ATTACHMENT', 'label' => 'Attachment', 'badge' => 'bg-secondary'],
             2 => ['constant' => 'DISPOSITION_INLINE', 'label' => 'Inline', 'badge' => 'bg-info'],
-        ],
+        ]],
     ];
 
     /**

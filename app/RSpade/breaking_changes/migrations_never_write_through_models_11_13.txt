@@ -1,0 +1,46 @@
+A MIGRATION NEVER WRITES THROUGH A MODEL
+Date: 2026-11-13
+
+IF YOU DO NOTHING: a migration of yours whose up() saves, deletes or bulk-updates through a
+    model - directly or through a helper it calls - throws "<Model>::save() refused: a
+    migration is executing" and the `migrate` run fails, on every database where that
+    migration has not run yet: a fresh install, a new developer's box, a restored backup.
+
+SUMMARY
+    Category 2: what a migration's up() may call changed.
+
+    While up() runs, a model `save()` or `delete()` and a query-builder `update()` or
+    `delete()` on a model (`->raw_bulk()` included) throw a RuntimeException. A migration is a
+    historical record that must replay unchanged forever, and a model is current code: its
+    hooks, derived columns and validations change after the migration is written. Reading
+    through a model is not refused. `DB::statement()`, `DB::select()` and `DB::table()` are
+    unaffected.
+
+    Migrations that have already run on a database are not run again there; the breakage is
+    on any database that still has to run them.
+
+    Contract: php artisan rsx:man migrations (Migrations Never Write Through a Model).
+
+ACTION REQUIRED - CODE
+    1. Find migrations that reach a model:
+           grep -rnE '_Model::|->save\(\)|->delete\(\)|->update\(' rsx/resource/migrations/
+       and read any helper class a migration calls for the same.
+
+    2. Rewrite each write as SQL in the migration itself:
+           $client = Client_Model::find($id); $client->status_id = 2; $client->save();
+       becomes
+           DB::statement('UPDATE clients SET status_id = 2 WHERE id = ?', [$id]);
+       A raw UPDATE moves `updated_at` (the column is ON UPDATE CURRENT_TIMESTAMP); add
+       `updated_at = updated_at` to the SET list where the migration must not look like an
+       edit.
+
+    3. Where the migration changes what a DERIVED column is computed from, do not compute the
+       value in the migration. End it with
+           \App\RSpade\Core\Database\Rsx_Rederive::enqueue('your_table');
+       and `migrate` recomputes that table's derived columns as its last step. Worked example:
+       system/app/RSpade/resource/reference_app/resource/migrations/2026_11_13_063004_add_direct_project_id_to_tasks.php
+
+VERIFICATION
+    Replay your migration chain against an empty database (the test database is one:
+    `php artisan rsx:test --fresh <any test class>`). A migration that still writes through a
+    model fails there by name.

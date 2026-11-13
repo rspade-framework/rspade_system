@@ -26,32 +26,26 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
- * @property int $is_enabled
- * @property int $is_portal_enabled
+ * @property bool $is_enabled
+ * @property bool $is_portal_enabled
  * @property string $name
  * @property string $portal_domain
  * @property string $slug
  * @property string $timezone
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
 abstract class Site_Model_Abstract extends Rsx_Model_Abstract
 {
     use SoftDeletes;
-
-    /**
-     * Enum field definitions
-     * @var array
-     */
-    public static $enums = [];
 
     /**
      * The table associated with the model

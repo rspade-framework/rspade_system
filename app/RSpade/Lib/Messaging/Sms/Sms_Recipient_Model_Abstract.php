@@ -45,11 +45,11 @@ use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
- * @property int $is_blocked_all
- * @property int $is_blocked_marketing
- * @property int $is_blocked_notification
+ * @property bool $is_blocked_all
+ * @property bool $is_blocked_marketing
+ * @property bool $is_blocked_notification
  * @property string $last_sent_at
  * @property string $number
  * @property int $site_id
@@ -58,7 +58,7 @@ use App\RSpade\Lib\Messaging\Sms\Sms_Queue_Model;
  * @property string $unsubscribed_at
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -76,8 +76,6 @@ abstract class Sms_Recipient_Model_Abstract extends Rsx_Site_Model_Abstract
         'is_blocked_marketing' => 'boolean',
         'is_blocked_all' => 'boolean',
     ];
-
-    public static $enums = [];
 
     /**
      * Find or create a recipient record for a phone number.

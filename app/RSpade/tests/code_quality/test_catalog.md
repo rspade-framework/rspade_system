@@ -380,20 +380,19 @@ handed to `check()` in memory - the rule never touches the filesystem.
 | TA1-SCOPE | application code names application checks - that is what a Permission class is for | php | fixture at `rsx/app/frontend/clients/...` | 0 violations | implemented | 2026-09-07 |
 | TA1-OTHER-ATTRIBUTE | a neighbouring attribute's arguments are not check names | php | fixture with `#[Route('/fixture/path')]` above `#[Auth('public')]` | 0 violations | implemented | 2026-09-07 |
 
-## MODEL-TABLE-01 / MODEL-ENUMS-01 lineage (`Model_Table_Lineage_Rule_Test`)
+## MODEL-TABLE-01 lineage (`Model_Table_Lineage_Rule_Test`)
 
-Both rules read one file and called "this file does not declare it" the same thing as "this
-model does not have it". A core model is a base plus a shell now, and an application's override
-of one declares only the members it changes - so the file-only reading turned the framework's own
-recommended shape into two findings telling the developer to copy declarations back out of the
-framework, which is exactly the frozen clone B-109 exists to prevent. The regex over the file
-stays as the fast path; when it misses, the rules walk the manifest `extends` chain.
+"This file does not declare a table" is not "this model has no table". A core model is a base
+plus a shell, and an application's override of one declares only the members it changes - so a
+file-only reading turns the framework's own recommended shape into a finding telling the
+developer to copy the declaration back out of the framework. The regex over the file stays as
+the fast path; when it misses, the rule walks the manifest `extends` chain.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| MTL-INHERITED | an override of a split model that declares neither $table nor $enums passes both rules - the base declares them | php | fixture `class User_Model extends User_Model_Abstract` under rsx/ | 0 + 0 violations | implemented | 2026-09-08 |
-| MTL-STILL-FIRES | a model whose lineage declares neither is still two findings; Rsx_Model_Abstract's own default $enums does not count, or the rule would be retired everywhere at once | php | fixture `class Client_Model extends Rsx_Site_Model_Abstract`, empty body | 1 + 1 violations naming each property | implemented | 2026-09-08 |
-| MTL-FAST-PATH | a model that declares both in its own file passes without the lineage being consulted | php | fixture declaring $table and $enums | 0 + 0 violations | implemented | 2026-09-08 |
+| MTL-INHERITED | an override of a split model that declares no $table passes - the base declares it | php | fixture `class User_Model extends User_Model_Abstract` under rsx/ | 0 violations | implemented | 2026-11-13 |
+| MTL-STILL-FIRES | a model whose lineage declares no table is still a finding | php | fixture `class Client_Model extends Rsx_Site_Model_Abstract`, empty body | 1 violation naming $table | implemented | 2026-11-13 |
+| MTL-FAST-PATH | a model that declares its table in its own file passes without the lineage being consulted | php | fixture declaring $table | 0 violations | implemented | 2026-11-13 |
 
 ## FILE-CASE-01 - filename case under rsx/ (`Filename_Case_Rule_Test`)
 
@@ -432,12 +431,12 @@ spellings would flag the framework's own. That half of the rule lives in `tests/
 | FTP-QUOTED | no framework test embeds an application class name as a STRING - it resolves at runtime, so FTP-REFERENCES cannot see it | php | the same files, minus `tests/code_quality` (whose rule fixtures feed application names to a rule as synthetic INPUT) | 0 hits | implemented | 2026-09-08 |
 
 The constant set is DERIVED, never listed: the role names come from
-`User_Model::$enums['role_id'][*]['constant']` (plus the same for `Portal_User_Model` and
+`User_Model::enum_columns()['role_id'][*]['constant']` (plus the same for `Portal_User_Model` and
 `Login_User_Model`), and `PERM_` is matched as a prefix because the manifest indexes no class
 constants. A hardcoded list here would be the very mistake the test exists to catch.
 
 TEXT-TYPE-01 (TextTypeDeclaration_CodeQualityRule), via `Text_Type_Declaration_Rule_Test`. A
-`$text_types` declaration the cast cannot honour - every mode silent at runtime, so it is a
+`$columns` `text_type` entry the cast cannot honour - every mode silent at runtime, so it is a
 manifest-build FATAL. Fixture models are loaded from temp files, outside the manifest, and
 handed to the `evaluate_class()` seam.
 
@@ -445,10 +444,11 @@ handed to the `evaluate_class()` seam.
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | TT-01 | a `$casts` entry on a declared column is fatal | php | fixture with `$casts = ['body' => 'string']` | violation naming the SHADOWING cast | implemented | 2026-09-24 |
 | TT-02 | a `casts()` method shadows exactly as `$casts` does | php | fixture `casts()` returning `['body' => 'string']` | the same violation | implemented | 2026-09-24 |
-| TT-03 | an entry naming a non-type class is fatal | php | `['body' => ArrayObject::class]` | 1 violation, "not a class extending Rsx_Text_Abstract" | implemented | 2026-09-24 |
+| TT-03 | an entry naming a non-type class is fatal | php | `['body' => ['text_type' => ArrayObject::class]]` | 1 violation, "not a class extending Rsx_Text_Abstract" | implemented | 2026-09-24 |
 | TT-04 | a type with no JS twin is fatal | php | the PHP-only `Text_Fixture_Plain_Text` | 1 violation, "has no JavaScript twin" | implemented | 2026-09-24 |
 | TT-05 | a model declaring nothing is not examined | php | a cast on an undeclared column | 0 violations | implemented | 2026-09-24 |
 | TT-06 | `@TEXT-TYPE-01-EXCEPTION` suppresses the file | php | shadowing fixture with the marker | 0 violations | implemented | 2026-09-24 |
+| TT-07 | checks 1-2 judge the entries a class's OWN `$columns` declares: a child inheriting a bad text-type entry is not re-reported, its declaring parent is | php | abstract parent declaring the twin-less type; child declaring `['notes' => []]` | 0 for the child, 1 for the parent | implemented | 2026-11-13 |
 
 End-to-end (during implementation): planting `protected $casts = ['description' => 'string']`
 on the reference app's `Project_Model` aborted `rsx:manifest:build` with the rule's message;
@@ -483,12 +483,74 @@ column list, so each fixture model is a temp-file class judged against a stated 
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| NEXP-RULE-01 | an unlisted secret column is flagged | php | `api_token`, no declaration | 1 violation naming the column, remediation names `$neverExport` | implemented | 2026-10-20 |
-| NEXP-RULE-02 | a listed secret column passes | php | `public static $neverExport = ['api_token']` | 0 violations | implemented | 2026-10-20 |
-| NEXP-RULE-03 | the EFFECTIVE (unioned) list is judged: an override of Login_User_Model lists only its own column | php | subclass declaring `backup_secret`; columns include password, remember_token | 0 violations | implemented | 2026-10-20 |
+| NEXP-RULE-01 | an unlisted secret column is flagged | php | `api_token`, no declaration | 1 violation naming the column, remediation shows the `never_export` entry | implemented | 2026-11-13 |
+| NEXP-RULE-02 | a declared secret column passes | php | `public static $columns = ['api_token' => ['never_export' => true]]` | 0 violations | implemented | 2026-11-13 |
+| NEXP-RULE-03 | the EFFECTIVE (overlaid) declaration is judged: an override of Login_User_Model declares only its own column | php | subclass declaring `backup_secret`; columns include password, remember_token | 0 violations | implemented | 2026-11-13 |
 | NEXP-RULE-04 | the patterns are narrow | php | password/token/secret and their suffixes, plus is_/has_ flags, a `_` column, *_hash, *_code, *_key | exactly the six credential names | implemented | 2026-10-20 |
 | NEXP-RULE-05 | a marker naming a column with a reason excuses that column only | php | marker for `display_token`; `api_token` unlisted | 1 violation, for `api_token` | implemented | 2026-10-20 |
 | NEXP-RULE-06 | a marker with no reason excuses nothing | php | bare marker | 1 violation | implemented | 2026-10-20 |
+
+## MODEL-COLUMNS-01 / MODEL-COLUMNS-02 - the `$columns` declaration (`Model_Columns_Rule_Test`)
+
+MODEL-COLUMNS-01 is a manifest-build FATAL over every class that declares `$columns` itself,
+Rsx_Model_Abstract included; its `evaluate_class($fqcn, $abs_file)` seam takes fixture models
+loaded from temp files, outside the manifest. MODEL-COLUMNS-02 is a per-file token rule
+(`rsx:check`), driven through `check()` over temp files.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MC-01 | a declaration using every kind, a combined flag and an explicitly plain column passes | php | enum, text_type + never_export, type_ref + revision_exclude, `'notes' => []` | 0 violations | implemented | 2026-11-13 |
+| MC-02 | Rsx_Model_Abstract's own declaration (the audit type columns) is judged and clean | php | the base class | 0 violations | implemented | 2026-11-13 |
+| MC-03 | a class that inherits `$columns` without declaring it is not judged | php | fixture with no `$columns` | 0 violations | implemented | 2026-11-13 |
+| MC-04 | an unknown key is fatal, naming key and column | php | `'enmu'` | 1 violation | implemented | 2026-11-13 |
+| MC-05 | ALLOWED_KEYS is exactly the declared kinds (the five plus `derived` and `from`) - the one list a new kind extends | php | the constant | equal | implemented | 2026-11-13 |
+| MC-06 | a `false` flag, and a truthy flag that is not `true`, are fatal | php | `never_export => false`, `type_ref => 1` | 1 violation each | implemented | 2026-11-13 |
+| MC-07 | two of enum / text_type / type_ref on one column is fatal | php | `type_ref` + `enum` | 1 violation | implemented | 2026-11-13 |
+| MC-08 | a scalar entry, an integer column key and a non-array declaration are fatal | php | `'token' => true`, a list, a string | 1 violation each | implemented | 2026-11-13 |
+| MC-09 | malformed enum maps: empty, a string value, a scalar value, a blank constant | php | four columns | 4 violations | implemented | 2026-11-13 |
+| MC-10 | a non-string text_type is fatal | php | `text_type => true` | 1 violation | implemented | 2026-11-13 |
+| MC-11 | an entry replacing an inherited never_export entry without it is fatal; restating it passes, and un-kinding an inherited enum is legal | php | parent with `api_secret` never_export; child entries | 1 / 0 violations | implemented | 2026-11-13 |
+| MC-12 | an entry for an audit type column without type_ref is fatal; keeping it passes | php | `created_by_type => []`, `deleted_by_type => [type_ref, revision_exclude]` | 1 / 0 violations | implemented | 2026-11-13 |
+| MC-READ-01 | `X::$columns` and `$fqcn :: $columns[...]` are each a MODEL-COLUMNS-02 finding on their line | php | two reads | 2 violations, line 6 first | implemented | 2026-11-13 |
+| MC-READ-02 | a declaration, an accessor call, `$this->columns` and a mention in a string or comment are not reads | php | one fixture | 0 violations | implemented | 2026-11-13 |
+| MC-READ-03 | Rsx_Model_Abstract.php, which implements the accessors, may read the property | php | a read in a file of that name | 0 violations | implemented | 2026-11-13 |
+
+## Derived columns: MODEL-COLUMNS-01 derived checks, the unread column statics, MODEL-DERIVED-01 (`Model_Derived_Rules_Test`)
+
+MODEL-COLUMNS-01 fixtures load from temp files through `evaluate_class()`. MODEL-DERIVED-01
+(`rsx:check`) only parses its subject and resolves class names through the manifest, so its
+temp sources name the indexed fixture `Derived_Plain_Fixture_Model` (tests/derived_columns).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MD-01 | a chain, an empty `from`, `derived` with enum / never_export, an optional method parameter all pass | php | three derived entries | 0 violations | implemented | 2026-11-13 |
+| MD-02 | a derive method the class does not have is fatal | php | `derived => derive_total`, no method | 1 violation | implemented | 2026-11-13 |
+| MD-03 | a static, a private, and a required-parameter derive method are each fatal | php | three methods | 3 violations | implemented | 2026-11-13 |
+| MD-04 | `from` without `derived`, and `derived` without `from`, are fatal | php | two entries | 2 violations | implemented | 2026-11-13 |
+| MD-05 | a `from` that is a string, holds a non-string, or repeats a name, and a non-string `derived`, are fatal | php | four entries | 4 violations | implemented | 2026-11-13 |
+| MD-06 | a column naming itself in `from` is fatal | php | `total` from `[total, tax]` | 1 violation | implemented | 2026-11-13 |
+| MD-07 | a cycle among derived columns is fatal once, naming its path | php | a -> b -> c -> a | 1 violation | implemented | 2026-11-13 |
+| MD-08 | `derived` beside `revision_exclude` is fatal | php | one entry | 1 violation | implemented | 2026-11-13 |
+| MD-09 | a cycle through an inherited entry is fatal at the child | php | base `a` from `b`, child `b` from `a` | 1 violation | implemented | 2026-11-13 |
+| MD-STATIC-01 | each of `$enums`, `$text_types`, `$type_ref_columns`, `$neverExport`, `$revision_exclude` declared static on a model is fatal, at its line | php | one fixture per name | 1 violation each | implemented | 2026-11-13 |
+| MD-STATIC-02 | the check covers a class that declares no `$columns`, an abstract base included | php | abstract base with `$type_ref_columns` | 1 violation | implemented | 2026-11-13 |
+| MD-STATIC-03 | the list is exactly the five names | php | the constant | equal | implemented | 2026-11-13 |
+| MD-STATIC-04 | an INSTANCE property of one of those names is not judged | php | `public $enums` | 0 violations | implemented | 2026-11-13 |
+| MD-ASSIGN-01 | `$this->derived = ...` inside a class named as the model is reported at its line; a source column is not | php | parse-only fixture | 1 violation | implemented | 2026-11-13 |
+| MD-ASSIGN-02 | every inferable receiver is reported: `new`, `::find()`, a builder chain ending `first()`, a typed and a nullable-typed parameter (inside a closure too), a `@var` docblock, a compound assignment | php | six assignments | 6 violations at their lines | implemented | 2026-11-13 |
+| MD-ASSIGN-03 | an unknown receiver, a source column, an unrelated class, a non-model `$this`, and a variable inferred only in another function are not reported | php | one fixture | 0 violations | implemented | 2026-11-13 |
+| MD-ASSIGN-04 | a file named Rsx_Model_Abstract.php is not judged | php | `$this->full_name =` | 0 violations | implemented | 2026-11-13 |
+
+## POLY-01 and Source_Cache: type_ref read from the `$columns` overlay
+
+POLY-01 reads `type_ref` entries from the `$columns` AST of the owning model and every
+manifest-visible ancestor, overlaid per column; the member summary carries each class's own
+`$columns` as column => is-type-ref.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| POLY-OVERLAY-01 | a morphMany over a column declared type_ref by an ANCESTOR of the related model (the audit `created_by_type` on Rsx_Model_Abstract) passes (`Morph_String_Pattern_Rule_Test`) | php | morphMany(Portal_Notification_Model, 'created_by') | 0 violations | implemented | 2026-11-13 |
+| SCM-TYPE-REF-01 | `declared_members()['type_ref_columns']` maps every column the class's own `$columns` declares to whether it is a literal `type_ref => true` (false included, an un-kinding entry); null for a class without `$columns` (`Source_Cache_Members_Test`) | php | two fixture classes in one file | the map / null | implemented | 2026-11-13 |
 
 ## Application rules - discovered by class, APP- ids (`App_Rule_Discovery_Test`)
 

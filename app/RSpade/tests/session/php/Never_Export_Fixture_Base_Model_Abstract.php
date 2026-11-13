@@ -18,7 +18,7 @@ abstract class Never_Export_Fixture_Base_Model_Abstract extends Rsx_Model_Abstra
 {
     protected $table = 'never_export_fixtures';
 
-    public static $enums = [];
-
-    public static $neverExport = ['base_secret_column'];
+    public static $columns = [
+        'base_secret_column' => ['never_export' => true],
+    ];
 }

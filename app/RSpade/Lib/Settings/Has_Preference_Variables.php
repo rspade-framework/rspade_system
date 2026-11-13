@@ -40,7 +40,7 @@ use Illuminate\Support\Facades\DB;
  * variable is for something that should still be true on another device next month.
  *
  * PORTAL USERS ALSO CARRY A metadata COLUMN (get_metadata() / set_metadata()), a JSON bag
- * on the row itself. It is in $neverExport, so it never reaches a payload either, but it
+ * on the row itself. It is never_export, so it never reaches a payload either, but it
  * is part of the record - loaded with every read of the row and copied with it. Per-identity
  * key/value state belongs in this store; reach for metadata only for something that is
  * genuinely a property of the record.

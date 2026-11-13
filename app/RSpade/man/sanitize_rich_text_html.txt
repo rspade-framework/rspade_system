@@ -99,7 +99,7 @@ USAGE PATTERN
 
         $project->description = sanitize_rich_text_html($html);   // WRONG
 
-    Undeclared HTML (a column with no $text_types entry, a third-party
+    Undeclared HTML (a column with no text_type declaration, a third-party
     payload shown once) is sanitized directly before it is emitted:
 
         <%!= sanitize_rich_text_html(this.data.external_html) %>

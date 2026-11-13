@@ -22,8 +22,6 @@ class Realtime_Attr_Onward_Parent_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_attr_onward_parents';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     public const GRANDPARENT_ID = 970;

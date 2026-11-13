@@ -19,8 +19,6 @@ class Realtime_Deep_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_deep_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     public function realtime_touch(): array

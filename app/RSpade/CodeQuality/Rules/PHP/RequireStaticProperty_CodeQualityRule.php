@@ -8,7 +8,7 @@ use App\RSpade\Core\Manifest\Manifest;
 /**
  * Enforces that concrete classes must define static properties that their abstract parent declares without values
  *
- * When an abstract class declares a static property without assigning a value (e.g., public static $enums;),
+ * When an abstract class declares a static property without assigning a value (e.g., public static $handler;),
  * all concrete subclasses that directly extend this abstract class MUST define that property.
  * This ensures critical static properties are not accidentally omitted in implementations.
  */

@@ -16,7 +16,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Unit tests for the POLY-01 rule (MorphStringPattern_CodeQualityRule).
  *
  * The rule flags Laravel's string-morph pattern: a polymorphic relation whose *_type
- * discriminator column is not declared in the owning model's $type_ref_columns (so it
+ * discriminator column is not declared type_ref in the owning model's $columns (so it
  * is a VARCHAR class name rather than a BIGINT type ref), plus pivot-table morphs that
  * no declaration can ever cover.
  *
@@ -42,7 +42,7 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
     private const MORPH_TO_MANY = 'morph' . 'ToMany';
     private const MORPHED_BY_MANY = 'morphed' . 'ByMany';
 
-    /** A real framework model that declares subject_type in $type_ref_columns. */
+    /** A real framework model that declares subject_type type_ref in $columns. */
     private const REAL_MODEL = '\\App\\RSpade\\Lib\\Portal\\Portal_Notification_Model::class';
 
     // =====================================================================
@@ -50,7 +50,7 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * Build a fixture class named $class_name whose $type_ref_columns is $declared and
+     * Build a fixture class named $class_name whose $columns declares $declared type_ref and
      * whose single method $method_name contains $body.
      *
      * @param array<int,string> $declared
@@ -62,12 +62,12 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
         string $body,
         string $method_docblock = ''
     ): string {
-        $columns = implode(', ', array_map(fn($c) => "'" . $c . "'", $declared));
+        $columns = implode(', ', array_map(fn($c) => "'" . $c . "' => ['type_ref' => true]", $declared));
 
         return "<?php\n"
             . "class {$class_name}\n"
             . "{\n"
-            . "    protected static \$type_ref_columns = [{$columns}];\n"
+            . "    public static \$columns = [{$columns}];\n"
             . "\n"
             . $method_docblock
             . "    public function {$method_name}()\n"
@@ -204,6 +204,28 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
         );
     }
 
+    /**
+     * The related model's EFFECTIVE declaration is its lineage overlaid: created_by_type is
+     * declared type_ref on Rsx_Model_Abstract, never on Portal_Notification_Model itself,
+     * and still counts.
+     */
+    public static function test_morph_many_passes_on_a_column_declared_by_an_ancestor()
+    {
+        $class = static::__unique_class('MmInherited');
+        $source = static::__class_source(
+            $class,
+            [],
+            'authored_notifications',
+            '$this->' . self::MORPH_MANY . '(' . self::REAL_MODEL . ", 'created_by')"
+        );
+
+        static::__assert_count(
+            0,
+            static::__run($source, $class),
+            'created_by_type is declared on the base every model extends'
+        );
+    }
+
     public static function test_morph_many_is_flagged_when_related_model_lacks_the_column()
     {
         $class = static::__unique_class('MmBad');
@@ -234,7 +256,7 @@ class Morph_String_Pattern_Rule_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The DECLARING model's own $type_ref_columns is irrelevant on the related side -
+     * The DECLARING model's own $columns is irrelevant on the related side -
      * declaring the column locally must not excuse a missing declaration on the model
      * whose table actually carries it.
      */

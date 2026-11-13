@@ -3,15 +3,17 @@
 ## Domain
 
 One artisan command regenerates the auto-generated regions of model files from the
-database schema and each model's `$enums`:
+database schema and each model's column declarations (`$columns`, read through `columns()`
+and its kind views):
 
 - `rsx:constants:regenerate` (`Commands/Rsx/Constants_Regenerate_Command.php`) - the single
   canonical model-codegen command, wired into `Maint_Migrate` (runs as a post-migration
-  step). It validates each model's `$enums`, then emits a pre-class
+  step). It validates each model's enum columns, then emits a pre-class
   `_AUTO_GENERATED_ Database type hints` docblock (typed `@property` per base + CTI-detail
-  column, DATE/DATETIME -> `string`, BEM `field__enum` method tags + `field__label` /
-  `field__constant` accessor hints) and an `_AUTO_GENERATED_ Enum constants` block after the
-  class brace.
+  column, DATE/DATETIME and DECIMAL -> `string`, boolean -> `bool`, each line noting the
+  column's kind - enum, text type, type ref, derived (`@property-read`), never exported, not
+  recorded in revisions; BEM `field__enum` method tags + `field__label` / `field__constant`
+  accessor hints) and an `_AUTO_GENERATED_ Enum constants` block after the class brace.
 
 The write goes through the shared, fence-safe rewriter, so the load-bearing contract is:
 **everything outside the auto-generated regions is hand-written and must never be silently
@@ -47,5 +49,6 @@ structurally impossible.
 | Fail loud: duplicate docblocks / unbalanced fences / missing class / parse error | php | implemented |
 | Self-check aborts on dropped hand-written line | php | implemented |
 | Command output spans CTI detail columns `(detail: <table>)`, BEM/typed enum members, string dates | php | implemented (Party demo) |
+| Each column's `@property` line states its kind and its read type (DECIMAL/uncast JSON string, boolean bool) | php | implemented (Column_Kinds_Fixture_Model) |
 
 See `issues_encountered.md` for the dual-implementation finding (now resolved).

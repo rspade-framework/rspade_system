@@ -869,7 +869,7 @@ JAVASCRIPT STUBS
         }
 
     A stub is generated from the model's CODE alone - enums, relationships,
-    declared text types, derived properties. It carries no column lengths:
+    declared text types, appended properties, derived columns. It carries no column lengths:
     field_length() is one inherited method that reads the page's field-length
     script (BUNDLE RENDERING, above).
 

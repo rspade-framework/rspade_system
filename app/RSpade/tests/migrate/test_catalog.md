@@ -191,6 +191,8 @@ every development migrate).
 | CRS-05 | a nonexistent framework path still classifies | php | a deleted app/RSpade path | false | implemented | 2026-09-15 |
 | CRS-06 | a sibling directory sharing the prefix is not the framework tree | php | app/RSpade_extras path | true | implemented | 2026-09-15 |
 | CRS-07 | the gate is applied AFTER resolve_declaring_file(), not to the model's own file record | php | handle() source offsets | gate offset > resolve offset | implemented | 2026-09-15 |
+| CRS-08 | the class declaring `$table` is the anchor; a model declaring `$columns` but inheriting its table resolves to the table's class | php | `Model_Columns_Fixture_Grandchild_Model` | `Model_Columns_Fixture_Base_Model_Abstract` and its file | implemented | 2026-11-13 |
+| CRS-09 | a declaration on Rsx_Model_Abstract (`$columns`) or above it (Eloquent's `$table`) is never the anchor: a model declaring neither is documented in its own file | php | `Constants_Regenerate_Bare_Fixture_Model_Abstract` | the fixture's own class and file | implemented | 2026-11-13 |
 
 ## Migration_Whitelist_Parse_Test (php)
 
@@ -307,3 +309,44 @@ nothing stops MySQL or touches a datadir.
 | RUNLOCK-04 | a failed restore keeps the flag and takes no snapshot | php | flag present, restore fails | restore only; the flag stays; migrate:restore named | implemented | 2026-10-29 |
 | RUNLOCK-05 | no flag means no restore | php | no flag | the snapshot begins; no restore | implemented | 2026-10-29 |
 | RUNLOCK-06 | migrate:restore refuses while the lock is held, runs once it is free | php | lock held, then free | exit 1 with nothing run, then the restore runs | implemented | 2026-10-29 |
+
+## Migration_Guard_Test (php)
+
+While a migration's up() executes, model writes are refused (Migration_Guard). Writes are
+refused before any SQL runs; the window is measured on the real loop through
+`Guard_Probing_Migrator`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MIG-GUARD-SAVE | save() inside the window throws the ruled RuntimeException naming the model | php | new Site_Model save | RuntimeException, 'Site_Model::save() refused', 'DB::statement() or the DB::table query builder', 'historical record' | implemented | 2026-11-13 |
+| MIG-GUARD-DELETE | delete() inside the window throws | php | Site_Model delete | RuntimeException | implemented | 2026-11-13 |
+| MIG-GUARD-BULK | the builder's bulk update() and delete() throw | php | where('id', -1) | RuntimeException each | implemented | 2026-11-13 |
+| MIG-GUARD-OUTSIDE | nothing is refused outside the window; reads inside it run | php | bulk update, count() | 0, 0 | implemented | 2026-11-13 |
+| MIG-GUARD-ALLOW | allow() permits writes inside the window | php | bulk update under allow | 0 rows, no throw | implemented | 2026-11-13 |
+| MIG-GUARD-NESTING | run() inside allow() is a fresh window; each scope restores what it found | php | run(allow(run())) | refusal, allowance back, closed | implemented | 2026-11-13 |
+| MIG-GUARD-THROW | a throwing body closes the window | php | throwing closure | is_active() false | implemented | 2026-11-13 |
+| MIG-GUARD-ENQUEUE | Rsx_Rederive::enqueue() works inside the window | php | enqueue | queue row | implemented | 2026-11-13 |
+| MIG-GUARD-LOOP | the real loop opens the window around each runPending() | php | 3 scratch migrations | [true, true, true]; closed after | implemented | 2026-11-13 |
+| MIG-GUARD-LOOP-THROW | a failing migration leaves the window closed | php | probe up() throws | closed | implemented | 2026-11-13 |
+| MIG-GUARD-SCOPE | the window wraps runPending() only; no execute_migrations() step runs in it | php | source | one run() before runPending(), none in execute_migrations() | implemented | 2026-11-13 |
+| MIG-GUARD-ATTACHMENTS | File_Mime_Repair::run() runs under the allowance | php | source + dry run in window | allow() present; completes | implemented | 2026-11-13 |
+
+## Rederive_Queue_Drain_Test (php)
+
+The rederive queue (`_rederive_queue`, `Rsx_Rederive::enqueue()`) and the last step of
+`migrate` that drains it, driven through the real `Maint_Migrate::drain_rederive_queue()`
+with its output captured verbatim. Fixtures are the derived_columns concern's.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| REDERIVE-ENQUEUE-IDEMPOTENT | a table is queued once however often it is enqueued | php | plain x2, chain | two rows | implemented | 2026-11-13 |
+| REDERIVE-ENQUEUE-TABLE-NAME | a model class name is refused | php | 'Task_Model' | InvalidArgumentException | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-EMPTY | an empty queue prints nothing | php | no rows | '' | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-SKIP | no model, no derived columns, a missing table and a missing column are dropped silently | php | four cases | '', queue empty | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-OUTPUT | heading, one dot per batch of 100, newline; a second pass after changes; the Done line; updated_at held | php | 150 rows, 3 stale | exact text; stale fixed; updated_at unchanged | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-STALE-ONLY | only stale records are saved, on every site, updated_at untouched (raw SQL), caller's site restored | php | 4 rows on 2 sites, 2 stale | 2 after_update; labels fixed | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-NO-REALTIME | the drain queues no realtime frame | php | realtime enabled | no pending frame | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-TRASHED | soft-deleted rows are rederived; each record's site is declared for a derive reading another site-scoped model | php | 3 rows on 2 sites, 1 trashed | labels + per-site counts | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-CAP | N queued tables allow N + 2 passes; the WARNING names the unsettled table; not fatal | php | unstable + skipped table | 4 passes, WARNING, Done | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-FAILURE | a throwing derive fails the step; every queued table stays queued | php | plain + throwing unstable | false; both still queued | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-POSITION | the drain is the last step of execute_migrations(), after the revision dictionary, not skipped on --framework-only | php | source | ordered offsets | implemented | 2026-11-13 |

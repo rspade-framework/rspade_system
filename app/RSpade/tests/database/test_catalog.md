@@ -58,7 +58,7 @@ Type: php / cli / asset / http / playwright.
 | db-as-10 | a portal actor outside its site stamps NOTHING (no cross-site portal identity) | portal request, non-site-scoped record | NULL pair | implemented |
 | db-as-11 | $record->created_by resolves the actor model through the pair | stamped records of both arms | User_Model / Login_User_Model instances | implemented |
 | db-as-12 | an unattributed record's relation is null, not an exception | NULL pair | null | implemented |
-| db-as-13 | the audit type columns survive a model declaring its own $type_ref_columns | Portal_Notification_Model | subject_type AND both audit columns cast | implemented |
+| db-as-13 | the audit type columns survive a model declaring its own type_ref columns | Portal_Notification_Model | subject_type AND both audit columns cast | implemented |
 | db-as-14 | a WHERE on an audit type column converts the class name to its type ref | where('created_by_type','User_Model') | the row is found | implemented |
 
 ## Audit DELETION stamp (`php/Audit_Delete_Stamp_Test.php`)
@@ -252,3 +252,22 @@ compiled bundle is staged in a scratch build root (one app script and its model 
 | db-sc-08 | the purge discards an entry the key alone would keep | `ALTER TABLE` with the applied migrations unchanged, then `purge_schema_state()` | the column is seen; the state key did not move | implemented | 2026-10-12 |
 | db-sc-09 | the purge clears the build-scoped cache and the page cache | a build-scoped key and a full-page-cache key under the code key | both gone; the process copy dropped | implemented | 2026-10-12 |
 | db-sc-10 | under maintenance the purge drops this process's copy only | maintenance forced | derived values dropped; both cache keys untouched | implemented | 2026-10-12 |
+
+## Model_Columns_Test (php, no DB) - the $columns declaration and its accessors
+
+`Rsx_Model_Abstract::columns()` and its kind views, over a three-class fixture chain declared
+through `$columns` only (`Model_Columns_Fixture_Base_Model_Abstract` -> `_Child_Model_Abstract` ->
+`_Grandchild_Model`; no table).
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-col-01 | the base's declaration is overlaid on the audit entries the framework base declares | the base fixture | the three audit `type_ref` entries, then the fixture's own, in order | implemented | 2026-11-13 |
+| db-col-02 | a child entry replaces the parent entry for that column wholesale | the child's `status_id`, `view_count`, inherited `body` | the child's value map alone; `[]`; the parent's entry; a replaced key keeps its place | implemented | 2026-11-13 |
+| db-col-03 | the overlay walks every class of the chain | the grandchild | its own, the child's and the base's entries each reach it | implemented | 2026-11-13 |
+| db-col-04 | the enum view, and enum_values() for one column | base, child, grandchild | `col => values`, replaced maps not merged | implemented | 2026-11-13 |
+| db-col-05 | enum_values() refuses a column that is not an enum | a text column, an unknown column, a column only a subclass declares | LogicException "is not an enum column" | implemented | 2026-11-13 |
+| db-col-06 | the text-type view and text_type_or_null() | child; grandchild declaring `body` plain | `body => type`; empty / null | implemented | 2026-11-13 |
+| db-col-07 | the type-ref view carries the audit columns first | child, grandchild | audit three + own type-ref columns | implemented | 2026-11-13 |
+| db-col-08 | the never-export and revision-exclude views | each fixture | per the overlay | implemented | 2026-11-13 |
+| db-col-09 | every model carries the audit type-ref columns | the fixtures and every concrete model in the manifest | all three in `type_ref_columns()` and `columns()` | implemented | 2026-11-13 |
+| db-col-10 | the memo is per class | the leaf asked first, then its ancestors | no ancestor answers a descendant's columns; a second ask answers the same | implemented | 2026-11-13 |

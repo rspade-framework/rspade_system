@@ -912,12 +912,12 @@ ENUM PROPERTIES
     becomes a property using BEM-style naming: {column}__{field} (double underscore).
 
     PHP Enum Definition:
-        public static $enums = [
-            'status_id' => [
+        public static $columns = [
+            'status_id' => ['enum' => [
                 1 => ['constant' => 'STATUS_PLANNING', 'label' => 'Planning', 'badge' => 'bg-info'],
                 2 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'badge' => 'bg-success'],
                 3 => ['constant' => 'STATUS_ON_HOLD', 'label' => 'On Hold', 'badge' => 'bg-warning'],
-            ],
+            ]],
         ];
 
     Resulting JavaScript Instance Properties (BEM-style double underscore):
@@ -964,7 +964,7 @@ ENUM PROPERTIES
 MODEL CONSTANTS
     All public constants defined on a PHP model are automatically exported to
     the JavaScript stub as static properties. This includes both enum constants
-    (generated from $enums) and manually defined constants.
+    (generated from the enum columns) and manually defined constants.
 
     PHP Model Definition:
         class User_Model extends Rsx_Model_Abstract
@@ -1008,7 +1008,7 @@ MODEL CONSTANTS
         private const API_SECRET = 'sk-abc123...';
 
     Constant Types Exported:
-        - Enum constants (from $enums 'constant' field)
+        - Enum constants (from each enum value's 'constant' field)
         - Non-enum public constants (string, int, float, bool, array)
         - Constants with no visibility modifier (treated as public)
 

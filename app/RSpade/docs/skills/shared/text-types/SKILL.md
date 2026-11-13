@@ -1,6 +1,6 @@
 ---
 name: text-types
-description: "Declaring what a TEXT column holds with public static $text_types and writing a type on Rsx_Text_Abstract - a bare string is plain text, Type::from_untrusted_encoded(), the {__TEXT, raw} envelope, is_empty(), after_model_saved(). Use when a column holds rich text, wiring an editor, migrating a plain column, or on 'cannot be used as a string', 'edits Rich_Text values, but was given string', literal <p> tags in stored text, or TEXT-TYPE-01."
+description: "Declaring what a TEXT column holds with a 'text_type' entry in public static $columns and writing a type on Rsx_Text_Abstract - a bare string is plain text, Type::from_untrusted_encoded(), the {__TEXT, raw} envelope, is_empty(), after_model_saved(). Use when a column holds rich text, wiring an editor, migrating a plain column, or on 'cannot be used as a string', 'edits Rich_Text values, but was given string', literal <p> tags in stored text, or TEXT-TYPE-01."
 ---
 
 # Declared TEXT column types
@@ -25,11 +25,13 @@ sink asks the value. **Declare any TEXT column whose content is not plain prose*
 a sink must escape, render or interpret differently from the characters it holds.
 
 ```php
-public static $text_types = [
-    'description' => Rich_Text::class,
-    'notes'       => Raw_Text::class,
+public static $columns = [
+    'description' => ['text_type' => Rich_Text::class],
+    'notes'       => ['text_type' => Raw_Text::class],
 ];
 ```
+
+A text type is one kind of `$columns` entry - never beside `enum` or `type_ref` on the same column; the grammar, inheritance and accessors (`text_type_columns()`) are skill `rspade:models`.
 
 **The content is a black box to your code.** A user may enter anything. To the application
 the value is as nebulous as an image: it can be empty, stored, displayed. It is *not* a

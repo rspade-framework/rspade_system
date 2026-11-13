@@ -77,6 +77,40 @@ class Realtime
     /** One "dropped under maintenance" warning per process (see _maintenance_drop()). */
     private static bool $maintenance_warned = false;
 
+    /** Open without_model_frames() scopes (see there). */
+    private static int $model_frames_suppressed = 0;
+
+    /**
+     * Run $work with the realtime effect of model writes switched off: a save() or delete()
+     * inside it queues no change frame, walks no touch cascade and kicks no emitter. Nothing
+     * else changes - publish() and the control frames are untouched.
+     *
+     * For a framework pass that rewrites records nobody is editing and no watcher needs to
+     * hear about one by one: `migrate`'s rederive drain (Rsx_Rederive::drain()), which may
+     * rewrite every row of a table while the application is being upgraded.
+     *
+     * @param callable $work
+     * @return mixed Whatever $work returns
+     */
+    public static function without_model_frames(callable $work): mixed
+    {
+        self::$model_frames_suppressed++;
+
+        try {
+            return $work();
+        } finally {
+            self::$model_frames_suppressed--;
+        }
+    }
+
+    /**
+     * Whether a without_model_frames() scope is open. Asked by the model write path.
+     */
+    public static function model_frames_suppressed(): bool
+    {
+        return self::$model_frames_suppressed > 0;
+    }
+
     /**
      * Check if realtime is enabled
      */

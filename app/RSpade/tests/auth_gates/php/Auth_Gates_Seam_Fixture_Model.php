@@ -32,8 +32,6 @@ class Auth_Gates_Seam_Fixture_Model extends Rsx_Model_Abstract
 
     protected $fillable = [];
 
-    public static $enums = [];
-
     /**
      * The fetch surface. The gate list the seam actually evaluates is the one the tests
      * install; this declaration is what makes the surface EXIST.

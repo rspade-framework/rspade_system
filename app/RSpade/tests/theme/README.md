@@ -30,7 +30,7 @@ so a portal request always resolves to the configured default.
 - `system/app/RSpade/Core/Js/Rsx_Dark_Mode.js` (the in-bundle API over it)
 - `system/app/RSpade/Core/Bundle/Rsx_Bundle_Abstract.php` (the rsxapp theme block and the script tag)
 - `system/app/RSpade/helpers.php` (`rsx_body_class`)
-- `system/app/RSpade/Core/Models/Login_User_Model.php` (`$enums['dark_mode']`)
+- `system/app/RSpade/Core/Models/Login_User_Model.php` (the `dark_mode` enum)
 
 ## Man pages
 

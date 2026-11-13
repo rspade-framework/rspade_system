@@ -225,7 +225,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
                     'error_excerpt' => static::__error_excerpt($schedule->last_error),
                     'consecutive_failures' => (int) $schedule->consecutive_failures,
                     'last_run_status_id' => $last_status_id !== null ? (int) $last_status_id : null,
-                    'last_run_status' => $last_status_id !== null ? Task_Run_Model::$enums['status_id'][(int) $last_status_id]['label'] : null,
+                    'last_run_status' => $last_status_id !== null ? Task_Run_Model::enum_values('status_id')[(int) $last_status_id]['label'] : null,
                 ];
             }
 
@@ -396,7 +396,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     public static function present(Task_Run_Model $task, bool $full, ?Task_Waiting $waiting = null): array
     {
         $status = $task->to_status_array($waiting);
-        $status['pool'] = $task->pool_id !== null ? Task_Run_Model::$enums['pool_id'][(int) $task->pool_id]['label'] : null;
+        $status['pool'] = $task->pool_id !== null ? Task_Run_Model::enum_values('pool_id')[(int) $task->pool_id]['label'] : null;
         // The worker is shown only while the run is RUNNING: once it settles the process that
         // ran it is over, and the pid the row keeps as evidence names nothing a reader can act on.
         $running = (int) $task->status_id === Task_Run_Model::STATUS_RUNNING;

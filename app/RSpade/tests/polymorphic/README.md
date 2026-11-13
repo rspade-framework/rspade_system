@@ -1,6 +1,6 @@
 # Polymorphic Type References
 
-Covers the `$type_ref_columns` contract: a polymorphic reference is the pair
+Covers the `type_ref` column contract: a polymorphic reference is the pair
 `{relation}_type` + `{relation}_id`, both BIGINT, with the `_type` column storing a
 type-ref integer id (not a class-name VARCHAR). The framework maps between integer
 ids and simple class names transparently (see `rsx:man polymorphic`).

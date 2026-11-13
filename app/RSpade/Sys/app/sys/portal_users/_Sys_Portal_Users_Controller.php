@@ -110,7 +110,7 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'has_site_screen' => $site_id !== 0 && $site !== null && $site->deleted_at === null,
                 'status_id' => $status_id,
                 'status' => _Sys_Enum_Words::enum_word(Portal_User_Model::class, 'status_id', $status_id),
-                'status_label' => Portal_User_Model::$enums['status_id'][$status_id]['label'],
+                'status_label' => Portal_User_Model::enum_values('status_id')[$status_id]['label'],
                 'is_verified' => (bool) $portal_user->is_verified,
                 'can_login' => $portal_user->can_login(),
                 'password_reset_required' => $portal_user->is_password_reset_required(),
@@ -329,7 +329,7 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'impersonator_login_user_id' => $viewer === null || $viewer->login_user_id === null ? null : (int) $viewer->login_user_id,
                 'impersonator_email' => $viewer === null ? null : $viewer->email,
                 'impersonation_started_at' => $session['impersonation_started_at'],
-                'type_label' => Session::$enums['type_id'][$session['type_id']]['label'] ?? ('Type ' . $session['type_id']),
+                'type_label' => Session::enum_values('type_id')[$session['type_id']]['label'] ?? ('Type ' . $session['type_id']),
             ];
         }
 

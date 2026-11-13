@@ -25,11 +25,11 @@ class Form_Edit_Coupled_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'form_edit_coupled_fixtures';
     protected $fillable = [];
 
-    public static $enums = [
-        'kind_id' => [
+    public static $columns = [
+        'kind_id' => ['enum' => [
             self::KIND_MEETING => ['constant' => 'KIND_MEETING', 'label' => 'Meeting'],
             self::KIND_CALL => ['constant' => 'KIND_CALL', 'label' => 'Phone call'],
-        ],
+        ]],
     ];
 
     public static $revisions = true;

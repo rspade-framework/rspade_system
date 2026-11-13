@@ -71,7 +71,7 @@ class _Sys_Users_DataGrid extends _Sys_DataGrid_Abstract
             $row['id'] = (int) $row['id'];
             $row['status_id'] = (int) $row['status_id'];
             $row['status'] = _Sys_Enum_Words::enum_word(Login_User_Model::class, 'status_id', $row['status_id']);
-            $row['status_label'] = Login_User_Model::$enums['status_id'][$row['status_id']]['label'];
+            $row['status_label'] = Login_User_Model::enum_values('status_id')[$row['status_id']]['label'];
             $row['is_developer'] = (bool) $row['is_developer'];
             $row['is_verified'] = (bool) $row['is_verified'];
             $row['is_activated'] = (bool) $row['is_activated'];

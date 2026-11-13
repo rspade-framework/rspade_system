@@ -24,8 +24,6 @@ class Realtime_Method_Touch_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_method_touch_children';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public function realtime_touch(): array
     {
         if (empty($this->parent_id)) {

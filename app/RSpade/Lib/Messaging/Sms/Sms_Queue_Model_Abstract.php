@@ -51,10 +51,10 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  *
  * @property int $attempt_count
  * @property string $body
- * @property int $category_id
+ * @property int $category_id enum: CATEGORY_TRANSACTIONAL, CATEGORY_NOTIFICATION, CATEGORY_MARKETING, CATEGORY_SECURITY (also $category_id__label and the other $category_id__* properties)
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $dedupe_key
  * @property string $dev_original_to
  * @property int $id
@@ -65,13 +65,13 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  * @property int $related_type
  * @property string $sent_at
  * @property int $site_id
- * @property int $status_id
+ * @property int $status_id enum: STATUS_PENDING, STATUS_SENDING, STATUS_SENT, STATUS_FAILED, STATUS_BLOCKED and 2 more (also $status_id__label and the other $status_id__* properties)
  * @property string $to_number
  * @property string $transport
  * @property string $transport_response
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -137,8 +137,8 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     protected $table = '_sms_queue';
     protected $fillable = [];
 
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_PENDING', 'label' => 'Pending', 'badge' => 'bg-warning'],
             2 => ['constant' => 'STATUS_SENDING', 'label' => 'Sending', 'badge' => 'bg-info'],
             3 => ['constant' => 'STATUS_SENT', 'label' => 'Sent', 'badge' => 'bg-success'],
@@ -151,13 +151,13 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             // A TEST recipient (Rsx_Test_Recipients): rendered and recorded like a sent
             // message and never handed to a provider, in every mode. Not a failure.
             7 => ['constant' => 'STATUS_TEST', 'label' => 'Test', 'badge' => 'bg-info'],
-        ],
-        'category_id' => [
+        ]],
+        'category_id' => ['enum' => [
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
             2 => ['constant' => 'CATEGORY_NOTIFICATION', 'label' => 'Notification', 'badge' => 'bg-info'],
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
             4 => ['constant' => 'CATEGORY_SECURITY', 'label' => 'Security', 'badge' => 'bg-dark'],
-        ],
+        ]],
     ];
 
     /**
@@ -425,7 +425,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     {
         $counts = [];
 
-        foreach (array_keys(static::$enums['status_id']) as $status_id) {
+        foreach (array_keys(static::enum_values('status_id')) as $status_id) {
             $counts[$status_id] = static::where('status_id', $status_id)->count();
         }
 

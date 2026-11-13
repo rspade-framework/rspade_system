@@ -7,7 +7,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
- * TEXT-TYPE-01 - a $text_types declaration must be one the cast can honour.
+ * TEXT-TYPE-01 - a `text_type` column declaration must be one the cast can honour.
  *
  * A declared text column is where markup and plain text stop being confused, and every way
  * the declaration can be wrong fails SILENTLY at runtime - the column quietly stops being
@@ -24,10 +24,10 @@ use App\RSpade\Core\Manifest\Manifest;
  *      stores whatever it is handed, unfiltered, and reads back a plain string - a
  *      stored-XSS path with no error anywhere.
  *
- * Checked on every class that DECLARES $text_types (checks 1 and 2, reported once at the
- * declaration), and on every model whose effective $text_types is non-empty (check 3,
- * reported on that model, since a shadowing $casts may live on either side of an
- * override).
+ * Checked on every class whose own $columns literal carries a `text_type` entry (checks 1
+ * and 2, on those entries, reported once at the declaration), and on every model with an
+ * effective text-type column (check 3, reported on that model, since a shadowing $casts
+ * may live on either side of an override).
  *
  * NOT detected (deliberately): a casts() method whose body cannot be evaluated without a
  * booted model. This rule is fatal, so an unprovable case is skipped rather than guessed at.
@@ -52,7 +52,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'A $text_types entry must name an Rsx_Text_Abstract type with a JS twin, and no $casts entry may shadow it';
+        return 'A $columns text_type entry must name an Rsx_Text_Abstract type with a JS twin, and no $casts entry may shadow it';
     }
 
     public function get_file_patterns(): array
@@ -126,9 +126,9 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function evaluate_class(string $fqcn, string $abs_file, bool $is_abstract = false): void
     {
-        $text_types = (array) $fqcn::$text_types;
+        $text_type_columns = $fqcn::text_type_columns();
 
-        if ($text_types === []) {
+        if ($text_type_columns === []) {
             return;
         }
 
@@ -138,25 +138,49 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $declares = (new \ReflectionProperty($fqcn, 'text_types'))->getDeclaringClass()->getName() === $fqcn;
+        $own_text_types = $this->own_text_type_entries($fqcn);
 
-        if ($declares) {
-            $this->check_entries($fqcn, $abs_file, $contents, $text_types);
+        if ($own_text_types !== []) {
+            $this->check_entries($fqcn, $abs_file, $contents, $own_text_types);
         }
 
         if (!$is_abstract) {
-            $this->check_casts_do_not_shadow($fqcn, $abs_file, $contents, $text_types);
+            $this->check_casts_do_not_shadow($fqcn, $abs_file, $contents, $text_type_columns);
         }
+    }
+
+    /**
+     * The `text_type` entries of the $columns literal this class declares itself (none when it
+     * inherits the property): column => the declared value, unvalidated.
+     *
+     * @return array<string, mixed>
+     */
+    private function own_text_type_entries(string $fqcn): array
+    {
+        $property = new \ReflectionProperty($fqcn, 'columns');
+
+        if ($property->getDeclaringClass()->getName() !== $fqcn) {
+            return [];
+        }
+
+        $entries = [];
+        foreach ((array) $property->getValue() as $column => $entry) {
+            if (is_array($entry) && array_key_exists('text_type', $entry)) {
+                $entries[$column] = $entry['text_type'];
+            }
+        }
+
+        return $entries;
     }
 
     /**
      * CHECKS 1 and 2: every entry names a real type, and that type has its JS twin.
      */
-    private function check_entries(string $fqcn, string $abs_file, string $contents, array $text_types): void
+    private function check_entries(string $fqcn, string $abs_file, string $contents, array $text_type_columns): void
     {
-        $line = $this->line_of($contents, '/\$text_types\s*=/');
+        $line = $this->line_of($contents, '/\$columns\s*=/');
 
-        foreach ($text_types as $column => $type_class) {
+        foreach ($text_type_columns as $column => $type_class) {
             $type_name = class_basename((string) $type_class);
             $class_name = class_basename($fqcn);
 
@@ -165,7 +189,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
                 $this->add_violation(
                     $abs_file,
                     $line,
-                    "{$class_name}::\$text_types['{$column}'] names " . (is_string($type_class) ? $type_class : gettype($type_class))
+                    "{$class_name}::\$columns['{$column}']['text_type'] names " . (is_string($type_class) ? $type_class : gettype($type_class))
                     . ", which is not a class extending Rsx_Text_Abstract.\n\n"
                     . "The first read or write of the column would throw, far from this declaration.",
                     $this->line_text($contents, $line),
@@ -181,7 +205,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
                 $this->add_violation(
                     $abs_file,
                     $line,
-                    "{$class_name}::\$text_types['{$column}'] names {$type_name}, which has no JavaScript twin.\n\n"
+                    "{$class_name}::\$columns['{$column}']['text_type'] names {$type_name}, which has no JavaScript twin.\n\n"
                     . "A text type is two classes of the same name: PHP owns the encoding, JavaScript owns "
                     . "which component prints and edits it. Without the twin the column fails only when a "
                     . "browser first receives it.",
@@ -197,11 +221,11 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * CHECK 3: no explicit cast shadows the text cast on a declared column.
      */
-    private function check_casts_do_not_shadow(string $fqcn, string $abs_file, string $contents, array $text_types): void
+    private function check_casts_do_not_shadow(string $fqcn, string $abs_file, string $contents, array $text_type_columns): void
     {
         $casts = $this->declared_casts($fqcn);
 
-        foreach (array_keys($text_types) as $column) {
+        foreach (array_keys($text_type_columns) as $column) {
             if (!array_key_exists($column, $casts)) {
                 continue;
             }
@@ -218,7 +242,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
                 . "the column stores whatever it is handed with no filter and reads back a plain string. "
                 . "Markup from a request is stored verbatim - a stored-XSS path - and nothing reports it.",
                 $this->line_text($contents, $line),
-                "Remove '{$column}' from the model's casts. \$text_types is the column's cast.\n"
+                "Remove '{$column}' from the model's casts. Its \$columns text_type is the column's cast.\n"
                 . "See: php artisan rsx:man text_types",
                 'critical'
             );

@@ -29,21 +29,19 @@ use App\RSpade\Lib\Geo\Places\Region_Model;
  * @property string $common_name
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
- * @property int $enabled
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
+ * @property bool $enabled
  * @property int $id
  * @property string $name
  * @property string $numeric
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
 abstract class Country_Model_Abstract extends Rsx_Model_Abstract
 {
-    public static $enums = [];
-
     protected $table = 'countries';
 
     protected $casts = [

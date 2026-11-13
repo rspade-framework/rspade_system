@@ -405,7 +405,7 @@ class Rsx_Js_Model {
 
     /**
      * The max character length of a varchar/char column, or null for a column of any other
-     * type (and for a name that is no column at all: a derived property has no length).
+     * type (and for a name that is no column at all: an appended property has no length).
      *
      * ONE definition for every model. The lengths are a fact about the database, so they
      * are not part of a model's generated stub: the page loads them in a script of its own,
@@ -441,6 +441,22 @@ class Rsx_Js_Model {
         const lengths = data[model_name];
 
         return Object.hasOwn(lengths, column) ? lengths[column] : null;
+    }
+
+    /**
+     * Whether a column is a DERIVED column of this model: computed by the PHP model on save
+     * from other columns of the same record, and never written by a form or an endpoint
+     * (write its source columns instead). Read from the stub's baked __DERIVED_COLUMNS,
+     * absent on a model that has none.
+     *
+     * @param {string} column - Column name
+     * @returns {boolean}
+     */
+    static is_derived_column(column) {
+        const CurrentClass = this;
+        const derived = CurrentClass.__DERIVED_COLUMNS ?? [];
+
+        return derived.includes(column);
     }
 
     /**

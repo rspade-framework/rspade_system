@@ -30,7 +30,7 @@ use App\RSpade\Core\Files\Rsx_File_Paths;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $expires_at
  * @property string $file_name
  * @property int $id
@@ -40,7 +40,7 @@ use App\RSpade\Core\Files\Rsx_File_Paths;
  * @property string $temp_key
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -58,8 +58,6 @@ abstract class Temp_File_Model_Abstract extends Rsx_Model_Abstract
     protected $table = '_temp_files';
 
     protected $fillable = [];
-
-    public static $enums = [];
 
     /** The file's whole contents. */
     public function read_bytes(): string

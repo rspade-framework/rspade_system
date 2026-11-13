@@ -2,12 +2,26 @@
 
 namespace App\RSpade\CodeQuality\Rules\Models;
 
-use Exception;
-use Illuminate\Support\Facades\Schema;
-use ReflectionClass;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 
+/**
+ * MODEL-ENUM-01 - every column a model's `$columns` declares, and every `from` column a
+ * derived entry names, is a column of the model's table.
+ *
+ * A declaration for a column the table does not have does nothing at all (an enum with no
+ * column to read, a never_export guarding nothing, a derived column whose source never
+ * changes), and a misspelled `from` name means the derived column is never re-derived.
+ * Checked on every concrete model - framework and application alike - against the connected
+ * database's column map (Rsx_Schema::model_columns()), through the same comparison the
+ * first-use runtime check uses (Rsx_Model_Abstract::_columns_missing_from()). The audit type
+ * columns Rsx_Model_Abstract declares are exempt: the deletion pair exists only on
+ * soft-deleting tables.
+ *
+ * A model whose table is not in the connected database is skipped (migrations not yet run).
+ * rsx:check only; suppressed by @MODEL-ENUM-01-EXCEPTION anywhere in the file.
+ */
 class ModelEnumColumns_CodeQualityRule extends CodeQualityRule_Abstract
 {
     public function get_id(): string
@@ -17,12 +31,12 @@ class ModelEnumColumns_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_name(): string
     {
-        return 'Model Enum Column Validation';
+        return 'Model Column Declarations Name Real Columns';
     }
 
     public function get_description(): string
     {
-        return 'Enum definitions must reference actual database columns';
+        return 'Every $columns entry and every derived from column must be a column of the model\'s table';
     }
 
     public function get_file_patterns(): array
@@ -37,79 +51,50 @@ class ModelEnumColumns_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only check PHP files in /rsx/ directory
-        if (!str_contains($file_path, '/rsx/')) {
-            return;
-        }
-
-        // Get class name from metadata
         $class_name = $metadata['class'] ?? null;
         if (!$class_name) {
             return;
         }
 
-        // Check if this is a model (extends Rsx_Model_Abstract)
         if (!Manifest::php_is_subclass_of($class_name, 'Rsx_Model_Abstract')) {
             return;
         }
 
-        // Try to load the class to get its properties
-        if (!class_exists($class_name)) {
+        // Only a concrete model has a table: an abstract base's declarations are checked
+        // through each concrete model that inherits them.
+        $record = Manifest::php_model_record($class_name);
+        if ($record === null) {
             return;
         }
 
-        try {
-            $reflection = new ReflectionClass($class_name);
+        $table_columns = Rsx_Schema::model_columns($class_name);
+        if ($table_columns === null) {
+            return;
+        }
 
-            // Get the $table property value
-            $table_prop = $reflection->getProperty('table');
-            $table_prop->setAccessible(true);
-            $instance = $reflection->newInstanceWithoutConstructor();
-            $table_name = $table_prop->getValue($instance);
+        $fqcn = $record['fqcn'];
+        $lines = explode("\n", (string) $this->source()->content($file_path));
 
-            // Get the $enums property if it exists
-            if (!$reflection->hasProperty('enums')) {
-                return;
-            }
-
-            $enums_prop = $reflection->getProperty('enums');
-            $enums_prop->setAccessible(true);
-            $enums = $enums_prop->getValue();
-
-            if (!is_array($enums)) {
-                return;
-            }
-
-            // Get table columns from database
-            $columns = Schema::getColumnListing($table_name);
-
-            // Check each enum field
-            $lines = explode("\n", $contents);
-            foreach ($enums as $column => $definitions) {
-                if (!in_array($column, $columns)) {
-                    // Find the line where this enum is defined
-                    $line_number = 1;
-                    foreach ($lines as $i => $line) {
-                        if (preg_match('/[\'"]' . preg_quote($column) . '[\'"\s]*=>/', $line)) {
-                            $line_number = $i + 1;
-                            break;
-                        }
-                    }
-
-                    $this->add_violation(
-                        $file_path,
-                        $line_number,
-                        "Enum field '{$column}' does not exist as a column in table '{$table_name}' (Have migrations been run yet?)",
-                        $lines[$line_number - 1] ?? '',
-                        "Remove the enum definition for '{$column}' or add the column to the database table",
-                        'high'
-                    );
+        foreach ($fqcn::_columns_missing_from($table_columns) as $column => $why) {
+            $line_number = 1;
+            foreach ($lines as $i => $line) {
+                if (preg_match('/[\'"]' . preg_quote($column, '/') . '[\'"]/', $line)) {
+                    $line_number = $i + 1;
+                    break;
                 }
             }
-        } catch (Exception $e) {
-            // If we can't check the database schema (e.g., during CI or before migrations),
-            // skip this validation
-            return;
+
+            $this->add_violation(
+                $file_path,
+                $line_number,
+                "{$class_name}::\$columns {$why} '{$column}', which is not a column of table '{$record['table']}' "
+                . '(have the migrations been run?). The declaration does nothing, and a model with derived columns '
+                . 'refuses to save until it is fixed.',
+                trim($lines[$line_number - 1] ?? ''),
+                "Add '{$column}' to the table with a migration, or correct the declaration.\n"
+                . 'See: php artisan rsx:man model',
+                'high'
+            );
         }
     }
 }

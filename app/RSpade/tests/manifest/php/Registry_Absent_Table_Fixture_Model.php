@@ -18,6 +18,4 @@ class Registry_Absent_Table_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'manifest_registry_absent_table_fixtures';
 
     protected $fillable = [];
-
-    public static $enums = [];
 }

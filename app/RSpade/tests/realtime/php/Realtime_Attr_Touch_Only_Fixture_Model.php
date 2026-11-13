@@ -22,8 +22,6 @@ class Realtime_Attr_Touch_Only_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_attr_touch_only';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = false;
 
     #[Realtime_Touch]

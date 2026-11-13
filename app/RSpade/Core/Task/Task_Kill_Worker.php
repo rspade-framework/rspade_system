@@ -223,7 +223,7 @@ class Task_Kill_Worker
             ]);
         }
 
-        $mode = Task_Kill_Request_Model::$enums['mode_id'][(int) $request->mode_id]['label'];
+        $mode = Task_Kill_Request_Model::enum_values('mode_id')[(int) $request->mode_id]['label'];
         Task_Instance::record_operator_line((int) $task->id, $signalled
             ? "Killed ({$mode}): {$request->explanation}"
             : "Settled as killed ({$mode}): {$request->explanation} - the worker process was already gone");

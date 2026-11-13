@@ -18,6 +18,4 @@ class Lifecycle_Bulk_Plain_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'lifecycle_bulk_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 }

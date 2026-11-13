@@ -1,13 +1,13 @@
 ---
 name: polymorphic
-description: "Polymorphic relationships on type references - a BIGINT {relation}_type + {relation}_id pair declared in $type_ref_columns, transparent to stock morph relations. Use when implementing morphTo / morphMany, adding a polymorphic column, handling polymorphic form fields, deciding what to do about morphToMany, or on a POLY-01 build failure or a half-set pair error."
+description: "Polymorphic relationships on type references - a BIGINT {relation}_type + {relation}_id pair declared ['type_ref' => true] in the model's $columns, transparent to stock morph relations. Use when implementing morphTo / morphMany, adding a polymorphic column, handling polymorphic form fields, deciding what to do about morphToMany, or on a POLY-01 build failure or a half-set pair error."
 ---
 
 # RSpade Polymorphic Relationships
 
 ## The shape - always a pair
 
-**A polymorphic reference is ALWAYS the pair `{relation}_type` + `{relation}_id`, both BIGINT.** The `_type` column stores a type-ref integer id, **never a VARCHAR class name**, and it is declared in the owning model's `$type_ref_columns`.
+**A polymorphic reference is ALWAYS the pair `{relation}_type` + `{relation}_id`, both BIGINT.** The `_type` column stores a type-ref integer id, **never a VARCHAR class name**, and it is declared `'{relation}_type' => ['type_ref' => true]` in the owning model's `$columns` (one kind of column declaration - the grammar: skill `rspade:models`).
 
 ```php
 $activity->eventable_type = 'Contact_Model';  // stored as an integer
@@ -32,7 +32,9 @@ Declare which columns are type references in your model - that declaration is th
 ```php
 class Activity_Model extends Rsx_Model_Abstract
 {
-    protected static $type_ref_columns = ['eventable_type'];
+    public static $columns = [
+        'eventable_type' => ['type_ref' => true],
+    ];
 
     #[Relationship]
     public function eventable()
@@ -53,13 +55,13 @@ The cast is automatically applied - no manual `$casts` needed.
 - **Eager loading is forbidden framework-wide**: `->with()` throws. Load the relation when you need it.
 - **A half-set pair fails loud.** `_type` null with `_id` set (or the reverse) is an error, not a partial record - **write both or neither**.
 - **A `_type_refs` row whose class was renamed or deleted is INERT, PERMANENT and SILENT** - nothing reports it and there is no command to delete it (deleting it is what would make old data unreadable). What throws is a DEREFERENCE: reading such a column, `morphTo()`, and `whereHasMorph($rel, '*')`, each naming the id and the class. Fix the DATA (see below) or restore the class; never code around it, and never delete the registry row.
-- **Pivot morphs are UNSUPPORTED.** `morphToMany()` / `morphedByMany()` put the `_type` column on a PIVOT TABLE that no model owns, so no `$type_ref_columns` declaration can ever apply to it. **Remedy: model the join table as a real model with its own `{relation}_type` / `{relation}_id` pair.**
+- **Pivot morphs are UNSUPPORTED.** `morphToMany()` / `morphedByMany()` put the `_type` column on a PIVOT TABLE that no model owns, so no `type_ref` declaration can ever apply to it. **Remedy: model the join table as a real model with its own `{relation}_type` / `{relation}_id` pair.**
 
 ## POLY-01
 
 A manifest-build FATAL (AST, cross-file) rejecting the Laravel string-morph pattern. It flags:
 
-1. `morphTo()` whose `_type` column is not declared in the DECLARING model's `$type_ref_columns`;
+1. `morphTo()` whose `_type` column is not declared `type_ref` in the DECLARING model's `$columns`;
 2. `morphOne()` / `morphMany()` whose `_type` column is not declared on the RELATED model;
 3. any `morphToMany()` / `morphedByMany()` - always, see above;
 4. a morph type column whose name does not end in `_type`.
@@ -233,7 +235,9 @@ Any model can be used without pre-registration.
 ```php
 class File_Attachment_Model extends Rsx_Model_Abstract
 {
-    protected static $type_ref_columns = ['fileable_type'];
+    public static $columns = [
+        'fileable_type' => ['type_ref' => true],
+    ];
 
     public function fileable()
     {
@@ -255,7 +259,9 @@ $attachment->fileable_id = $project->id;
 ```php
 class Activity_Model extends Rsx_Model_Abstract
 {
-    protected static $type_ref_columns = ['subject_type'];
+    public static $columns = [
+        'subject_type' => ['type_ref' => true],
+    ];
 
     public function subject()
     {

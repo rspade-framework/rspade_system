@@ -32,7 +32,7 @@ retention task, and the REVISION-01 declaration rule.
 - `app/RSpade/Lib/Revisions/Revision_Parent_Registry.php` - `#[Revision_Parent]` discovery.
 - `app/RSpade/Lib/Revisions/Revision_Cleanup_Service.php` - the retention task.
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - `$revisions`,
-  `$revision_exclude`, `revisions()`, `revisions_including_children()`, the differ and the
+  `revision_exclude`, `revisions()`, `revisions_including_children()`, the differ and the
   two write-effect hooks, `_resolve_context_actor()`, and the `toArray()` system-column strip.
 - `app/RSpade/CodeQuality/Rules/Manifest/RevisionParent_CodeQualityRule.php` - REVISION-01.
 - `config('rsx.revisions')` - `retention_days`, `dictionary_max_age_days`.
@@ -58,7 +58,7 @@ retention task, and the REVISION-01 declaration rule.
 - **Unknown codec byte or unknown dictionary id THROWS.** There is nothing to degrade to:
   the revision genuinely cannot be read.
 - **The dictionary is derived, never authored** - JSON structural tokens, every column
-  name in `information_schema`, every `$enums` label - and ordered COLDEST FIRST,
+  name in `information_schema`, every enum label - and ordered COLDEST FIRST,
   HOTTEST LAST, because zlib prices a match by its distance and the dictionary is loaded
   nearest-last.
 - **Dictionary rows are append-only.** A regeneration never invalidates an old revision,
@@ -80,11 +80,11 @@ retention task, and the REVISION-01 declaration rule.
   changed; a delete (soft or hard) records an EMPTY document, because a delete does not
   change fields. A restore is recorded as its own operation.
 - **Excluded always**: `updated_at` and the `updated_by` pair (they move on every write) and
-  every `_`-prefixed system column. Excluded by declaration: `$revision_exclude`.
+  every `_`-prefixed system column. Excluded by declaration: `revision_exclude` columns; every derived column is excluded too.
 - **A never-exported column is REDACTED, not excluded**: its change is recorded as
   `[Revision::REDACTED, Revision::REDACTED]` on create, update and clear, decided before
   `_revision_value()` so a declared text type is never encoded; an untouched one is not
-  mentioned; `$revision_exclude` wins when a column is in both lists.
+  mentioned; `revision_exclude` wins when a column carries both.
   `Revision_Model::is_redacted()` is the reader's test.
 - **Bulk**: `where()->update()` records one revision per affected record (it runs `save()`);
   `raw_bulk()`, `DB::table()` and raw SQL record nothing - the same rule realtime follows.
@@ -109,14 +109,14 @@ retention task, and the REVISION-01 declaration rule.
 | `regenerate_if_stale()` decisions, the 255 ceiling, cache reset | php | yes |
 | `migrate` / `migrate:restore` seams | php (source structure) | yes |
 | The four operations (create / update / delete / undelete) and their diffs | php | yes |
-| Exclusions: `$revision_exclude`, `_`-prefixed, `updated_*` | php | yes |
+| Exclusions: `revision_exclude`, `_`-prefixed, `updated_*` | php | yes |
 | Redaction of never-exported columns, `Revision::REDACTED`, `is_redacted()` | php | yes |
 | Transaction grouping, sequences, `revision_count`, source, actor, `describe()` | php | yes |
 | Unit boundaries (`_reset_request_state`) | php | yes |
 | The root pair and `#[Revision_Parent]` | php | yes |
 | `Revision::without()` and the `$revisions = false` fast path | php | yes |
 | Bulk semantics (`update()` per row, `raw_bulk()` none) and DB rollback | php | yes |
-| `toArray()` system-column strip and `$neverExport` on the blob | php | yes |
+| `toArray()` system-column strip and `never_export` on the blob | php | yes |
 | Retention task (0 = forever, N, cascade, chunked drain) | php | yes |
 | REVISION-01 (all three checks + the exception marker) | php | yes |
 | Reset seams in the live dispatchers (web / API / Ajax / task) | - | covered by the facade tests; the call sites themselves are single lines |

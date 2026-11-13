@@ -35,8 +35,6 @@ class Model_Fetch_Parent_Fixture_Model extends Rsx_Model_Abstract
 
     protected $fillable = [];
 
-    public static $enums = [];
-
     /**
      * The fetch surface. The body looks the record up under the model's DEFAULT scopes,
      * which is what lets the batch preload serve it (MODEL-FETCH-TRASHED-01).

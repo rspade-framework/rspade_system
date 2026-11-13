@@ -23,8 +23,6 @@ class Lifecycle_Bulk_Soft_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'lifecycle_bulk_soft_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     /**
      * @var array<int, array{id: int, changed: array<int, string>}>
      */

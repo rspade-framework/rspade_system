@@ -282,14 +282,14 @@ class Spreadsheet_Rendition
      */
     protected static function __mark_wrapping_cells(Spreadsheet $spreadsheet): void
     {
-        $text_types = [DataType::TYPE_STRING, DataType::TYPE_STRING2, DataType::TYPE_INLINE];
+        $string_types = [DataType::TYPE_STRING, DataType::TYPE_STRING2, DataType::TYPE_INLINE];
 
         foreach ($spreadsheet->getAllSheets() as $sheet) {
             foreach ($sheet->getCoordinates() as $coordinate) {
                 $cell = $sheet->getCell($coordinate);
                 $value = $cell->getValue();
 
-                if (!is_string($value) || $value === '' || !in_array($cell->getDataType(), $text_types, true)) {
+                if (!is_string($value) || $value === '' || !in_array($cell->getDataType(), $string_types, true)) {
                     continue;
                 }
 

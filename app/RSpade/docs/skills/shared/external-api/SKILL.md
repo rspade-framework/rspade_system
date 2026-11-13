@@ -57,7 +57,7 @@ The failure looks like a broken manifest build with a class-not-found deep in th
 
 | You return | Client gets |
 |---|---|
-| a model | 200, redacting `toArray()` - `neverExport` fields stripped, enum `__label` + `__MODEL` included |
+| a model | 200, redacting `toArray()` - `never_export` columns stripped, enum `__label` + `__MODEL` included |
 | an associative array | 200 with that JSON object |
 | nothing to report | return `['result' => 'success']` |
 | `Rsx_Api::created($data)` | 201 |
@@ -67,6 +67,8 @@ The failure looks like a broken manifest build with a class-not-found deep in th
 | `Rsx_Api::document($array)` | 200, the object EXACTLY as given - no timing fields, no echoed `_request_ref` |
 | a file / streamed response | sent as it is (downloads are exempt) |
 | `null`, a list, `[]`, a scalar, a Collection | **refused**: a 500 naming the endpoint (`Every external API response body is a JSON object ... a list goes inside an object (['items' => $list])`), a writer rolled back |
+
+**A model's DERIVED column (skill `rspade:models`) is a response field and a filter, never an `#[Api_Param]` of a write** - the write takes its source column, and a client sending the derived one gets 422 "Unknown parameter" like any undeclared key.
 
 There is no 204. Error shape is always `{"error":{"code","message","fields"?, ...documented extras}}`, built only by `Api_Dispatcher::_error()` - branch on `error.code`, never the message.
 
@@ -78,7 +80,7 @@ There is no 204. Error shape is always `{"error":{"code","message","fields"?, ..
 
 `Authorization: Bearer rsx_...` ONLY -> the key owner's `Session` identity, immutable for the request (`Session::is_logged_in()`/`get_user()`/`get_user_id()`/`get_site_id()` all work; NO cookie, NO Set-Cookie). **One session per key**: the key's first call mints a `TYPE_API` `_sessions` row plus a user session for its owner, reused by every later call, so the key's use is ONE entry (`is_api`) in the owner's `get_sessions_for_user()` (revoking the key ends it; the terminate functions do not), `get_session_id()` answers that row, `has_session()` is false (not a browser), `put_value()` throws, and acts are attributed to an audit session per caller address + user agent. Revoked/expired keys sign their user session out; deleting a key cascades its session away. Site scope applies automatically — **never hand-write `where('site_id')`**.
 
-Keys are minted and revoked at **Settings > API Keys** (the plaintext key is shown once). `key_hash` is in the model's `$neverExport`; a screen listing keys returns the fields it renders, never the record (a browser refuses an `Api_Key_Model` record - there is no JS model for it). **Every mint and every end of a live key is an EVENT** the model fires after commit - `api_key.created` / `api_key.revoked` (`how`: `revoked` | `deleted`), `{api_key, user, actor, audit_session_id, ip_address}` (`Api_Key_Event`) - so audit and notify from ONE handler, never from each controller (`rsx:man external_api`, KEY EVENTS). A rolled-back mint, ending an already-dead key and plain expiry fire nothing. Missing header -> 401, bad key -> 401, **both before route match** - so a bad key cannot be used to probe which paths exist.
+Keys are minted and revoked at **Settings > API Keys** (the plaintext key is shown once). `key_hash` is `never_export` on the model; a screen listing keys returns the fields it renders, never the record (a browser refuses an `Api_Key_Model` record - there is no JS model for it). **Every mint and every end of a live key is an EVENT** the model fires after commit - `api_key.created` / `api_key.revoked` (`how`: `revoked` | `deleted`), `{api_key, user, actor, audit_session_id, ip_address}` (`Api_Key_Event`) - so audit and notify from ONE handler, never from each controller (`rsx:man external_api`, KEY EVENTS). A rolled-back mint, ending an already-dead key and plain expiry fire nothing. Missing header -> 401, bad key -> 401, **both before route match** - so a bad key cannot be used to probe which paths exist.
 
 `_api_keys.scopes` narrows ONE key below its holder — see **Key scopes** below. `_api_keys.user_role_id` stays RESERVED and NOT enforced; do not restrict a key with it.
 

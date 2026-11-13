@@ -20,8 +20,6 @@ class Revision_Child_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'revision_child_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $revisions = true;
 
     #[Revision_Parent]

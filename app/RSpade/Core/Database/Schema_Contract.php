@@ -465,7 +465,7 @@ class Schema_Contract
      * API quietly opened.
      *
      * Two kinds:
-     *   'enum'  - a PHP-side assertion about a model's $enums declaration
+     *   'enum'  - a PHP-side assertion about a model's enum column declaration
      *   'count' - a COUNT(*) over a table with a framework-authored predicate; a
      *             non-zero count is the finding
      *
@@ -480,7 +480,7 @@ class Schema_Contract
                 'label' => 'users.role_id enum',
                 'table' => null,
                 'predicate' => null,
-                'why' => "User_Model::\$enums['role_id'] must be non-empty and every entry must carry"
+                'why' => "User_Model's role_id enum must be non-empty and every entry must carry"
                     . ' permissions and can_admin_roles: has_permission() reads them, and'
                     . ' Rsx_Test_Abstract::most_privileged_role_id() shouldnt_happen()s on an empty enum',
                 'remediation' => 'declare the roles on the User_Model override (rsx:man acls)',

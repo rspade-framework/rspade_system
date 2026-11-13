@@ -19,7 +19,5 @@ class Column_Order_Fixture_Detail_Model extends Rsx_Detail_Model_Abstract
     protected $table = 'codegen_column_order_fixture_details';
     protected $fillable = [];
 
-    public static $enums = [];
-
     protected static $parent_model = Column_Order_Fixture_Model::class;
 }

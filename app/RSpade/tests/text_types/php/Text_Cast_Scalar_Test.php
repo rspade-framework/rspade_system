@@ -42,7 +42,7 @@ class Text_Cast_Scalar_Test extends Rsx_Test_Abstract
                 . "class " . self::MODEL . " extends \\App\\RSpade\\Core\\Database\\Models\\Rsx_Model_Abstract\n"
                 . "{\n"
                 . "    protected \$table = 'fixture';\n"
-                . "    public static \$text_types = ['body' => \\App\\RSpade\\Tests\\TextTypes\\Php\\Text_Fixture_Wrapped_Text::class];\n"
+                . "    public static \$columns = ['body' => ['text_type' => \\App\\RSpade\\Tests\\TextTypes\\Php\\Text_Fixture_Wrapped_Text::class]];\n"
                 . "}\n");
             require $path;
             @unlink($path);

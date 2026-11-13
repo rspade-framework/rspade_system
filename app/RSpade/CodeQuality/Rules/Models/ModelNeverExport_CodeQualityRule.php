@@ -30,8 +30,9 @@ use App\RSpade\Core\Manifest\Manifest;
  * ordinary data, and a rule that cries wolf gets suppressed wholesale.
  *
  * The list checked is the EFFECTIVE one - Rsx_Model_Abstract::never_exported_columns(), the
- * union of $neverExport up the inheritance chain - so a class override of a core model passes
- * on the columns its base already protects and is flagged only for what it adds.
+ * $columns entries carrying never_export after the inheritance overlay - so a class override
+ * of a core model passes on the columns its base already protects and is flagged only for
+ * what it adds.
  *
  * Every CONCRETE model whose table exists is checked, framework and application alike; the
  * finding is reported on that model's file, which is where an override adds its declaration.
@@ -66,7 +67,7 @@ class ModelNeverExport_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'A password/token/secret column must be in the model\'s effective $neverExport list';
+        return 'A password/token/secret column must be declared never_export in the model\'s $columns';
     }
 
     public function get_file_patterns(): array
@@ -153,7 +154,7 @@ class ModelNeverExport_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             $class_name = class_basename($fqcn);
-            $line = $this->line_of($contents, '/\$neverExport\s*=/') ?? $this->line_of($contents, '/\bclass\s+' . preg_quote($class_name, '/') . '\b/') ?? 1;
+            $line = $this->line_of($contents, '/\$columns\s*=/') ?? $this->line_of($contents, '/\bclass\s+' . preg_quote($class_name, '/') . '\b/') ?? 1;
             $lines = explode("\n", $contents);
 
             $this->add_violation(
@@ -165,15 +166,18 @@ class ModelNeverExport_CodeQualityRule extends CodeQualityRule_Abstract
                 . "user object and the external API, so a column it does not strip reaches every browser that "
                 . "reads the record. A payload carrying a password hash, a token or a secret is a security "
                 . "event with no error anywhere. Laravel's \$hidden does not close it: makeVisible() undoes "
-                . "\$hidden, and \$neverExport is applied after it.",
+                . "\$hidden, and never_export is applied after it.",
                 $lines[$line - 1] ?? '',
-                "Add '{$column}' to the model's never-export list:\n"
-                . "    public static \$neverExport = ['{$column}'];\n"
-                . "The effective list is the UNION of every \$neverExport up the inheritance chain, so an "
-                . "override lists only what it adds - it can no longer drop a column its base protects.\n"
+                "Declare '{$column}' never_export in the model's \$columns:\n"
+                . "    public static \$columns = [\n"
+                . "        '{$column}' => ['never_export' => true],\n"
+                . "    ];\n"
+                . "The \$columns of every class in the chain overlay one another, so an override declares "
+                . "only the columns it adds - and an entry replacing one that carries never_export must "
+                . "carry it too (MODEL-COLUMNS-01).\n"
                 . "The same declaration covers the revision lane: on a model with \$revisions, a change to a "
                 . "never-exported column is recorded with both values replaced by Revision::REDACTED, so the "
-                . "column needs no \$revision_exclude entry and the history still says it changed.\n"
+                . "column needs no revision_exclude and the history still says it changed.\n"
                 . "If the column is exported ON PURPOSE, declare it in this file with the reason:\n"
                 . "    // @" . self::RULE_ID . "-EXCEPTION {$column} - <why a browser may hold it>\n"
                 . "See: php artisan rsx:man model, NEVER EXPORT FIELDS",

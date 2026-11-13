@@ -18,6 +18,4 @@ class Revision_Plain_Fixture_Model extends Rsx_Model_Abstract
 {
     protected $table = 'revision_plain_fixtures';
     protected $fillable = [];
-
-    public static $enums = [];
 }

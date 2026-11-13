@@ -14,7 +14,5 @@ class Detail_Fixture_Person_Detail_Model extends Rsx_Detail_Model_Abstract
     protected $table = 'detail_fixture_person_details';
     protected $fillable = [];
 
-    public static $enums = [];
-
     protected static $parent_model = Detail_Fixture_Party_Model::class;
 }

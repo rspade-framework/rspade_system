@@ -13,7 +13,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * RSpade stores a polymorphic discriminator as a BIGINT type-ref id, never as a
  * VARCHAR class name. The shape is ALWAYS a pair:
  *
- *     {relation}_type   BIGINT   - declared in the owning model's $type_ref_columns
+ *     {relation}_type   BIGINT   - declared `type_ref` in the owning model's $columns
  *     {relation}_id     BIGINT
  *
  * With the _type column declared, STOCK Eloquent morph relations work unchanged:
@@ -31,13 +31,13 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * Detected (AST, never a regex over source):
  *   1. morphTo()      - the _type column lives on the DECLARING model. Flagged when
- *                       that model's $type_ref_columns does not declare it.
+ *                       that model's effective $columns does not declare it type_ref.
  *   2. morphOne() / morphMany()
  *                     - the _type column lives on the RELATED model (argument 1).
  *                       Flagged when THAT model does not declare it.
  *   3. morphToMany() / morphedByMany()
  *                     - the _type column lives on a PIVOT TABLE that no model owns,
- *                       so no $type_ref_columns declaration can ever apply to it.
+ *                       so no $columns type_ref declaration can ever apply to it.
  *                       Always flagged: model the join table as a real model with a
  *                       {relation}_type / {relation}_id pair.
  *   4. A morph type column whose name does not end in `_type` (the pair standard).
@@ -87,7 +87,7 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
     public function get_description(): string
     {
         return 'Flags a Laravel string-morph relationship: a morphTo/morphOne/morphMany whose '
-            . '*_type discriminator column is not declared in the owning model\'s $type_ref_columns, '
+            . '*_type discriminator column is not declared type_ref in the owning model\'s $columns, '
             . 'and pivot-table morphs which no type-ref declaration can cover';
     }
 
@@ -273,7 +273,7 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
             return [
                 'message' => sprintf(
                     "%s::%s() uses %s('%s'). The '%s_type' discriminator lives on a PIVOT TABLE, "
-                        . "which no model owns - so no \$type_ref_columns declaration can ever apply to it "
+                        . "which no model owns - so no \$columns type_ref declaration can ever apply to it "
                         . "and the column is a stock Laravel VARCHAR class-name morph.",
                     $class_name,
                     $method->name->toString(),
@@ -283,7 +283,7 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
                 ),
                 'suggestion' => $this->conversion_recipe(
                     "Model the join table as a real RSpade model with a {$name}_type BIGINT / "
-                        . "{$name}_id BIGINT pair declared in its \$type_ref_columns, and relate to it "
+                        . "{$name}_id BIGINT pair, the _type column declared type_ref in its \$columns, and relate to it "
                         . "with morphMany()/belongsTo() instead of a pivot morph."
                 ),
             ];
@@ -334,7 +334,7 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
                     $type_column
                 ),
                 'suggestion' => "Rename the columns to {relation}_type / {relation}_id (both BIGINT) "
-                    . "and declare the _type column in the owning model's \$type_ref_columns.\n"
+                    . "and declare the _type column type_ref in the owning model's \$columns.\n"
                     . "See: php artisan rsx:man polymorphic.",
             ];
         }
@@ -352,7 +352,7 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
         return [
             'message' => sprintf(
                 "%s::%s() relates polymorphically over '%s.%s', but %s does not declare "
-                    . "'%s' in \$type_ref_columns. That is Laravel's string-morph pattern: a VARCHAR "
+                    . "'%s' type_ref in its \$columns. That is Laravel's string-morph pattern: a VARCHAR "
                     . "column repeating a class name on every row, outside the type-ref registry and "
                     . "invisible to the query-builder conversion.",
                 $class_name,
@@ -364,7 +364,9 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
             ),
             'suggestion' => $this->conversion_recipe(
                 "Declare it on {$owner}:\n"
-                    . "    protected static \$type_ref_columns = ['{$type_column}'];"
+                    . "    public static \$columns = [\n"
+                    . "        '{$type_column}' => ['type_ref' => true],\n"
+                    . "    ];"
             ),
         ];
     }
@@ -392,12 +394,14 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * The $type_ref_columns list for a simple class name, climbing lineage until a class
-     * DECLARES the property (an inherited empty declaration from Rsx_Model_Abstract is a
-     * legitimate answer: "this model has no type-ref columns").
+     * The effective type-ref columns of a simple class name: the `$columns` declarations of
+     * the class and every manifest-visible ancestor overlaid base first, per column - a
+     * class's entry for a column replaces its parent's, so an entry without type_ref
+     * removes the kind. Rsx_Model_Abstract's own entries (the audit type columns) are part
+     * of the overlay like any other ancestor's.
      *
-     * Returns null when the class cannot be located/parsed at all - the rule then declines
-     * to judge rather than assuming an empty list.
+     * Returns null when the class cannot be located in the manifest at all - the rule then
+     * declines to judge rather than assuming an empty list.
      *
      * @return array<int,string>|null
      */
@@ -407,30 +411,33 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
             return $this->type_ref_cache[$class_name];
         }
 
+        $lineage = $this->lineage_with_self($class_name);
         $result = null;
 
-        if ($known_node !== null) {
-            $result = $this->read_type_ref_property($known_node);
+        // A class the manifest does not index (a fixture parsed from a temporary file) is
+        // judged on its own declaration alone.
+        if ($lineage === [] && $known_node !== null) {
+            $lineage = [['class' => $class_name, 'file' => '']];
         }
 
-        if ($result === null) {
-            foreach ($this->lineage_with_self($class_name) as $ancestor) {
-                // The property's LITERAL default is a field of the member summary, so an
-                // ancestor is summarized once for the whole pass rather than re-parsed here.
-                $properties = $this->source()->declared_members($ancestor['file'], $ancestor['class'])['properties'];
+        if ($lineage !== []) {
+            $overlay = [];
 
-                if (!isset($properties['type_ref_columns'])) {
-                    // Not located, or located without the property - keep climbing.
-                    continue;
-                }
+            foreach (array_reverse($lineage) as $ancestor) {
+                $is_self = $ancestor['class'] === $class_name;
 
-                $declared = $properties['type_ref_columns']['default'];
+                // The class being checked is already parsed; every ancestor is read from the
+                // member summary, which is built once for the whole pass.
+                $declared = ($is_self && $known_node !== null)
+                    ? $this->read_type_ref_entries($known_node)
+                    : $this->source()->declared_members($ancestor['file'], $ancestor['class'])['type_ref_columns'];
 
-                if (is_array($declared)) {
-                    $result = $declared;
-                    break;
+                foreach ((array) $declared as $column => $is_type_ref) {
+                    $overlay[$column] = $is_type_ref;
                 }
             }
+
+            $result = array_keys(array_filter($overlay));
         }
 
         $this->type_ref_cache[$class_name] = $result;
@@ -465,29 +472,18 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * The literal string values of a class's own $type_ref_columns declaration, or null
-     * when the class does not declare the property.
+     * The column => is-type-ref map of a class's own `$columns` declaration, or null when the
+     * class does not declare the property.
      *
-     * @return array<int,string>|null
+     * @return array<string,bool>|null
      */
-    private function read_type_ref_property(Node\Stmt\ClassLike $class_node): ?array
+    private function read_type_ref_entries(Node\Stmt\ClassLike $class_node): ?array
     {
         foreach ($class_node->getProperties() as $property) {
             foreach ($property->props as $prop) {
-                if ($prop->name->toString() !== 'type_ref_columns') {
-                    continue;
+                if ($prop->name->toString() === 'columns' && $property->isStatic()) {
+                    return \App\RSpade\CodeQuality\Support\Source_Cache::type_ref_entries($prop->default);
                 }
-
-                $columns = [];
-                if ($prop->default instanceof Node\Expr\Array_) {
-                    foreach ($prop->default->items as $item) {
-                        if ($item !== null && $item->value instanceof Node\Scalar\String_) {
-                            $columns[] = $item->value->value;
-                        }
-                    }
-                }
-
-                return $columns;
             }
         }
 

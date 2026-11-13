@@ -328,12 +328,12 @@ class Audit_Stamp_Test extends Rsx_Test_Abstract
 
     /**
      * The audit type columns are type-ref cast on EVERY model, including one that declares
-     * its own $type_ref_columns (a redeclared static property would otherwise shadow the
-     * base's declaration and silently drop the cast).
+     * type-ref columns of its own in $columns (the overlay keeps the base's entries beside
+     * the model's).
      */
     public static function test_the_audit_type_columns_survive_a_model_declaring_its_own()
     {
-        $declared = Portal_Notification_Model::_type_ref_columns();
+        $declared = Portal_Notification_Model::type_ref_columns();
 
         static::__assert_true(in_array('subject_type', $declared, true), 'model declaration kept');
         static::__assert_true(in_array('created_by_type', $declared, true), 'audit declaration merged');

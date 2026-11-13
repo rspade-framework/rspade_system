@@ -18,11 +18,11 @@ use App\RSpade\Tests\Codegen\Php\No_Appends_Fixture_Model;
 use App\RSpade\Tests\Codegen\Php\Split_Fixture_Model;
 
 /**
- * The JS model stub DECLARES a model's derived properties ($appends).
+ * The JS model stub DECLARES a model's appended properties ($appends).
  *
  * Without this the property arrives on the fetched record at runtime with no declared surface
  * on Base_*_Model.js at all - no autocomplete, and nothing telling a reader of the stub that it
- * exists. The stub is generated from enums, relationships and constants, and a derived
+ * exists. The stub is generated from enums, relationships and constants, and an appended
  * property is none of those.
  *
  * Asserted: the names are declared as JSDoc @property lines; a model with no $appends gains
@@ -54,12 +54,12 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
         );
 
         static::__assert_contains(
-            '@property {*} display_id - derived (appended by the PHP model); read-only',
+            '@property {*} display_id - appended property (computed by the PHP model); read-only',
             $content,
             'the first appended name is declared'
         );
         static::__assert_contains(
-            '@property {*} is_flagged - derived (appended by the PHP model); read-only',
+            '@property {*} is_flagged - appended property (computed by the PHP model); read-only',
             $content,
             'and the second'
         );
@@ -80,7 +80,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
     // CODEGEN-NO-LENGTHS: a stub is a function of the model's CODE. Column lengths are a fact
     // about the database and reach the page in the bundle's field-length script, answered by the
     // one Rsx_Js_Model.field_length() every stub inherits - so a stub declares no field_length of
-    // its own and carries no length for anything, a derived property least of all.
+    // its own and carries no length for anything, an appended property least of all.
     public static function test_a_stub_declares_no_field_length_and_carries_no_lengths()
     {
         $content = static::__generate(
@@ -93,12 +93,12 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
         static::__assert_false(str_contains($content, 'lengths'), 'and carries no length table');
         static::__assert_false(
             str_contains($content, '"display_id":'),
-            'the derived name appears in no map at all'
+            'the appended name appears in no map at all'
         );
         static::__assert_contains("static __MODEL = 'Appends_Fixture_Model';", $content, 'it names its model, which is how the inherited field_length() finds its lengths');
     }
 
-    // CODEGEN-APPENDS-NONE: a model that declares no derived properties gains no lines. The
+    // CODEGEN-APPENDS-NONE: a model that declares no appended properties gains no lines. The
     // feature is opt-in by declaration and adds nothing to a stub that has nothing to declare.
     public static function test_a_model_without_appends_declares_nothing()
     {
@@ -116,7 +116,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
 
     // CODEGEN-APPENDS-REAL: the framework model that actually uses the pattern - proof the build
     // this test runs inside produces the declaration, not just the generator in isolation.
-    public static function test_the_attachment_model_declares_its_four_derived_properties()
+    public static function test_the_attachment_model_declares_its_four_appended_properties()
     {
         $content = static::__generate(
             File_Attachment_Model::class,
@@ -126,7 +126,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
 
         foreach (['is_image', 'is_video', 'is_document', 'can_open_inline'] as $name) {
             static::__assert_contains(
-                "@property {*} {$name} - derived (appended by the PHP model); read-only",
+                "@property {*} {$name} - appended property (computed by the PHP model); read-only",
                 $content,
                 "the stub declares {$name}"
             );
@@ -150,7 +150,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
         );
 
         static::__assert_contains(
-            '@property {*} base_display_id - derived (appended by the PHP model); read-only',
+            '@property {*} base_display_id - appended property (computed by the PHP model); read-only',
             $content,
             'the appended property declared on the base reaches the concrete\'s stub'
         );

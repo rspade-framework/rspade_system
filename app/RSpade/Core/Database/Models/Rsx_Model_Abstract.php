@@ -5,12 +5,14 @@ namespace App\RSpade\Core\Database\Models;
 use App\Database\RestrictedEloquentBuilder;
 use App\Exceptions\MassAssignmentException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use LogicException;
 use RuntimeException;
 use App\RSpade\Core\Database\DetailTables\Rsx_Detail_Model_Abstract;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Emissions;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
+use App\RSpade\Core\Database\Migration_Guard;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
@@ -42,12 +44,12 @@ use App\RSpade\Lib\Revisions\Revision_Parent_Registry;
  * $model->save();
  *
  * Enum System:
- * Define enums using public static $enums property:
- * public static $enums = [
- *     'status_id' => [
+ * Declare an enum column in the model's $columns:
+ * public static $columns = [
+ *     'status_id' => ['enum' => [
  *         1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
- *         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive']
- *     ]
+ *         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive'],
+ *     ]],
  * ];
  *
  * This provides magic properties and methods (BEM-style double underscore):
@@ -115,43 +117,6 @@ abstract class Rsx_Model_Abstract extends Model
     public static $revisions = false;
 
     /**
-     * Columns this model never records a revision for, on top of the automatic exclusions
-     * (every `_`-prefixed system column, updated_at, and the updated_by pair).
-     *
-     * The list is for columns that CHANGE without the user having changed anything -
-     * denormalized counters, last-seen timestamps, cached aggregates. Recording them turns
-     * a history into noise, and a diff of "what the user changed" is the whole product.
-     *
-     * NOT a security control: a column excluded here is still stored in the record. To keep
-     * a value out of the database, do not put it there. A SECRET column is not listed here
-     * at all - its $neverExport declaration already makes every revision record THAT it
-     * changed with the value replaced by Revision::REDACTED. A column named in both lists is
-     * not recorded at all: this list wins.
-     *
-     * @var array<int, string>
-     */
-    protected static $revision_exclude = [];
-
-    /**
-     * Enum definitions for this model
-     *
-     * Example:
-     * public static $enums = [
-     *     'role_id' => [
-     *         1 => ['constant' => 'ROLE_ADMIN', 'label' => 'Administrator'],
-     *         2 => ['constant' => 'ROLE_USER', 'label' => 'User']
-     *     ],
-     *     'status_id' => [
-     *         1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
-     *         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive']
-     *     ]
-     * ];
-     *
-     * @var array
-     */
-    // Note: $enums is declared later with full documentation
-
-    /**
      * Private helper to resolve enum magic properties and methods
      *
      * Handles (these are mirrored in JavaScript stubs, BEM-style double underscore):
@@ -168,8 +133,9 @@ abstract class Rsx_Model_Abstract extends Model
     {
         $class = get_called_class();
 
-        if (!empty($class::$enums)) {
-            foreach ($class::$enums as $column => $enum_config) {
+        $enum_columns = $class::enum_columns();
+        if (!empty($enum_columns)) {
+            foreach ($enum_columns as $column => $enum_config) {
                 // Sorted once per class+column, not once per call. The sort is by the enum's
                 // declared `order` then by key, and neither depends on the record - but this
                 // method is reached from __get, so an unmemoized uksort here was a full sort
@@ -228,7 +194,7 @@ abstract class Rsx_Model_Abstract extends Model
      *
      * @param string $class The called class, used as half the memo key
      * @param string $column The enum column
-     * @param array $enum_config That column's raw $enums entry
+     * @param array $enum_config That column's declared enum value map
      * @return array
      */
     private static function __sorted_enum_config(string $class, string $column, array $enum_config): array
@@ -320,7 +286,7 @@ abstract class Rsx_Model_Abstract extends Model
     /**
      * `field__property` => [column, [enum_value => property_value, ...]], memoized per class.
      *
-     * Inverts static::$enums once so a magic-property read is a hash lookup instead of a
+     * Inverts static::enum_columns() once so a magic-property read is a hash lookup instead of a
      * nested walk of every column x value x property combination. Declaration order is
      * preserved inside each key, so when several enum values define the same property the
      * first one whose value matches still wins - the same answer the walk gave.
@@ -337,7 +303,7 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         $map = [];
-        foreach ((array) static::$enums as $column => $enum_config) {
+        foreach (static::enum_columns() as $column => $enum_config) {
             foreach ((array) $enum_config as $enum_val => $enum_properties) {
                 if (!is_array($enum_properties)) {
                     continue;
@@ -495,7 +461,7 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         // Add enum field extra data - ALL properties (BEM-style: field__property)
-        foreach (static::$enums as $column => $definitions) {
+        foreach (static::enum_columns() as $column => $definitions) {
             if (isset($this->$column) && isset($definitions[$this->$column])) {
                 foreach ($definitions[$this->$column] as $prop => $value) {
                     // Add all enum properties to the export
@@ -593,67 +559,6 @@ abstract class Rsx_Model_Abstract extends Model
     protected $guarded = ['*'];
 
     /**
-     * Columns that must never leave the server in a payload.
-     *
-     * public static $neverExport = ['password', 'remember_token'];
-     *
-     * toArray() - the one serializer behind fetch(), relationships, the page's user object
-     * and the external API - unsets every listed column AFTER Laravel has built the array,
-     * so makeVisible() and $visible cannot reveal one. Anything whose disclosure would be a
-     * security event (a password hash, a token, a secret, an open key/value bag) belongs
-     * here; Laravel's $hidden is advisory and is for tidiness only.
-     *
-     * The effective list is the UNION of every declaration up the inheritance chain (see
-     * never_exported_columns()), so a subclass - a class override of a core model included
-     * - only ever ADDS columns and can never drop one its parent protects.
-     *
-     * The same list REDACTS the revision lane: on a model with $revisions, a change to a
-     * listed column is recorded with both sides replaced by Revision::REDACTED, so a history
-     * can say the column changed without the stored document ever holding its value.
-     *
-     * A secret-shaped column (password, token, secret) missing from the effective list is
-     * flagged by the MODEL-NEVER-EXPORT-01 code-quality rule.
-     *
-     * @var array<int, string>
-     */
-    public static $neverExport = [];
-
-    /**
-     * Enumeration definitions for fields ending in _id
-     * Define this array with enum values for lookup fields in the format:
-     * 'field_id' => [
-     *     1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
-     *     2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive'],
-     * ]
-     * This enables automatic constant generation and JavaScript exports
-     * @var array
-     */
-    public static $enums;
-
-    /**
-     * Declared TEXT column types (see rsx:man text_types).
-     *
-     * Maps a column to the Rsx_Text_Abstract subclass that owns its encoding:
-     *
-     * public static $text_types = [
-     *     'description' => Rich_Text::class,
-     *     'notes'       => Raw_Text::class,
-     * ];
-     *
-     * A declared column is read as a VALUE OBJECT rather than a string, is filtered by
-     * its type on every write, and travels to the browser as a {__TEXT, raw} envelope
-     * the JavaScript side rehydrates. The knowledge of what kind of string a column
-     * holds lives here, once, instead of at every place that prints, edits, exports or
-     * indexes it.
-     *
-     * A column NOT listed here keeps today's behaviour exactly: a naked string, no
-     * object, no filtering. Declaration is opt-in.
-     *
-     * @var array<string, class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>>
-     */
-    public static $text_types = [];
-
-    /**
      * FACT GROUPS - one fact a person edits as one thing, stored across several columns
      * (see rsx:man model, FACT GROUPS).
      *
@@ -694,87 +599,346 @@ abstract class Rsx_Model_Abstract extends Model
     public static $detail_tables = null;
 
     /**
-     * Polymorphic type reference columns
+     * COLUMN DECLARATIONS - what kind of value each column holds, one entry per column
+     * (see rsx:man model).
      *
-     * Columns listed here will automatically be cast using Rsx_Type_Ref_Cast,
-     * which transparently converts between class name strings (PHP) and
-     * integer IDs (database).
+     * public static $columns = [
+     *     'status_id'     => ['enum' => [
+     *         1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
+     *         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'selectable' => false],
+     *     ]],
+     *     'description'   => ['text_type' => Rich_Text::class],
+     *     'fileable_type' => ['type_ref' => true],
+     *     'api_secret'    => ['never_export' => true],
+     *     'view_count'    => ['revision_exclude' => true],
+     *     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
+     * ];
      *
-     * A polymorphic reference is ALWAYS the pair {relation}_type + {relation}_id, both
-     * BIGINT. Declaring the _type column here is the whole setup - stock Eloquent morph
-     * relations (morphTo/morphMany/morphOne/whereMorphedTo/whereHasMorph) then work over
-     * it unchanged, because Type_Ref_Registry::register_morph_map() registers each
-     * type-ref integer id as a morph-map alias alongside the class name.
+     * KEYS (anything else is an error):
      *
-     * Example:
-     *   protected static $type_ref_columns = ['fileable_type'];
+     *   enum             - integer-keyed map of value => ['constant' => 'NAME', 'label' => 'Shown',
+     *                      ...]: optional `constant` (generated as a class constant), `label`,
+     *                      `order`, `selectable` (false hides it from __enum_select()) and any
+     *                      custom property, readable as $record->{column}__{property}. The column
+     *                      is a BIGINT; Model::{column}__enum() and the JS stub mirror it.
+     *   text_type        - class-string of an Rsx_Text_Abstract subclass that owns the column's
+     *                      encoding (rsx:man text_types): read as a value object, filtered on
+     *                      every write, sent to the browser as a {__TEXT, raw} envelope.
+     *   type_ref         - literal true, on the {relation}_type column of a polymorphic pair: the
+     *                      column stores a _type_refs integer id and reads as a class name, and
+     *                      stock morph relations work over it (rsx:man polymorphic).
+     *   never_export     - literal true: toArray() - the one serializer behind fetch(),
+     *                      relationships, the page's user object and the external API - removes
+     *                      the column after Laravel built the array, so makeVisible() and
+     *                      $visible cannot reveal it; on a model with $revisions, a change to it
+     *                      is recorded with both sides replaced by Revision::REDACTED. For a
+     *                      password hash, a token, a secret, an open key/value bag (Laravel's
+     *                      $hidden is advisory). A secret-shaped column without it is flagged
+     *                      by MODEL-NEVER-EXPORT-01.
+     *   revision_exclude - literal true: no revision is recorded for the column, on top of the
+     *                      automatic exclusions (`_`-prefixed system columns, updated_at, the
+     *                      updated_by pair). For values that change without anybody changing
+     *                      them (counters, last-seen stamps, cached aggregates). Not a security
+     *                      control. On a never_export column it wins: nothing is recorded.
+     *   derived          - the name of a public, non-static method of the model, taking no
+     *                      required argument, that computes the column's value (it may read
+     *                      other tables). The framework writes the column on save(): on an
+     *                      INSERT, and on every UPDATE in which a `from` column changed. The
+     *                      value is assigned through setAttribute(), so the column's own kind
+     *                      (enum, text_type, type_ref) still applies. Requires `from`.
+     *   from             - the list of THIS record's columns the derive method reads (may be
+     *                      [], may name another derived column, never the column itself).
+     *                      Only allowed beside `derived`.
      *
-     * With this:
-     *   $attachment->fileable_type = 'Contact_Model';  // Stored as integer
-     *   echo $attachment->fileable_type;               // Returns 'Contact_Model'
+     * A DERIVED COLUMN IS NEVER ASSIGNED. save() throws a LogicException when one was set by
+     * hand - on a new record any assignment at all, even null or the value it would compute -
+     * and a bulk update() naming one, Form_Edit::set() of one, and a raw-SQL (Expression)
+     * bulk update of a `from` column throw too. Assign the `from` columns instead, or call
+     * rederive() when what the method reads lives elsewhere (another table) and has moved.
+     * A save that changes only derived columns leaves updated_at and the updated_by pair as
+     * they were; a derived column never appears in revision history. An explicit
+     * ->raw_bulk()->update() of a `from` column writes no derived value: the caller rederives.
      *
-     *   #[Relationship]
-     *   public function fileable() { return $this->morphTo('fileable', 'fileable_type', 'fileable_id'); }
-     *   $attachment->fileable;                         // The Contact_Model row
+     * At most one of enum / text_type / type_ref per column; never_export and revision_exclude
+     * combine with anything except that revision_exclude never sits beside derived (a derived
+     * column is never recorded already). A flag is `true` or absent - a kind is removed by
+     * replacing the entry, and `'column' => []` declares an explicitly plain column.
      *
-     * The base declares the AUDIT type columns: the two authorship ones, which every table
-     * carries, plus the deletion one, which only the soft-deleting tables carry (declaring a
-     * cast for a column a table does not have is inert - Eloquent only casts attributes that
-     * exist). A subclass that declares its own array does NOT lose them: the property is read
-     * through _type_ref_columns(), which unions the base's declaration with the subclass's
-     * (see that method).
+     * INHERITANCE: the effective declaration overlays every class from this base down to the
+     * model, base first; a class's entry for a column REPLACES its parent's entry for that
+     * column wholesale (entries are never merged key by key). A class with nothing to declare
+     * declares nothing. A replacing entry may never drop a protection: an entry replacing one
+     * that carries never_export carries it too, and an entry for one of the audit type columns
+     * below keeps type_ref (MODEL-COLUMNS-01, a manifest-build error).
      *
-     * @var array
+     * Every rule above is checked at manifest build by MODEL-COLUMNS-01.
+     *
+     * This base declares the AUDIT type columns: the two authorship pairs every table carries
+     * and the deletion pair only soft-deleting tables carry (a cast for a column a table does
+     * not have is inert - Eloquent casts only attributes that exist).
+     *
+     * Read ONLY through columns() and its kind views (enum_columns(), enum_values(),
+     * text_type_columns(), type_ref_columns(), never_exported_columns(),
+     * revision_excluded_columns(), derived_columns()) - never as a property. Every declared
+     * column and every `from` name is checked against the model's table the first time a
+     * model with derived columns saves, on rederive() and on Form_Edit::run()
+     * (_assert_columns_exist()), and by MODEL-ENUM-01 in rsx:check.
+     *
+     * @var array<string, array<string, mixed>>
      */
-    protected static $type_ref_columns = ['created_by_type', 'updated_by_type', 'deleted_by_type'];
+    public static $columns = [
+        'created_by_type' => ['type_ref' => true],
+        'updated_by_type' => ['type_ref' => true],
+        'deleted_by_type' => ['type_ref' => true],
+    ];
 
     /**
-     * The effective never-export list for this model: the UNION of $neverExport as declared
-     * by this class and by every ancestor.
+     * columns() and its kind views, per model class, for the life of the process. They are
+     * facts about the code, so nothing a schema change or a test-database swap does can
+     * move them.
      *
-     * PHP static properties are per-declaring-class: a model writing
-     * `public static $neverExport = ['api_secret'];` creates its OWN property, and
-     * `static::$neverExport` on that model answers only 'api_secret'. Reading the property
-     * through each class of the chain answers each class's nearest declaration, and merging
-     * those answers yields every column any class in the chain protects - which is what
-     * makes a subclass list additive rather than a replacement.
+     * @var array<string, array<string, array>>
+     */
+    private static array $_columns_memo = [];
+
+    /**
+     * The effective column declarations of this model: column => entry, the $columns of every
+     * class from this base down to the model overlaid base first, a class's entry replacing
+     * its parent's for the same column.
      *
-     * toArray() and the MODEL-NEVER-EXPORT-01 rule both read the declaration through this
-     * method; nothing reads the property directly.
+     * Checks the structure only (an array of arrays keyed by column name), so a class loaded
+     * outside a manifest build still fails loud on a malformed declaration.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function columns(): array
+    {
+        return static::__column_views()['columns'];
+    }
+
+    /**
+     * Every enum column: column => its value map, in declaration order.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    public static function enum_columns(): array
+    {
+        return static::__column_views()['enum'];
+    }
+
+    /**
+     * One enum column's value map. Throws when the column is not an enum - a caller naming
+     * a column holds a fact about the model, so a missing declaration is a broken
+     * assumption, not an input to handle.
+     *
+     * @param string $column
+     * @return array<int, array<string, mixed>>
+     */
+    public static function enum_values(string $column): array
+    {
+        $enum_map = static::__column_views()['enum'];
+
+        if (!array_key_exists($column, $enum_map)) {
+            throw new LogicException(static::class . "::{$column} is not an enum column: its \$columns entry has no 'enum'.");
+        }
+
+        return $enum_map[$column];
+    }
+
+    /**
+     * Every column with a declared text type: column => Rsx_Text_Abstract subclass.
+     *
+     * @return array<string, class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>>
+     */
+    public static function text_type_columns(): array
+    {
+        return static::__column_views()['text_type'];
+    }
+
+    /**
+     * Every polymorphic type-ref column, the base's audit columns included. Every consumer
+     * of the declaration (getCasts(), the query builder's WHERE conversion, the orphan
+     * report) reads it here.
+     *
+     * @return array<int, string>
+     */
+    public static function type_ref_columns(): array
+    {
+        return static::__column_views()['type_ref'];
+    }
+
+    /**
+     * Every column that never leaves the server in a payload. toArray(), the revision
+     * redaction and the MODEL-NEVER-EXPORT-01 rule read the declaration here.
      *
      * @return array<int, string>
      */
     public static function never_exported_columns(): array
     {
-        $columns = [];
-        for ($current = static::class; $current !== false; $current = get_parent_class($current)) {
-            if (property_exists($current, 'neverExport')) {
-                $columns = array_merge($columns, $current::$neverExport);
-            }
-        }
-
-        return array_values(array_unique($columns));
+        return static::__column_views()['never_export'];
     }
 
     /**
-     * The full type-ref column list for this model: the framework audit authorship columns
-     * (declared on the base, present on every table) UNIONed with whatever the concrete model
-     * declares for itself.
-     *
-     * The union is the whole point. PHP static properties are per-declaring-class: a model
-     * writing `protected static $type_ref_columns = ['fileable_type'];` creates its OWN
-     * property, and `static::$type_ref_columns` on that model answers ONLY 'fileable_type' -
-     * the audit columns would silently lose their cast. `self::$type_ref_columns` inside this
-     * method always resolves to the base's declaration, so merging the two yields both.
-     *
-     * Every consumer of the declaration (getCasts(), the query builder's WHERE conversion)
-     * must go through this method rather than reading the property.
+     * Every column no revision records: those declared revision_exclude plus every derived
+     * column (the automatic exclusions - system columns, updated_at, the updated_by pair -
+     * are added by the revision lane itself).
      *
      * @return array<int, string>
      */
-    public static function _type_ref_columns(): array
+    public static function revision_excluded_columns(): array
     {
-        return array_values(array_unique(array_merge(self::$type_ref_columns, static::$type_ref_columns)));
+        return static::__column_views()['revision_exclude'];
+    }
+
+    /**
+     * Every derived column: column => ['method' => derive method, 'from' => source columns],
+     * in DEPENDENCY ORDER - a derived column named in another's `from` comes before it. A
+     * cycle among derived columns throws a LogicException naming its path. Empty for a model
+     * with none (one memoized read).
+     *
+     * @return array<string, array{method: string, from: array<int, string>}>
+     */
+    public static function derived_columns(): array
+    {
+        return static::__column_views()['derived'];
+    }
+
+    /**
+     * columns() and each kind view of it, built once per class and memoized.
+     *
+     * @return array{columns: array, enum: array, text_type: array, type_ref: array, never_export: array, revision_exclude: array, derived: array}
+     */
+    private static function __column_views(): array
+    {
+        $class = static::class;
+
+        if (isset(self::$_columns_memo[$class])) {
+            return self::$_columns_memo[$class];
+        }
+
+        $lineage = [];
+        for ($current = $class; $current !== self::class; $current = get_parent_class($current)) {
+            $lineage[] = $current;
+        }
+        $lineage[] = self::class;
+
+        $columns = [];
+        foreach (array_reverse($lineage) as $current) {
+            $declared = $current::$columns;
+
+            if (!is_array($declared)) {
+                throw new LogicException("{$current}::\$columns must be an array of column => entry.");
+            }
+
+            foreach ($declared as $column => $entry) {
+                if (!is_string($column) || $column === '' || !is_array($entry)) {
+                    throw new LogicException(
+                        "{$current}::\$columns must map each column name to an array entry, e.g. "
+                        . "'status_id' => ['enum' => [...]]. See: php artisan rsx:man model"
+                    );
+                }
+
+                $columns[$column] = $entry;
+            }
+        }
+
+        $views = [
+            'columns' => $columns,
+            'enum' => [],
+            'text_type' => [],
+            'type_ref' => [],
+            'never_export' => [],
+            'revision_exclude' => [],
+            'derived' => [],
+        ];
+
+        $derived = [];
+
+        foreach ($columns as $column => $entry) {
+            if (array_key_exists('enum', $entry)) {
+                $views['enum'][$column] = $entry['enum'];
+            }
+            if (array_key_exists('text_type', $entry)) {
+                $views['text_type'][$column] = $entry['text_type'];
+            }
+            foreach (['type_ref', 'never_export', 'revision_exclude'] as $flag) {
+                if (($entry[$flag] ?? false) === true) {
+                    $views[$flag][] = $column;
+                }
+            }
+            if (array_key_exists('derived', $entry)) {
+                $method = $entry['derived'];
+                $from = $entry['from'] ?? null;
+
+                if (!is_string($method) || $method === '' || !is_array($from) || !array_is_list($from)) {
+                    throw new LogicException(
+                        "{$class}::\$columns['{$column}'] declares a derived column as "
+                        . "['derived' => 'method_name', 'from' => ['source_column', ...]]. See: php artisan rsx:man model"
+                    );
+                }
+
+                $derived[$column] = ['method' => $method, 'from' => array_values($from)];
+            }
+        }
+
+        $views['derived'] = static::__derived_dependency_order($class, $derived);
+
+        foreach (array_keys($views['derived']) as $column) {
+            if (!in_array($column, $views['revision_exclude'], true)) {
+                $views['revision_exclude'][] = $column;
+            }
+        }
+
+        return self::$_columns_memo[$class] = $views;
+    }
+
+    /**
+     * The derived columns sorted so each comes after every derived column its `from` names,
+     * declaration order kept otherwise. A cycle throws, naming its path.
+     *
+     * @param string $class The model, for the message
+     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     * @return array<string, array{method: string, from: array<int, string>}>
+     */
+    private static function __derived_dependency_order(string $class, array $derived): array
+    {
+        $ordered = [];
+        $state = [];
+
+        $visit = function (string $column, array $path) use (&$visit, &$ordered, &$state, $derived, $class): void {
+            if (($state[$column] ?? null) === 'done') {
+                return;
+            }
+
+            if (($state[$column] ?? null) === 'active') {
+                $cycle = array_slice($path, array_search($column, $path, true));
+                $cycle[] = $column;
+
+                throw new LogicException(
+                    "{$class}::\$columns declares derived columns that depend on each other in a cycle: "
+                    . implode(' -> ', $cycle) . '. A derived column cannot be computed from itself, directly or '
+                    . 'through another derived column. See: php artisan rsx:man model'
+                );
+            }
+
+            $state[$column] = 'active';
+            $path[] = $column;
+
+            foreach ($derived[$column]['from'] as $source) {
+                if (is_string($source) && isset($derived[$source])) {
+                    $visit($source, $path);
+                }
+            }
+
+            $state[$column] = 'done';
+            $ordered[$column] = $derived[$column];
+        };
+
+        foreach (array_keys($derived) as $column) {
+            $visit($column, []);
+        }
+
+        return $ordered;
     }
 
     /**
@@ -785,7 +949,7 @@ abstract class Rsx_Model_Abstract extends Model
      */
     public static function text_type_or_null(string $column): ?string
     {
-        return ((array) static::$text_types)[$column] ?? null;
+        return static::text_type_columns()[$column] ?? null;
     }
 
     /**
@@ -803,12 +967,12 @@ abstract class Rsx_Model_Abstract extends Model
         $type = static::text_type_or_null($column);
 
         if ($type === null) {
-            shouldnt_happen(static::class . "::\$text_types has no entry for '{$column}'");
+            shouldnt_happen(static::class . " declares no text type for '{$column}'");
         }
 
         if (!is_subclass_of($type, \App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract::class)) {
             throw new \LogicException(
-                static::class . "::\$text_types['{$column}'] names {$type}, which does not extend "
+                static::class . "::\$columns['{$column}']['text_type'] names {$type}, which does not extend "
                 . 'Rsx_Text_Abstract.'
             );
         }
@@ -850,6 +1014,74 @@ abstract class Rsx_Model_Abstract extends Model
         Rsx_Schema::remember_derived($memo_key, $checked);
 
         return $checked;
+    }
+
+    /**
+     * Check, the first time it is asked in a process, that every column this model's
+     * $columns declares below this base, and every `from` column a derived entry names, is a
+     * column of the model's table. Throws a LogicException naming the model and the first
+     * missing column, and when the table is not in the connected database.
+     *
+     * The audit type columns this base declares are exempt: the deletion pair exists only on
+     * soft-deleting tables. Asked on the WRITE side only - save() of a model with derived
+     * columns, rederive(), Form_Edit::run() - and never on an attribute read: a model read
+     * during a migration that has not yet added a declared column must still work.
+     */
+    public static function _assert_columns_exist(): void
+    {
+        $memo_key = 'columns_checked|' . static::class;
+
+        if (Rsx_Schema::derived($memo_key) !== null) {
+            return;
+        }
+
+        $model = class_basename(static::class);
+        $table_columns = Rsx_Schema::model_columns($model);
+
+        if ($table_columns === null) {
+            throw new LogicException(
+                "{$model}::\$columns cannot be checked: the model's table is not in the connected database."
+            );
+        }
+
+        foreach (static::_columns_missing_from($table_columns) as $column => $why) {
+            throw new LogicException(
+                "{$model}::\$columns {$why} '{$column}', which is not a column of the model's table. "
+                . 'Add the column with a migration, or correct the declaration. See: php artisan rsx:man model'
+            );
+        }
+
+        Rsx_Schema::remember_derived($memo_key, true);
+    }
+
+    /**
+     * The declared names that are not columns of a table: column => what names it ("declares"
+     * or "names in ['x']['from']"). The audit type columns this base declares are exempt.
+     * Shared by _assert_columns_exist() and MODEL-ENUM-01.
+     *
+     * @param array<string, mixed> $table_columns The table's column map, keyed by column name
+     * @return array<string, string>
+     */
+    public static function _columns_missing_from(array $table_columns): array
+    {
+        $exempt = self::$columns;
+        $missing = [];
+
+        foreach (static::columns() as $column => $entry) {
+            if (!array_key_exists($column, $exempt) && !array_key_exists($column, $table_columns)) {
+                $missing[$column] = 'declares';
+            }
+        }
+
+        foreach (static::derived_columns() as $column => $spec) {
+            foreach ($spec['from'] as $source) {
+                if (!isset($missing[$source]) && !array_key_exists($source, $table_columns)) {
+                    $missing[$source] = "names in ['{$column}']['from']";
+                }
+            }
+        }
+
+        return $missing;
     }
 
     /**
@@ -1035,7 +1267,7 @@ abstract class Rsx_Model_Abstract extends Model
 
         // Apply type ref casts for polymorphic type columns
         // These columns store integer IDs but expose class name strings
-        foreach (static::_type_ref_columns() as $column) {
+        foreach (static::type_ref_columns() as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Database\TypeRefs\Rsx_Type_Ref_Cast::class;
             }
@@ -1045,7 +1277,7 @@ abstract class Rsx_Model_Abstract extends Model
         // declaration never fights a schema-derived cast: a column is a date or a text
         // type, never both. An explicit $casts entry on a declared column would win here
         // and shadow the text cast, which is why TEXT-TYPE-01 refuses one at build time.
-        foreach (array_keys((array) static::$text_types) as $column) {
+        foreach (array_keys(static::text_type_columns()) as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Database\TextTypes\Rsx_Text_Cast::class;
             }
@@ -1731,10 +1963,36 @@ EXAMPLE;
     }
 
     /**
-     * Override save to fire realtime emission on a committed write
+     * The raw value the framework last wrote into each derived column of this instance
+     * (column => raw attribute), so the guard can tell its own write from a hand assignment:
+     * a save that threw after deriving can be retried, while an assignment made after the
+     * framework's write still throws. Cleared by a successful save.
+     *
+     * @var array<string, mixed>
+     */
+    private array $__derived_written = [];
+
+    /**
+     * Set by rederive() around its save(): every derived column is recomputed, not only those
+     * whose `from` columns changed.
+     */
+    private bool $__rederive_all = false;
+
+    /**
+     * Set around the write of a save that changes only derived columns, so the UPDATE holds
+     * updated_at where it is (see _merge_derived_only_write()).
+     */
+    private bool $__derived_only_write = false;
+
+    /**
+     * Override save to derive the derived columns, stamp authorship, and fire the write's
+     * effects (revision, text-type hooks, realtime, lifecycle) on a committed write.
      */
     public function save(array $options = [])
     {
+        // A migration's up() never writes through a model (Migration_Guard): before anything else.
+        Migration_Guard::_refuse_model_write(static::class, 'save()');
+
         // CTI: the discriminator is immutable once set (it selects the detail table; changing
         // it would orphan the existing detail). Reject before the write.
         $this->__assert_detail_discriminator_immutable();
@@ -1745,8 +2003,24 @@ EXAMPLE;
         // misclassify the update as a create.
         $was_existing = $this->exists;
 
+        // DERIVED COLUMNS: refuse a hand assignment, then compute every derived column whose
+        // sources changed (all of them on an insert or a rederive()). One memoized read for a
+        // model that declares none.
+        $derived = static::derived_columns();
+        if ($derived !== []) {
+            static::_assert_columns_exist();
+            $this->__assert_no_explicit_derived_assignment($derived, $was_existing);
+            $this->__apply_derivations($derived, $was_existing, $this->__rederive_all);
+        }
+
+        // A save whose only changes are derived columns records nobody as the updater and
+        // leaves updated_at alone: nobody edited the record, the framework kept it consistent.
+        $derived_only = $derived !== [] && $was_existing && $this->__dirty_only_derived($derived);
+
         // Stamp authorship BEFORE the write so the columns ride the same INSERT/UPDATE.
-        $this->__apply_audit_stamp($was_existing);
+        if (!$derived_only) {
+            $this->__apply_audit_stamp($was_existing);
+        }
 
         // Snapshot the BEFORE values while they still exist. parent::save() ends with
         // syncOriginal(), so once the write returns the "original" IS the new row and the
@@ -1763,18 +2037,254 @@ EXAMPLE;
         // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
         // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
         // recurse). Decremented in finally so an exception cannot leave the guard stuck on.
+        // A derived-only write also turns Eloquent's timestamps off for its duration and asks
+        // the builder to hold updated_at in the statement (MySQL's ON UPDATE would bump it).
+        $uses_timestamps = $this->timestamps;
+        if ($derived_only) {
+            $this->timestamps = false;
+            $this->__derived_only_write = true;
+        }
+
         self::$_single_model_write_depth++;
         try {
             $result = parent::save($options);
         } finally {
             self::$_single_model_write_depth--;
+
+            if ($derived_only) {
+                $this->timestamps = $uses_timestamps;
+                $this->__derived_only_write = false;
+            }
         }
 
         if ($result) {
             $this->_dispatch_write_effects_on_save($was_existing, $revision_original, $text_hook_before);
+            $this->__derived_written = [];
         }
 
         return $result;
+    }
+
+    /**
+     * Recompute every derived column from the record as stored and save it when, and only
+     * when, a value differs. Answers whether it saved. For when what a derive method reads
+     * lives outside this record (another table) and has moved; a change to a `from` column
+     * of this record is derived by save() itself.
+     *
+     * The save is the model's own save(), so site-scope checks and a model's save() override
+     * run; it is a derived-only save (no updated_at, no updated_by, no revision; realtime and
+     * after_update() still fire). A record whose values are already right is never saved.
+     *
+     * Throws on an unsaved record, and with a LogicException on a record with unsaved
+     * changes - those would ride the same save unasked. False for a model with no derived
+     * columns.
+     */
+    public function rederive(): bool
+    {
+        if (!$this->exists) {
+            shouldnt_happen(static::class . '::rederive() needs a saved record: an unsaved one is derived by its first save().');
+        }
+
+        $derived = static::derived_columns();
+
+        if ($derived === []) {
+            return false;
+        }
+
+        if ($this->isDirty()) {
+            throw new LogicException(
+                static::class . " #{$this->getKey()}::rederive() refused: the record has unsaved changes ("
+                . implode(', ', array_keys($this->getDirty())) . '). Save them, or discard them with refresh(), first.'
+            );
+        }
+
+        static::_assert_columns_exist();
+        $this->__assign_all_derivations($derived);
+
+        if (!$this->isDirty()) {
+            $this->__derived_written = [];
+
+            return false;
+        }
+
+        $this->__rederive_all = true;
+        try {
+            return (bool) $this->save();
+        } finally {
+            $this->__rederive_all = false;
+        }
+    }
+
+    /**
+     * The derived columns whose stored value differs from a fresh computation, as column =>
+     * [stored raw value, computed raw value]. Saves nothing and leaves the record exactly as
+     * it was (attributes and dirty state). Empty for a model with no derived columns.
+     *
+     * Throws like rederive() on an unsaved record or one with unsaved changes. Framework-
+     * internal ('_' prefix): the verify path reports with it.
+     *
+     * @return array<string, array{0: mixed, 1: mixed}>
+     */
+    public function _derived_drift(): array
+    {
+        if (!$this->exists) {
+            shouldnt_happen(static::class . '::_derived_drift() needs a saved record.');
+        }
+
+        $derived = static::derived_columns();
+
+        if ($derived === []) {
+            return [];
+        }
+
+        if ($this->isDirty()) {
+            throw new LogicException(
+                static::class . " #{$this->getKey()}::_derived_drift() refused: the record has unsaved changes ("
+                . implode(', ', array_keys($this->getDirty())) . ').'
+            );
+        }
+
+        $attributes = $this->getAttributes();
+        $written = $this->__derived_written;
+        $drift = [];
+
+        try {
+            $this->__assign_all_derivations($derived);
+
+            foreach (array_keys($derived) as $column) {
+                if ($this->isDirty($column)) {
+                    $drift[$column] = [$this->getRawOriginal($column), $this->getAttributes()[$column] ?? null];
+                }
+            }
+        } finally {
+            $this->setRawAttributes($attributes);
+            $this->__derived_written = $written;
+        }
+
+        return $drift;
+    }
+
+    /**
+     * Refuse a derived column that was assigned by hand (see $__derived_written for how the
+     * framework's own write is told apart). On an existing record a dirty derived column
+     * throws; on a new record any presence of one does, even null or the right value.
+     *
+     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     */
+    private function __assert_no_explicit_derived_assignment(array $derived, bool $was_existing): void
+    {
+        $attributes = $this->getAttributes();
+
+        foreach ($derived as $column => $spec) {
+            $assigned = $was_existing ? $this->isDirty($column) : array_key_exists($column, $attributes);
+
+            if (!$assigned) {
+                continue;
+            }
+
+            if (array_key_exists($column, $this->__derived_written)
+                && ($attributes[$column] ?? null) === $this->__derived_written[$column]) {
+                continue;
+            }
+
+            $model = class_basename(static::class);
+
+            throw new LogicException(
+                "{$model}::{$column} is a derived column - {$model}::{$spec['method']}() computes it from ["
+                . implode(', ', $spec['from']) . '] on save. It is never assigned. Assign its source column(s), '
+                . 'or call rederive().'
+            );
+        }
+    }
+
+    /**
+     * Compute the derived columns that need it, in dependency order: every one on an insert
+     * or when forced, otherwise those with a changed `from` column (a derived column that
+     * just changed counts as changed for the ones after it). An identical value stays clean.
+     *
+     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     */
+    private function __apply_derivations(array $derived, bool $was_existing, bool $force): void
+    {
+        if (!$was_existing || $force) {
+            $this->__assign_all_derivations($derived);
+
+            return;
+        }
+
+        foreach ($derived as $column => $spec) {
+            foreach ($spec['from'] as $source) {
+                if ($this->isDirty($source)) {
+                    $this->__assign_derivation($column, $spec['method']);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Compute and assign every derived column, in dependency order. The one compute path of
+     * save(), rederive() and _derived_drift().
+     *
+     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     */
+    private function __assign_all_derivations(array $derived): void
+    {
+        foreach ($derived as $column => $spec) {
+            $this->__assign_derivation($column, $spec['method']);
+        }
+    }
+
+    /**
+     * Compute one derived column and assign it through setAttribute(), so its cast applies,
+     * recording the raw value written.
+     */
+    private function __assign_derivation(string $column, string $method): void
+    {
+        $this->setAttribute($column, $this->{$method}());
+        $this->__derived_written[$column] = $this->getAttributes()[$column] ?? null;
+    }
+
+    /**
+     * Whether this save changes something, and every change is a derived column.
+     *
+     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     */
+    private function __dirty_only_derived(array $derived): bool
+    {
+        $dirty = array_keys($this->getDirty());
+
+        return $dirty !== [] && array_diff($dirty, array_keys($derived)) === [];
+    }
+
+    /**
+     * Hold updated_at in a derived-only save's UPDATE: `updated_at = updated_at`. Eloquent's
+     * timestamps are off for that write, but every normalized table declares updated_at
+     * ON UPDATE CURRENT_TIMESTAMP, which MySQL applies to any UPDATE that does not name the
+     * column. Returns $values untouched for every other write, and for a record that has no
+     * updated_at.
+     *
+     * Framework-internal ('_' prefix); the builder's single-model-write branch is its only
+     * caller.
+     *
+     * @param array<string, mixed> $values The columns the UPDATE is about to write
+     * @return array<string, mixed>
+     */
+    public function _merge_derived_only_write(array $values): array
+    {
+        if (!$this->__derived_only_write) {
+            return $values;
+        }
+
+        $column = $this->getUpdatedAtColumn();
+
+        if ($column === null || array_key_exists($column, $values) || !array_key_exists($column, $this->getAttributes())) {
+            return $values;
+        }
+
+        $values[$column] = DB::raw($this->getConnection()->getQueryGrammar()->wrap($column));
+
+        return $values;
     }
 
     /**
@@ -1856,9 +2366,9 @@ EXAMPLE;
      * (who the write is attributed to), which is what an audit column asks. The impersonator
      * is recorded on the session.
      *
-     * A table without the columns is skipped, which is what makes this safe DURING a
-     * migration run: a data-seed migration whose position in history predates the audit-pair
-     * migration writes through live models against a schema that has not been converged yet.
+     * A table without the columns is skipped. A migration's up() never saves through a model
+     * (Migration_Guard), but the framework helpers it may call under Migration_Guard::allow()
+     * (the file-attachment repairs) do, against a schema that has not been converged yet.
      *
      * THE DELETION PAIR IS ALSO HANDLED HERE, but only for the saves that move deleted_at:
      * a record whose deleted_at goes null -> set is stamped with its deleter, and one whose
@@ -2042,7 +2552,7 @@ EXAMPLE;
      * Two tiers, both cheap. Rsx_Schema's column map is consulted first and is free - in
      * steady state it answers every call with no query at all. It is only ever trusted when
      * AFFIRMATIVE; anything else (a table or a column that arrived after this process read
-     * the schema - a migration saving a record into a table it just created) falls through
+     * the schema - the run of migrate that created it, writing to it afterwards) falls through
      * to one authoritative column listing. The answer is memoized with the schema itself
      * (Rsx_Schema::derived()), separately per column set: every table has the authorship
      * pairs, only a soft-deleting table has the deletion pair.
@@ -2428,6 +2938,9 @@ EXAMPLE;
      */
     public function delete()
     {
+        // A migration's up() never writes through a model (Migration_Guard).
+        Migration_Guard::_refuse_model_write(static::class, 'delete()');
+
         // Guard the DB write: a hard delete reaches RestrictedEloquentBuilder::delete() and a
         // SoftDeletes delete reaches builder::update([deleted_at]) — both from inside
         // parent::delete(). Under the guard those run raw (no re-iterate), and the model fires
@@ -2486,7 +2999,7 @@ EXAMPLE;
 
         if (!isset($memo[static::class])) {
             $columns = [];
-            foreach (array_keys((array) static::$text_types) as $column) {
+            foreach (array_keys(static::text_type_columns()) as $column) {
                 $type = static::text_type_for($column);
                 if ($type::has_after_model_saved_hook()) {
                     $columns[$column] = $type;
@@ -2752,7 +3265,7 @@ EXAMPLE;
             'updated_by_type' => true,
         ];
 
-        foreach (static::$revision_exclude as $column) {
+        foreach (static::revision_excluded_columns() as $column) {
             $excluded[$column] = true;
         }
 
@@ -2951,7 +3464,8 @@ EXAMPLE;
      */
     private function _realtime_emit_on_write(): void
     {
-        if (!Realtime::is_enabled()) {
+        // Off, or switched off for this pass (Realtime::without_model_frames()).
+        if (!Realtime::is_enabled() || Realtime::model_frames_suppressed()) {
             return;
         }
 

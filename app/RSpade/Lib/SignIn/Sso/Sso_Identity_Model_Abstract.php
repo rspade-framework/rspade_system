@@ -24,8 +24,8 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * signing in with Google proves who is holding the browser, which is exactly what
  * login_users is. A users row is an authorization scope inside one tenant.
  *
- * provider_key IS A REGISTRY STRING, NOT AN ENUM (owner ruling, 2026-09-04), so $enums is
- * EMPTY here and will stay empty. The set of providers is open by design - an application
+ * provider_key IS A REGISTRY STRING, NOT AN ENUM (owner ruling, 2026-09-04), so the model
+ * declares no enum column and never will. The set of providers is open by design - an application
  * adds one with a composer package and a config block - and a new key must not need a
  * migration and a constant to become storable. The five constants on Rsx_Sso name the
  * BUILT-INS; they are not the permitted set.
@@ -56,7 +56,7 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property string $avatar_url
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property int $id
  * @property string $last_login_at
@@ -66,7 +66,7 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property string $provider_user_key
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -83,15 +83,6 @@ abstract class Sso_Identity_Model_Abstract extends Rsx_System_Model_Abstract
      * @var bool
      */
     public static $unbounded = true;
-
-    /**
-     * Declared and EMPTY, not omitted: every model states its enum vocabulary, and this
-     * one's is deliberately nothing. provider_key is a registry string - see the class
-     * docblock and the migration.
-     *
-     * @var array
-     */
-    public static $enums = [];
 
     protected $table = '_sso_identities';
 }

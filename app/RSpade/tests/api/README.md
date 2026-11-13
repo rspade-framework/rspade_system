@@ -108,7 +108,7 @@ redaction, and its scan-time declaration rules all matter for correctness and se
 - Request log row: persistence, nullable identity columns, realtime-silent flag. (php)
 - Retention cleanup task: old pruned / new kept / config-driven window / chunked
   backlog. (php)
-- Serialization: model redaction (`neverExport`), enum `__label`, `__MODEL`, container
+- Serialization: model redaction (`never_export`), enum `__label`, `__MODEL`, container
   recursion, and `build_response()` status mapping. (php - no DB)
 - Response helpers: status codes + error/bare shapes. (php - no DB)
 - Coded failures inside an endpoint: `abort(404)` is 404 `not_found`, another abort status

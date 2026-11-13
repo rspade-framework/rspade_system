@@ -14,7 +14,7 @@ add to or remove from the permissions a user's role grants by default, with DENY
 written against.
 
 Roles and permissions are application vocabulary, so every test derives its roles and
-permissions from `User_Model`'s own `$enums` and catalogue at runtime.
+permissions from `User_Model`'s own `role_id` enum and catalogue at runtime.
 
 Adjacent pieces this concern leans on but does not own: the `Permission` facade and its
 `#[Auth_Check]` gates (`auth_gates`), and the realtime user-refresh push an ACL change sends

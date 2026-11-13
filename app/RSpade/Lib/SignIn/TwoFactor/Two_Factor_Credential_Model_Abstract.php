@@ -69,17 +69,17 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property int $counter
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $credential_key
  * @property int $id
  * @property string $label
  * @property string $last_used_at
  * @property int $login_user_id
- * @property string $secret
- * @property int $type_id
+ * @property string $secret never exported to the browser
+ * @property int $type_id enum: TYPE_TOTP, TYPE_PASSKEY, TYPE_RECOVERY_CODE (also $type_id__label and the other $type_id__* properties)
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $type_id__label
  * @property-read string $type_id__constant
@@ -114,16 +114,15 @@ abstract class Two_Factor_Credential_Model_Abstract extends Rsx_System_Model_Abs
     protected $table = '_two_factor_credentials';
 
     /**
-     * Never in a payload. secret is a TOTP seed (encrypted at rest) or a recovery code's
-     * hash; no fetch() exists for this model, and this keeps the column out of any toArray()
-     * a future caller makes.
+     * Column declarations (see rsx:man model).
      *
-     * @var string[]
+     * secret is never in a payload: it is a TOTP seed (encrypted at rest) or a recovery code's
+     * hash; no fetch() exists for this model, and never_export keeps the column out of any
+     * toArray() a future caller makes.
      */
-    public static $neverExport = ['secret'];
-
-    public static $enums = [
-        'type_id' => [
+    public static $columns = [
+        'secret' => ['never_export' => true],
+        'type_id' => ['enum' => [
             1 => [
                 'constant' => 'TYPE_TOTP',
                 'label' => 'Authenticator App',
@@ -142,7 +141,7 @@ abstract class Two_Factor_Credential_Model_Abstract extends Rsx_System_Model_Abs
                 'order' => 3,
                 'selectable' => false,
             ],
-        ],
+        ]],
     ];
 
     /**

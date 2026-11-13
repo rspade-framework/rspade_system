@@ -183,7 +183,7 @@ class Revision_Recording_Test extends Rsx_Test_Abstract
 
         $diff = static::__only_revision()->diff();
 
-        static::__assert_false(array_key_exists('counter', $diff), '$revision_exclude column must not be recorded');
+        static::__assert_false(array_key_exists('counter', $diff), 'a revision_exclude column must not be recorded');
         static::__assert_false(array_key_exists('_internal', $diff), 'a _-prefixed system column must not be recorded');
         static::__assert_false(array_key_exists('updated_at', $diff), 'updated_at must not be recorded');
         static::__assert_false(array_key_exists('updated_by_id', $diff), 'the updated_by pair must not be recorded');
@@ -471,7 +471,7 @@ class Revision_Recording_Test extends Rsx_Test_Abstract
 
         $array = static::__only_revision()->toArray();
 
-        static::__assert_false(array_key_exists('changes', $array), '$neverExport keeps the blob out of payloads');
+        static::__assert_false(array_key_exists('changes', $array), 'never_export keeps the blob out of payloads');
     }
 
     public static function test_a_recorded_revision_is_stored_compressed()

@@ -14,7 +14,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * A user's invitation columns never leave the server.
  *
  * invite_code is a bearer credential for claiming a pending account, so it - and the two
- * invite dates that travel with it - is in User_Model_Abstract::$neverExport. toArray() is
+ * invite dates that travel with it - is never_export on User_Model_Abstract. toArray() is
  * the one serializer behind window.rsxapp.user, model fetch, relationship and list payloads
  * and the external API, so asserting on it covers every channel.
  */

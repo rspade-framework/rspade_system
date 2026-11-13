@@ -1031,7 +1031,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * baseline exactly as they will have run on a real install.
      *
      * The role is the most privileged one this application declares, derived from
-     * User_Model::$enums at runtime by Rsx_Test_Abstract::most_privileged_role_id(),
+     * User_Model's role_id enum at runtime by Rsx_Test_Abstract::most_privileged_role_id(),
      * because a baseline identity that fails an auth gate would make every gated surface
      * untestable by default; a test that needs a WEAKER identity creates its own.
      *

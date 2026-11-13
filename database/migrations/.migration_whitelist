@@ -861,6 +861,11 @@
             "created_at": "2026-11-13T01:27:35+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe bind_api_tester_keys_to_their_browser_session"
+        },
+        "2026_11_13_060614_create_rederive_queue_table.php": {
+            "created_at": "2026-11-13T06:06:14+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_rederive_queue_table"
         }
     }
 }

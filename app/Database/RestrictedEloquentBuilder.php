@@ -6,6 +6,7 @@ use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
+use App\RSpade\Core\Database\Migration_Guard;
 use App\RSpade\Core\Database\Orm_Fetch_Preload;
 use App\RSpade\Core\Database\Rsx_Result_Set;
 use App\RSpade\Core\Rsx;
@@ -45,16 +46,15 @@ class RestrictedEloquentBuilder extends Builder
      *
      * @return array
      */
-    protected function _get_type_ref_columns(): array
+    protected function _model_type_refs(): array
     {
         if ($this->_type_ref_columns_cache === null) {
             $model = $this->getModel();
 
-            // _type_ref_columns() unions the model's own declaration with the framework audit
-            // authorship columns declared on the base - reading the static property directly
-            // would drop the audit columns for any model that declares its own array.
+            // type_ref_columns() is the model's effective declaration, the framework audit
+            // authorship columns declared on the base included.
             $this->_type_ref_columns_cache = ($model instanceof Rsx_Model_Abstract)
-                ? $model::_type_ref_columns()
+                ? $model::type_ref_columns()
                 : [];
         }
 
@@ -78,7 +78,7 @@ class RestrictedEloquentBuilder extends Builder
      */
     protected function _is_type_ref_column(string $column): bool
     {
-        $columns = $this->_get_type_ref_columns();
+        $columns = $this->_model_type_refs();
         if (empty($columns)) {
             return false;
         }
@@ -634,6 +634,7 @@ class RestrictedEloquentBuilder extends Builder
         // If $id is provided, allow it (deleting by primary key) — a raw base-builder path.
         if ($id !== null) {
             if (!Rsx_Model_Abstract::_is_inside_single_model_write()) {
+                Migration_Guard::_refuse_model_write(get_class($this->getModel()), 'delete($id)');
                 $this->_assert_site_lock_permits_raw_write('delete');
             }
 
@@ -645,6 +646,10 @@ class RestrictedEloquentBuilder extends Builder
         if (Rsx_Model_Abstract::_is_inside_single_model_write()) {
             return parent::delete();
         }
+
+        // A migration's up() never writes through a model, a bulk statement included
+        // (Migration_Guard) - on a plain model this path never reaches a model delete().
+        Migration_Guard::_refuse_model_write(get_class($this->getModel()), 'where(...)->delete()');
 
         // Check if there are any WHERE clauses on the underlying query
         $baseQuery = $this->getQuery();
@@ -707,13 +712,26 @@ class RestrictedEloquentBuilder extends Builder
             // authorship stamp is - this call is the statement, and merging the pair into it is
             // what keeps a soft delete ONE UPDATE. The model decides whether anything applies
             // (it returns $values untouched for every non-soft-delete write reaching here).
+            // A save that changes only derived columns holds updated_at here the same way.
             $model = $this->getModel();
             if ($model instanceof Rsx_Model_Abstract) {
                 $values = $model->_merge_soft_delete_stamp($values);
+                $values = $model->_merge_derived_only_write($values);
             }
 
             return parent::update($values);
         }
+
+        // A migration's up() never writes through a model, a bulk statement included
+        // (Migration_Guard) - on a plain model this path never reaches a model save().
+        Migration_Guard::_refuse_model_write(get_class($this->getModel()), 'where(...)->update()');
+
+        // DERIVED COLUMNS. A derived column is written only by its record's save(), so a bulk
+        // statement naming one is refused - raw_bulk() included. A raw Expression on a `from`
+        // column is refused too: it can only run as one raw statement, which would leave every
+        // derived column computed from it stale. A plain value on a `from` column takes the
+        // per-record path (_has_side_effect_surface()), where each record derives in save().
+        $this->_refuse_derived_column_write($values);
 
         // Escape hatch, a plain model with no surface, or a raw Expression value (DB::raw('n+1')
         // cannot be applied per-record safely): one raw statement.
@@ -923,9 +941,9 @@ class RestrictedEloquentBuilder extends Builder
      * realtime_touch()), a lifecycle surface (an overridden after_create/update/delete hook),
      * or revision recording ($revisions - a bulk update records one revision per affected
      * record, and only the per-record path can produce a per-record diff), or a declared text
-     * type with an after_model_saved() hook (Rsx_Text_Abstract).
-     * A model with none of them takes the raw single-statement fast path (today's behavior,
-     * no regression).
+     * type with an after_model_saved() hook (Rsx_Text_Abstract), or a derived column (each
+     * record's save() derives it from the values the update changes).
+     * A model with none of them takes the raw single-statement fast path.
      */
     protected function _has_side_effect_surface(): bool
     {
@@ -939,7 +957,58 @@ class RestrictedEloquentBuilder extends Builder
         return Realtime_Touch_Registry::has_realtime_surface($fqcn)
             || Model_Lifecycle_Registry::has_lifecycle_surface($fqcn)
             || Revision_Parent_Registry::records_revisions($fqcn)
-            || $fqcn::text_columns_with_save_hooks() !== [];
+            || $fqcn::text_columns_with_save_hooks() !== []
+            || $fqcn::derived_columns() !== [];
+    }
+
+    /**
+     * Refuse a bulk update() that names a derived column (with or without raw_bulk()), or
+     * that writes a raw Expression into a column a derived column is computed from. A
+     * `table.`-qualified key is judged by its column name.
+     *
+     * @param array $values The update's column => value map
+     * @throws \LogicException
+     */
+    protected function _refuse_derived_column_write(array $values): void
+    {
+        $model = $this->getModel();
+        if (!$model instanceof Rsx_Model_Abstract) {
+            return;
+        }
+
+        $fqcn = get_class($model);
+        $derived = $fqcn::derived_columns();
+
+        if ($derived === []) {
+            return;
+        }
+
+        $name = class_basename($fqcn);
+
+        foreach ($values as $key => $value) {
+            $column = is_string($key) && str_contains($key, '.') ? substr($key, strrpos($key, '.') + 1) : (string) $key;
+
+            if (isset($derived[$column])) {
+                throw new \LogicException(
+                    "{$name}::{$column} is a derived column - {$name}::{$derived[$column]['method']}() computes it from ["
+                    . implode(', ', $derived[$column]['from']) . '] on save. A bulk update() never writes it, raw_bulk() '
+                    . 'included. Update its source column(s), or call rederive() on each record.'
+                );
+            }
+
+            if ($value instanceof Expression) {
+                foreach ($derived as $derived_column => $spec) {
+                    if (in_array($column, $spec['from'], true)) {
+                        throw new \LogicException(
+                            "{$name}: a raw SQL expression cannot be written to {$column}, which the derived column "
+                            . "{$derived_column} is computed from - it runs as one statement and would leave "
+                            . "{$derived_column} stale. Write plain values (each record then derives in its own save()), "
+                            . 'or update with ->raw_bulk() and plain values and rederive() each record after.'
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /**

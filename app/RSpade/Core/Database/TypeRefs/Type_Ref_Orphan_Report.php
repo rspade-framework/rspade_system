@@ -38,9 +38,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *     restore from another environment, a deleted registry row).
  *
  * THE COLUMN INVENTORY is the manifest's, not a schema guess: every model's
- * _type_ref_columns() - its own $type_ref_columns declaration UNIONED with the framework
- * audit pairs (created_by_type / updated_by_type / deleted_by_type), which are type refs on
- * every table in the system - intersected with the columns each table actually has.
+ * type_ref_columns() - its own type_ref declarations plus the framework audit pairs
+ * (created_by_type / updated_by_type / deleted_by_type), which are type refs on every table
+ * in the system - intersected with the columns each table actually has.
  *
  * NO ROWS ARE EVER LOADED. Everything is COUNT(*) ... GROUP BY, and the SELECT the report
  * prints is TEXT for the operator to paste into `db:query` - this class never runs it.
@@ -116,7 +116,7 @@ class Type_Ref_Orphan_Report
                 continue;
             }
 
-            foreach ($fqcn::_type_ref_columns() as $column) {
+            foreach ($fqcn::type_ref_columns() as $column) {
                 $by_table[$table][$column] = true;
             }
         }

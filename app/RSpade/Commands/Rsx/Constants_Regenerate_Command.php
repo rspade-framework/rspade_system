@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Codegen\Model_Codegen_Rewriter;
 use App\RSpade\Core\Database\DetailTables\Detail_Tables_Resolver;
+use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Console\Command;
@@ -18,16 +19,19 @@ use ReflectionClass;
 use RuntimeException;
 
 /**
- * Regenerates model constants and docblocks based on $enums and the database schema.
+ * Regenerates model constants and docblocks based on the enum columns and the database schema.
  *
  * This is the single canonical model-codegen command. It scans every concrete model
  * extending Rsx_Model_Abstract and, for each one:
  *
- * 1. Validates the model's $enums (integer values, integer column type, no duplicate
+ * 1. Validates the model's enum columns (integer values, integer column type, no duplicate
  *    constants) - fails loud rather than emitting broken metadata.
  * 2. Emits a pre-class `_AUTO_GENERATED_ Database type hints` docblock with:
  *    - a typed `@property` line per base-table column (DATE/DATETIME -> string, matching
- *      the framework's string-time philosophy - model datetime attributes are ISO strings),
+ *      the framework's string-time philosophy - model datetime attributes are ISO strings;
+ *      DECIMAL -> string), noting the column's declared kind - enum, text type, type ref,
+ *      derived (`@property-read`), never exported, not recorded in revisions
+ *      (property_line()),
  *    - a `@property` line per Class-Table-Inheritance detail column, tagged `(detail: <table>)`,
  *    - BEM `@property-read string $col__label` / `$col__constant` accessor hints,
  *    - BEM typed `@method static array $col__enum()/__enum_select()/__enum_labels()/__enum_ids()`.
@@ -43,7 +47,7 @@ class Constants_Regenerate_Command extends Command
 {
     protected $signature = 'rsx:constants:regenerate';
 
-    protected $description = 'Regenerate model constants and docblocks based on $enums';
+    protected $description = 'Regenerate model constants and docblocks based on the enum columns';
 
     /**
      * Type mapping from database column types to PHP type hints. Keyed on both the DBAL
@@ -63,8 +67,9 @@ class Constants_Regenerate_Command extends Command
         'smallint' => 'int',
         'mediumint' => 'int',
         'year' => 'int',
+        // DECIMAL reads as a numeric string (exact; never a float).
+        'decimal' => 'string',
         // Floating point.
-        'decimal' => 'float',
         'float' => 'float',
         'double' => 'float',
         'real' => 'float',
@@ -132,7 +137,7 @@ class Constants_Regenerate_Command extends Command
             // NOTHING UNDER system/ IS WRITTEN unless this is a framework-developer box.
             // The test is on the RESOLVED file, not on the model's own: a core model is an
             // abstract base under app/RSpade/ plus a shell in rsx/models/, so a model whose
-            // OWN file is an application file still declares its $table and $enums in the
+            // OWN file is an application file still declares its $table and $columns in the
             // framework's file - and that is the file this command would rewrite, dirtying
             // the framework submodule on a downstream box (a downstream field report,
             // 2026-09-15). Framework model docblocks are the framework author's to
@@ -227,15 +232,19 @@ class Constants_Regenerate_Command extends Command
      *
      * A core model is an abstract base carrying every member plus a shell that declares
      * nothing, and an application's override is a class extending that base. In both shapes
-     * `$table` and `$enums` - the two inputs this command reads - are declared one or more
+     * `$table` and `$columns` - the two inputs this command reads - are declared one or more
      * links up, and the docblock and the enum constants it emits describe THAT class. Writing
      * them into the shell instead would put a second set of constants in the tree and leave
      * the real ones to drift.
      *
      * `$table` is the anchor: every model declares it, and it is what decides which table the
-     * docblock documents. `$enums` is consulted only when a model somehow declares enums
-     * further down than its table. A model that declares neither is documented in its own
-     * file, which is the pre-split shape and still correct.
+     * docblock documents. `$columns` is consulted only when a model somehow declares its
+     * columns further down than its table. A declaration on Rsx_Model_Abstract or above it
+     * never counts: the base declares `$columns` (the audit type columns) for every model, and
+     * a model whose regions resolved there would have its docblock written into the framework
+     * base (or into Eloquent's Model, which declares `$table`).
+     * A model that declares neither is documented in its own file, which is the one-file
+     * model shape and still correct.
      *
      * @return array{0:string,1:string} [class basename, absolute file path]
      */
@@ -244,12 +253,18 @@ class Constants_Regenerate_Command extends Command
         $reflector = new ReflectionClass($full_class_name);
         $declaring = $reflector;
 
-        foreach (['table', 'enums'] as $property) {
+        foreach (['table', 'columns'] as $property) {
             if (!$reflector->hasProperty($property)) {
                 continue;
             }
 
-            $declaring = $reflector->getProperty($property)->getDeclaringClass();
+            $declared_by = $reflector->getProperty($property)->getDeclaringClass();
+
+            if (!$declared_by->isSubclassOf(Rsx_Model_Abstract::class)) {
+                continue;
+            }
+
+            $declaring = $declared_by;
             break;
         }
 
@@ -264,7 +279,7 @@ class Constants_Regenerate_Command extends Command
     }
 
     /**
-     * Validate the model's $enums before any metadata is emitted. Bad values / column types
+     * Validate the model's enum columns before any metadata is emitted. Bad values / column types
      * are fatal (return an exit code, stopping the whole run); a duplicate constant throws
      * (the caller's per-file catch skips + reports). Returns null when the model is clean.
      */
@@ -272,10 +287,7 @@ class Constants_Regenerate_Command extends Command
     {
         $table = with(new $full_class_name())->getTable();
 
-        $reflector = new ReflectionClass($full_class_name);
-        $enums = $reflector->getStaticPropertyValue('enums', []);
-
-        foreach ($enums as $column => $enum_values) {
+        foreach ($full_class_name::enum_columns() as $column => $enum_values) {
             // Validate enum values are integers.
             foreach ($enum_values as $value => $props) {
                 if (!is_int($value) && !ctype_digit((string)$value)) {
@@ -290,12 +302,12 @@ class Constants_Regenerate_Command extends Command
                     $this->newLine();
                     $this->line('Example of a properly defined enum:');
                     $this->newLine();
-                    $this->line("    protected static \$enums = [");
-                    $this->line("        'status' => [");
+                    $this->line("    public static \$columns = [");
+                    $this->line("        'status' => ['enum' => [");
                     $this->line("            1 => ['label' => 'Active', 'constant' => 'STATUS_ACTIVE'],");
                     $this->line("            2 => ['label' => 'Inactive', 'constant' => 'STATUS_INACTIVE'],");
                     $this->line("            3 => ['label' => 'Pending', 'constant' => 'STATUS_PENDING'],");
-                    $this->line('        ],');
+                    $this->line('        ]],');
                     $this->line('    ];');
                     $this->newLine();
                     $this->line('For more information, run: php artisan rsx:man enums');
@@ -378,7 +390,7 @@ class Constants_Regenerate_Command extends Command
 
     /**
      * Build the pre-class docblock and post-brace enum-constants block for a model from its
-     * database schema (base + CTI detail columns) and $enums. Returns [$doc_block,
+     * database schema (base + CTI detail columns) and its enum columns. Returns [$doc_block,
      * $constants_block] ($constants_block is '' for enum-less models). Pure computation - no
      * file writes - so it is directly assertable.
      *
@@ -389,8 +401,7 @@ class Constants_Regenerate_Command extends Command
         $model = new $full_class_name();
         $table = $model->getTable();
 
-        $reflector = new ReflectionClass($full_class_name);
-        $enums = $reflector->getStaticPropertyValue('enums', []);
+        $enum_map = $full_class_name::enum_columns();
 
         // ---- @property lines for every base-table column ----
         // Columns are listed by NAME, never in physical (ORDINAL_POSITION) order: a column added
@@ -399,8 +410,7 @@ class Constants_Regenerate_Command extends Command
         // name, two databases with the same schema generate byte-identical files.
         $properties = [];
         foreach (static::__columns_by_name($table) as $column) {
-            $php_type = $this->map_database_type_to_php(DB::getSchemaBuilder()->getColumnType($table, $column));
-            $properties[] = " * @property {$php_type} \${$column}";
+            $properties[] = $this->property_line($model, $table, $column);
         }
 
         // ---- Class-Table Inheritance: document detail-table columns as part of the base
@@ -410,7 +420,8 @@ class Constants_Regenerate_Command extends Command
                 if (!class_exists($detail_class)) {
                     continue;
                 }
-                $detail_table = (new $detail_class())->getTable();
+                $detail_model = new $detail_class();
+                $detail_table = $detail_model->getTable();
                 if (!Schema::hasTable($detail_table)) {
                     continue;
                 }
@@ -427,8 +438,7 @@ class Constants_Regenerate_Command extends Command
                     if (in_array($column, $structural, true)) {
                         continue;
                     }
-                    $php_type = $this->map_database_type_to_php(DB::getSchemaBuilder()->getColumnType($detail_table, $column));
-                    $properties[] = " * @property {$php_type} \${$column} (detail: {$detail_table})";
+                    $properties[] = $this->property_line($detail_model, $detail_table, $column, "(detail: {$detail_table})");
                 }
             }
         }
@@ -436,7 +446,7 @@ class Constants_Regenerate_Command extends Command
         // ---- BEM enum accessor properties + typed methods ----
         $enum_properties = [];
         $enum_methods = [];
-        foreach ($enums as $column_name => $enum_definitions) {
+        foreach ($enum_map as $column_name => $enum_definitions) {
             $enum_properties[] = " * @property-read string \${$column_name}__label";
             $enum_properties[] = " * @property-read string \${$column_name}__constant";
 
@@ -448,7 +458,7 @@ class Constants_Regenerate_Command extends Command
 
         // ---- enum constants ----
         $enum_constants = [];
-        foreach ($enums as $column_name => $enum_definitions) {
+        foreach ($enum_map as $column_name => $enum_definitions) {
             foreach ($enum_definitions as $value => $definition) {
                 if (isset($definition['constant'])) {
                     $enum_constants[] = "    const {$definition['constant']} = {$value};";
@@ -490,6 +500,123 @@ class Constants_Regenerate_Command extends Command
         }
 
         return [$doc_block, $constants_block];
+    }
+
+    /**
+     * Enum constants named on an enum column's @property line before the rest are counted
+     * instead ("and 7 more").
+     */
+    private const ENUM_CONSTANTS_LISTED = 6;
+
+    /**
+     * One column's `@property` line: the PHP type its attribute reads as, then what kind of
+     * column it is, so the model file alone tells a reader how to treat it. The kind notes,
+     * joined by "; " when a column carries several:
+     *
+     *   enum: STATUS_OPEN, STATUS_DONE (also $status__label and the other $status__* properties)
+     *   text type: a value object, filtered on write          (typed as the text-type class)
+     *   type ref: a model class name, stored as a type-ref id (typed string)
+     *   derived: computed by derive_x() from a, b; never assigned  (tagged @property-read)
+     *   never exported to the browser
+     *   not recorded in revisions
+     *   decimal                                               (typed string)
+     *   json                                                  (typed string: no array cast)
+     *
+     * The kinds come from the model's column declarations (columns() and its views); the
+     * type from the schema, corrected for the casts a read goes through: a boolean column
+     * reads as bool, a DECIMAL as a string, and a JSON column as an array only when the
+     * model casts it to one. $tag (the CTI detail marker) follows the name.
+     */
+    protected function property_line(Rsx_Model_Abstract $model, string $table, string $column, string $tag = ''): string
+    {
+        $class = get_class($model);
+        $db_type = strtolower(DB::getSchemaBuilder()->getColumnType($table, $column));
+        $php_type = $this->map_database_type_to_php($db_type);
+        $cast = $model->getCasts()[$column] ?? null;
+        $notes = [];
+
+        if ($cast === 'boolean' || $cast === 'bool') {
+            $php_type = 'bool';
+        } elseif (str_starts_with($db_type, 'decimal')) {
+            $php_type = 'string';
+            $notes[] = 'decimal';
+        } elseif (str_starts_with($db_type, 'json')) {
+            $php_type = in_array($cast, ['array', 'json'], true) ? 'array' : 'string';
+            if ($php_type === 'string') {
+                $notes[] = 'json';
+            }
+        }
+
+        $enum_map = $class::enum_columns();
+        $text_types = $class::text_type_columns();
+        $derived = $class::derived_columns();
+
+        if (isset($derived[$column])) {
+            $from = $derived[$column]['from'];
+            $notes[] = "derived: computed by {$derived[$column]['method']}()"
+                . ($from === [] ? '' : ' from ' . implode(', ', $from))
+                . '; never assigned';
+        }
+
+        if (array_key_exists($column, $enum_map)) {
+            $notes[] = 'enum: ' . static::__enum_summary($enum_map[$column])
+                . " (also \${$column}__label and the other \${$column}__* properties)";
+        } elseif (isset($text_types[$column])) {
+            $php_type = '\\' . ltrim($text_types[$column], '\\');
+            $notes[] = 'text type: a value object, filtered on write';
+        } elseif (in_array($column, $class::type_ref_columns(), true)) {
+            $php_type = 'string';
+            $notes[] = 'type ref: a model class name, stored as a type-ref id';
+        }
+
+        if (in_array($column, $class::never_exported_columns(), true)) {
+            $notes[] = 'never exported to the browser';
+        }
+
+        // A derived column is never recorded already; the note is for a declared exclusion.
+        if (!isset($derived[$column]) && in_array($column, $class::revision_excluded_columns(), true)) {
+            $notes[] = 'not recorded in revisions';
+        }
+
+        $tag_name = isset($derived[$column]) ? '@property-read' : '@property';
+        $line = " * {$tag_name} {$php_type} \${$column}";
+
+        if ($tag !== '') {
+            $line .= " {$tag}";
+        }
+
+        if ($notes !== []) {
+            $line .= ' ' . implode('; ', $notes);
+        }
+
+        return $line;
+    }
+
+    /**
+     * An enum's constants for its @property line: every constant up to
+     * ENUM_CONSTANTS_LISTED, then a count of the values left unnamed.
+     *
+     * @param array<int, array<string, mixed>> $values
+     */
+    private static function __enum_summary(array $values): string
+    {
+        $constants = [];
+        foreach ($values as $definition) {
+            if (isset($definition['constant'])) {
+                $constants[] = $definition['constant'];
+            }
+        }
+
+        if ($constants === []) {
+            return count($values) . ' values, no constants';
+        }
+
+        $listed = count($constants) > self::ENUM_CONSTANTS_LISTED
+            ? array_slice($constants, 0, self::ENUM_CONSTANTS_LISTED - 1)
+            : $constants;
+        $rest = count($values) - count($listed);
+
+        return implode(', ', $listed) . ($rest > 0 ? " and {$rest} more" : '');
     }
 
     /**

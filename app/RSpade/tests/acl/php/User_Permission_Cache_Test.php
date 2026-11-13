@@ -38,7 +38,7 @@ class User_Permission_Cache_Test extends Rsx_Test_Abstract
      * own roles: a permission some role grants by default and another role does not.
      *
      * Permissions and roles are application vocabulary - an application's User_Model may
-     * declare an entirely different set - so the triple is read out of $enums at runtime
+     * declare an entirely different set - so the triple is read out of the role_id enum at runtime
      * and no PERM_ or ROLE_ constant is named here. An application whose roles all carry
      * the same permissions cannot express the scenario, and the test skips.
      *

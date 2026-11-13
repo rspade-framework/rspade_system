@@ -18,8 +18,6 @@ class Realtime_Cycle_B_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_cycle_b_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     public const A_ID = 1;

@@ -75,12 +75,12 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract
         }
 
         $status = (int) ($params['status'] ?? 0);
-        if (isset(Task_Run_Model::$enums['status_id'][$status])) {
+        if (array_key_exists($status, Task_Run_Model::enum_values('status_id'))) {
             $query->where('status_id', $status);
         }
 
         $origin = (int) ($params['origin'] ?? 0);
-        if (isset(Task_Run_Model::$enums['origin_id'][$origin])) {
+        if (array_key_exists($origin, Task_Run_Model::enum_values('origin_id'))) {
             $query->where('origin_id', $origin);
         }
 

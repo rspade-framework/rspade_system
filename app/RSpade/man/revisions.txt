@@ -6,7 +6,10 @@ SYNOPSIS
         public static $revisions = true;
 
         // Columns that move without the user having changed anything.
-        protected static $revision_exclude = ['last_seen_at', 'open_task_count'];
+        public static $columns = [
+            'last_seen_at'    => ['revision_exclude' => true],
+            'open_task_count' => ['revision_exclude' => true],
+        ];
     }
 
     // PHP: file a child's revisions under its parent's history.
@@ -22,7 +25,7 @@ SYNOPSIS
     foreach ($client->revisions() as $revision) {
         $revision->operation_id__label;   // Created / Updated / Deleted / Restored
         $revision->diff();                // ['name' => ['Acme', 'Acme Ltd'], ...]
-        Revision_Model::is_redacted($v);  // a $neverExport column: changed, value not recorded
+        Revision_Model::is_redacted($v);  // a never_export column: changed, value not recorded
         $revision->transaction->actor;    // who did it
     }
 
@@ -87,19 +90,22 @@ OPTING IN
     Set on any model extending Rsx_Model_Abstract. From that point every
     committed save() and delete() through the model layer records.
 
-    protected static $revision_exclude = ['col', ...];
+    public static $columns = ['col' => ['revision_exclude' => true], ...];
 
-    Columns this model never records, on top of the automatic exclusions. The
+    A revision_exclude entry in the model's $columns (rsx:man model, COLUMN
+    DECLARATIONS) is a column this model never records, on top of the
+    automatic exclusions; Model::revision_excluded_columns() answers them,
+    derived columns included. The
     list is for columns that CHANGE without the user having changed anything -
     denormalized counters, last-seen timestamps, cached aggregates. Recording
     them turns a history into noise, and a diff of what the user changed is the
     whole product.
 
-    $revision_exclude is NOT a security control. An excluded column is still
+    revision_exclude is NOT a security control. An excluded column is still
     stored in the record. To keep a value out of the database, do not put it
-    there. A SECRET does not belong in this list either: $neverExport already
-    redacts it (REDACTED COLUMNS). A column in both lists is not recorded at
-    all - this list wins.
+    there. A SECRET does not need it either: never_export already redacts it
+    (REDACTED COLUMNS). A column carrying both is not recorded at all -
+    revision_exclude wins.
 
     #[Revision_Parent]
 
@@ -141,14 +147,18 @@ AUTOMATIC EXCLUSIONS
       every `_`-prefixed system column
           Framework bookkeeping, not data anybody changed. See SYSTEM COLUMNS.
 
+      every derived column
+          Computed by the model, never edited (rsx:man derived_columns). A save
+          whose only changes are derived columns writes no revision at all.
+
     created_at and the created_by pair are NOT excluded. They appear exactly
     once, on the create, where they are the record's provenance.
 
 REDACTED COLUMNS
 
-    A column in the model's never-export list (Model::never_exported_columns(),
-    the union of $neverExport up the chain - rsx:man model, NEVER EXPORT
-    FIELDS) is a secret, and a secret's history is THAT it changed, never what
+    A column declared never_export in the model's $columns
+    (Model::never_exported_columns() - rsx:man model, NEVER EXPORT COLUMNS)
+    is a secret, and a secret's history is THAT it changed, never what
     it held. Such a change is recorded with BOTH sides replaced by the marker:
 
         'api_token' => [Revision::REDACTED, Revision::REDACTED]
@@ -165,10 +175,9 @@ REDACTED COLUMNS
     its own wording) instead of the value - never the marker itself, and never
     a comparison against a copy of the literal.
 
-    One declaration covers both lanes: a secret in $neverExport needs no
-    $revision_exclude entry. Name a column in $revision_exclude as well only
-    when even the fact that it changed is noise; then it is not recorded at
-    all.
+    One declaration covers both lanes: a never_export column needs no
+    revision_exclude. Add revision_exclude to its entry as well only when even
+    the fact that it changed is noise; then it is not recorded at all.
 
 WHAT EACH OPERATION RECORDS
 
@@ -315,7 +324,7 @@ THE DICTIONARY
     front, and the measured effect is 138 bytes going to 45 instead of 94.
 
     The dictionary is DERIVED, never authored: it is built from JSON structural
-    tokens, every column name in information_schema, and every $enums label in
+    tokens, every column name in information_schema, and every enum label in
     the manifest - so it is automatically correct for whatever application this
     framework is running. Tokens are ordered coldest first, hottest LAST,
     because zlib prices a match by its distance and the dictionary is loaded
@@ -476,7 +485,7 @@ API REFERENCE
 
     diff(): array
         The decoded document, ['field' => [before, after], ...]. The only
-        reader of `changes`, which is $neverExport and never leaves the server
+        reader of `changes`, which is never_export and never leaves the server
         raw. A never-exported column's pair is [REDACTED, REDACTED]. Throws
         when the payload names a codec or dictionary this build cannot honour.
 
@@ -682,8 +691,8 @@ TROUBLESHOOTING
         Revision::without().
 
     A field never appears in a diff
-        It is in $revision_exclude, it is an automatic exclusion (updated_at,
-        the updated_by pair, a `_`-prefixed column), or the write did not
+        It is revision_exclude, it is an automatic exclusion (updated_at,
+        the updated_by pair, a `_`-prefixed column, a derived column), or the write did not
         actually change it - an update records only what moved.
 
     A field's values read "__RSX_REDACTED__"
@@ -719,6 +728,7 @@ SEE ALSO
     rsx:man site_locks
     rsx:man scripting
     rsx:man model
+    rsx:man derived_columns
     rsx:man realtime
     rsx:man migrations
     rsx:man database_schema_architecture

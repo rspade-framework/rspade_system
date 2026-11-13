@@ -7,9 +7,13 @@
 
 namespace App\RSpade\Tests\Migrate\Php;
 
+use ReflectionClass;
 use ReflectionMethod;
 use App\RSpade\Commands\Rsx\Constants_Regenerate_Command;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Database\Php\Model_Columns_Fixture_Base_Model_Abstract;
+use App\RSpade\Tests\Database\Php\Model_Columns_Fixture_Grandchild_Model;
+use App\RSpade\Tests\Migrate\Php\Constants_Regenerate_Bare_Fixture_Model_Abstract;
 
 /**
  * rsx:constants:regenerate never rewrites a file under system/ unless this box is a
@@ -17,14 +21,15 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * THE TEST IS ON THE RESOLVED FILE, and that is the whole point. A core model is an
  * abstract base under app/RSpade/ plus a shell in rsx/models/, and resolve_declaring_file()
- * follows $table and $enums up to the base - so a model whose OWN file is an application
+ * follows $table and $columns up to the base - so a model whose OWN file is an application
  * file still has its docblock and enum constants written into the FRAMEWORK'S file. On a
  * downstream box that dirties the system/ submodule on every development migrate (a
  * downstream field report, 2026-09-15), and `rsx:framework:pull` discards the bytes on the
  * next update.
  *
  * is_writable_by_this_box() is pure path arithmetic plus one config read, so every case is
- * driven directly with no model, no schema and no file write.
+ * driven directly with no model, no schema and no file write. resolve_declaring_file() is
+ * reflection over fixture classes, equally free of schema and writes.
  *
  * No database access - skip the per-test transaction.
  */
@@ -134,6 +139,53 @@ class Constants_Regenerate_Scope_Test extends Rsx_Test_Abstract
         static::__assert_true(
             self::__ask(base_path('app/RSpade_extras/Some_Model.php'), false),
             'app/RSpade_extras is not app/RSpade'
+        );
+    }
+
+    /**
+     * [class basename, file] as resolve_declaring_file() answers for a model class.
+     *
+     * @return array{0:string,1:string}
+     */
+    private static function __resolve(string $fqcn): array
+    {
+        $command = new Constants_Regenerate_Command();
+        $method = new ReflectionMethod($command, 'resolve_declaring_file');
+        $method->setAccessible(true);
+
+        return $method->invoke($command, $fqcn);
+    }
+
+    /**
+     * A model that declares $columns but inherits $table resolves to the class declaring
+     * the table: the table is the anchor.
+     */
+    public static function test_the_class_declaring_the_table_is_the_anchor()
+    {
+        [$class_name, $file] = self::__resolve(Model_Columns_Fixture_Grandchild_Model::class);
+
+        static::__assert_equals('Model_Columns_Fixture_Base_Model_Abstract', $class_name);
+        static::__assert_equals(
+            (new ReflectionClass(Model_Columns_Fixture_Base_Model_Abstract::class))->getFileName(),
+            $file,
+            'the regions are written where the table is declared'
+        );
+    }
+
+    /**
+     * Rsx_Model_Abstract declares $columns for every model (the audit type columns), and
+     * Eloquent's Model declares $table. Neither may be the anchor: a model declaring neither
+     * is documented in its own file.
+     */
+    public static function test_a_declaration_on_the_base_is_never_the_anchor()
+    {
+        [$class_name, $file] = self::__resolve(Constants_Regenerate_Bare_Fixture_Model_Abstract::class);
+
+        static::__assert_equals('Constants_Regenerate_Bare_Fixture_Model_Abstract', $class_name);
+        static::__assert_equals(
+            (new ReflectionClass(Constants_Regenerate_Bare_Fixture_Model_Abstract::class))->getFileName(),
+            $file,
+            'never Rsx_Model_Abstract.php, never the vendor Model'
         );
     }
 

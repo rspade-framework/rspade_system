@@ -68,21 +68,21 @@ use App\RSpade\Core\Models\User_Model;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $expires_at
  * @property int $id
- * @property int $is_revoked
- * @property int $is_temporary
- * @property string $key_hash
+ * @property bool $is_revoked
+ * @property bool $is_temporary
+ * @property string $key_hash never exported to the browser
  * @property string $key_prefix
  * @property string $last_used_at
  * @property string $name
- * @property int $read_only
+ * @property bool $read_only
  * @property string $scopes
  * @property int $tester_session_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_id
  * @property int $user_role_id
  *
@@ -108,14 +108,14 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
 
     /**
      * key_hash is the SHA-256 of the whole key: never a payload field. With it a caller could
-     * not authenticate (lookup hashes the presented key), but it identifies the credential
-     * and invites an offline guess, so no serializer may carry it. The other columns are
-     * display data (key_prefix is the shown part), the key's own policy (scopes, read_only),
-     * or ids that grant nothing.
+     * not authenticate (lookup hashes the presented key), but it identifies the credential and
+     * invites an offline guess, so no serializer may carry it. The other columns are display
+     * data (key_prefix is the shown part), the key's own policy (scopes, read_only), or ids that
+     * grant nothing.
      */
-    public static $neverExport = ['key_hash'];
-
-    public static $enums = [];
+    public static $columns = [
+        'key_hash' => ['never_export' => true],
+    ];
 
     /**
      * A key's life is reported by the framework, whatever wrote it (Api_Key_Event):

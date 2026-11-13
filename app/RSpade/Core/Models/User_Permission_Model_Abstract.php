@@ -25,13 +25,13 @@ use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
- * @property int $is_grant
+ * @property bool $is_grant
  * @property int $permission_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_id
  *
  * @mixin \Eloquent
@@ -40,12 +40,6 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
 {
     protected $table = '_user_permissions';
     protected $fillable = []; // No mass assignment - always explicit
-
-    /**
-     * Enum field definitions (none for this simple model)
-     * @var array
-     */
-    public static $enums = [];
 
     /**
      * In-memory per-process cache generation counter, keyed by user_id.

@@ -48,6 +48,7 @@ Nothing in this concern is application-facing except through the model surface.
 | `mergeCasts()` stays per instance; two classes on different tables keep separate cast maps | php | implemented (`Model_Attribute_Read_Test`) |
 | Enum magic reads (`field__label`/`__constant`/custom, `isset()`, the instance and static lookup forms) | php | implemented (`Model_Attribute_Read_Test`) |
 | A `_`-prefixed system column reads back through the slow path and stays out of `toArray()` | php | implemented (`Model_Attribute_Read_Test`, own fixture table) |
+| The `$columns` declaration: base-first overlay, a child entry replacing the parent's wholesale, each kind view, `enum_values()` refusing a non-enum column, the audit type refs on every model, the per-class memo | php | implemented (`Model_Columns_Test`) |
 | `refresh()` re-reads a row in place and drops the relations it had read; an empty relation list is not a load, a named relation is still refused | php | implemented (`Model_Refresh_Test`) |
 
 ## Fixture models
@@ -59,6 +60,11 @@ and dropped in its `teardown()`:
 |---|---|---|
 | `System_Column_Fixture_Model` | `model_attribute_read_fixtures` | the only `_`-prefixed SYSTEM column in the tree, plus one enum column with a custom property |
 | `Attribute_Read_Enum_Fixture_Model` | `model_attribute_read_enum_fixtures` | a SECOND enum map, on a DIFFERENT table - the per-class and per-class+column memos cannot be proved unshared with one model |
+
+Three more fixture models, declared through `$columns` only and never given a table, form the
+chain `Model_Columns_Test` reads: `Model_Columns_Fixture_Base_Model_Abstract` (one entry of every
+kind), `Model_Columns_Fixture_Child_Model_Abstract` (replaces, un-kinds and adds entries) and
+`Model_Columns_Fixture_Grandchild_Model` (the leaf).
 
 The CTI fixtures the `detail_tables` concern owns are NOT usable for a length or cast
 assertion: those answers come from `Rsx_Schema`'s column map, which is read from the migrated

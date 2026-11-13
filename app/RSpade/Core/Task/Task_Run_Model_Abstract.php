@@ -53,38 +53,38 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $completed_at
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $dispatched_by_id
- * @property int $dispatched_by_type
+ * @property string $dispatched_by_type type ref: a model class name, stored as a type-ref id
  * @property string $error
  * @property string $eta_at
- * @property int $has_queue
+ * @property bool $has_queue
  * @property int $id
  * @property string $last_heartbeat_at
  * @property string $last_report_at
  * @property string $method
- * @property int $origin_id
+ * @property int $origin_id enum: ORIGIN_DISPATCHED, ORIGIN_SCHEDULED, ORIGIN_INLINE (also $origin_id__label and the other $origin_id__* properties)
  * @property string $output_truncated_at
  * @property array $params
  * @property string $params_hash
- * @property int $pool_id
+ * @property int $pool_id enum: POOL_ON_DEMAND, POOL_SCHEDULED (also $pool_id__label and the other $pool_id__* properties)
  * @property int $priority
  * @property int $progress_done
- * @property float $progress_percent
+ * @property string $progress_percent decimal
  * @property int $progress_total
  * @property int $return_code
  * @property int $schedule_id
  * @property string $scheduled_for
  * @property int $site_id
  * @property string $started_at
- * @property int $status_id
+ * @property int $status_id enum: STATUS_PENDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED, STATUS_STOPPED and 2 more (also $status_id__label and the other $status_id__* properties)
  * @property string $status_reason
  * @property string $status_text
  * @property string $stop_requested_at
  * @property int $timeout
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_session_id
  * @property int $worker_generation
  * @property string $worker_host
@@ -162,10 +162,9 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
         'params' => 'array',
     ];
 
-    protected static $type_ref_columns = ['dispatched_by_type'];
-
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'dispatched_by_type' => ['type_ref' => true],
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_PENDING', 'label' => 'Pending', 'badge' => 'bg-secondary', 'terminal' => false],
             2 => ['constant' => 'STATUS_RUNNING', 'label' => 'Running', 'badge' => 'bg-primary', 'terminal' => false],
             3 => ['constant' => 'STATUS_COMPLETED', 'label' => 'Completed', 'badge' => 'bg-success', 'terminal' => true],
@@ -176,16 +175,16 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             6 => ['constant' => 'STATUS_KILLED', 'label' => 'Killed', 'badge' => 'bg-danger', 'terminal' => true],
             // Removed from the queue before it ran.
             7 => ['constant' => 'STATUS_CANCELLED', 'label' => 'Cancelled', 'badge' => 'bg-dark', 'terminal' => true],
-        ],
-        'origin_id' => [
+        ]],
+        'origin_id' => ['enum' => [
             1 => ['constant' => 'ORIGIN_DISPATCHED', 'label' => 'Dispatched'],
             2 => ['constant' => 'ORIGIN_SCHEDULED', 'label' => 'Scheduled'],
             3 => ['constant' => 'ORIGIN_INLINE', 'label' => 'Inline'],
-        ],
-        'pool_id' => [
+        ]],
+        'pool_id' => ['enum' => [
             1 => ['constant' => 'POOL_ON_DEMAND', 'label' => 'On demand'],
             2 => ['constant' => 'POOL_SCHEDULED', 'label' => 'Scheduled'],
-        ],
+        ]],
     ];
 
     /** The status ids a run can still leave: pending and running. */
@@ -418,11 +417,11 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
     {
         if (is_int($value) || ctype_digit((string) $value)) {
             $id = (int) $value;
-            if (isset(static::$enums[$column][$id])) {
+            if (array_key_exists($id, static::enum_values($column))) {
                 return $id;
             }
         } else {
-            foreach (static::$enums[$column] as $id => $definition) {
+            foreach (static::enum_values($column) as $id => $definition) {
                 if (strcasecmp($definition['label'], (string) $value) === 0) {
                     return $id;
                 }
@@ -546,7 +545,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
     public function rerun(): int
     {
         if ($this->is_live()) {
-            throw new \RuntimeException("Task {$this->id} is still " . strtolower(static::$enums['status_id'][(int) $this->status_id]['label']) . '; only a finished run can be run again.');
+            throw new \RuntimeException("Task {$this->id} is still " . strtolower(static::enum_values('status_id')[(int) $this->status_id]['label']) . '; only a finished run can be run again.');
         }
 
         $new_id = Task::dispatch($this->service_name(), $this->method, $this->params ?? []);
@@ -854,9 +853,9 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             'method' => $this->method,
             'name' => $this->task_name(),
             'params' => $this->params ?? [],
-            'origin' => self::$enums['origin_id'][(int) $this->origin_id]['label'],
+            'origin' => self::enum_values('origin_id')[(int) $this->origin_id]['label'],
             'status_id' => (int) $this->status_id,
-            'status' => self::$enums['status_id'][(int) $this->status_id]['label'],
+            'status' => self::enum_values('status_id')[(int) $this->status_id]['label'],
             'is_live' => $this->is_live(),
             'status_reason' => $this->status_reason,
             'error' => $this->error,

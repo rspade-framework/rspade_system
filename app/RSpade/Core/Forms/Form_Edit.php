@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Forms;
 
 use Illuminate\Support\Facades\DB;
+use LogicException;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
@@ -159,6 +160,10 @@ class Form_Edit
                 . 'Declare public static $revisions = true; on ' . class_basename($class) . '.'
             );
         }
+
+        // The record's column declarations are checked against its table before anything is
+        // written through them (memoized: once per process).
+        $class::_assert_columns_exist();
 
         $coupled = static::__coupled($coupled);
         $fields = static::__map($fields, 'fields');
@@ -417,7 +422,9 @@ class Form_Edit
      * Assign a value to a field of the record, if this submission is writing that field.
      * The column is the one run()'s fields: map stores the field in, else the field's own
      * name. A field stored in several columns, or in a column that also holds other fields,
-     * is composed by the callback itself, guarded by changed().
+     * is composed by the callback itself, guarded by changed(). A field stored in a DERIVED
+     * column throws a LogicException whatever the submission changed: a form writes the
+     * column's sources, and the record's save() derives it.
      *
      * @param string $field The field, named as the form's input is
      * @param mixed $value The value, after whatever normalising the endpoint does
@@ -438,8 +445,20 @@ class Form_Edit
             );
         }
 
+        $column = $columns[0] ?? $field;
+        $class = get_class($this->record);
+        $derived = $class::derived_columns()[$column] ?? null;
+
+        if ($derived !== null) {
+            throw new LogicException(
+                "Form_Edit::set('{$field}'): " . class_basename($class) . "::{$column} is a derived column "
+                . "({$derived['method']}(), from [" . implode(', ', $derived['from']) . ']); a form never writes it. '
+                . 'Write its source column(s).'
+            );
+        }
+
         if ($this->changed($field)) {
-            $this->record->{$columns[0] ?? $field} = $value;
+            $this->record->{$column} = $value;
         }
 
         return $this;
@@ -744,11 +763,11 @@ class Form_Edit
             return self::FIELD_SECRET;
         }
 
-        if (isset($class::$text_types[$column])) {
+        if ($class::text_type_or_null($column) !== null) {
             return self::FIELD_FORMATTED_TEXT;
         }
 
-        if (isset($class::$enums[$column])) {
+        if (isset($class::enum_columns()[$column])) {
             return self::FIELD_ENUM;
         }
 
@@ -805,7 +824,7 @@ class Form_Edit
         }
 
         $class = get_class($model);
-        $enum = $class::$enums[$column] ?? null;
+        $enum = $class::enum_columns()[$column] ?? null;
 
         if ($enum !== null) {
             return (string) ($enum[$value]['label'] ?? $value);

@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Files;
 
+use App\RSpade\Core\Database\Migration_Guard;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
@@ -43,6 +44,19 @@ class File_Mime_Repair
      * @return array{attachments:int,blobs:int,caches:int}
      */
     public static function run(bool $dry_run = false): array
+    {
+        // A migration calls this, and it saves attachments and blobs through their models: the
+        // file-attachment repairs are the framework's settled exception to the rule that a
+        // migration never writes through a model (Migration_Guard).
+        return Migration_Guard::allow(fn () => self::__run($dry_run));
+    }
+
+    /**
+     * The repair itself (see run()).
+     *
+     * @return array{attachments:int,blobs:int,caches:int}
+     */
+    private static function __run(bool $dry_run): array
     {
         $document_extensions = array_keys(config('rsx.files.document_mime_by_extension', []));
         if (empty($document_extensions)) {

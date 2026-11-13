@@ -711,7 +711,10 @@ DERIVED VALUES
     A "derived value" is anything the page shows that is not one record's own
     column: a count, a sum, a rolled-up status, a balance computed across several
     tables. Making one go live is a decision with three rungs. Reach for the
-    lowest rung the value's INPUTS allow.
+    lowest rung the value's INPUTS allow. (A model's DERIVED COLUMN - a stored
+    column declared 'derived' in $columns, rsx:man derived_columns - is a
+    column of its record: its save() and rederive() send the record's own
+    notice, so it needs none of this.)
 
     Rung 1 - touch cascade, when the inputs are model writes on child records.
     If the derived thing is "a parent's result set" (the contacts under a client,
@@ -722,8 +725,8 @@ DERIVED VALUES
 
     Rung 2 - realtime_emit(), when the writing code KNOWS an aggregate moved but
     the change did not come through the aggregate's own model. After a
-    DB::table()/raw/bulk-import write, or after recomputing a stored derived
-    column, call $record->realtime_emit() on the record whose subscribers should
+    DB::table()/raw/bulk-import write, or after a raw SQL recompute of a stored
+    aggregate, call $record->realtime_emit() on the record whose subscribers should
     refetch (MANUAL EMISSION). One explicit line, no engine.
 
     Rung 3 - #[Emitter], when the value is COMPUTED across records or depends on

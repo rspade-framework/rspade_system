@@ -3,10 +3,10 @@ NAME
     Enums - Database field enumeration system for RSX models
 
 SYNOPSIS
-    public static $enums = [
-        'field_name' => [
+    public static $columns = [
+        'field_name' => ['enum' => [
             value => ['constant' => 'NAME', 'label' => 'Display Name', ...]
-        ]
+        ]],
     ];
 
 DESCRIPTION
@@ -26,10 +26,12 @@ DESCRIPTION
 DEFINING ENUMS
 
     Basic Definition
-        Define enums as a static property on your model class:
+        An enum column is an entry of the model's $columns carrying the 'enum'
+        key (rsx:man model, COLUMN DECLARATIONS - the grammar, inheritance and
+        accessors). The column is a BIGINT:
 
-        public static $enums = [
-            'status_id' => [
+        public static $columns = [
+            'status_id' => ['enum' => [
                 1 => [
                     'constant' => 'STATUS_ACTIVE',
                     'label' => 'Active',
@@ -38,7 +40,7 @@ DEFINING ENUMS
                     'constant' => 'STATUS_INACTIVE',
                     'label' => 'Inactive',
                 ],
-            ],
+            ]],
         ];
 
     Standard Properties
@@ -50,7 +52,7 @@ DEFINING ENUMS
     Custom Properties
         You can add any custom properties for business logic:
 
-        'status_id' => [
+        'status_id' => ['enum' => [
             1 => [
                 'constant' => 'STATUS_PUBLISHED',
                 'label' => 'Published',
@@ -59,7 +61,13 @@ DEFINING ENUMS
                 'can_edit' => false,               // Business rule
                 'icon' => 'fa-check',              // Icon class
             ],
-        ];
+        ]],
+
+    Reading the Map
+        Model::enum_values('status_id') returns one column's value map and
+        throws for a column that is not an enum ("X_Model::col is not an enum
+        column"); Model::enum_columns() returns every enum column's map. A
+        model's $columns is never read directly (MODEL-COLUMNS-02).
 
 PHP MAGIC PROPERTIES (Instance)
 
@@ -309,8 +317,8 @@ EXAMPLE IMPLEMENTATION
     // rsx/models/project_model.php
     class Project_Model extends Rsx_Model_Abstract
     {
-        public static $enums = [
-            'status' => [
+        public static $columns = [
+            'status' => ['enum' => [
                 1 => [
                     'constant' => 'STATUS_PLANNING',
                     'label' => 'Planning',
@@ -348,13 +356,13 @@ EXAMPLE IMPLEMENTATION
                     'selectable' => false, // Hide from new projects
                     'order' => 5,
                 ],
-            ],
-            'priority' => [
+            ]],
+            'priority' => ['enum' => [
                 1 => ['constant' => 'PRIORITY_LOW', 'label' => 'Low', 'days' => 30],
                 2 => ['constant' => 'PRIORITY_MEDIUM', 'label' => 'Medium', 'days' => 14],
                 3 => ['constant' => 'PRIORITY_HIGH', 'label' => 'High', 'days' => 7],
                 4 => ['constant' => 'PRIORITY_CRITICAL', 'label' => 'Critical', 'days' => 1],
-            ],
+            ]],
         ];
     }
 
@@ -376,6 +384,7 @@ EXAMPLE IMPLEMENTATION
 SEE ALSO
     php artisan rsx:constants:regenerate - Generate constants and type hints
     rsx:man model_fetch - Model fetching from JavaScript
-    rsx:man model - RSX model system overview
+    rsx:man model - COLUMN DECLARATIONS: the $columns grammar
+    skill rspade:model-enums - Enums how-to
 
 RSpade 1.0                           December 2025                                  ENUMS(7)

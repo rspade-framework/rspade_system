@@ -86,13 +86,13 @@
 | DOCUMENTS-CLI-FAILED | the failure list is empty-clean, names the document, quotes the reason, says where each failure stands, and truncates honestly | cli | no failures; one FAILED blob out of attempts; the same blob mid-retry; then two with --limit=1 | `[OK] No failed documents.`; file name + reason + remedy; `0 waiting for another attempt, 1 out of attempts` with `3 of 3` / `none - out of attempts`, then `1 waiting ... 0 out` with `1 of 3`; `2 failed document(s)` with `showing 1 of 2` | implemented | 2026-10-11 |
 | DOCUMENTS-CLI-FAILED-SOFT | soft failures are listed once, in a table of their own (reason, checks failed, next check), whatever they owed, and never in the hard tables; status counts them in their own row | cli | a FAILED .docx in the queue with 2 soft failures + a text-only .pdf with 1 and a FAILED index row | `[OK] No documents waiting on a tool or source file.` before; then `2 document(s) could not be processed - tool or source unavailable`, both names and both reasons once each; status row `Could not run: tool or source unavailable (nothing charged)` = 2 | implemented | 2026-10-20 |
 
-## Text_Preview_And_Derived_Properties_Test (php)
+## Text_Preview_And_Appended_Properties_Test (php)
 
 text/* previews as ITSELF, and the attachment answers its own presentation questions. Four
 independent properties: the viewer registry resolves text/* to Text_Viewer; text/* classifies as
 FILE_TYPE_DOCUMENT (FILE_TYPE_TEXT surviving as a value nothing assigns); should_show_text_preview()
 answers the "is a text pane worth the space" question once; and is_image / is_video / is_document /
-can_open_inline ride toArray() as derived properties, the last of which cannot come from
+can_open_inline ride toArray() as appended properties, the last of which cannot come from
 file_type_id at all.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
@@ -102,7 +102,7 @@ file_type_id at all.
 | DOCUMENTS-TEXTVIEW-SUPPRESS | should_show_text_preview(): true for docx and pdf, false for xlsx and txt, false with no extraction | php | four attachments stamped EXTRACTED, then one FAILED | true/true/false/false, then false | implemented | 2026-09-08 |
 | DOCUMENTS-TEXTVIEW-PAYLOAD | both get_preview_info() and get_extracted_text() carry the flag, and the text is returned regardless | php | an EXTRACTED .txt | flag false on both payloads; status available; text non-empty | implemented | 2026-09-08 |
 | DOCUMENTS-TEXTVIEW-INLINE | can_open_inline() is answered from the mime, not file_type_id - the .txt and the .docx are the same bucket and disagree | php | txt / pdf / real png / docx / xlsx | true/true/true/false/false; both txt and docx are FILE_TYPE_DOCUMENT | implemented | 2026-09-08 |
-| DOCUMENTS-TEXTVIEW-APPENDS | toArray() carries all four derived keys and each equals its delegating method; fetch() carries them with no hand-added key | php | a real PNG and a .docx | four keys present, values match the predicates, fetch() agrees | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-APPENDS | toArray() carries all four appended keys and each equals its delegating method; fetch() carries them with no hand-added key | php | a real PNG and a .docx | four keys present, values match the predicates, fetch() agrees | implemented | 2026-09-08 |
 | DOCUMENTS-SHEET-DIR | a workbook renders into a rendition directory that does not exist yet (the state after rsx:clean) | php | Spreadsheet_Rendition::render() into a missing directory | the directory is created, the grid is written, no script in it | implemented | 2026-09-16 |
 | DOCUMENTS-SHEET-FORMULA-RESULT | a formula cell shows the result the file stores, in its number format, never the formula text | php | a workbook with `=SUM(A1:A2)` formatted as currency | `$42.00` present, `=SUM` absent | implemented | 2026-10-11 |
 | DOCUMENTS-SHEET-FORMULA-NO-RESULT | a formula the file stores no result for shows the placeholder | php | a workbook saved without computed results | the placeholder in the cell, `=SUM` absent | implemented | 2026-10-11 |

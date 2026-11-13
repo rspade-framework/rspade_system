@@ -18,7 +18,5 @@ class Companion_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'companion_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $revisions = true;
 }

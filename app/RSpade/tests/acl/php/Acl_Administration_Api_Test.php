@@ -25,7 +25,7 @@ use App\RSpade\Lib\Developer\Debug\Rsx_Caller_Exception;
  * every permission in the catalogue rather than against a hand-written expectation.
  *
  * Roles and permissions are application vocabulary, so the fixture is derived from
- * User_Model's own $enums and catalogue at runtime and no PERM_ or ROLE_ constant is
+ * User_Model's own role_id enum and catalogue at runtime and no PERM_ or ROLE_ constant is
  * named here. Runs in the default per-test transaction.
  */
 class Acl_Administration_Api_Test extends Rsx_Test_Abstract

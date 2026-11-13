@@ -1,0 +1,110 @@
+MODEL COLUMN DECLARATIONS MOVE INTO ONE $columns PROPERTY; DERIVED COLUMNS ARE A DECLARED KIND
+Date: 2026-11-13
+
+IF YOU DO NOTHING: every model of yours that declares `$enums`, `$text_types`,
+    `$type_ref_columns`, `$neverExport` or `$revision_exclude` fails the manifest build with
+    MODEL-COLUMNS-01, so no page of the application loads; and every `Some_Model::$enums[...]`
+    read in your code fatals with "Access to undeclared static property".
+
+SUMMARY
+    Category 2: the way a model declares what its columns are changed shape.
+
+    - A model declares its columns in ONE property:
+
+          public static $columns = [
+              'status_id'     => ['enum' => [1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'], ...]],
+              'description'   => ['text_type' => Rich_Text::class],
+              'taskable_type' => ['type_ref' => true],
+              'api_secret'    => ['never_export' => true],
+              'view_count'    => ['revision_exclude' => true],
+              'project_id'    => ['derived' => 'derive_project_id', 'from' => ['taskable_type', 'taskable_id']],
+          ];
+
+      The properties `$enums`, `$text_types`, `$type_ref_columns`, `$neverExport` and
+      `$revision_exclude` are not read by anything. A model that declares one fails the build.
+    - A model with nothing to declare declares nothing. `public static $enums = [];` is gone,
+      and so is rule MODEL-ENUMS-01 with its `@MODEL-ENUMS-01-EXCEPTION` marker.
+    - Inheritance is per column: a child's entry for a column REPLACES the parent's entry for
+      that column, whole. An override that replaces an entry carrying `never_export` must keep
+      `never_export` on it (MODEL-COLUMNS-01).
+    - The declaration is read through accessors, never as a property (MODEL-COLUMNS-02):
+      `columns()`, `enum_columns()`, `enum_values('col')`, `text_type_columns()`,
+      `type_ref_columns()`, `never_exported_columns()`, `revision_excluded_columns()`,
+      `derived_columns()`.
+    - A DERIVED column is a stored column the model computes and nothing assigns. save()
+      computes it when the record is new or one of its `from` columns changed;
+      `$record->rederive()` recomputes on demand. Assigning one throws.
+    - The generated header of each model (rsx:constants:regenerate) states each column's kind.
+
+    Contract: php artisan rsx:man model (COLUMN DECLARATIONS), rsx:man derived_columns,
+    rsx:man class_override. Worked examples: every model under
+    system/app/RSpade/resource/reference_app/models/.
+
+ACTION REQUIRED - CODE
+    1. Convert every model declaration. Find them:
+           grep -rnE 'static \$(enums|text_types|type_ref_columns|neverExport|revision_exclude)\b' rsx/
+       For each model, write one `public static $columns` and delete the old properties:
+
+           BEFORE                                        AFTER (inside $columns)
+           $enums = ['status_id' => [ ...map... ]]       'status_id' => ['enum' => [ ...map... ]]
+           $enums = [];                                  (delete the line; declare nothing)
+           $text_types = ['notes' => Raw_Text::class]    'notes' => ['text_type' => Raw_Text::class]
+           $type_ref_columns = ['taskable_type']         'taskable_type' => ['type_ref' => true]
+           $neverExport = ['token_hash']                 'token_hash' => ['never_export' => true]
+           $revision_exclude = ['view_count']            'view_count' => ['revision_exclude' => true]
+
+       One column takes one entry; kinds that apply to the same column share it
+       (`['text_type' => Raw_Text::class, 'never_export' => true]`). `enum`, `text_type` and
+       `type_ref` exclude one another. `$columns` is `public static`, also where the old
+       property was `protected`. Do not list the audit columns (`created_by_type`,
+       `updated_by_type`, `deleted_by_type`): the base model declares them.
+
+    2. Convert every read of the old properties:
+           grep -rnE '::\$(enums|text_types|neverExport|revision_exclude)\b|_type_ref_columns\(' rsx/
+           Some_Model::$enums['status_id']         ->  Some_Model::enum_values('status_id')
+           isset(Some_Model::$enums['c'][$id])     ->  array_key_exists($id, Some_Model::enum_values('c'))
+           Some_Model::$enums (all columns)        ->  Some_Model::enum_columns()
+           Some_Model::$text_types                 ->  Some_Model::text_type_columns()
+       `enum_values()` throws on a column that is not an enum.
+
+    3. An override of a core model (class X_Model extends X_Model_Abstract) that redeclared
+       one of the old properties: declare in `$columns` ONLY the columns you add or change.
+       The base's other columns are inherited. A column you restate replaces the base's entry
+       for it, so restate the whole entry - an enum map you extend is copied in full, and a
+       column the base marks `never_export` keeps `never_export`.
+
+    4. Delete every `@MODEL-ENUMS-01-EXCEPTION` marker.
+
+    5. Run `php artisan rsx:constants:regenerate`, then `php artisan rsx:check`. The first
+       rewrites each model's generated header from `$columns`; the second reports any column
+       or `from` name that is not on the table (MODEL-ENUM-01) and any remaining direct
+       `::$columns` read (MODEL-COLUMNS-02).
+
+ACTION REQUIRED - DERIVED COLUMNS
+    Code that keeps a stored column in step with other data by hand - a save path that
+    computes a cached parent id, a denormalized label, a rolled-up flag - is the case the
+    derived kind exists for, and should be moved onto it:
+
+    1. Declare the column `['derived' => 'derive_x', 'from' => [same-record source columns]]`
+       and move the computation into `public function derive_x()` on the model, returning the
+       value. Delete every assignment of the column: an assignment now throws at save().
+    2. Where the value depends on ANOTHER record, the model whose change moves it calls
+       `rederive()` on the dependents - a `save()` override that calls `parent::save()` and
+       then rederives them. Worked example:
+       system/app/RSpade/resource/reference_app/models/task_model.php (`save()`,
+       `derive_project_id()`).
+    3. A column that is "computed when a rule applies, typed by the user otherwise" becomes
+       TWO columns: the user's own editable column, and the derived column that reads it.
+    4. Add a migration that ends with
+           \App\RSpade\Core\Database\Rsx_Rederive::enqueue('your_table');
+       for every table that gained a derived column, so `migrate` recomputes its existing
+       rows. `php artisan rsx:derived:check --all` then reports any record whose stored value
+       differs from what the model computes.
+
+    A derived column is never recorded in revision history, and a save that changes only
+    derived columns leaves `updated_at` and the `updated_by` pair untouched.
+
+VERIFICATION
+    php artisan rsx:debug /            - the manifest builds; MODEL-COLUMNS-01 names any model left unconverted
+    php artisan rsx:check              - no MODEL-COLUMNS-02 / MODEL-ENUM-01 findings
+    php artisan rsx:derived:check --all

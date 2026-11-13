@@ -287,7 +287,7 @@ ATTACHMENT API
             #[Relationship] attribute is what makes the property form work.
 
             The integer discriminator is transparent here. fileable_type holds a
-            type-ref id, declared in the model's $type_ref_columns, and the
+            type-ref id, declared type_ref in the model's $columns, and the
             framework registers each id as a morph-map alias - so STOCK
             morphTo() resolves it and there is nothing to hand-roll. An app that
             wrote its own fileable() accessor should delete it (rsx:man
@@ -927,12 +927,12 @@ FILE TYPE DETECTION
             realtime frame and every after_* hook per row for a value no reader
             may branch on.
 
-    Derived properties on the attachment payload
+    Appended properties on the attachment payload
         is_image / is_video / is_document / can_open_inline are declared in
         $appends, so they ride toArray() and reach the JS record on every
-        payload (rsx:man model, DERIVED PROPERTIES). can_open_inline asks
+        payload (rsx:man model, APPENDED PROPERTIES). can_open_inline asks
         whether a BROWSER can display these bytes in a tab of its own - it
-        reads config('rsx.preview.browser_inline') and CANNOT be derived from
+        reads config('rsx.preview.browser_inline') and CANNOT be computed from
         file_type_id, since text/*, Word and Excel are all DOCUMENT and
         disagree about inline display.
 

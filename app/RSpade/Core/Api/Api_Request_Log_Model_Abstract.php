@@ -76,7 +76,7 @@ use App\RSpade\Core\Session\Ip_Address;
  * @property int $api_key_id
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $duration_ms
  * @property string $handler
  * @property int $id
@@ -90,7 +90,7 @@ use App\RSpade\Core\Session\Ip_Address;
  * @property int $status
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_id
  * @property string $verb
  *
@@ -113,8 +113,6 @@ abstract class Api_Request_Log_Model_Abstract extends Rsx_System_Model_Abstract
     public static $unbounded = true;
 
     protected $table = '_api_request_log';
-
-    public static $enums = [];
 
     /**
      * Per-request infrastructure churn - never kicks the realtime emitter engine.

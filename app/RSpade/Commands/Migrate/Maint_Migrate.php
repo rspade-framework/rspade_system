@@ -17,6 +17,8 @@ use Illuminate\Database\Console\Migrations\MigrateCommand;
 use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Database\MigrationValidator;
 use App\RSpade\Core\Database\Migrate_Dump_Rollback;
+use App\RSpade\Core\Database\Migration_Guard;
+use App\RSpade\Core\Database\Rsx_Rederive;
 use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Database\SqlQueryTransformer;
@@ -1079,7 +1081,49 @@ class Maint_Migrate extends Command
             return 1;
         }
 
+        // THE REDERIVE QUEUE - the LAST step, on every run, --framework-only included. A
+        // migration that changes what a derived column is computed from enqueues the table
+        // (Rsx_Rederive::enqueue()); here, with the schema at the tip and every other step
+        // done, each queued table's records are rederived by current model code. Inside the
+        // snapshot / dump window, so a derive method that throws fails the run and rolls it
+        // back. Silent when nothing is queued.
+        if (!$this->drain_rederive_queue()) {
+            return 1;
+        }
+
         return $exitCode;
+    }
+
+    /**
+     * Rederive every table in the rederive queue (Rsx_Rederive::drain()), printing its
+     * progress. Prints nothing when the queue is empty.
+     *
+     * @return bool false when a derivation failed (the caller turns that into a rollback)
+     */
+    protected function drain_rederive_queue(): bool
+    {
+        try {
+            Rsx_Rederive::drain(function (string $text): void {
+                $this->write_raw($text);
+            });
+        } catch (\Throwable $e) {
+            $this->newLine();
+            $this->error('Rederiving cached values failed: ' . $e->getMessage());
+            $this->error('  at ' . $e->getFile() . ':' . $e->getLine());
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Write $text to the console exactly as given - no newline added. The rederive drain's
+     * progress dots share one line with their table's heading.
+     */
+    protected function write_raw(string $text): void
+    {
+        $this->output->write($text);
     }
 
     /**
@@ -2160,10 +2204,17 @@ class Maint_Migrate extends Command
             $this->info("\n[$currentMigration/$totalMigrations] Running: $migrationName");
             $this->newLine();
 
-            $migrator->runPending([$file], [
-                'pretend' => false,
-                'step' => $step
-            ]);
+            // THE MIGRATION WINDOW. While this one file's up() runs, a model save() / delete()
+            // and a bulk builder write THROW (Migration_Guard): a migration is a historical
+            // record that replays forever, so it writes with DB::statement() / DB::table(),
+            // never through a model, which is current code. The window covers this call only -
+            // normalization, the hook and every post-migration step run outside it.
+            Migration_Guard::run(function () use ($migrator, $file, $step) {
+                $migrator->runPending([$file], [
+                    'pretend' => false,
+                    'step' => $step
+                ]);
+            });
 
             if ($currentMigration < $totalMigrations) {
                 $this->info("\n Normalizing schema after migration...\n");

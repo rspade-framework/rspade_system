@@ -11,7 +11,7 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
 /**
  * The cast that puts a declared text type on a column.
  *
- * Applied automatically from `public static $text_types` - see
+ * Applied automatically to every column whose `$columns` entry declares a `text_type` - see
  * Rsx_Model_Abstract::__schema_derived_casts(). A column with no declaration never
  * reaches this class and stays an ordinary string.
  *

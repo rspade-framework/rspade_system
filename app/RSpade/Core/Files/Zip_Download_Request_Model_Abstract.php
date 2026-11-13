@@ -50,13 +50,13 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $download_key
  * @property string $files
  * @property int $id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property string $zip_name
  *
  * @mixin \Eloquent
@@ -78,8 +78,6 @@ abstract class Zip_Download_Request_Model_Abstract extends Rsx_System_Model_Abst
     public static $unbounded = true;
 
     protected $table = '_zip_download_requests';
-
-    public static $enums = [];
 
     /**
      * Transient download plumbing - never kicks the realtime emitter engine.

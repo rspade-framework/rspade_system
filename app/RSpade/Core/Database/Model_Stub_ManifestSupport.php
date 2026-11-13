@@ -250,12 +250,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         // Get relationships
         $model_metadata['rel'] = $fqcn::get_relationships();
 
-        // Get enums
-        if (property_exists($fqcn, 'enums')) {
-            $model_metadata['enums'] = $fqcn::$enums ?? [];
-        }
+        // Column declarations (enums, text types, and every other kind): each shapes the stub.
+        $model_metadata['columns'] = $fqcn::columns();
 
-        // Derived properties (PHP $appends). Adding or removing one changes the stub's declared
+        // Appended properties (PHP $appends). Adding or removing one changes the stub's declared
         // surface, so it has to move the metadata hash or the stub is never regenerated.
         $model_metadata['appends'] = static::_get_model_appends($fqcn);
 
@@ -275,7 +273,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * The model's DERIVED PROPERTY names - Laravel's $appends.
+     * The model's APPENDED PROPERTY names - Laravel's $appends.
      *
      * A computed value that must reach JavaScript is declared as $appends plus a
      * getXAttribute() accessor delegating to the public method that defines it; Eloquent
@@ -346,7 +344,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $relationships = $fetchable_relationships;
 
         // Get enums
-        $enums = $fqcn::$enums ?? [];
+        $enum_map = $fqcn::enum_columns();
 
         // Determine the base class to extend
         // User can configure a custom base class that sits between stubs and Rsx_Js_Model
@@ -355,7 +353,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         // Collect enum constant names to avoid duplicating them
         $enum_constant_names = [];
-        foreach ($enums as $column => $enum_values) {
+        foreach ($enum_map as $column => $enum_values) {
             foreach ($enum_values as $value => $props) {
                 if (!empty($props['constant'])) {
                     $enum_constant_names[] = $props['constant'];
@@ -374,7 +372,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $non_enum_constants[$const_name] = $const_value;
         }
 
-        // DERIVED PROPERTIES - the model's $appends. These reach the JS record through
+        // APPENDED PROPERTIES - the model's $appends. These reach the JS record through
         // toArray() with no column behind them, so nothing else in this generator knows about
         // them: field_length() answers null for each exactly as it does for any non-varchar
         // (the page's field-length data is built from columns), and they get no enum treatment.
@@ -386,12 +384,22 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         // exists, without putting anything in the assignment's way.
         $appends = static::_get_model_appends($fqcn);
 
+        // DERIVED COLUMNS - computed by the PHP model on save, from columns of the same record.
+        // Declared on the stub for the reader, and listed in a baked __DERIVED_COLUMNS for
+        // Rsx_Js_Model.is_derived_column(). Nothing in the browser writes a record, so nothing
+        // is enforced here, and the column stays an ordinary assignable property (as above).
+        $derived_columns = $fqcn::derived_columns();
+
         // Start building the stub content
         $content = "/**\n";
         $content .= " * Auto-generated JavaScript stub for {$class_name}\n";
         $content .= " * DO NOT EDIT - This file is automatically regenerated\n";
         foreach ($appends as $append) {
-            $content .= " * @property {*} {$append} - derived (appended by the PHP model); read-only\n";
+            $content .= " * @property {*} {$append} - appended property (computed by the PHP model); read-only\n";
+        }
+        foreach ($derived_columns as $column => $spec) {
+            $content .= " * @property {*} {$column} - derived column (computed by the PHP model on save from "
+                . implode(', ', $spec['from']) . "); read-only\n";
         }
         $content .= " * @Instantiatable\n";
         $content .= " */\n";
@@ -409,6 +417,11 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $content .= "    static __REALTIME = true;\n";
         }
 
+        // The model's derived columns, baked ONLY when it has some (the __REALTIME precedent).
+        if ($derived_columns !== []) {
+            $content .= '    static __DERIVED_COLUMNS = ' . json_encode(array_keys($derived_columns)) . ";\n";
+        }
+
         $content .= "\n";
 
         // Generate non-enum constants first (static properties)
@@ -422,7 +435,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         }
 
         // Generate enum constants and methods
-        foreach ($enums as $column => $enum_values) {
+        foreach ($enum_map as $column => $enum_values) {
             // Sort enum values by order property first, then by key
             uksort($enum_values, function ($keyA, $keyB) use ($enum_values) {
                 $orderA = isset($enum_values[$keyA]['order']) ? $enum_values[$keyA]['order'] : 0;
@@ -604,10 +617,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         // there is no value to ask at the moment it is needed - an add form has null in
         // every field, and an edit form is still fetching. The column's type is known
         // synchronously at render; the value is not.
-        $text_types = [];
+        $text_type_names = [];
 
-        foreach ((array) $fqcn::$text_types as $col_name => $type_class) {
-            $text_types[$col_name] = class_basename($type_class);
+        foreach ($fqcn::text_type_columns() as $col_name => $type_class) {
+            $text_type_names[$col_name] = class_basename($type_class);
         }
 
         $content .= "    /**\n";
@@ -616,7 +629,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "     * @returns {Function|null} The text type class\n";
         $content .= "     */\n";
         $content .= "    static text_type_or_null(column) {\n";
-        $content .= "        const types = " . json_encode($text_types, JSON_FORCE_OBJECT) . ";\n";
+        $content .= "        const types = " . json_encode($text_type_names, JSON_FORCE_OBJECT) . ";\n";
         $content .= "        const name = types[column] ?? null;\n";
         $content .= "        return name === null ? null : Manifest.get_class_by_name(name);\n";
         $content .= "    }\n\n";

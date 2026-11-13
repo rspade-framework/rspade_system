@@ -23,6 +23,4 @@ class Field_Length_Fixture_Model extends Rsx_Model_Abstract
     protected $fillable = [];
 
     public $timestamps = false;
-
-    public static $enums = [];
 }

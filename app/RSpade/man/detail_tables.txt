@@ -62,7 +62,6 @@ DECLARATION
         class Party_Person_Detail_Model extends Rsx_Detail_Model_Abstract
         {
             protected $table = 'party_person_details';
-            public static $enums = [];
             protected static $parent_model = Party_Model::class;
         }
 
@@ -158,8 +157,8 @@ CODEGEN (spans base + detail as one logical model)
       per detail table, each group sorted by column name.
     - The JS stub bakes the discriminator + a value->accessor map and emits the embedded-
       resolving detail accessors.
-    - $enums declared on detail columns work like any column (the detail model is a real
-      model and casts its own columns natively).
+    - $columns declared on detail columns (an enum, a text type, ...) work like any column
+      (the detail model is a real model and casts its own columns natively).
 
 SEMANTICS & EDGE CASES
     1. Wrong-type access (fail loud) - throws BEFORE any await, in both PHP and JS,

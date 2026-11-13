@@ -146,19 +146,19 @@ untouched: it stays in the build, it stays framework property, and the override
 keeps inheriting it. Everything the framework adds to the base after the override
 was written is present on the application's class the day it arrives.
 
-WHAT THE BASE CARRIES, AND THEREFORE WHAT AN OVERRIDE INHERITS: $table, $enums,
-$type_ref_columns, $revisions, $realtime, $appends, $detail_tables, the
+WHAT THE BASE CARRIES, AND THEREFORE WHAT AN OVERRIDE INHERITS: $table, $columns,
+$revisions, $realtime, $appends, $detail_tables, the
 constants, the traits, the relationships, fetch()/portal_fetch(), the hooks, and
 the _AUTO_GENERATED_ codegen regions. An override declares NONE of them unless it
 is changing them.
 
-    MODEL-TABLE-01 and MODEL-ENUMS-01 walk the lineage. A $table declared by an
+    MODEL-TABLE-01 walks the lineage. A $table declared by an
     ancestor satisfies the rule, so an override that does not change the table
     declares no $table. Redeclaring one is how two answers to "which table" get
     into a tree.
 
     php artisan rsx:constants:regenerate writes the docblock and the enum
-    constants into the class that DECLARES $table / $enums - the base for a
+    constants into the class that DECLARES $table / $columns - the base for a
     framework model, the override's own file when the override redeclares them.
 
     The generated JS stub and the model index take their staleness key from the
@@ -172,12 +172,20 @@ is changing them.
     Redeclaring fetch() or a fetchable relationship without the attribute fails the
     manifest build (UNMARKED FETCH OVERRIDE, rsx:man auth_gates).
 
-    $neverExport is UNIONED up the chain, so an override that declares its own
-    lists only the columns it adds; the base's stay withheld (User_Model_Abstract:
-    the invite columns; Login_User_Model_Abstract: password, remember_token;
-    Portal_User_Model_Abstract: password, metadata).
+    $columns is overlaid PER COLUMN down the chain: an override's $columns
+    declares only the columns it adds or changes, and every other entry of the
+    base stays in force. An entry the override declares for a column the base
+    also declares REPLACES the base's entry wholesale - restate every key you
+    keep. A replacing entry may never drop never_export (the base's secrets stay
+    withheld: User_Model_Abstract the invite columns; Login_User_Model_Abstract
+    password, remember_token; Portal_User_Model_Abstract password, metadata) nor
+    type_ref on an audit type column - MODEL-COLUMNS-01, a manifest-build FATAL
+    (rsx:man model, COLUMN DECLARATIONS).
 
-        public static $neverExport = ['my_private_column'];
+        public static $columns = [
+            'my_private_column' => ['never_export' => true],   // added
+            'status_id' => ['enum' => [...]],                  // replaces the base's entry
+        ];
 
 WHICH MEMBERS AN OVERRIDE MAY REPLACE OUTRIGHT. PHP-PARENT-CHAIN-01 (a
 manifest-build FATAL) requires every override of an inherited method to call
@@ -652,8 +660,8 @@ RECIPE 1 - A CORE MODEL (extend the base)
         {
         }
 
-2. Declare ONLY the members this application changes. No $table, no $enums, no
-   constants, no relationships that the base already has.
+2. Declare ONLY the members this application changes. No $table, no $columns
+   entry the base already has, no constants, no relationships that the base already has.
 
 3. For each method: replace it outright when the base marks it #[Replaceable];
    otherwise call parent::<same-method>() inside it (PHP-PARENT-CHAIN-01).

@@ -29,15 +29,15 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * @property string $column_name
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property int $file_attachment_id
  * @property int $id
  * @property int $owner_id
- * @property int $owner_type
+ * @property string $owner_type type ref: a model class name, stored as a type-ref id
  * @property int $site_id
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -56,7 +56,7 @@ abstract class File_Embed_Reference_Model_Abstract extends Rsx_Model_Abstract
 
     protected $fillable = [];
 
-    public static $enums = [];
-
-    protected static $type_ref_columns = ['owner_type'];
+    public static $columns = [
+        'owner_type' => ['type_ref' => true],
+    ];
 }

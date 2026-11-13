@@ -64,13 +64,12 @@ class Widget_Model extends Rsx_Site_Model_Abstract
 
     protected $table = 'widgets';
 
-    protected static $type_ref_columns = ['thing_type'];
-
-    public static $enums = [
-        'status' => [
+    public static $columns = [
+        'thing_type' => ['type_ref' => true],
+        'status' => ['enum' => [
             1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
             2 => ['constant' => 'STATUS_DONE', 'label' => 'Done'],
-        ],
+        ]],
     ];
 
     // HANDWRITTEN trailing method
@@ -119,7 +118,7 @@ EOF;
         );
 
         static::__assert_contains('public static $realtime = true;', $result);
-        static::__assert_contains("protected static \$type_ref_columns = ['thing_type'];", $result);
+        static::__assert_contains("'thing_type' => ['type_ref' => true],", $result);
     }
 
     public static function test_handwritten_method_after_fences_survives()
@@ -233,8 +232,8 @@ class Bare_Model extends Rsx_Site_Model_Abstract
     protected $table = 'bares';
     public static $realtime = true;
 
-    public static $enums = [
-        'kind' => [ 1 => ['constant' => 'KIND_A', 'label' => 'A'] ],
+    public static $columns = [
+        'kind' => ['enum' => [ 1 => ['constant' => 'KIND_A', 'label' => 'A'] ]],
     ];
 }
 EOF;
@@ -298,13 +297,12 @@ class Widget_Model extends Rsx_Site_Model_Abstract
 
     protected $table = 'widgets';
 
-    protected static $type_ref_columns = ['thing_type'];
-
-    public static $enums = [
-        'status' => [
+    public static $columns = [
+        'thing_type' => ['type_ref' => true],
+        'status' => ['enum' => [
             1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
             2 => ['constant' => 'STATUS_DONE', 'label' => 'Done'],
-        ],
+        ]],
     ];
 
     // HANDWRITTEN trailing method
@@ -336,7 +334,7 @@ EOF;
 
         // Every hand-written member is byte-identical (owned-region strip equality).
         static::__assert_contains('public static $realtime = true;', $result);
-        static::__assert_contains("protected static \$type_ref_columns = ['thing_type'];", $result);
+        static::__assert_contains("'thing_type' => ['type_ref' => true],", $result);
         static::__assert_contains('public function hello()', $result);
         static::__assert_equals(
             Model_Codegen_Rewriter::strip_owned_regions(static::__old_format_fixture(), 'Widget_Model'),
@@ -394,7 +392,6 @@ class Widget_Model extends Rsx_Site_Model_Abstract
 
     public static $realtime = true;
     protected $table = 'widgets';
-    public static $enums = [];
 }
 EOF;
         $result = Model_Codegen_Rewriter::rewrite(
@@ -441,7 +438,6 @@ class Widget_Model extends Rsx_Site_Model_Abstract
     /** __/AUTO_GENERATED */
 
     protected $table = 'widgets';
-    public static $enums = [];
 }
 EOF;
         $result = Model_Codegen_Rewriter::rewrite(
@@ -532,7 +528,6 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 class Plain_Model extends Rsx_Site_Model_Abstract
 {
     protected $table = 'plains';
-    public static $enums = [];
 }
 EOF;
         $stripped = Model_Codegen_Rewriter::strip_owned_regions($plain, 'Plain_Model');
@@ -560,7 +555,6 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 class Dup_Model extends Rsx_Site_Model_Abstract
 {
     protected $table = 'dups';
-    public static $enums = [];
 }
 EOF;
         static::__assert_throws(

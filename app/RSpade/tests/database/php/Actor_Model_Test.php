@@ -87,7 +87,7 @@ class Actor_Model_Test extends Rsx_Test_Abstract
 
     /**
      * The least privileged role this application declares - the one granting the fewest
-     * permissions (tie: the highest id). Derived from User_Model's own $enums so the
+     * permissions (tie: the highest id). Derived from User_Model's own role_id enum so the
      * class names no role constant, and used for the throwaway staff user whose point is
      * that it fails the gates on the user-management screen.
      */

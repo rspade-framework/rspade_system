@@ -32,7 +32,7 @@ dictionary is minted.
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | RD-01 | every column of a known table is in the vocabulary | php | `_revisions` columns | each present as `"col":[` | implemented | 2026-08-28 |
-| RD-02 | every enum label of a known model is in the vocabulary | php | `Login_User_Model::$enums` | each present quoted | implemented | 2026-08-28 |
+| RD-02 | every enum label of a known model is in the vocabulary | php | `Login_User_Model::enum_columns()` | each present quoted | implemented | 2026-08-28 |
 | RD-03 | hot tokens are LAST: structural after columns, `id` after ordinary columns | php | built token list | `{"` last; ordinary < id < structural | implemented | 2026-08-28 |
 | RD-04 | the byte buffer keeps the TAIL when over the window | php | oversized token list | length == window; ends with hottest | implemented | 2026-08-28 |
 | RD-05 | regeneration builds when the table is empty | php | no rows | new id; current() reports it; sha1 hash, token_count > 0 | implemented | 2026-08-28 |
@@ -63,7 +63,7 @@ protecting is that the CALL SITES still exist in a command nobody re-reads, not 
 ## Revision_Recording_Test (php)
 
 The recording path in `Rsx_Model_Abstract`, driven with real writes against real fixture
-tables. Fixtures: `Revision_Fixture_Model` (opt-in, soft-deleting, `$revision_exclude`),
+tables. Fixtures: `Revision_Fixture_Model` (opt-in, soft-deleting, a `revision_exclude` column),
 `Revision_Child_Fixture_Model` (`#[Revision_Parent]`), `Revision_Plain_Fixture_Model`
 (the opt-out control).
 
@@ -100,7 +100,7 @@ tables. Fixtures: `Revision_Fixture_Model` (opt-in, soft-deleting, `$revision_ex
 
 A never-exported column in the revision lane. Fixture: `Revision_Secret_Fixture_Model`
 (`api_token` plain secret, `secret_note` secret with a declared text type, `rotating_secret`
-in both `$neverExport` and `$revision_exclude`). Absence is asserted on the STORED payload,
+both `never_export` and `revision_exclude`). Absence is asserted on the STORED payload,
 decoded from the `changes` column.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
@@ -110,7 +110,7 @@ decoded from the `changes` column.
 | RX-03 | an untouched secret is not mentioned | php | name edited | diff is exactly the name pair | implemented | 2026-10-20 |
 | RX-04 | clearing a secret is recorded redacted | php | token set to null | [REDACTED, REDACTED]; no secret stored | implemented | 2026-10-20 |
 | RX-05 | a declared text type secret is never encoded | php | create with `secret_note` | marker pair; no `<p>` and no `__TEXT` in the stored document | implemented | 2026-10-20 |
-| RX-06 | `$revision_exclude` wins over redaction | php | create, then edit only `rotating_secret` | absent on the create; no revision for the edit | implemented | 2026-10-20 |
+| RX-06 | `revision_exclude` wins over redaction | php | create, then edit only `rotating_secret` | absent on the create; no revision for the edit | implemented | 2026-10-20 |
 | RX-07 | delete and restore carry no secret | php | delete(), restore() | empty delete document; restore without `api_token`; no secret stored | implemented | 2026-10-20 |
 | RX-08 | diff() hands back the marker and is_redacted() answers | php | re-read row | both sides is_redacted(); an ordinary value and null are not | implemented | 2026-10-20 |
 

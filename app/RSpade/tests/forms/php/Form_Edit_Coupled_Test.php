@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Forms\Php;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Forms\Form_Edit;
 use App\RSpade\Core\Response\Error_Response;
@@ -66,12 +67,17 @@ class Form_Edit_Coupled_Test extends Rsx_Test_Abstract
 
         Type_Ref_Registry::class_to_id('Form_Edit_Fixture_Model');
         Type_Ref_Registry::class_to_id('Form_Edit_Coupled_Fixture_Model');
+
+        // Form_Edit::run() checks the model's column declarations against its table, so the
+        // runtime table has to be in this process's view of the schema.
+        Rsx_Schema::forget();
     }
 
     public static function teardown()
     {
         DB::statement('DROP TABLE IF EXISTS form_edit_fixtures');
         DB::statement('DROP TABLE IF EXISTS form_edit_coupled_fixtures');
+        Rsx_Schema::forget();
     }
 
     /** @return array{0: Form_Edit_Fixture_Model, 1: Form_Edit_Coupled_Fixture_Model} */

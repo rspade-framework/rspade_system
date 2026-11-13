@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Forms\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Forms\Form_Edit;
 use App\RSpade\Core\Response\Error_Response;
@@ -50,11 +51,16 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
         Type_Ref_Registry::class_to_id('Form_Edit_Fixture_Model');
+
+        // Form_Edit::run() checks the model's column declarations against its table, so the
+        // runtime table has to be in this process's view of the schema.
+        Rsx_Schema::forget();
     }
 
     public static function teardown()
     {
         DB::statement('DROP TABLE IF EXISTS form_edit_fixtures');
+        Rsx_Schema::forget();
     }
 
     private static function __record(): Form_Edit_Fixture_Model
@@ -70,9 +76,7 @@ class Form_Edit_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The version a form would have loaded. This runtime table has no entry in the schema
-     * cache, so the attribute is a Carbon rather than the string a real model answers, and
-     * casting one to string drops its milliseconds.
+     * The version a form would have loaded, in database form with its milliseconds.
      */
     private static function __version(Form_Edit_Fixture_Model $record): string
     {

@@ -1,29 +1,29 @@
 ---
 name: model-enums
-description: "Declaring integer model enums with public static $enums - constants (Project_Model::STATUS_ACTIVE), status_id__label and custom properties, Model.status_id__enum_select() and the other JS helpers, rsx:constants:regenerate. Use when adding a status_id or type_id column, building a dropdown of enum values, showing an enum label or badge, or when a constant is missing after an enum change."
+description: "Declaring integer model enums as 'enum' entries of public static $columns - constants (Project_Model::STATUS_ACTIVE), status_id__label and custom properties, Model.status_id__enum_select() and the other JS helpers, rsx:constants:regenerate. Use when adding a status_id or type_id column, building a dropdown of enum values, showing an enum label or badge, or when a constant is missing after an enum change."
 ---
 
 # RSX Model Enums
 
 Integer-backed enums with model-level mapping to constants, labels, and custom properties. Uses BEM-style double underscore naming for magic properties.
 
-The sibling declaration for a TEXT column is `public static $text_types` - what kind of string the column holds (rich text, a notation), so its encoding is stated once rather than at every print site. Skill `rspade:text-types`.
+An enum is one kind of column declaration in the model's `$columns` - the grammar, inheritance (a child's entry replaces the parent's), the accessors and the other kinds (text type, type ref, never_export, derived) are skill `rspade:models`.
 
 ## Defining Enums
 
 ```php
 class Project_Model extends Rsx_Model_Abstract {
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'badge' => 'bg-success', 'order' => 1],
             2 => ['constant' => 'STATUS_ON_HOLD', 'label' => 'On Hold', 'badge' => 'bg-warning', 'order' => 2],
             3 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'selectable' => false, 'order' => 99],
-        ],
-        'priority_id' => [
+        ]],
+        'priority_id' => ['enum' => [
             1 => ['constant' => 'PRIORITY_LOW', 'label' => 'Low', 'color' => '#999', 'days' => 30],
             2 => ['constant' => 'PRIORITY_MEDIUM', 'label' => 'Medium', 'color' => '#f90', 'days' => 14],
             3 => ['constant' => 'PRIORITY_HIGH', 'label' => 'High', 'color' => '#f00', 'days' => 7],
-        ],
+        ]],
     ];
 }
 ```
@@ -49,7 +49,7 @@ Non-selectable items are excluded from `field__enum_select()` but still display 
 Add any properties for business logic - they become accessible via BEM-style syntax:
 
 ```php
-'status_id' => [
+'status_id' => ['enum' => [
     1 => [
         'constant' => 'STATUS_ACTIVE',
         'label' => 'Active',
@@ -58,7 +58,7 @@ Add any properties for business logic - they become accessible via BEM-style syn
         'can_edit' => true,                // Business rule
         'permissions' => ['edit', 'view'], // Permission list
     ],
-],
+]],
 ```
 
 ---
@@ -224,8 +224,8 @@ DB::statement("ALTER TABLE projects ADD COLUMN status_id BIGINT NOT NULL DEFAULT
 php artisan rsx:constants:regenerate
 ```
 
-This regenerates the model's constants and its documentation comments from `$enums`.
+This regenerates the model's constants and its generated header from the enum entries (`migrate` runs it in development). Code that needs the raw map reads `Model::enum_values('status_id')` - never `$columns` directly; it throws `"... is not an enum column"` for any other column.
 
 ## More Information
 
-Details: `php artisan rsx:man enum`
+Details: `rsx:man enums`; the declaration grammar: skill `rspade:models`, `rsx:man model`

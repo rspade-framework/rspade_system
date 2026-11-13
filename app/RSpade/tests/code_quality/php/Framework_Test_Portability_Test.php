@@ -80,7 +80,7 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
     /**
      * Framework core does not read an application's role or permission vocabulary.
      *
-     * A role constant is declared by the application's own User_Model (through $enums), so
+     * A role constant is declared by the application's own User_Model (its role_id enum), so
      * core code naming one is core code that only runs in THIS application. The two known
      * offenders were a live controller and the test-baseline seed; both were rewritten to
      * derive the role they need.
@@ -471,7 +471,7 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
 
     /**
      * The forbidden spelling: one of the override-eligible models, `::`, and either a ROLE
-     * constant this application's own $enums declare or any PERM_ name.
+     * constant this application's own role_id enum declares or any PERM_ name.
      *
      * The role names are DERIVED, never listed - an application's roles are its own, and a
      * hardcoded list here would be the very mistake this test exists to catch.
@@ -481,9 +481,7 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
         $role_constants = [];
 
         foreach ([User_Model::class, Portal_User_Model::class, Login_User_Model::class] as $fqcn) {
-            $enums = $fqcn::$enums['role_id'] ?? [];
-
-            foreach ($enums as $definition) {
+            foreach ($fqcn::enum_columns()['role_id'] ?? [] as $definition) {
                 if (isset($definition['constant'])) {
                     $role_constants[$definition['constant']] = true;
                 }

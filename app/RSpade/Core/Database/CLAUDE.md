@@ -9,6 +9,11 @@
 - **Sequential execution only** - No --path option allowed
 - **Fail on errors** - No fallback to old schemas, migrations must succeed or fail loudly
 
+## The migration guard and the rederive queue
+
+- **`Migration_Guard`**: `Maint_Migrate` wraps exactly the call that executes one migration file in `Migration_Guard::run()`; inside it `Rsx_Model_Abstract::save()` / `delete()` and `RestrictedEloquentBuilder::update()` / `delete()` (`raw_bulk()` included) call `_refuse_model_write()` and throw "`<Model>::save() refused: a migration is executing`". Normalization, the post-normalize hook, the initial user, the revision dictionary and the rederive drain run outside the window. `Migration_Guard::allow()` is the one framework-internal exception (`File_Mime_Repair`, the file-attachment repairs); application code never uses it.
+- **`Rsx_Rederive`**: `enqueue('<table>')` inserts into `_rederive_queue` (a `DB::table()` write, so it works inside the guard; a model class name throws). `drain()` is `Maint_Migrate::execute_migrations()`'s LAST step on every run: keyset batches of 100, every site (each site's batch under `Site_Lock::write()` with the site declared), trashed rows included, `rederive()` per record, `Realtime::without_model_frames()`, passes repeated while anything changed up to N + 2, a queue row removed when its table completes. `check()` / `rebuild()` back `rsx:derived:check` / `rsx:derived:rebuild` (`Commands/Rsx/Derived_*`). Contract: `rsx:man derived_columns`.
+
 ## Database Rules
 
 - **No mass assignment**: All fields assigned explicitly

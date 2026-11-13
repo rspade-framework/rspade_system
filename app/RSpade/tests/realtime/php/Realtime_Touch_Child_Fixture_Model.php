@@ -20,8 +20,6 @@ class Realtime_Touch_Child_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'realtime_touch_child_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
-
     public static $realtime = true;
 
     public const PARENT_ID = 900;

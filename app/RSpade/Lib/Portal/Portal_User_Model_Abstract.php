@@ -71,23 +71,23 @@ use App\RSpade\Lib\Settings\Has_Preference_Variables;
  * @property int $contact_id
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property string $email
  * @property int $id
- * @property int $is_verified
+ * @property bool $is_verified
  * @property string $last_login
  * @property string $last_seen
- * @property array $metadata
- * @property string $password
- * @property int $password_reset_required
+ * @property array $metadata never exported to the browser
+ * @property string $password never exported to the browser
+ * @property bool $password_reset_required
  * @property int $site_id
- * @property int $status_id
+ * @property int $status_id enum: STATUS_ACTIVE, STATUS_INACTIVE, STATUS_SUSPENDED (also $status_id__label and the other $status_id__* properties)
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -211,19 +211,24 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     protected $fillable = []; // No mass assignment - always explicit
 
     /**
-     * Columns toArray() never sends to the browser (portal_fetch(), relationship and list
-     * payloads, the page's user object, the external API). password is the credential hash.
-     * metadata is an open key/value bag written by application code: whatever somebody
-     * parks in it later must not ride every payload of the identity, so the column never
-     * leaves the server, and a value a page genuinely needs is published deliberately by
-     * an accessor.
+     * Column declarations (see rsx:man model).
      *
-     * An override's own $neverExport is UNIONED with this list, never a replacement for it
-     * (see Rsx_Model_Abstract::never_exported_columns()).
-     *
-     * @var string[]
+     * Never sent to the browser (portal_fetch(), relationship and list payloads, the page's user
+     * object, the external API): password is the credential hash; metadata is an open key/value
+     * bag written by application code - whatever somebody parks in it later must not ride every
+     * payload of the identity, so the column never leaves the server, and a value a page
+     * genuinely needs is published deliberately by an accessor. An override that redeclares
+     * either column keeps never_export on it (MODEL-COLUMNS-01).
      */
-    public static $neverExport = ['password', 'metadata'];
+    public static $columns = [
+        'password' => ['never_export' => true],
+        'metadata' => ['never_export' => true],
+        'status_id' => ['enum' => [
+            1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'badge' => 'bg-success', 'order' => 1],
+            2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'badge' => 'bg-secondary', 'order' => 2],
+            3 => ['constant' => 'STATUS_SUSPENDED', 'label' => 'Suspended', 'badge' => 'bg-danger', 'order' => 3, 'selectable' => false],
+        ]],
+    ];
 
     /**
      * The attributes that should be cast.
@@ -233,14 +238,6 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     protected $casts = [
         'is_verified' => 'boolean',
         'metadata' => 'array',
-    ];
-
-    public static $enums = [
-        'status_id' => [
-            1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active', 'badge' => 'bg-success', 'order' => 1],
-            2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'badge' => 'bg-secondary', 'order' => 2],
-            3 => ['constant' => 'STATUS_SUSPENDED', 'label' => 'Suspended', 'badge' => 'bg-danger', 'order' => 3, 'selectable' => false],
-        ],
     ];
 
     /**
@@ -331,7 +328,7 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     /**
      * Read a value from the JSON metadata column.
      *
-     * metadata is a serialized column on the row, listed in $neverExport, so no payload
+     * metadata is a serialized column on the row, declared never_export in $columns, so no payload
      * carries it. Per-identity key/value state that is not a property of the record - a
      * prompt dismissed, a step skipped, a code to resend - belongs in the preference
      * variables store instead (get_variable() / set_variable(), Has_Preference_Variables),
@@ -444,7 +441,7 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      * A portal user may only read their own row. Fail-closed: any mismatch denies.
      * portal_fetch() (from the Portal_Authorizable trait) has already required an
      * authenticated portal session before this is called. The password and the
-     * metadata bag are removed by $neverExport.
+     * metadata bag are never_export in $columns.
      *
      * @return bool
      */

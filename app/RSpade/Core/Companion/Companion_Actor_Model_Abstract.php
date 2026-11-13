@@ -24,15 +24,15 @@ use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
  *
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $deleted_at
  * @property int $deleted_by_id
- * @property int $deleted_by_type
+ * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property int $id
  * @property string $name
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  *
  * @mixin \Eloquent
  */
@@ -43,8 +43,6 @@ abstract class Companion_Actor_Model_Abstract extends Rsx_Actor_Model_Abstract
 
     protected $table = '_companion_actors';
     protected $fillable = [];
-
-    public static $enums = [];
 
     /**
      * The id of a companion's actor row, created on first use.

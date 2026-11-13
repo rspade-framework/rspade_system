@@ -653,7 +653,7 @@ Needs a framework-development box for the `/ssr-test` probe.
 | sitz-http-05 | two memberships: no site at sign-in, no row; choosing a site records sign_in, switching records site_switch | /login/site/1, then the second site | no row; sign_in on site 1; site_switch on the second, its membership | implemented |
 | sitz-http-06 | an impersonation from /_sys records the target's entry naming the impersonator | _Sys_Users_Controller.sign_in_as | one impersonation row on the target's membership | implemented |
 
-## Model_Never_Export_Union_Test (php, no DB) - $neverExport is one control, unioned up the chain
+## Model_Never_Export_Union_Test (php, no DB) - never_export is one control, overlaid down the chain
 
 Fixture chain `Never_Export_Fixture_Base_Model_Abstract` -> `Never_Export_Fixture_Model` (beside the
 test, built unsaved). User_Payload_Never_Export_Test covers the user invite columns.

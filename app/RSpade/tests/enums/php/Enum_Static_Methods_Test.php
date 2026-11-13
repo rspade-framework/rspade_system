@@ -14,7 +14,7 @@ use App\RSpade\Lib\Ui\Flash\Flash_Alert_Model;
 /**
  * Tests for the static enum helper methods on Rsx_Model_Abstract.
  *
- * All enum metadata is derived from static $enums arrays - no rows are read or
+ * All enum metadata is derived from the static $columns enum entries - no rows are read or
  * written, so database transactions are not needed.
  *
  * Test models:

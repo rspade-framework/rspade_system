@@ -74,12 +74,12 @@ use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
  *
  * @property int $attempt_count
  * @property array $bcc
- * @property int $block_cause_id
- * @property int $category_id
+ * @property int $block_cause_id enum: BLOCK_CAUSE_OPTED_OUT, BLOCK_CAUSE_SITE_BLOCK_LIST (also $block_cause_id__label and the other $block_cause_id__* properties)
+ * @property int $category_id enum: CATEGORY_TRANSACTIONAL, CATEGORY_NOTIFICATION, CATEGORY_MARKETING, CATEGORY_SECURITY (also $category_id__label and the other $category_id__* properties)
  * @property array $cc
  * @property string $created_at
  * @property int $created_by_id
- * @property int $created_by_type
+ * @property string $created_by_type type ref: a model class name, stored as a type-ref id
  * @property string $dedupe_key
  * @property string $dev_original_to
  * @property string $email_class
@@ -99,7 +99,7 @@ use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
  * @property string $reply_to_name
  * @property string $sent_at
  * @property int $site_id
- * @property int $status_id
+ * @property int $status_id enum: STATUS_PENDING, STATUS_SENDING, STATUS_SENT, STATUS_FAILED, STATUS_BLOCKED and 2 more (also $status_id__label and the other $status_id__* properties)
  * @property string $subject
  * @property string $tag
  * @property array $template_data
@@ -109,7 +109,7 @@ use App\RSpade\Lib\Messaging\Mail\Rsx_Mail_Transport;
  * @property string $transport_response
  * @property string $updated_at
  * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property array $withheld_recipients
  *
  * @property-read string $status_id__label
@@ -206,8 +206,8 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         'withheld_recipients' => 'array',
     ];
 
-    public static $enums = [
-        'status_id' => [
+    public static $columns = [
+        'status_id' => ['enum' => [
             1 => ['constant' => 'STATUS_PENDING', 'label' => 'Pending', 'badge' => 'bg-warning'],
             2 => ['constant' => 'STATUS_SENDING', 'label' => 'Sending', 'badge' => 'bg-info'],
             3 => ['constant' => 'STATUS_SENT', 'label' => 'Sent', 'badge' => 'bg-success'],
@@ -220,23 +220,23 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             // A TEST recipient (Rsx_Test_Recipients): rendered and recorded like a sent
             // message and never handed to a transport, in every mode. Not a failure.
             7 => ['constant' => 'STATUS_TEST', 'label' => 'Test', 'badge' => 'bg-info'],
-        ],
-        'category_id' => [
+        ]],
+        'category_id' => ['enum' => [
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
             2 => ['constant' => 'CATEGORY_NOTIFICATION', 'label' => 'Notification', 'badge' => 'bg-info'],
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
             4 => ['constant' => 'CATEGORY_SECURITY', 'label' => 'Security', 'badge' => 'bg-dark'],
-        ],
+        ]],
         // WHY a Blocked row was blocked - one status, two standing rules. NULL on every
         // row that is not Blocked. last_error carries the sentence a reader is shown.
-        'block_cause_id' => [
+        'block_cause_id' => ['enum' => [
             // The recipient unsubscribed from this category (_email_recipients). Never
             // applies to a transactional message; resend overrides it only with force.
             1 => ['constant' => 'BLOCK_CAUSE_OPTED_OUT', 'label' => 'Recipient opted out'],
             // The address is on the site's block list (_email_blocked_addresses). Applies
             // to every category; no force overrides it - removing the entry does.
             2 => ['constant' => 'BLOCK_CAUSE_SITE_BLOCK_LIST', 'label' => 'Site block list'],
-        ],
+        ]],
     ];
 
     /** What last_error says on a row blocked by the recipient's opt-out. */
@@ -663,7 +663,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     {
         $counts = [];
 
-        foreach (array_keys(static::$enums['status_id']) as $status_id) {
+        foreach (array_keys(static::enum_values('status_id')) as $status_id) {
             $counts[$status_id] = static::where('status_id', $status_id)->count();
         }
 

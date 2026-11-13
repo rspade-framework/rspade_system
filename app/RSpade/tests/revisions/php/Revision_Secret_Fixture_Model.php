@@ -16,10 +16,11 @@ use App\RSpade\Tests\TextTypes\Php\Text_Fixture_Wrapped_Text;
  * revision_secret_fixtures, created by Revision_Redaction_Test.
  *
  * `api_token` is a plain secret. `secret_note` is a secret with a declared text type, the
- * case where redaction must happen before any encoding. `rotating_secret` is in BOTH lists,
- * the case where $revision_exclude wins and the column is not recorded at all.
+ * case where redaction must happen before any encoding. `rotating_secret` carries both
+ * never_export and revision_exclude, the case where revision_exclude wins and the column is
+ * not recorded at all.
  *
- * @TEXT-TYPE-01-EXCEPTION - the borrowed text_types fixture type has no JavaScript twin, and
+ * @TEXT-TYPE-01-EXCEPTION - the borrowed text-type fixture has no JavaScript twin, and
  * this model is written and read in PHP only; no payload of it ever reaches a browser.
  */
 class Revision_Secret_Fixture_Model extends Rsx_Model_Abstract
@@ -29,14 +30,11 @@ class Revision_Secret_Fixture_Model extends Rsx_Model_Abstract
     protected $table = 'revision_secret_fixtures';
     protected $fillable = [];
 
-    public static $enums = [];
+    public static $columns = [
+        'api_token' => ['never_export' => true],
+        'secret_note' => ['text_type' => Text_Fixture_Wrapped_Text::class, 'never_export' => true],
+        'rotating_secret' => ['never_export' => true, 'revision_exclude' => true],
+    ];
 
     public static $revisions = true;
-
-    public static $neverExport = ['api_token', 'secret_note', 'rotating_secret'];
-
-    public static $text_types = ['secret_note' => Text_Fixture_Wrapped_Text::class];
-
-    /** Moves on its own schedule; in both lists, so it is not recorded at all. */
-    protected static $revision_exclude = ['rotating_secret'];
 }
