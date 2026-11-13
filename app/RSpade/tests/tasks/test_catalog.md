@@ -1,7 +1,7 @@
 # Test catalog: tasks
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (reason) | `planned`.
-Type: php / cli (given per section). Last updated: 2026-10-11.
+Type: php / cli (given per section). Last updated: 2026-11-13.
 
 ## Task_Definition_Test (php, default isolation) - vocabulary, cron, discovery, the instance handle
 
@@ -127,7 +127,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-exec-04 | a current-generation worker that left the pool is abandoned at once, live pid or not | departed wid, this pid | PENDING retry, abandon_count 1, reason, operator line | implemented |
 | task-exec-05 | a live member's run is left alone | this process joined; dead pid | RUNNING | implemented |
 | task-exec-06 | an older generation on this host is judged by pid, held to a task worker's command line | dead pid; worker-shaped pid; a pid an unrelated process holds | abandoned; RUNNING; abandoned ("is no longer that task worker"), that process untouched | implemented |
-| task-exec-07 | an older generation on another host is left alone and counted by health | three other-host rows + one local | RUNNING; previous_generation_rows 3 on 2 hosts; WARN | implemented |
+| task-exec-07 | an older generation on another host, started just now, is left alone and counted by health | three other-host rows + one local | RUNNING; unanswered_foreign_rows 3 on 2 hosts; WARN "that rsx-lockd cannot answer for" | implemented |
 | task-exec-08 | a run with no worker_id is judged by pid on its own host | inline dead pid; dispatched dead pid; other host | inline FAILED; dispatched PENDING; other RUNNING | implemented |
 
 ## Task_Abandonment_Retry_Test (php, $requires_db_reset + no-tx) - what the reaper does with an abandoned run
@@ -535,10 +535,29 @@ Children are real `php artisan` processes on the test database: a task being sto
 | task-dead-01 | one tick settles every run a rebooted host left RUNNING | previous-generation pool runs (dispatched, scheduled) and an inline run, all with dead pids | dispatched PENDING with a paced retry; scheduled FAILED, counted, next_run_at kept; inline FAILED | implemented |
 | task-dead-02 | a reused pid neither keeps a dead run alive nor gets killed | previous-generation pool run two hours old on a plain `sleep` pid | abandoned on the first tick ("is no longer that task worker"); no kill request, no [TASK TIMEOUT]; the process untouched | implemented |
 | task-dead-02b | an inline run's reused pid does not keep it RUNNING | inline row on a live `sleep` pid with worker_pid_start_time + 1 | FAILED on the first tick, reason names the pid; the process untouched | implemented |
-| task-dead-03 | another host's unsettled run does not hold its #[Exclusive] identity | other-host previous-generation RUNNING exclusive_task; dispatch + worker | stuck run RUNNING; the new run reads "queued" and COMPLETES | implemented |
+| task-dead-03 | another host's run, inside the vanished-host limit, does not hold its #[Exclusive] identity | other-host previous-generation RUNNING exclusive_task started now; dispatch + worker | that run RUNNING; the new run reads "queued" and COMPLETES | implemented |
 | task-dead-04 | a schedule's queued run that was never claimed is claimed by the next worker | PENDING scheduled-origin row with schedule_id, a day overdue | COMPLETED; schedule last_task_id + last_success_at | implemented |
 | task-dead-05 | a long-overdue schedule runs once | hourly schedule (at a minute half an hour from now) 30 days overdue; two scheduled workers | one run row; next_run_at in the future | implemented |
 | task-dead-06 | long-overdue pending runs each run once, oldest due first | three pending runs 10/30/20 days overdue | run order by due time; three rows, each COMPLETED | implemented |
+
+## Task_Vanished_Host_Test (php, $requires_db_reset + no-tx, live rsx-lockd) - a run whose host is gone, the host's vouch, late writes
+
+Bound `rsx.tasks.vanished_host_timeout` = 600 by config; every age a stored "seconds ago".
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-vanish-01 | a scheduled run on a vanished host is FAILED and counted | other-host older-generation scheduled run (real manifest schedule), evidence 700 s old | FAILED, reason names the host and the limit; consecutive_failures 1; next_run_at kept | implemented |
+| task-vanish-02 | a dispatched run on a vanished host is retried | other-host dispatched run, newest evidence 700 s old | PENDING, abandon_count 1, retry in the future; worker columns, worker_seen_at, started_at cleared | implemented |
+| task-vanish-03 | evidence inside the bound keeps a run | silent 300 s; 10,000 s old with heartbeat / report / worker_seen_at 30 s ago | all RUNNING | implemented |
+| task-vanish-04 | an inline run on another host | inline rows, worker_seen_at 700 s / 30 s ago | FAILED / RUNNING | implemented |
+| task-vanish-05 | an explicit-timeout run is judged by its host's vouch | timeout 60, started 10,000 s ago, vouched 30 s / 700 s ago | RUNNING / PENDING | implemented |
+| task-vanish-06 | silent_timeout = 0 changes nothing | as 05 without a timeout, silent_timeout 0 | RUNNING / PENDING | implemented |
+| task-vanish-07 | the bound has no "off" | 0, -1, '600', null | the tick throws naming the key | implemented |
+| task-vanish-08 | a tick vouches only for its own live runs | local older-generation pool run on a task-worker pid; local inline run of this process; fresh other-host run | worker_seen_at set on both local rows, null on the other host's | implemented |
+| task-vanish-09 | a late settle never overwrites the reaper's verdict | dispatched run re-pended by the tick then re-claimed elsewhere; inline run FAILED by the tick; settle() from the old claim | settle() false; rows unchanged; operator line "its outcome was not recorded"; log error under [TASK #id] | implemented |
+| task-vanish-10 | late reports are dropped and the task is told to stop | dispatched run re-pended by the tick; status/progress/flush twice from the old claim | nothing written; one operator line; is_stop_requested() true | implemented |
+| task-vanish-11 | the health row says when a stranded run settles | other-host pool run 100 s and inline run 200 s old | WARN naming both hosts, "settled automatically", "next in about 7 min" (the older run), remediation "none needed"; OK after the tick settles them | implemented |
+| task-vanish-12 | rspade-taskd ticks at least hourly when idle | node reads the module's CEILING_MS | 3600000 | implemented |
 
 ## Deferred / planned
 
@@ -549,7 +568,6 @@ Children are real `php artisan` processes on the test database: a task being sto
 | task-d-03 | rsx:tasks:list running table (worker PID, progress, status text) | cli | Schedules table covered by task-vis-03 | planned |
 | task-d-04 | orphaned temp directory removal by Task_Retention_Service::remove_orphaned_temp_directories() | php | the run's own cleanup is covered; the sweep of a directory left by a killed run is not | planned |
 | task-d-10 | an inline run whose pid was reused stays RUNNING (the reaper has no command line to hold an inline pid to) | php | pins a known gap; awaiting an owner decision on the evidence (docs.dev/audits/task_dead_run_recovery_audit_2026_10_11.md, scenario 2) | blocked |
-| task-d-11 | a RUNNING run on a host that no longer exists is settled | php | no mechanism declares a host gone; awaiting an owner decision (same audit, scenario 3) | blocked |
 | task-d-12 | rsx-lockd restarting under live workers: the run locks are released while their tasks still run | php | cannot restart the daemon from inside a test run | deferred |
 | task-d-13 | the Task System health row reads INFO under the maintenance flag | php | needs the real flag raised; the branch is one read of Framework_Maintenance::is_active_on_disk() | deferred |
 | task-d-14 | a web request blocked in Task::internal() while the system is off, ended by the web server, leaves its run queued | http | needs a served fixture route and a php-fpm request limit; the dead-waiter case is task-switch-10 | deferred |

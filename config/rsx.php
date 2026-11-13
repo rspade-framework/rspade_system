@@ -1775,8 +1775,27 @@ return [
         //
         // An inline run (Task::internal(), rsx:task:run, a #[Command]) is never killed for
         // time. A run dispatched with an explicit 'timeout' option is under that HARD limit
-        // from its start instead, and not under this one. 0 = no silence limit.
+        // from its start instead, and not under this one. 0 = no silence limit. A run whose
+        // HOST has gone silent is a different limit: vanished_host_timeout, below.
         'silent_timeout' => 1800,  // 30 minutes
+
+        // THE VANISHED-HOST LIMIT (seconds). A SANCTIONED TIMEOUT under the no-timeout mandate,
+        // and what it bounds is the silence of a HOST about a run it holds - never a task's
+        // work. Every rsx:task:process tick stamps _tasks.worker_seen_at (database clock) on the
+        // runs it finds alive on its own host, and a host holding a RUNNING run ticks every
+        // minute. A RUNNING run on ANOTHER host that rsx-lockd cannot answer for (claimed under
+        // an older rsx-lockd generation, or run inline), with no sign of life of its own
+        // (start, heartbeat, report) and no stamp from its host for longer than this, is
+        // settled ABANDONED by whichever host ticks: a dispatched run goes back to pending for
+        // its paced retry, a scheduled or inline run is FAILED. What it catches is a host that
+        // no longer exists - a recreated container has a new hostname and a new rsx-lockd -
+        // whose runs would otherwise stay RUNNING forever. A run that reports, or whose host
+        // ticks, is never touched however long it runs. Measured on the database clock, so a
+        // skewed host clock cannot shorten it. Expiry on a host that is in fact alive but has
+        // stopped ticking settles its runs while their processes run on; their later writes
+        // are refused and logged (rsx:man tasks, ABANDONED WORKERS). An integer >= 1; there is
+        // no "off", and any other value makes the tick throw.
+        'vanished_host_timeout' => 3600,  // 1 hour
 
         // THE MAINTENANCE WINDOW: the hour (0-23, on the RSX_SERVER_TIMEZONE wall clock) at
         // which every #[Schedule('maintenance')] task runs - the framework's retention

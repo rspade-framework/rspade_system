@@ -103,7 +103,10 @@ They exist only while the suite runs (the test trees enter the manifest only the
   an abandoned run (`Task_Abandonment_Retry_Test`); the silence limit - a run that stops
   reporting is force-killed, one that keeps reporting never is - and a requested timeout
   (`Task_Timeout_Reaper_Test`); every reporting call stamping the run alive
-  (`Task_Sign_Of_Life_Test`).
+  (`Task_Sign_Of_Life_Test`); a run whose host vanished settled by another host's tick, the
+  host's `worker_seen_at` vouch, late settles and reports from a process its run was taken from
+  refused, the Task Worker Pools health row, rspade-taskd's hourly idle ceiling
+  (`Task_Vanished_Host_Test`).
 - Schedules: reconcile against the manifest (`Task_Schedule_Reconcile_Test`), run rows and
   statistics (`Task_Schedule_Run_Test`), visibility in rsx:health and rsx:tasks:list
   (`Task_Schedule_Visibility_Test`), setting the next run explicitly -

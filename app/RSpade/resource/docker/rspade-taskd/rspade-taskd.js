@@ -34,7 +34,7 @@
  * up) and is retried every STARTUP_RETRY_MS without a word.
  *
  * NO DEADLINE ON A TICK. A tick runs as long as it runs; nothing here kills it. The intervals
- * below are cadences - when to ASK again - and the owner's values (2026-11-05).
+ * below are cadences - when to ASK again - and the owner's values.
  *
  * Flags (every one has the production default; the tests point them at scratch):
  *
@@ -58,8 +58,12 @@ const path = require('path');
 /** A poke never runs the tick more often than this; owner-specified. */
 const DEBOUNCE_MS = 2 * 1000;
 
-/** The longest the daemon goes without asking: the clock-drift backstop; owner-specified. */
-const CEILING_MS = 3 * 60 * 60 * 1000;
+/**
+ * The longest the daemon goes without asking, even when the last tick named nothing to wait
+ * for: the backstop against clock drift and against work no tick announced (another host's
+ * run that has gone silent, settled by the vanished-host rule). Owner-specified.
+ */
+const CEILING_MS = 60 * 60 * 1000;
 
 /** A failing tick is asked again this often; owner-specified. */
 const ERROR_RETRY_MS = 60 * 1000;

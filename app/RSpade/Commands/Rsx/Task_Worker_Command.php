@@ -199,7 +199,7 @@ class Task_Worker_Command extends Command
                     $lost = 'the pool membership ended while the task ran';
                 }
 
-                Task_Runner::settle($instance, $outcome, $run_lock);
+                $recorded = Task_Runner::settle($instance, $outcome, $run_lock);
                 $this->tasks_processed++;
 
                 // A run lock was just released, and time has passed: a run this worker set
@@ -207,6 +207,9 @@ class Task_Worker_Command extends Command
                 // now, so the next pass looks at every pending run again.
                 $this->skip_ids = [];
                 $this->info("[WORKER] Task {$task_id} " . ($outcome->success ? 'completed' : 'failed: ' . $outcome->error));
+                if (!$recorded && $instance->is_superseded()) {
+                    $this->error("[WORKER] Task {$task_id} had been settled as abandoned while it ran; its outcome was not recorded");
+                }
 
                 if ($lost !== null) {
                     if (Task_Pool::holds_lock()) {
@@ -494,6 +497,7 @@ class Task_Worker_Command extends Command
                 'worker_id' => null,
                 'worker_generation' => null,
                 'worker_host' => null,
+                'worker_seen_at' => null,
                 'updated_at' => now(),
             ]);
         }

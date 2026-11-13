@@ -168,6 +168,11 @@ Related framework capabilities on the file-attachment subsystem:
   `preview_loaded` again, and that the URLs held from before the relink then answer `no-store`
   with the new bytes while the new ones are long-lived. Requires realtime. Run it with
   `node system/app/RSpade/tests/attachments/playwright/attachment_content_version_swap.js`.
+- playwright: `playwright/upload_progress.js` uploads a generated file through `Ajax.upload()`
+  over a throttled upload link and proves `on_progress` (increasing `loaded`, a final
+  `loaded === total` before the promise resolves, the same answer as without the option, a
+  throwing callback aborting the upload) and that `$.ajax()` to `/_upload` throws. Run it with
+  `node system/app/RSpade/tests/attachments/playwright/upload_progress.js`.
 - http (not yet implemented): real Content-Type headers on `/_download` / `/_inline`; thumbnail
   endpoints for external attachments over the wire.
 

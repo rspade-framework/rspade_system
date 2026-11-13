@@ -866,6 +866,11 @@
             "created_at": "2026-11-13T06:06:14+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_rederive_queue_table"
+        },
+        "2026_11_13_080007_add_worker_seen_at_to_tasks.php": {
+            "created_at": "2026-11-13T08:00:08+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_worker_seen_at_to_tasks"
         }
     }
 }

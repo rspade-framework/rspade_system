@@ -91,6 +91,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $worker_id
  * @property int $worker_pid
  * @property int $worker_pid_start_time
+ * @property string $worker_seen_at
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant

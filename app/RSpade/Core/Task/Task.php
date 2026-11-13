@@ -716,6 +716,40 @@ class Task
     }
 
     /**
+     * rsx.tasks.vanished_host_timeout, validated: whole seconds, at least 1. There is no "off" -
+     * a bad value throws wherever it is read (the scheduler tick, the health row).
+     */
+    public static function vanished_host_timeout(): int
+    {
+        $seconds = config('rsx.tasks.vanished_host_timeout');
+
+        if (!is_int($seconds) || $seconds < 1) {
+            throw new \RuntimeException('rsx.tasks.vanished_host_timeout must be an integer >= 1 (seconds), got ' . var_export($seconds, true));
+        }
+
+        return $seconds;
+    }
+
+    /**
+     * SQL: whole seconds, on the database clock, since a _tasks row's latest evidence of life -
+     * the latest of started_at, last_heartbeat_at, last_report_at (stamped by the run) and
+     * worker_seen_at (stamped by its host's rsx:task:process tick when it found the run's
+     * process alive). A stamp never written adds nothing; a run with no started_at counts from
+     * created_at.
+     */
+    public static function sql_seconds_since_evidence(): string
+    {
+        $start = 'COALESCE(started_at, created_at)';
+
+        return 'TIMESTAMPDIFF(SECOND, GREATEST('
+            . "{$start}, "
+            . "COALESCE(last_heartbeat_at, {$start}), "
+            . "COALESCE(last_report_at, {$start}), "
+            . "COALESCE(worker_seen_at, {$start})"
+            . '), NOW(3))';
+    }
+
+    /**
      * Resolve a service basename to its FQCN and validate that $rsx_task is a #[Task] method of
      * it. Throws, naming what is wrong, when it is not.
      *

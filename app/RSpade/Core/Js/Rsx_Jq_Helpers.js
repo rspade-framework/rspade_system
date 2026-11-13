@@ -520,11 +520,14 @@ class Rsx_Jq_Helpers {
                 return native_ajax.call(this, attach_csrf_header(settings));
             }
 
-            // Allow file upload endpoint - requires native $.ajax for FormData support.
-            // Same header attach covers every /_upload multipart caller.
-            const is_file_upload = request_url === '/_upload' || request_url.endsWith('/_upload');
-            if (is_file_upload) {
-                return native_ajax.call(this, attach_csrf_header(settings));
+            // The upload endpoint has its own transport, Ajax.upload(), which attaches the
+            // CSRF token, rebases the path for the portal and reports progress.
+            if (is_local_request && (request_url === '/_upload' || request_url.endsWith('/_upload'))) {
+                shouldnt_happen(
+                    '$.ajax() to /_upload is prohibited. Upload through the framework transport:\n' +
+                    '  const result = await Ajax.upload(form_data, {on_progress: (loaded, total) => ...});\n' +
+                    'See: php artisan rsx:man file_upload'
+                );
             }
 
             // Block local AJAX requests that don't use the Ajax endpoint pattern

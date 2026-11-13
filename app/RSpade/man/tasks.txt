@@ -1621,9 +1621,10 @@ FAILURE AND ABANDONMENT
     until something dispatches it again (rerun()); a schedule runs again at its cadence.
 
     A RUNNING run whose worker is gone is ABANDONED - the task never reported an outcome -
-    and the cron tick settles it, with NO grace period: every verdict is evidence, never an
-    age. Each host's tick asks rsx-lockd about every RUNNING run carrying a worker_id, one
-    members_alive round trip per pool, under that pool's lock:
+    and the cron tick settles it. A run some party can judge is judged by EVIDENCE, never by
+    its age; only a run nobody reachable can answer for is judged by its silence (THE
+    VANISHED HOST, below). Each host's tick asks rsx-lockd about every RUNNING run carrying
+    a worker_id, one members_alive round trip per pool, under that pool's lock:
 
         the daemon's own generation     not alive -> abandoned, whatever host ran it.
                                         Alive -> running.
@@ -1633,13 +1634,40 @@ FAILURE AND ABANDONMENT
                                         task worker of this project by its command line,
                                         so a pid the kernel has handed to another process
                                         since (a reboot) does not keep a dead run alive.
-        an older generation, ANOTHER    left alone for that host's own tick; rsx:health's
-        host                            Task Worker Pools row WARNs while any remains.
+        an older generation, ANOTHER    left for that host's own tick - until it is a
+        host                            VANISHED HOST's run (below); rsx:health's Task
+                                        Worker Pools row WARNs while any remains.
         no worker_id (inline)           the pid on its own host decides, held to the
                                         start time the run recorded (an inline run's
                                         process may be a web server worker or any
                                         command, so there is no command line to hold it
-                                        to): a live process at a reused pid is gone.
+                                        to): a live process at a reused pid is gone. On
+                                        another host: left for that host's tick - until
+                                        it is a VANISHED HOST's run.
+
+    THE HOST'S VOUCH. Every tick stamps _tasks.worker_seen_at, on the database clock, on each
+    run it has just found alive on its own host (a live pool member, or a pid that is still
+    the run's process). A host holding a RUNNING run ticks every minute - cron, or
+    rspade-taskd while anything runs - so a live host keeps vouching for its runs.
+
+    THE VANISHED HOST. A RUNNING run on ANOTHER host that rsx-lockd cannot answer for (an
+    older generation, or inline) is abandoned by whichever host ticks once its latest
+    evidence of life - started_at, last_heartbeat_at, last_report_at and worker_seen_at,
+    measured in SQL against the database clock - is older than
+    rsx.tasks.vanished_host_timeout (3600 s). Its reason reads "no sign of life from the run
+    (PID P) or from its host H for Ns (rsx.tasks.vanished_host_timeout Ms): that host no
+    longer runs rsx:task:process, or no longer exists". This is what settles the runs of a
+    host that is gone for good - a recreated container comes back with a new hostname and a
+    new rsx-lockd, so nothing else would ever answer for them. A run that reports, or whose
+    host ticks, is never touched however long it runs: an explicit-timeout run stays its own
+    host's to kill, and rsx.tasks.silent_timeout = 0 changes nothing here. The limit is a
+    SANCTIONED timeout and bounds a host's silence, never a task's work.
+
+    Known limits. A host that is alive but whose tick has stopped (its cron line removed,
+    its daemon down) for longer than the limit has its runs settled while their processes
+    run on - a dispatched run may then run twice (see LATE WRITES). Every host sharing the
+    database must run code that stamps worker_seen_at, or its inline runs older than the
+    limit read as abandoned to the hosts that do; upgrade inside a maintenance window.
 
     Settling an abandoned run:
 
@@ -1656,8 +1684,18 @@ FAILURE AND ABANDONMENT
 
     A daemon restart therefore never reaps live work: every running worker is then of an
     older generation and is judged by its own pid. A worker of the CURRENT generation whose
-    connection dropped while its process lives on is reaped at once; if it then finishes,
-    its own settle no longer matches (the row is no longer RUNNING under it).
+    connection dropped while its process lives on is reaped at once.
+
+    LATE WRITES. A process whose run was settled as abandoned while it ran on writes nothing
+    more onto it: its reports and its settle are guarded on the claim it made (host, pid,
+    pid start time, abandon count), so they never reach the row again - not the retry another
+    worker has claimed, not a FAILED verdict. Its first refused write logs an error under
+    "[TASK #<id>]" and leaves one operator line on the run ("The process this run was taken
+    from (host H, PID P) is still running; its reports are no longer recorded", or "... its
+    outcome was not recorded (it completed)"); later reports are dropped, and
+    is_stop_requested() answers true, so a task that checks it stops at its next item. The
+    run keeps the verdict it was given. A run a kill worker settled KILLED keeps that verdict
+    quietly, as before.
 
 RETENTION
 
@@ -1778,11 +1816,12 @@ TURNING THE TASK SYSTEM OFF AND ON
         # ... replace the server; the database carries the switch across ...
         php artisan rsx:tasks:enable        # on the new server
 
-    Stopped this way, no run is left RUNNING under a host that no longer exists. A host
-    that is lost WITHOUT this - and comes back under another hostname, as a recreated
-    container does unless its hostname is pinned - leaves its RUNNING runs unsettled: only
-    the host that ran a worker can judge its pid (FAILURE AND ABANDONMENT), and rsx:health
-    WARNs about them in the Task Worker Pools row.
+    Stopped this way, the old server's runs end at once. Nothing is required, though: a
+    host lost WITHOUT this - or one that comes back under another hostname, as a recreated
+    container does unless its hostname is pinned - leaves runs that settle themselves once
+    neither they nor their host have shown a sign of life for rsx.tasks.vanished_host_timeout
+    (one hour; FAILURE AND ABANDONMENT, THE VANISHED HOST). rsx:health's Task Worker Pools
+    row names them meanwhile and says when the next one settles.
 
 COMMANDS
 
@@ -1823,7 +1862,7 @@ COMMANDS
     due moment may have moved earlier: a dispatch, set_next_run() / run_again_in(), a
     worker that ran something exiting, a manifest rebuild, rsx:tasks:enable (which
     rsx:maintenance:disable runs). Pokes are debounced to one tick per 2 s; with nothing
-    due the daemon still asks every 3 hours; a failing tick is asked again every minute,
+    due the daemon still asks every hour; a failing tick is asked again every minute,
     and one the maintenance gate refuses (exit 75) every 5 minutes. A poke nobody answers
     costs nothing, and dispatch() spawns its own worker either way.
     `rspade-taskd status` shows the last tick and the next one. Supervisor runs it under
@@ -1838,8 +1877,10 @@ COMMANDS
     was due, so claiming it early never runs that minute twice. A dispatched run is due at
     its scheduled_for exactly.
 
-    Each tick it: (1) settles abandoned runs and requests force kills for runs silent
-    past the silence limit (or past a requested timeout);
+    Each tick it: (1) settles abandoned runs (including another host's runs past
+    rsx.tasks.vanished_host_timeout), stamps worker_seen_at on the runs it found alive here,
+    and requests force kills for runs silent past the silence limit (or past a requested
+    timeout);
     (2) hands back kill requests whose kill worker died; (3) reconciles _task_schedules
     from the manifest; (4) tries ONE spawn per pool with due work - on_demand (else
     scheduled) for due dispatched runs, scheduled for due schedules, kill for this host's
@@ -1857,6 +1898,10 @@ CONFIGURATION (config/rsx.php 'tasks')
         ],
         'silent_timeout'              => 1800,  // seconds WITHOUT A REPORT before a worker-run
                                                 // task is killed (0 = none); THE SILENCE LIMIT
+        'vanished_host_timeout'       => 3600,  // seconds without a sign of life from a run on
+                                                // ANOTHER host, or a vouch from that host,
+                                                // before it is settled abandoned (>= 1, no
+                                                // "off"); THE VANISHED HOST
         'stop_grace_seconds'          => 60,    // force_stop()'s default grace
         'failing_schedule_warn_after' => 3,     // rsx:health threshold
         'retry' => [
@@ -1995,10 +2040,18 @@ TROUBLESHOOTING
         - The cap was lowered under running workers (they drain as they finish), or two
           configurations share one database and host.
 
-    Task Worker Pools WARN: running task(s) from a previous rsx-lockd generation on host(s)
-        - Runs claimed before the daemon last restarted, on other hosts. Each host's tick
-          settles its own by pid; for a host that is gone, settle them with
-          rsx:tasks:stop <id> --kill --explanation="...".
+    Task Worker Pools WARN: running task(s) on host(s) ... that rsx-lockd cannot answer for
+        - Runs on other hosts claimed before the daemon last restarted, or run inline. Each
+          host's tick settles its own by pid; a host that is gone leaves them to be settled
+          automatically once they and it have been silent for rsx.tasks.vanished_host_timeout
+          (the detail says when the next one is due). Nothing to do - but a host that is
+          alive must run rsx:task:process, or its runs are settled too.
+
+    "The process this run was taken from ... is still running" on a run
+        - The run was settled as abandoned while its process ran on (its host stopped
+          ticking, or its worker's rsx-lockd connection dropped). That process's later
+          reports and outcome were refused (FAILURE AND ABANDONMENT, LATE WRITES); the run
+          keeps its verdict, and a dispatched one is retried.
 
     A schedule runs but never succeeds
         - rsx:tasks:list (Schedules table) and /_sys/tasks (Schedules tab) show the streak

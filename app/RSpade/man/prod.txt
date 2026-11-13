@@ -623,8 +623,19 @@ ADMINISTRATION
         are immune to their own gate. rsx:man maintenance_mode.
 
     rsx:tasks:disable [--reason] [--grace] / rsx:tasks:enable
-        REPLACING A HOST (a new server, or a recreated container): turn the
-        task system off on the old one first -
+        REPLACING A HOST (a new server, or a recreated container) needs no
+        task step: a run the old host left RUNNING - under a hostname nothing
+        answers to any more, as a recreated container's id is - settles itself.
+        Once neither the run nor its host has shown a sign of life for
+        rsx.tasks.vanished_host_timeout (3600 s, one hour), the next
+        rsx:task:process tick on any host settles it ABANDONED: a dispatched
+        run is retried, a scheduled run FAILS and its schedule runs again at
+        its next cadence, an inline run FAILS. rsx:health's Task Worker Pools
+        row names such runs and says when the next one settles. rsx:man tasks,
+        FAILURE AND ABANDONMENT.
+
+        To end the old host's runs promptly instead of an hour later, turn
+        the task system off on it first -
 
             php artisan rsx:tasks:disable --reason="replacing the server"
 
@@ -635,12 +646,12 @@ ADMINISTRATION
 
             php artisan rsx:tasks:enable
 
-        and the next rsx:task:process tick picks up the queue. A host removed
-        WITHOUT this leaves its running task runs RUNNING under a hostname
-        nothing answers to any more - a container's hostname is its id unless
-        pinned, so pin it (or stop the tasks first) on any box whose container
-        is recreated. rsx:health FAILs its Task System row for as long as the
-        switch is off. rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON.
+        and the next rsx:task:process tick picks up the queue. Pinning a
+        container's hostname does the same for a recreated container: the new
+        container's tick judges the runs as its own, by pid, at once. Both are
+        conveniences, never requirements. rsx:health FAILs its Task System row
+        for as long as the switch is off. rsx:man tasks, TURNING THE TASK
+        SYSTEM OFF AND ON.
 
     migrate
         Runs in place on a sealed box and rebuilds nothing. See BUILD AND

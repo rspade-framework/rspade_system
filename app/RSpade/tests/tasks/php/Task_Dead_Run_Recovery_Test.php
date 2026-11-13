@@ -35,8 +35,10 @@ use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
  *   signalled, and no kill is requested for it. An inline run is held to its recorded start
  *   time alone, and is settled FAILED all the same.
  *
- *   ANOTHER HOST'S RUN THAT NEVER SETTLES does not hold the queue back: its #[Exclusive]
- *   identity runs again, because the run lock lived in the lock daemon and went with it.
+ *   ANOTHER HOST'S RUN, NOT YET SETTLED, does not hold the queue back: its #[Exclusive]
+ *   identity runs again, because the run lock lived in the lock daemon and went with it. (Such
+ *   a run is left for its own host while it, or its host, shows a sign of life within
+ *   rsx.tasks.vanished_host_timeout; past that it is settled - Task_Vanished_Host_Test.)
  *
  *   A RUN THAT WAS QUEUED BUT NEVER CLAIMED (a schedule tick queued behind its exclusive
  *   group) is claimed by whichever worker comes next and counted on its schedule.
@@ -222,13 +224,14 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // A run on a host that never settles it
+    // A run on another host, not yet settled
     // -------------------------------------------------------------------------
 
     /**
-     * A previous generation's run on another host stays RUNNING on this host's tick - and its
-     * #[Exclusive] identity is not held by it: the next dispatch queues, reads as claimable,
-     * and a worker runs it.
+     * A previous generation's run on another host that started moments ago - well inside
+     * rsx.tasks.vanished_host_timeout - stays RUNNING on this host's tick, left for its own
+     * host; and its #[Exclusive] identity is not held by it: the next dispatch queues, reads
+     * as claimable, and a worker runs it.
      */
     public static function test_another_hosts_unsettled_run_does_not_hold_its_exclusive_identity()
     {
@@ -237,7 +240,7 @@ class Task_Dead_Run_Recovery_Test extends Rsx_Test_Abstract
         $stuck = static::__pool_run(Task_Concurrency_Fixture_Service::class, 'exclusive_task', self::DEAD_PID, 34, ['worker_host' => self::OTHER_HOST]);
 
         Artisan::call('rsx:task:process');
-        static::__assert_equals(Task_Run_Model::STATUS_RUNNING, static::__status($stuck), 'another host\'s run is left for that host');
+        static::__assert_equals(Task_Run_Model::STATUS_RUNNING, static::__status($stuck), 'another host\'s run inside the vanished-host limit is left for that host');
 
         $next = Task::dispatch('Task_Concurrency_Fixture_Service', 'exclusive_task');
         static::__assert_true($next !== $stuck, 'a new run is queued');

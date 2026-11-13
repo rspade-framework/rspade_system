@@ -314,11 +314,18 @@ class Task_Runner
      *
      * The held reports are written first, so nothing the task reported is lost. The row
      * settles COMPLETED (STOPPED when a stop had been requested) or FAILED; the write matches
-     * only a row still RUNNING, so a run a kill worker already settled KILLED keeps that verdict.
-     * A scheduled run updates its schedule's statistics. A pool worker calls this under its
-     * pool lock (THE RULE: task-table writes only; frames are deferred).
+     * only a row still RUNNING under THIS process's claim (Task_Instance::_claimed_row(): the
+     * host, pid, pid start time and abandon count the claim left), so a run a kill worker
+     * already settled KILLED keeps that verdict, and so does a run settled as ABANDONED while
+     * this process ran on (back to pending, re-claimed by another worker, or FAILED) - that
+     * late outcome is refused loudly: a Laravel log error and an operator line on the run
+     * naming the outcome that was not recorded. A scheduled run updates its schedule's
+     * statistics only when its settle was recorded. A pool worker calls this under its pool
+     * lock (THE RULE: task-table writes only; frames are deferred).
+     *
+     * @return bool Whether the outcome was recorded on the row
      */
-    public static function settle(Task_Instance $instance, Task_Run_Outcome $outcome, ?Task_Lock_Set $run_lock = null): void
+    public static function settle(Task_Instance $instance, Task_Run_Outcome $outcome, ?Task_Lock_Set $run_lock = null): bool
     {
         if (!$outcome->success) {
             $instance->stderr('Task failed: ' . $outcome->error);
@@ -341,8 +348,7 @@ class Task_Runner
             ? DB::raw('IF(stop_requested_at IS NULL, ' . Task_Run_Model::STATUS_COMPLETED . ', ' . Task_Run_Model::STATUS_STOPPED . ')')
             : Task_Run_Model::STATUS_FAILED;
 
-        $settled = DB::table('_tasks')
-            ->where('id', $id)
+        $settled = (bool) $instance->_claimed_row()
             ->where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->update([
                 'status_id' => $status,
@@ -357,6 +363,11 @@ class Task_Runner
 
         if ($settled) {
             static::__update_schedule($id, $outcome, $now);
+        } elseif (!$instance->_claimed_row()->exists()) {
+            // Not a verdict this process's claim still carries (a kill's KILLED is one): the
+            // run was settled as abandoned while this process ran on, and keeps that verdict.
+            $result = $outcome->success ? 'it completed' : "it failed: {$outcome->error}";
+            $instance->_mark_superseded("its outcome was not recorded ({$result})");
         }
 
         if ($run_lock !== null) {
@@ -377,6 +388,8 @@ class Task_Runner
         if ($run_lock !== null && Task_Pool::member_pool() === null) {
             Task_Daemon::poke();
         }
+
+        return $settled;
     }
 
     /**

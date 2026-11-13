@@ -196,15 +196,18 @@ static on_app_modules_define() {
 - **Per-form override**: `<Rsx_Form $question_handler=this.ask_inline>` or
   `form.question_handler = fn`.
 - **No handler anywhere throws**, naming `set_question_handler()`.
-- **`Rsx_Form.MAX_QUESTION_ROUNDS` (5) is a defect detector**, not a duration: a sixth
-  question in one submit means the endpoint is ignoring `_answers`.
+- **A re-ask is the defect, not a round count**: one submit may answer any number of
+  DISTINCT keys (its own questions plus one per uploaded file); an endpoint asking a key
+  already answered is ignoring `_answers`, and the submit ends with a rendered error naming
+  the endpoint and the key (`... asked 'k' again after it was answered`). A handler answering
+  `null`/`undefined` trips it too - the server reads both as not answered.
 - The framework defines **no question kinds** and ships **no dialog**. `confirm` / `select`
   / `prompt` are a recommended contract - `rsx:man form_conventions`, QUESTIONS. A
   `confirm` may carry `back_label` (the button that stops the call; "Back" when absent).
 - A non-form caller sees `error.code === Ajax.ERROR_QUESTION` with `metadata.key` /
   `metadata.question`, and may run the same handler with `Rsx_Form.ask()` - or let
   `Rsx_Form.call_answering(Controller.method, params)` run the whole loop (resolves the value,
-  or `Rsx_Form.CANCELLED`; uncapped rounds, but a key asked again after its answer throws). In
+  or `Rsx_Form.CANCELLED`; the same re-ask guard, which throws there). In
   PHP an in-process `Ajax::internal()` raises `AjaxQuestionException`.
 - **A standard question the framework words for you**: the duplicate-upload question
   (`Rsx_Duplicate_Upload`, key `duplicate_upload:<id>`) - skill `rspade:file-attachments`.

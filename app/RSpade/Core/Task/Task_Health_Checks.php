@@ -97,10 +97,12 @@ class Task_Health_Checks
      * More members than a cap is a WARN - admission happens under the pool lock, so it means
      * the cap was lowered under running workers, or two configurations share a pool.
      *
-     * RUNNING rows claimed under a previous rsx-lockd generation on ANOTHER host are a WARN
-     * too (previous_generation_rows()): each host's rsx:task:process settles its own such
-     * rows by pid, so they stay RUNNING for as long as their host runs no tick - a host that
-     * was retired, or whose cron is gone.
+     * RUNNING rows on ANOTHER host that rsx-lockd cannot answer for - claimed under a previous
+     * generation, or run inline - are a WARN too (unanswered_foreign_rows()): their own host's
+     * rsx:task:process judges them by pid, and when that host has gone silent (retired,
+     * recreated, its cron gone) any host's tick settles them once they and their host have
+     * shown no sign of life for rsx.tasks.vanished_host_timeout. The detail says when the
+     * next one is due to be settled; nothing is asked of the operator.
      * An unreachable daemon or a refused pool.stats is a FAIL: nothing can be admitted. Under
      * the maintenance flag the daemon is stopped on purpose, which is INFO (the Lock Server
      * row's convention; the flag is read off disk, as a probe of the box right now).
@@ -154,15 +156,19 @@ class Task_Health_Checks
             ];
         }
 
-        $previous = self::previous_generation_rows((int) $generation);
-        if ($previous['count'] > 0) {
+        $unanswered = self::unanswered_foreign_rows((int) $generation);
+        if ($unanswered['count'] > 0) {
+            $limit = Task::vanished_host_timeout();
+            $minutes = (int) ceil($unanswered['next_settle_seconds'] / 60);
+            $next = $minutes > 0 ? "next in about {$minutes} min" : 'next on the coming tick';
+
             return [
                 'status' => 'WARN',
-                'detail' => $detail . '; ' . $previous['count'] . ' running task(s) from a previous rsx-lockd'
-                    . ' generation on host(s) ' . implode(', ', $previous['hosts']) . '; each host\'s'
-                    . ' rsx:task:process reaps its own - a host that no longer runs one leaves them RUNNING',
-                'remediation' => 'confirm the rsx:task:process cron runs on each named host; for a host'
-                    . ' that is gone, settle its runs with rsx:tasks:stop <id> --kill --explanation="..."',
+                'detail' => $detail . '; ' . $unanswered['count'] . ' running task(s) on host(s) '
+                    . implode(', ', $unanswered['hosts']) . ' that rsx-lockd cannot answer for; each is'
+                    . " settled automatically once it and its host have been silent for {$limit}s"
+                    . " (rsx.tasks.vanished_host_timeout; {$next})",
+                'remediation' => 'none needed; a host that is alive must run rsx:task:process',
             ];
         }
 
@@ -173,29 +179,39 @@ class Task_Health_Checks
     }
 
     /**
-     * RUNNING rows claimed by a pool member of an rsx-lockd generation other than $generation,
-     * on a host other than this one - the rows this host's reaper can never settle.
+     * RUNNING rows on a host other than this one that rsx-lockd cannot answer for: claimed by a
+     * pool member of a generation other than $generation, or run inline (no worker_id). Their
+     * own host judges them by pid; when it has gone silent, the vanished-host rule settles them.
      *
      * @param int $generation The daemon's current generation (Task_Pool::stats())
-     * @return array{count: int, hosts: string[]}
+     * @return array{count: int, hosts: string[], next_settle_seconds: int|null} next_settle_seconds:
+     *         how long until the first of them passes rsx.tasks.vanished_host_timeout (0 = already
+     *         past it, settled by the next tick); null when there are none
      */
-    public static function previous_generation_rows(int $generation): array
+    public static function unanswered_foreign_rows(int $generation): array
     {
         $rows = DB::table('_tasks')
+            ->select('worker_host')
+            ->selectRaw(Task::sql_seconds_since_evidence() . ' AS seconds_since_evidence')
             ->where('status_id', Task_Run_Model::STATUS_RUNNING)
-            ->whereNotNull('worker_id')
-            ->where('worker_generation', '!=', $generation)
+            ->where(function ($query) use ($generation) {
+                $query->whereNull('worker_id')->orWhere('worker_generation', '!=', $generation);
+            })
+            ->whereNotNull('worker_host')
             ->where('worker_host', '!=', Task_Pool::host())
-            ->get(['worker_host']);
+            ->get();
 
         $hosts = [];
+        $next = null;
         foreach ($rows as $row) {
             $hosts[$row->worker_host] = true;
+            $remaining = max(0, Task::vanished_host_timeout() - (int) $row->seconds_since_evidence);
+            $next = $next === null ? $remaining : min($next, $remaining);
         }
         $hosts = array_keys($hosts);
         sort($hosts);
 
-        return ['count' => count($rows), 'hosts' => $hosts];
+        return ['count' => count($rows), 'hosts' => $hosts, 'next_settle_seconds' => $next];
     }
 
     /**

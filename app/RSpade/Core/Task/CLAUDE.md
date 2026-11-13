@@ -23,8 +23,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   pools; a kill worker is still started), while this process's own spawns into the pool
   fill its cap (`is_worker_process()`, `/proc`), then read the pool count under the pool
   lock, unlock, and spawn only below the cap - `rsx:task:killer` for the kill pool,
-  `rsx:task:worker --pool=` otherwise) and the process switch `spawn_workers(bool)` (OFF by
-  default under the test suite).
+  `rsx:task:worker --pool=` otherwise), the process switch `spawn_workers(bool)` (OFF by
+  default under the test suite), `is_run_process()`, and the vanished-host pair
+  `vanished_host_timeout()` (the validated config) and `sql_seconds_since_evidence()` (the
+  one SQL measure of a run's latest evidence of life, on the database clock), read by the
+  tick and the health row alike.
 - `Task_Daemon.php` — the application's side of `rspade-taskd`, the container's scheduler
   (`resource/docker/rspade-taskd/`): `poke()` (a line on its socket, only where
   `/.rspade_container` exists and this process spawns workers; never waits, never fails),
@@ -68,9 +71,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `--once` - a fresh revision unit and virtual session before, `Session::_end_virtual()`
   after), `settle()` (a failure that was THROWN also goes to the Laravel log under
   `log_prefix()`; a returned failure does not; then flush, guarded
-  RUNNING -> COMPLETED/STOPPED/FAILED, schedule statistics, run lock release + re-anchor of a
-  coalesced pending run, THEN the lifecycle frame - the waiters it tells must read the lock
-  free), `settle_abandoned_inline()`, `running_fields()`.
+  RUNNING -> COMPLETED/STOPPED/FAILED under the instance's claim (`_claimed_row()`), a
+  refusal of a run taken from this process logged and noted on the run, schedule
+  statistics, run lock release + re-anchor of a coalesced pending run, THEN the lifecycle
+  frame - the waiters it tells must read the lock free; answers whether it recorded the
+  outcome), `settle_abandoned_inline()`, `running_fields()`.
 - `Task_Run_Outcome.php` — THE RETURN CONTRACT, in one place (`from_return()`,
   `from_throwable()`, `exit_code()`).
 - `Task_Instance.php` — the `$task` handle: the reporting calls, held and written together
@@ -78,7 +83,10 @@ says what is in this DIRECTORY and what must stay true when editing it.
   write stamps `last_report_at` even when nothing else changed), `run_again_in()`,
   `is_stop_requested()`, attachments (inside the blob
   store's reference scope; a replaced blob released if orphaned), the console streams a
-  runner attaches (`set_console_streams()`), and `record_operator_line()`.
+  runner attaches (`set_console_streams()`), `record_operator_line()`, and THE CLAIM it
+  writes under (`_claimed_row()`: the row's worker_host, worker_pid, worker_pid_start_time
+  and abandon_count as `for_row()` read them) with `_mark_superseded()` /
+  `is_superseded()` for a run taken from this process.
 - `Task_Run_Model(_Abstract).php` — `_tasks`, one row per run: enums, report readers,
   cursor reads of output and messages, `to_status_array()` / `to_status_arrays()` (with
   `waiting`), `search_query()` /
@@ -172,8 +180,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   Contract: `rsx:man task_commands`.
 - `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases, and reads them on the server timezone's wall clock (`Rsx_Time::get_server_timezone()`), walking REAL minutes with cron's DST rule for fixed-time jobs. `_task_schedules.timezone` records the zone a row's `next_run_at` was computed in and `cron_resolved` the five-field expression it resolved to (`'maintenance'` resolves through `rsx.tasks.maintenance_hour`, `Cron_Parser::maintenance_hour()`); reconciliation re-registers a row whose zone or resolution differs, and only records a NULL resolution. Every framework task running daily or less is `#[Schedule('maintenance...')]` + `#[Exclusive('maintenance')]` - `Maintenance_Window_Test` holds that line.
 - `Task_Health_Checks.php` — `rsx:health` rows: Task System (FAIL while off; INFO under the
-  maintenance flag), Task Worker Pools, Task Scheduler Liveness (INFO while off), Task
-  Schedule Failures.
+  maintenance flag), Task Worker Pools (WARN naming the other hosts' runs rsx-lockd cannot
+  answer for - `unanswered_foreign_rows()` - and when the next settles), Task Scheduler
+  Liveness (INFO while off), Task Schedule Failures.
 - The switch's commands are `Commands/Rsx/Tasks_Disable_Command.php` (switch first, then the
   synchronous stop pass: `force_stop()` on every RUNNING run, this host's kill requests
   carried out in-process, re-read until none is owed) and `Tasks_Enable_Command.php`;
@@ -208,7 +217,14 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - **Every settle and every claim is GUARDED** on the status it expects (and, for a
   kill or an abandonment, on the worker that held it), so two writers can never both win:
   a run a kill worker settled KILLED keeps that verdict when the task returns, and two
-  pools can never both claim one pending row.
+  pools can never both claim one pending row. The run's own writes - `Task_Runner::settle()`
+  and every `Task_Instance::flush()` - are guarded on the CLAIM the instance was made under
+  (`_claimed_row()`: host, pid, pid start time, abandon count), so a process whose run was
+  settled as abandoned can neither overwrite the reaper's verdict nor write onto the retry
+  another worker claimed: its first refused write logs and leaves an operator line, it drops
+  every later report, and `is_stop_requested()` answers true. An instance is always made
+  AFTER its process claimed the row (`Task_Instance::find()` follows every claim); a new run
+  path must keep that order.
 - **A graceful stop is cooperative.** `request_stop()` only stamps `stop_requested_at`;
   nothing here may act on it for the task. Killing happens only through a kill request,
   carried out by a kill worker, never inside the request that asked.
@@ -238,20 +254,28 @@ says what is in this DIRECTORY and what must stay true when editing it.
   a worker's socket keeps its membership alive after it dies. Every spawn seam closes the
   daemon sockets `Lockd_Connection::open_socket_inodes()` names
   (`RsxLocks::inherited_lock_fds()`); a new spawn path of a long-lived child must use one.
-- **Abandoned-worker recovery is evidence, never age.** A claim writes `worker_id` +
+- **Abandoned-worker recovery is evidence wherever a party can answer; silence only where
+  none can.** A claim writes `worker_id` +
   `worker_generation`, `worker_host` and `worker_pid` + `worker_pid_start_time` together
-  (`Task_Runner::running_fields()`); wherever they are cleared, all of them are. `rsx:task:process` asks the daemon about every RUNNING run with a
+  (`Task_Runner::running_fields()`); wherever they are cleared, all of them are, and
+  `worker_seen_at` with them. `rsx:task:process` asks the daemon about every RUNNING run with a
   `worker_id` in ONE `members_alive()` per pool, under that pool's lock: the daemon's own
   generation and not alive -> abandoned at once; an older generation (`known: false`) ->
   this host judges its own runs by pid - `Task::is_run_process()`: the pid must still be
   the process the run recorded (`worker_pid_start_time`, `Lib/Support/Process/Process_Identity`)
   and a task worker of this project (`Task::is_worker_process()`, the command line); never
-  bare pid existence, which a reused pid satisfies - and leaves other hosts' alone. A run
+  bare pid existence, which a reused pid satisfies - and leaves other hosts' to them. A run
   with no `worker_id` (inline) is the same pid + start-time probe on its own host, with no
   command line to hold it to. The kill worker and the /_sys worker evidence ask
-  `is_run_process()` too, so a reused pid is never signalled. No grace period exists and
-  none may be added. The silence limit (and a run's own requested timeout) is enforced as a
-  force-kill REQUEST for a live local run.
+  `is_run_process()` too, so a reused pid is never signalled. Every run the tick found alive
+  on its own host is stamped `worker_seen_at = NOW(3)` (THE VOUCH). The ONE age-based
+  verdict is THE VANISHED HOST: another host's run that rsx-lockd cannot answer for (an
+  older generation, or inline), whose latest evidence - `started_at`, `last_heartbeat_at`,
+  `last_report_at`, `worker_seen_at`, measured in SQL against `NOW(3)` - is older than
+  `rsx.tasks.vanished_host_timeout`, is settled through `settle_abandoned()` like any
+  abandonment. A row rsx-lockd answers for (`known: true`) is never judged by age, and no
+  other grace period or age rule may be added. The silence limit (and a run's own requested
+  timeout) is enforced as a force-kill REQUEST for a live local run.
 - **Abandonment is retried; a failure never is.** An abandoned DISPATCHED run goes back to
   PENDING at now + `rsx.tasks.retry.base_seconds` * 2^(n-1) (`abandon_count`) and FAILS on
   the `retry.attempts`-th; an abandoned scheduled or inline run is FAILED. A run that
@@ -280,7 +304,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
   by `Task::internal()`'s fourth argument, which only `Task_Run_Command` (and therefore every
   alias) passes - so an application calling `internal()` prints to nobody's console. The
   streams are display only: every line is recorded on the run either way.
-- **Reports are written at a rate, never dropped.** A held report is written by the first
+- **Reports are written at a rate, never dropped** - except by a process whose run was taken
+  from it (the claim guard, above), which records nothing more. A held report is written by the first
   reporting call or `is_stop_requested()` after `FLUSH_INTERVAL`, by `flush()` or by the
   settle; `is_stop_requested()` READS the row on every call (a stop is seen at once) but
   writes only at the rate, so a per-item stop check is not a per-item write.

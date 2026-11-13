@@ -7,7 +7,9 @@
 
 namespace App\RSpade\Core\Task;
 
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Files\Rsx_Temp_Files;
 use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -15,6 +17,7 @@ use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Attachment_Model;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -55,6 +58,12 @@ use App\RSpade\Core\Time\Rsx_Time;
  * silence from the latest of started_at, last_heartbeat_at and last_report_at
  * (rsx.tasks.silent_timeout), so a task that keeps reporting is never killed for time and one
  * that reports nothing is. is_stop_requested() is a read, not a report.
+ *
+ * WRITES ARE THE CLAIM'S. Reports and the settle are written only while the row still carries
+ * the claim this instance was made under (host, pid, pid start time, abandon count). A run
+ * settled as abandoned while its process ran on - a host judged silent or vanished - is no
+ * longer that process's: its first refused write logs an error and leaves one operator line on
+ * the run, later reports are dropped, and is_stop_requested() answers true.
  *
  * Every run - dispatched, scheduled or inline - has its _tasks row, so every report is
  * recorded the same way wherever the task runs. A console runner (rsx:task:run, a #[Command])
@@ -137,6 +146,24 @@ class Task_Instance
      */
     private ?int $queue_stored = null;
 
+    /**
+     * THE CLAIM this instance writes under: the row's worker_host, worker_pid,
+     * worker_pid_start_time and abandon_count as they were when the instance was made - for a
+     * run, right after this process claimed it. Every write of reports and the settle match only
+     * a row that still carries them, so a process whose run was settled as abandoned (re-pended,
+     * re-claimed by another worker, or FAILED) can no longer write onto it.
+     */
+    private ?string $claim_host = null;
+    private ?int $claim_pid = null;
+    private ?int $claim_pid_start_time = null;
+    private int $claim_abandon_count = 0;
+
+    /**
+     * The run was taken from this process (a write under the claim matched nothing): reports
+     * are dropped and is_stop_requested() answers true. Set once, by _mark_superseded().
+     */
+    private bool $superseded = false;
+
     private function __construct(int $id, string $class, string $method, array $params)
     {
         $this->id = $id;
@@ -158,6 +185,11 @@ class Task_Instance
             $instance->started_at_time = (float) strtotime((string) $row->started_at);
         }
         $instance->has_queue = (bool) $row->has_queue;
+
+        $instance->claim_host = $row->worker_host !== null ? (string) $row->worker_host : null;
+        $instance->claim_pid = $row->worker_pid !== null ? (int) $row->worker_pid : null;
+        $instance->claim_pid_start_time = $row->worker_pid_start_time !== null ? (int) $row->worker_pid_start_time : null;
+        $instance->claim_abandon_count = (int) $row->abandon_count;
 
         return $instance;
     }
@@ -537,6 +569,12 @@ class Task_Instance
      */
     public function flush(): void
     {
+        if ($this->superseded) {
+            $this->__drop_pending();
+
+            return;
+        }
+
         $queue_pending = $this->pending_queue_clear || $this->pending_queue_pops > 0 || $this->pending_queue_pushes !== [] || $this->pending_has_queue;
 
         if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === [] && !$queue_pending && !$this->pending_touch) {
@@ -553,7 +591,16 @@ class Task_Instance
         }
         $row['last_report_at'] = $now;
         $row['updated_at'] = $now;
-        DB::table('_tasks')->where('id', $this->id)->update($row);
+
+        // Guarded on the claim: a run settled as abandoned while this process ran on is no
+        // longer this process's to write. MySQL counts only CHANGED rows, so a write that
+        // matched but changed nothing reads 0 too - the claim is asked again before giving up.
+        if (!$this->_claimed_row()->update($row) && !$this->_claimed_row()->exists()) {
+            $this->_mark_superseded('its reports are no longer recorded');
+            $this->__drop_pending();
+
+            return;
+        }
 
         foreach ($this->pending_reports as $kind_id => $body) {
             DB::statement(
@@ -610,6 +657,15 @@ class Task_Instance
             $this->queue_stored += count($this->pending_queue_pushes) - $this->pending_queue_pops;
         }
 
+        $this->__drop_pending();
+        $this->last_flush = microtime(true);
+
+        Task_Notify::changed($this->id, $changed, $output_written);
+    }
+
+    /** Forget every held report: written, or refused because the run is no longer this process's. */
+    private function __drop_pending(): void
+    {
         $this->pending_row = [];
         $this->pending_reports = [];
         $this->pending_output = [];
@@ -617,10 +673,8 @@ class Task_Instance
         $this->pending_queue_pushes = [];
         $this->pending_queue_pops = 0;
         $this->pending_queue_clear = false;
+        $this->pending_has_queue = false;
         $this->pending_touch = false;
-        $this->last_flush = microtime(true);
-
-        Task_Notify::changed($this->id, $changed, $output_written);
     }
 
     /**
@@ -637,10 +691,18 @@ class Task_Instance
      * primary-key read, cheap enough for every item of a loop. Held reports are written at the
      * usual rate (FLUSH_INTERVAL), not on every call: a loop calling heartbeat() and this per
      * item must not turn into a write per item.
+     *
+     * TRUE for a run that was taken from this process - settled as abandoned while it ran on
+     * (rsx:task:process, a vanished or silent host): its reports are no longer recorded and a
+     * retry may already be doing the same work, so a cooperative task stops at its next item.
      */
     public function is_stop_requested(): bool
     {
         $this->__maybe_flush();
+
+        if ($this->superseded) {
+            return true;
+        }
 
         return DB::table('_tasks')->where('id', $this->id)->value('stop_requested_at') !== null;
     }
@@ -722,6 +784,44 @@ class Task_Instance
     }
 
     /**
+     * RUNNER-ONLY: the run's row while it still carries this instance's claim (worker_host,
+     * worker_pid, worker_pid_start_time, abandon_count as the claim left them). Every write of
+     * reports and the settle go through it.
+     */
+    public function _claimed_row(): Builder
+    {
+        return DB::table('_tasks')
+            ->where('id', $this->id)
+            ->where('worker_host', $this->claim_host)
+            ->where('worker_pid', $this->claim_pid)
+            ->where('worker_pid_start_time', $this->claim_pid_start_time)
+            ->where('abandon_count', $this->claim_abandon_count);
+    }
+
+    /** Has the run been taken from this process (see is_stop_requested())? */
+    public function is_superseded(): bool
+    {
+        return $this->superseded;
+    }
+
+    /**
+     * RUNNER-ONLY: the run was taken from this process while it ran on - a write under the claim
+     * matched nothing. One Laravel log error under the run's prefix and one operator line on the
+     * run saying $what (what is not recorded); from then on reports are dropped and
+     * is_stop_requested() is true. Called once by the refused report write (later reports are
+     * dropped without asking) and once by a refused settle. The row keeps whatever verdict it
+     * was given.
+     */
+    public function _mark_superseded(string $what): void
+    {
+        $this->superseded = true;
+
+        $process = "host {$this->claim_host}, PID {$this->claim_pid}";
+        Log::error(Task_Runner::log_prefix($this) . "the run was settled as abandoned while its process ({$process}) was still running; {$what}.");
+        static::record_operator_line($this->id, "The process this run was taken from ({$process}) is still running; {$what}.");
+    }
+
+    /**
      * Append an OPERATOR line - a lifecycle operation someone performed on a run - to that
      * run's output. Written at once, shown as stderr, never echoed to any process's stderr.
      */
@@ -800,6 +900,11 @@ class Task_Instance
     {
         if ($name === '' || mb_strlen($name) > 255) {
             throw new \InvalidArgumentException('An attachment name is 1 to 255 characters.');
+        }
+
+        // A run taken from this process records nothing more from it, attachments included.
+        if ($this->superseded) {
+            return;
         }
 
         $truncate_minutes = (int) config('rsx.tasks.retention.output_truncate_after_minutes', 10080);

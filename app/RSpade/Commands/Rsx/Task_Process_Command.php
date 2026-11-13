@@ -40,9 +40,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Each tick it:
  * 1. Recovers RUNNING runs that will never settle on their own: those whose worker has left its
- *    pool (rsx-lockd's answer, asked under that pool's lock), and those whose live local worker
- *    has reported nothing for rsx.tasks.silent_timeout, or has outrun a timeout the run was
- *    dispatched with (a force kill is requested and a kill worker carries it out).
+ *    pool (rsx-lockd's answer, asked under that pool's lock), those on another host that
+ *    nobody has vouched for within rsx.tasks.vanished_host_timeout, and those whose live local
+ *    worker has reported nothing for rsx.tasks.silent_timeout, or has outrun a timeout the run
+ *    was dispatched with (a force kill is requested and a kill worker carries it out). It
+ *    stamps worker_seen_at on every run it found alive on this host.
  * 2. Hands kill requests whose kill worker died back to the queue.
  * 3. Reconciles _task_schedules against the manifest's #[Schedule] declarations (register new,
  *    re-register a changed cron expression, delete removed) so schedule edits take effect
@@ -123,8 +125,9 @@ class Task_Process_Command extends Command
      * 1. ABANDONED - the run's worker is gone. A dispatched run goes back to pending for a
      *    paced retry (FAILED once rsx.tasks.retry.attempts runs were abandoned); a scheduled run
      *    is FAILED (its schedule runs again at its next cadence) and so is an inline run (its
-     *    caller is gone). settle_abandoned() has the detail. There is NO grace period: the
-     *    verdicts below are evidence, never an age.
+     *    caller is gone). settle_abandoned() has the detail. A run some host can judge is
+     *    judged by evidence, never by its age; only a run NO reachable party can answer for -
+     *    another host's run that rsx-lockd does not know - is judged by its silence (below).
      *
      *    A run carrying a pool identity (worker_id + worker_generation) is judged by rsx-lockd,
      *    one pool.members_alive round trip per pool, UNDER THAT POOL'S LOCK (THE RULE: pool ops
@@ -139,13 +142,28 @@ class Task_Process_Command extends Command
      *        (Task::is_run_process(): the pid's start time and its command line, never bare
      *        pid existence - after a reboot the kernel hands old pids to unrelated
      *        processes): one that is not is abandoned, one that is is left to record its own
-     *        outcome; a run from another host is left alone for that host's own tick.
+     *        outcome; a run from another host is left for that host's own tick (but see
+     *        THE VANISHED HOST below).
      *
      *    A run with NO worker_id ran inline (Task::internal(), rsx:task:run, --once), which is
      *    no pool member: the verdict is the local probe, taken only on the run's own host.
      *    An inline run's process may be a php-fpm worker or any artisan command, so there is
      *    no command line to hold it to - the probe is the pid AND its recorded start time
      *    (Task::is_run_process()): a live process at a reused pid is not the run's.
+     *
+     *    THE HOST'S VOUCH. Every run this tick finds alive by evidence on its own host (the
+     *    daemon's live members here, and the pid probes that pass) is stamped worker_seen_at =
+     *    NOW(3), on the database clock. A host holding a RUNNING run ticks every minute
+     *    (cron, or rspade-taskd's busy recheck), so a live host keeps its runs vouched for.
+     *
+     *    THE VANISHED HOST. A RUNNING run on ANOTHER host that rsx-lockd cannot answer for
+     *    (an older generation, or an inline run) whose latest evidence of life - started_at,
+     *    last_heartbeat_at, last_report_at, worker_seen_at, measured in SQL against NOW(3) -
+     *    is older than rsx.tasks.vanished_host_timeout is abandoned here: its host stopped
+     *    ticking or no longer exists (a recreated container has a new hostname and a new
+     *    rsx-lockd), and nothing else would ever settle it. A run that reports, or whose host
+     *    ticks, is never touched, however long it runs. Rows rsx-lockd answers for keep the
+     *    verdicts above.
      *
      * 2. SILENT, OR PAST A REQUESTED TIMEOUT - a POOL worker is alive AND runs on this host,
      *    and its run has shown no sign of life for rsx.tasks.silent_timeout seconds, or - for a
@@ -157,12 +175,15 @@ class Task_Process_Command extends Command
     private function detect_stuck_tasks(): void
     {
         $this_host = Task_Pool::host();
+        $vanished_limit = Task::vanished_host_timeout();
         $live = [];
 
         foreach ([Task_Run_Model::POOL_ON_DEMAND => Task_Pool::ON_DEMAND, Task_Run_Model::POOL_SCHEDULED => Task_Pool::SCHEDULED] as $pool_id => $pool) {
             Task_Pool::lock($pool);
             try {
                 $running = DB::table('_tasks')
+                    ->select('*')
+                    ->selectRaw(Task::sql_seconds_since_evidence() . ' AS seconds_since_evidence')
                     ->where('status_id', Task_Run_Model::STATUS_RUNNING)
                     ->where('pool_id', $pool_id)
                     ->whereNotNull('worker_id')
@@ -190,8 +211,15 @@ class Task_Process_Command extends Command
                             . " (host {$task->worker_host}, PID {$task->worker_pid})";
                     } else {
                         if (!$local) {
-                            // Another host's worker from an older daemon generation: only that
-                            // host's pid evidence can settle it.
+                            // Another host's worker from an older daemon generation: that host's
+                            // pid evidence settles it, and its tick vouches for it meanwhile
+                            // (worker_seen_at). Silent past the vanished-host limit, the host is
+                            // gone.
+                            $reason = static::__vanished_host_reason($task, $vanished_limit);
+                            if ($reason === null) {
+                                continue;
+                            }
+                            $this->settle_abandoned($task, $reason);
                             continue;
                         }
                         if (Task::is_run_process($task)) {
@@ -216,11 +244,19 @@ class Task_Process_Command extends Command
 
         // Inline runs: no pool, judged by their pid and its start time on their own host.
         $inline = DB::table('_tasks')
+            ->select('*')
+            ->selectRaw(Task::sql_seconds_since_evidence() . ' AS seconds_since_evidence')
             ->where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->whereNull('worker_id')
             ->get();
         foreach ($inline as $task) {
             if ($task->worker_host !== null && $task->worker_host !== $this_host) {
+                // Another host's inline run: that host's tick judges it by pid and vouches for
+                // it meanwhile. Silent past the vanished-host limit, the host is gone.
+                $reason = static::__vanished_host_reason($task, $vanished_limit);
+                if ($reason !== null) {
+                    $this->settle_abandoned($task, $reason);
+                }
                 continue;
             }
             if (Task::is_run_process($task)) {
@@ -231,9 +267,41 @@ class Task_Process_Command extends Command
         }
         Task_Notify::flush_deferred();
 
+        // This host vouches for every run it just found alive, on the database clock: the
+        // evidence another host's tick reads before it settles a run whose host has vanished.
+        foreach ($live as $task) {
+            DB::table('_tasks')
+                ->where('id', $task->id)
+                ->where('status_id', Task_Run_Model::STATUS_RUNNING)
+                ->where('worker_host', $task->worker_host)
+                ->where('worker_pid', $task->worker_pid)
+                ->update(['worker_seen_at' => DB::raw('NOW(3)')]);
+        }
+
         foreach ($live as $task) {
             $this->enforce_task_timeout($task);
         }
+    }
+
+    /**
+     * The abandonment reason for another host's RUNNING run that rsx-lockd cannot answer for,
+     * when its latest evidence of life (Task::sql_seconds_since_evidence(): the run's own
+     * stamps and its host's worker_seen_at vouch) is older than rsx.tasks.vanished_host_timeout;
+     * null while it is not.
+     *
+     * @param object $task The RUNNING _tasks row, read with seconds_since_evidence
+     * @param int $limit rsx.tasks.vanished_host_timeout
+     */
+    private static function __vanished_host_reason(object $task, int $limit): ?string
+    {
+        $silent_for = (int) $task->seconds_since_evidence;
+        if ($silent_for <= $limit) {
+            return null;
+        }
+
+        return "no sign of life from the run (PID {$task->worker_pid}) or from its host {$task->worker_host}"
+            . " for {$silent_for}s (rsx.tasks.vanished_host_timeout {$limit}s): that host no longer runs"
+            . ' rsx:task:process, or no longer exists';
     }
 
     /**
@@ -284,6 +352,7 @@ class Task_Process_Command extends Command
                     'worker_id' => null,
                     'worker_generation' => null,
                     'worker_host' => null,
+                    'worker_seen_at' => null,
                     'updated_at' => $now,
                 ]);
                 if ($settled) {

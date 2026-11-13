@@ -362,31 +362,6 @@ class Ajax {
     }
 
     /**
-     * Upload a multipart FormData to the framework upload endpoint.
-     *
-     * The one client-side upload transport. It owns the two things every caller was
-     * getting wrong on its own:
-     *
-     *   - the CHANNEL: Rsx_Portal.internal_url() rebases /_upload onto the base this
-     *     page is served under, so a portal upload is dispatched as a portal request.
-     *   - the CSRF TOKEN: multipart uploads must use native fetch (jQuery cannot send
-     *     FormData through the $.ajax chokepoint that normally attaches the header),
-     *     so the header is attached here instead. A session-bearing POST without it
-     *     is rejected by Rsx_Csrf.
-     *
-     * It also refuses an over-size file BEFORE sending it. The server is the enforcement
-     * boundary and always will be - this check exists so the user is told in the first
-     * second rather than after minutes of pushing a doomed file up a slow connection.
-     * The ceiling is window.rsxapp.files.max_file_size, injected from the
-     * rsx.files.max_file_size config on every page.
-     *
-     * Resolves with the parsed endpoint response ({success, attachment}); throws with
-     * the endpoint's own error text on any failure.
-     *
-     * @param {FormData} form_data Must carry the 'file' part
-     * @returns {Promise<object>} The parsed upload response
-     */
-    /**
      * The upload size ceiling as a string you can put in front of a user: "100 MB".
      *
      * Every "Max size 25MB" in a template is a number that will be wrong the day the
@@ -438,7 +413,49 @@ class Ajax {
         return Math.round(value / GB) + ' GB';
     }
 
-    static async upload(form_data) {
+    /**
+     * Upload a multipart FormData to the framework upload endpoint.
+     *
+     * The one client-side upload transport. It owns everything a hand-rolled upload
+     * would have to restate:
+     *
+     *   - the CHANNEL: Rsx_Portal.internal_url() rebases /_upload onto the base this
+     *     page is served under, so a portal upload is dispatched as a portal request.
+     *   - the CSRF TOKEN: a multipart body does not pass through the $.ajax chokepoint that
+     *     attaches the header to every other local request, so it is attached here. A
+     *     session-bearing POST without it is rejected by Rsx_Csrf.
+     *   - PROGRESS: options.on_progress(loaded, total) is called from the request's upload
+     *     stream, in bytes of the request body (the multipart envelope included, so total
+     *     is slightly more than the file's size). loaded only increases, and when the body
+     *     was sent in full the last call is loaded === total, before the promise settles.
+     *     A progress bar needs nothing else - never a hand-rolled request to /_upload.
+     *
+     * It also refuses an over-size file BEFORE sending it. The server is the enforcement
+     * boundary and always will be - this check exists so the user is told in the first
+     * second rather than after minutes of pushing a doomed file up a slow connection.
+     * The ceiling is window.rsxapp.files.max_file_size, injected from the
+     * rsx.files.max_file_size config on every page.
+     *
+     * Resolves with the parsed endpoint response ({success, attachment}); throws with
+     * the endpoint's own error text on any failure. An error thrown by on_progress aborts
+     * the upload and is what the promise rejects with.
+     *
+     *     const result = await Ajax.upload(form_data, {
+     *         on_progress: (loaded, total) => this.$sid('bar').css('width', (100 * loaded / total) + '%'),
+     *     });
+     *
+     * @param {FormData} form_data Must carry the 'file' part
+     * @param {Object} [options]
+     * @param {Function} [options.on_progress] (loaded, total) => void, both in bytes
+     * @returns {Promise<object>} The parsed upload response
+     */
+    static async upload(form_data, options = {}) {
+        const on_progress = options.on_progress === undefined ? null : options.on_progress;
+
+        if (on_progress !== null && typeof on_progress !== 'function') {
+            throw new Error('Ajax.upload(): options.on_progress must be a function (loaded, total) => void.');
+        }
+
         // 0 (or an absent block on a page rendered before this shipped) means no framework
         // ceiling - which must read as UNLIMITED, never as "reject everything".
         const max_file_size = window.rsxapp?.files?.max_file_size || 0;
@@ -451,31 +468,97 @@ class Ajax {
             );
         }
 
-        const headers = {};
-        if (window.rsxapp && window.rsxapp.csrf) {
-            headers['X-CSRF-Token'] = window.rsxapp.csrf;
-        }
-
-        const response = await fetch(Rsx_Portal.internal_url('/_upload'), {
-            method: 'POST',
-            body: form_data,
-            headers: headers,
-        });
+        const xhr = await Ajax._send_upload(form_data, on_progress);
 
         // A refusal in front of PHP (the web server's 413 for an oversized body, a 502)
         // answers HTML, not JSON: report its status rather than a JSON parse error.
         let result;
         try {
-            result = await response.json();
+            result = JSON.parse(xhr.responseText);
         } catch (e) {
-            throw new Error(`Upload failed (HTTP ${response.status} ${response.statusText})`);
+            throw new Error(`Upload failed (HTTP ${xhr.status} ${xhr.statusText})`);
         }
 
-        if (!response.ok || !result.success || !result.attachment) {
+        const ok = xhr.status >= 200 && xhr.status < 300;
+        if (!ok || !result.success || !result.attachment) {
             throw new Error(result.error || 'Upload failed');
         }
 
         return result;
+    }
+
+    /**
+     * POST the multipart body to /_upload, resolving with the finished request whatever its
+     * HTTP status. XMLHttpRequest, because it is the transport that reports the upload
+     * stream's progress. No time limit: an upload takes as long as the connection needs.
+     * @private
+     */
+    static _send_upload(form_data, on_progress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            let callback_error = null;
+            let reported = -1;
+            let total = null;
+
+            // Calls on_progress with a strictly larger loaded. A throw from the caller's
+            // callback aborts the upload and becomes the rejection.
+            const report = (loaded, of) => {
+                if (callback_error !== null || loaded <= reported) {
+                    return;
+                }
+                reported = loaded;
+                try {
+                    on_progress(loaded, of);
+                } catch (error) {
+                    callback_error = error;
+                    xhr.abort();
+                }
+            };
+
+            if (on_progress !== null) {
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        total = event.total;
+                        report(event.loaded, event.total);
+                    }
+                });
+                // The body was sent in full: the final call, loaded === total.
+                xhr.upload.addEventListener('load', (event) => {
+                    if (event.lengthComputable) {
+                        total = event.total;
+                    }
+                    if (total !== null) {
+                        report(total, total);
+                    }
+                });
+            }
+
+            xhr.addEventListener('load', () => {
+                // A response means the whole body was received; the final call is owed before
+                // the caller hears the answer, even where the upload's own load event did not
+                // reach this listener first.
+                if (on_progress !== null && total !== null) {
+                    report(total, total);
+                }
+                if (callback_error !== null) {
+                    reject(callback_error);
+                    return;
+                }
+                resolve(xhr);
+            });
+            xhr.addEventListener('error', () => {
+                reject(new Error('Upload failed: could not connect to the server.'));
+            });
+            xhr.addEventListener('abort', () => {
+                reject(callback_error !== null ? callback_error : new Error('Upload failed: the request was aborted.'));
+            });
+
+            xhr.open('POST', Rsx_Portal.internal_url('/_upload'));
+            if (window.rsxapp && window.rsxapp.csrf) {
+                xhr.setRequestHeader('X-CSRF-Token', window.rsxapp.csrf);
+            }
+            xhr.send(form_data);
+        });
     }
 
     /**

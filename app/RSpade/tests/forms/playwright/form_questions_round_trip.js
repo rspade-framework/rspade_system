@@ -4,7 +4,7 @@
  *
  * An endpoint may answer a submission with a QUESTION rather than a result. submit()
  * clears the spinner, runs the application's question handler, merges the answer into
- * _answers and calls the endpoint AGAIN - all inside one submit() invocation. Five
+ * _answers and calls the endpoint AGAIN - all inside one submit() invocation. These
  * properties carry the feature, and each is one case below:
  *
  *   a. CANCEL IS NOT AN ANSWER. Rsx_Form.CANCELLED stops the submit like before_submit
@@ -14,21 +14,27 @@
  *   b. FALSE IS AN ANSWER. It reaches the endpoint as _answers.k === false, riding
  *      alongside the original values rather than replacing them.
  *   c. ANSWERS ACCUMULATE. A second question does not discard the first answer.
- *   d. MAX_QUESTION_ROUNDS IS A DEFECT DETECTOR. An endpoint that keeps asking is
- *      ignoring _answers; the loop ends in a rendered error instead of running forever.
- *   e. NO HANDLER IS A CONFIGURATION FAULT. It escapes submit() rather than being
+ *   d. DISTINCT QUESTIONS ARE NOT CAPPED. An endpoint asking two questions of its own
+ *      plus one per uploaded file (seven keys for five files) completes once answered.
+ *   e. A RE-ASK IS THE DEFECT. An endpoint asking a key already answered is ignoring
+ *      _answers; the loop ends in a rendered error naming the endpoint and the key
+ *      instead of running forever.
+ *   f. NO HANDLER IS A CONFIGURATION FAULT. It escapes submit() rather than being
  *      rendered, so the omission cannot hide inside a form's error area.
+ *   g. Rsx_Form.call_answering() FOLLOWS THE SAME RULE: seven distinct keys resolve with
+ *      the endpoint's value, and a re-asked key throws naming the endpoint and the key.
  *
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S. The page is the control panel at /_sys and
  * the mounted components are Rsx_Form and Form_Errors; the probe form is built at runtime
  * in the browser, so no application screen, modal or bundle is involved and it runs in any
- * install. Ajax.call_detailed (the call Rsx_Form makes) is replaced by a scripted fake for
- * the duration and restored afterwards: what is under test is the LOOP, not any endpoint.
+ * install. Ajax.call_detailed (the call Rsx_Form makes) and Ajax.call (the call
+ * call_answering() makes) are replaced by one scripted fake for the duration and restored
+ * afterwards: what is under test is the LOOP, not any endpoint.
  *
  * The probe carries its own per-form question_handler, which takes precedence over
  * whatever global handler the install has registered (the reference application registers
- * one; a framework page's bundle does not carry it). Case (e) clears both and restores
- * them.
+ * one; a framework page's bundle does not carry it). Case (f) clears both and restores
+ * them; case (g), which has no form, registers the same delegate globally for its duration.
  *
  * Self-contained: mints its own dev-auth headers through system/bin/dev-auth.js, so it
  * runs with a bare `node form_questions_round_trip.js`.
@@ -95,14 +101,16 @@ async function build_probe(page) {
 
         // The scripted fake. window.__q_script is a list of outcomes, one per call:
         // {question: {key, question}} rejects as a pending question, anything else resolves.
+        // With __q_always_ask set every call asks the SAME key - an endpoint ignoring _answers.
         window.__q_calls = [];
         window.__q_original_ajax_call = Ajax.call_detailed;
-        Ajax.call_detailed = function (url, body) {
-            window.__q_calls.push({ url: url, body: JSON.parse(JSON.stringify(body || {})) });
+        window.__q_original_ajax_plain_call = Ajax.call;
+        const scripted = function (url, body) {
+            window.__q_calls.push({ url: String(url), body: JSON.parse(JSON.stringify(body || {})) });
 
             const index = window.__q_calls.length - 1;
             const step = window.__q_always_ask
-                ? { question: { key: 'k' + index, question: { kind: 'confirm' } } }
+                ? { question: { key: 'same_key', question: { kind: 'confirm' } } }
                 : (window.__q_script[index] || { resolve: { ok: true } });
 
             if (step.question) {
@@ -112,8 +120,13 @@ async function build_probe(page) {
                 return Promise.reject(error);
             }
 
-            return Promise.resolve({ value: step.resolve, replayed: false, completed_at: null, duration_ms: null });
+            return Promise.resolve(step.resolve);
         };
+        Ajax.call_detailed = async function (url, body) {
+            const value = await scripted(url, body);
+            return { value: value, replayed: false, completed_at: null, duration_ms: null };
+        };
+        Ajax.call = scripted;
 
         // The per-form handler delegates to a swappable page-level function, so each case
         // scripts its own answers without rebuilding the form.
@@ -262,7 +275,40 @@ async function run() {
             }
         }
 
-        // --- d. an endpoint that never stops asking ends in a rendered error ---
+        // --- d. two questions of its own plus one per file (five files) completes ---
+        const per_file_script = [
+            { question: { key: 'mention', question: { kind: 'confirm' } } },
+            { question: { key: 'join', question: { kind: 'confirm' } } },
+        ];
+        for (let i = 1; i <= 5; i++) {
+            per_file_script.push({ question: { key: 'duplicate_upload:' + i, question: { kind: 'confirm' } } });
+        }
+        per_file_script.push({ resolve: { saved: true } });
+
+        await arm(page, per_file_script);
+        const many = await page.evaluate(async () => {
+            window.__q_answer = async () => true;
+            const result = await $('#rsx_question_mount_temp').component().submit();
+            return {
+                result: result,
+                calls: window.__q_calls,
+                error_text: $('#rsx_question_errors_temp').text().trim(),
+            };
+        });
+
+        const last_answers = many.calls.length > 0 ? (many.calls[many.calls.length - 1].body._answers || {}) : {};
+        if (!many.result || many.result.saved !== true) {
+            fail('(d) seven distinct questions must complete with the server result, got '
+                + JSON.stringify(many.result) + ' / "' + many.error_text + '"');
+        } else if (many.calls.length !== 8) {
+            fail('(d) expected eight calls (seven questions, then the answer), made ' + many.calls.length);
+        } else if (Object.keys(last_answers).length !== 7 || last_answers['duplicate_upload:5'] !== true) {
+            fail('(d) the last call did not carry all seven answers: ' + JSON.stringify(last_answers));
+        } else {
+            pass('two questions of its own plus one per file for five files completes once answered');
+        }
+
+        // --- e. an endpoint asking an answered key again ends in a rendered error ---
         await arm(page, [], true);
         const runaway = await page.evaluate(async () => {
             window.__q_answer = async () => true;
@@ -271,21 +317,22 @@ async function run() {
                 result: result,
                 calls: window.__q_calls.length,
                 error_text: $('#rsx_question_errors_temp').text(),
-                max: Rsx_Form.MAX_QUESTION_ROUNDS,
             };
         });
 
         if (runaway.result !== false) {
-            fail('(d) a runaway question loop must resolve false');
-        } else if (runaway.calls !== runaway.max + 1) {
-            fail('(d) expected ' + (runaway.max + 1) + ' calls before the cap, made ' + runaway.calls);
+            fail('(e) a re-asked key must resolve false');
+        } else if (runaway.calls !== 2) {
+            fail('(e) expected two calls (the ask, then the re-ask), made ' + runaway.calls);
         } else if (!runaway.error_text.includes('Rsx_Form_Question_Probe_Controller_Temp')) {
-            fail('(d) the rendered error does not name the endpoint: "' + runaway.error_text.trim() + '"');
+            fail('(e) the rendered error does not name the endpoint: "' + runaway.error_text.trim() + '"');
+        } else if (!runaway.error_text.includes("'same_key'")) {
+            fail('(e) the rendered error does not name the re-asked key: "' + runaway.error_text.trim() + '"');
         } else {
-            pass('MAX_QUESTION_ROUNDS ends a runaway loop with an error naming the endpoint');
+            pass('a re-asked key ends the submission with an error naming the endpoint and the key');
         }
 
-        // --- e. no handler anywhere is a configuration fault that escapes ---
+        // --- f. no handler anywhere is a configuration fault that escapes ---
         await arm(page, [{ question: { key: 'k', question: { kind: 'confirm' } } }]);
         const unhandled = await page.evaluate(async () => {
             const form = $('#rsx_question_mount_temp').component();
@@ -310,17 +357,55 @@ async function run() {
         });
 
         if (unhandled.message === null) {
-            fail('(e) a question with no handler must throw, but the submit resolved '
+            fail('(f) a question with no handler must throw, but the submit resolved '
                 + JSON.stringify(unhandled.resolved));
         } else if (!unhandled.message.includes('set_question_handler')) {
-            fail('(e) the thrown message does not name the registration call: ' + unhandled.message);
+            fail('(f) the thrown message does not name the registration call: ' + unhandled.message);
         } else if (unhandled.error_text !== '') {
-            fail('(e) the configuration fault was rendered in the form instead of escaping');
+            fail('(f) the configuration fault was rendered in the form instead of escaping');
         } else {
             pass('a question with no handler throws, naming set_question_handler()');
         }
 
+        // --- g. call_answering() follows the same rule ---
+        await arm(page, per_file_script);
+        const direct = await page.evaluate(async () => {
+            const global_handler = Rsx_Form._question_handler;
+            Rsx_Form.set_question_handler(async (question, context) => await window.__q_answer(question, context));
+            window.__q_answer = async () => true;
+
+            const completed = await Rsx_Form.call_answering('/_ajax/Rsx_Form_Question_Probe_Controller_Temp/claim', { id: 1 });
+            const completed_calls = window.__q_calls.length;
+
+            window.__q_calls = [];
+            window.__q_always_ask = true;
+            let message = null;
+            try {
+                await Rsx_Form.call_answering('/_ajax/Rsx_Form_Question_Probe_Controller_Temp/claim', { id: 1 });
+            } catch (e) {
+                message = e && e.message ? e.message : String(e);
+            }
+            window.__q_always_ask = false;
+
+            Rsx_Form.set_question_handler(global_handler);
+            return { completed: completed, completed_calls: completed_calls, message: message, reask_calls: window.__q_calls.length };
+        });
+
+        if (!direct.completed || direct.completed.saved !== true || direct.completed_calls !== 8) {
+            fail('(g) call_answering() must complete seven distinct questions, got '
+                + JSON.stringify(direct.completed) + ' after ' + direct.completed_calls + ' calls');
+        } else if (direct.message === null) {
+            fail('(g) call_answering() must throw on a re-asked key');
+        } else if (direct.reask_calls !== 2 || !direct.message.includes("'same_key'")
+            || !direct.message.includes('Rsx_Form_Question_Probe_Controller_Temp::claim')) {
+            fail('(g) the re-ask error must come on the second call naming endpoint and key: '
+                + direct.reask_calls + ' calls, "' + direct.message + '"');
+        } else {
+            pass('call_answering() completes distinct questions and throws on a re-asked key');
+        }
+
         await page.evaluate(() => {
+            Ajax.call = window.__q_original_ajax_plain_call;
             Ajax.call_detailed = window.__q_original_ajax_call;
             $('#rsx_question_mount_temp').remove();
         });

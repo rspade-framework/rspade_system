@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data), the claim flow (find_by_key, can_user_assign_this_file, attach_to), the duplicate-upload question (duplicates_on(), Rsx_Duplicate_Upload, Rsx_Form.call_answering(), 'Upload Again' / 'Skip This File' / 'Cancel Upload'), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or claim endpoint or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
+description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data, {on_progress}) and upload progress bars, the claim flow (find_by_key, can_user_assign_this_file, attach_to), the duplicate-upload question (duplicates_on(), Rsx_Duplicate_Upload, Rsx_Form.call_answering(), 'Upload Again' / 'Skip This File' / 'Cancel Upload'), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or claim endpoint or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
 ---
 
 # File attachments
@@ -42,7 +42,9 @@ async _upload(file) {
 }
 ```
 
-**Never `fetch('/_upload')` by hand from page code.** `Ajax.upload()` owns two things a hand-rolled call gets wrong: it rebases the path through `Rsx_Portal.internal_url()` so a portal page's upload dispatches as a genuine portal request, and it sends the CSRF token (multipart cannot go through jQuery, so the token has to be attached explicitly). A raw fetch hardcodes the staff channel and sends no token.
+**A progress bar is an option, not a reason to hand-roll**: `Ajax.upload(form_data, {on_progress: (loaded, total) => ...})` reports the request's upload stream in bytes of the request body (`loaded` only increases; when the body was sent in full the last call is `loaded === total`, before the promise settles). The answer and the errors are the same with or without it; an error thrown by the callback aborts the upload and is the rejection.
+
+**Never hand-roll a request to `/_upload` from page code.** `Ajax.upload()` owns what a hand-rolled call gets wrong: it rebases the path through `Rsx_Portal.internal_url()` so a portal page's upload dispatches as a genuine portal request, and it sends the CSRF token (a multipart body does not ride the `$.ajax` chokepoint that attaches it). A raw `fetch()` hardcodes the staff channel and sends no token; `$.ajax()` to `/_upload` THROWS.
 
 **Never post a `site_id`.** It is derived server-side from the request's realm; client input is ignored. Same for `fileable_*` — the endpoint strips them, because letting an uploader name the owning record would let them attach files to records they do not own.
 

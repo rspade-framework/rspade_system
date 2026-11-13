@@ -56,7 +56,8 @@ and a playwright script drives the ordinary web server.
 | `Rsx_Form.CANCELLED` stops the submit, leaving the form open and error-free | playwright | implemented (`form_questions_round_trip.js`) |
 | An answer resubmits with `_answers` plus the original values | playwright | implemented (`form_questions_round_trip.js`) |
 | Answers accumulate across questions in one submit | playwright | implemented (`form_questions_round_trip.js`) |
-| `MAX_QUESTION_ROUNDS` ends a runaway loop with an error naming the endpoint | playwright | implemented (`form_questions_round_trip.js`) |
+| Any number of distinct questions completes (two of the form's own plus one per file) | playwright | implemented (`form_questions_round_trip.js`) |
+| A re-asked key ends the loop with an error naming the endpoint and the key - in `submit()` and in `call_answering()` | playwright | implemented (`form_questions_round_trip.js`) |
 | A question with no registered handler throws instead of rendering | playwright | implemented (`form_questions_round_trip.js`) |
 | Credential fields: `$autofill_id` forwarded by `Password_Input` / `Code_Input` renders a stable id and name, keeps the token and `$sid()`; `autocomplete_off` is on | playwright | implemented (`credential_autofill.js`) |
 | Blade-written fields: `Rsx_Blade_Autocomplete` gives every token-less `<input>` / `<textarea>` `autocomplete="off"` off an SPA page, keeps a declared token, and touches nothing on an SPA page | playwright | implemented (`blade_autocomplete_off.js`) |

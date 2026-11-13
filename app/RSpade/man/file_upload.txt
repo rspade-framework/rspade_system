@@ -1126,6 +1126,36 @@ UPLOAD ENDPOINT
           }
         }
 
+    FROM THE BROWSER: Ajax.upload()
+
+        Ajax.upload(form_data, options = {}): Promise<{success, attachment}>
+            The one browser transport for this endpoint. form_data carries the
+            file under the part name 'file'. It rebases the path for a portal
+            page (Rsx_Portal.internal_url()), attaches the CSRF token, refuses a
+            file over the size ceiling before sending it (THE UPLOAD SIZE
+            CEILING), and throws with the endpoint's own error text on any
+            failure.
+
+            options.on_progress(loaded, total)
+                Called from the request's upload stream, in bytes of the
+                request body (the multipart envelope included, so total is a
+                little more than the file's size). loaded only increases; when
+                the body was sent in full the last call is loaded === total,
+                made before the promise settles. The answer and the errors are
+                the same with or without it. An error thrown by the callback
+                aborts the upload and is what the promise rejects with.
+
+            const result = await Ajax.upload(form_data, {
+                on_progress: (loaded, total) => {
+                    this.$sid('bar').css('width', Math.floor(100 * loaded / total) + '%');
+                },
+            });
+
+        A progress bar needs nothing more: never hand-roll a request to
+        /_upload. $.ajax() to /_upload THROWS (rsx:man jquery), and a raw
+        fetch() or XMLHttpRequest restates the channel and the CSRF token and
+        drifts from the transport the framework maintains.
+
     Upload event hooks (customization points):
 
         file.upload.authorize (gate) - MANDATORY, see the next section

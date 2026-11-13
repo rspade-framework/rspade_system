@@ -615,13 +615,15 @@ FRAMEWORK INVENTORY
                                  has more members than its cap (the cap was
                                  lowered under running workers, or two
                                  configurations share one database and host);
-                                 WARN when RUNNING runs claimed under a
-                                 previous rsx-lockd generation sit on OTHER hosts
-                                 ("N running task(s) from a previous rsx-lockd
-                                 generation on host(s) ..." - each host's
-                                 rsx:task:process reaps its own, so a host that
-                                 no longer runs one leaves them RUNNING; rsx:man
-                                 tasks, FAILURE AND ABANDONMENT); FAIL when the daemon
+                                 WARN when RUNNING runs that rsx-lockd cannot
+                                 answer for (claimed under a previous
+                                 generation, or run inline) sit on OTHER hosts
+                                 ("N running task(s) on host(s) ... that
+                                 rsx-lockd cannot answer for; each is settled
+                                 automatically once it and its host have been
+                                 silent for Gs (...; next in about M min)" -
+                                 nothing to do; rsx:man tasks, FAILURE AND
+                                 ABANDONMENT, THE VANISHED HOST); FAIL when the daemon
                                  cannot be reached or refuses pool.stats -
                                  nothing can be admitted;
                                  INFO while the maintenance flag is up, when the

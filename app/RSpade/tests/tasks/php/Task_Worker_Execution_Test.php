@@ -30,10 +30,11 @@ use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
  * The abandoned-run tests plant the identity a claim writes (pool_id + worker_id +
  * worker_generation + worker_host + worker_pid): a wid of the daemon's own generation that has
  * left the pool (a dead worker) or this process's own live membership; a wid of an older
- * generation on this host (judged by its pid) or on another host (left alone); and a row with
- * no worker_id (an inline run), judged by its pid. Every planted run started NOW: there is no
- * grace period, so age never enters a verdict. The retry pacing of an abandoned dispatched run
- * is Task_Abandonment_Retry_Test.
+ * generation on this host (judged by its pid) or on another host (left alone while it, or its
+ * host, has shown a sign of life within rsx.tasks.vanished_host_timeout); and a row with no
+ * worker_id (an inline run), judged by its pid. Every planted run started NOW, so the
+ * vanished-host limit (Task_Vanished_Host_Test) never decides here. The retry pacing of an
+ * abandoned dispatched run is Task_Abandonment_Retry_Test.
  *
  * Commits real rows, so this class provisions a clean baseline once and opts out of per-test
  * transactions. Each test clears the fixture's rows before it runs.
@@ -261,9 +262,9 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A run from an older generation on ANOTHER host is left alone - even with a dead pid,
-     * which on this box means nothing - for that host's own tick, and counted by the health
-     * row. A run of this host is not counted.
+     * A run from an older generation on ANOTHER host that started just now is left alone -
+     * even with a dead pid, which on this box means nothing - for that host's own tick, and
+     * counted by the health row. A run of this host is not counted.
      */
     public static function test_older_generation_on_another_host_is_left_and_counted()
     {
@@ -281,18 +282,16 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(Task_Run_Model::STATUS_RUNNING, (int) static::__row($other)->status_id, 'another host\'s older-generation run is left alone');
 
-        static::__assert_equals(
-            ['count' => 3, 'hosts' => ['b-' . self::OTHER_HOST, self::OTHER_HOST]],
-            Task_Health_Checks::previous_generation_rows($current),
-            'three runs on two other hosts; this host\'s run is not counted'
-        );
+        $unanswered = Task_Health_Checks::unanswered_foreign_rows($current);
+        static::__assert_equals(3, $unanswered['count'], 'three runs on two other hosts; this host\'s run is not counted');
+        static::__assert_equals(['b-' . self::OTHER_HOST, self::OTHER_HOST], $unanswered['hosts']);
 
         $health = Task_Health_Checks::task_worker_pool();
         static::__assert_equals('WARN', $health['status'], 'the health row warns: ' . json_encode($health));
-        static::__assert_contains('3 running task(s) from a previous rsx-lockd generation on host(s) b-' . self::OTHER_HOST . ', ' . self::OTHER_HOST, $health['detail']);
+        static::__assert_contains('3 running task(s) on host(s) b-' . self::OTHER_HOST . ', ' . self::OTHER_HOST . ' that rsx-lockd cannot answer for', $health['detail']);
 
         static::__reset_fixture();
-        static::__assert_equals(['count' => 0, 'hosts' => []], Task_Health_Checks::previous_generation_rows($current));
+        static::__assert_equals(['count' => 0, 'hosts' => [], 'next_settle_seconds' => null], Task_Health_Checks::unanswered_foreign_rows($current));
     }
 
     /**

@@ -211,18 +211,6 @@ class Rsx_Form extends Component {
         return value === Rsx_Form.CANCELLED;
     }
 
-    /**
-     * How many questions one submit() may answer before the form calls it a defect.
-     *
-     * NOT a duration and NOT a guess about how fast anything is - a defect detector. The
-     * endpoint re-runs from scratch each round and every prior answer is carried forward,
-     * so an endpoint asking a sixth question inside ONE submit is asking something it has
-     * already been told: it is ignoring _answers, and the loop it has started is infinite.
-     * This cap turns that into a rendered error naming the endpoint, instead of a browser
-     * tab that never stops posting.
-     */
-    static MAX_QUESTION_ROUNDS = 5;
-
     /** The application's question handler. Registered once - see set_question_handler(). */
     static _question_handler = null;
 
@@ -351,9 +339,9 @@ class Rsx_Form extends Component {
      *     if (Rsx_Form.is_cancelled(result)) return;   // the user stopped it; nothing was written
      *
      * A batch endpoint may ask one question per item (a key per item), so the number of
-     * rounds is not capped. What IS refused is the defect the cap guards in submit(): an
-     * endpoint asking a key it has already been answered is ignoring _answers, and that
-     * throws, naming the endpoint, instead of asking forever.
+     * rounds is not capped. What IS refused, exactly as in submit(), is a RE-ASK: an endpoint
+     * asking a key it has already been answered is ignoring _answers, and that throws,
+     * naming the endpoint and the key, instead of asking forever (Rsx_Form._reask_error()).
      *
      * @param {string|object|function} url - As Ajax.call(): a stub method, or an Ajax URL
      * @param {Object} [params]
@@ -381,12 +369,10 @@ class Rsx_Form extends Component {
                 pending = error.metadata || {};
             }
 
-            if (Object.prototype.hasOwnProperty.call(answers, pending.key)) {
-                const { controller, action } = Ajax.ajax_url_to_controller_action(url);
-                throw new Error(
-                    `${controller}::${action} asked '${pending.key}' again after it was answered. ` +
-                    'The endpoint is not reading the answers it was given (_answers).'
-                );
+            const { controller, action } = Ajax.ajax_url_to_controller_action(url);
+            const reask = Rsx_Form._reask_error(answers, pending.key, `${controller}::${action}`);
+            if (reask !== null) {
+                throw reask;
             }
 
             attempt++;
@@ -403,6 +389,34 @@ class Rsx_Form extends Component {
 
             answers[pending.key] = answer;
         }
+    }
+
+    /**
+     * The runaway-question guard, shared by submit() and call_answering(): the Error for an
+     * endpoint asking a key this submission has ALREADY answered, else null.
+     *
+     * The endpoint re-runs from scratch each round with every prior answer carried in
+     * _answers, so a submission may go through any number of rounds as long as each asks
+     * something new - a form's own questions plus one per uploaded file. Asking an answered
+     * key again means the endpoint is not reading _answers, and the loop it has started is
+     * infinite. There is no round count: the re-ask is the defect, and it is named.
+     *
+     * @private
+     * @param {Object} answers key => answer, as given so far in this submission
+     * @param {string} key The key the endpoint just asked
+     * @param {string} endpoint "Controller::method", for the message
+     * @returns {Error|null}
+     */
+    static _reask_error(answers, key, endpoint) {
+        if (!Object.prototype.hasOwnProperty.call(answers, key)) {
+            return null;
+        }
+
+        return new Error(
+            `${endpoint} asked '${key}' again after it was answered, so the submission cannot finish. ` +
+            'The endpoint is not reading the answers it was given (_answers) - or the question handler ' +
+            'answered null or undefined, which the server reads as not answered.'
+        );
     }
 
     on_create() {
@@ -914,15 +928,11 @@ class Rsx_Form extends Component {
                     break;
                 }
 
-                asked++;
+                // Any number of DIFFERENT questions may be asked (one per uploaded file, say);
+                // a key already answered means the endpoint is ignoring _answers.
+                const runaway = Rsx_Form._reask_error(answers, question.key, `${this.args.controller}::${this.args.method}`);
 
-                if (asked > Rsx_Form.MAX_QUESTION_ROUNDS) {
-                    // The endpoint is ignoring the answers it is being handed. Name it.
-                    const runaway = new Error(
-                        `${this.args.controller}::${this.args.method} asked more than ` +
-                        `${Rsx_Form.MAX_QUESTION_ROUNDS} questions in one submission. The endpoint is ` +
-                        'not reading the answers it was given (_answers), so the submission cannot finish.'
-                    );
+                if (runaway !== null) {
                     runaway.code = Ajax.ERROR_GENERIC;
 
                     this._set_submitting($submit_btns, false);
@@ -932,6 +942,8 @@ class Rsx_Form extends Component {
                     this.trigger('submit_error', runaway);
                     return false;
                 }
+
+                asked++;
 
                 // The spinner comes off while the user reads the question; _submitting
                 // stays true for the whole loop, so re-entrancy remains blocked.

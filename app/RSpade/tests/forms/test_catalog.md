@@ -51,7 +51,7 @@ is reachable through the ordinary in-process Ajax entry point.
 
 The browser half: `submit()` clears the spinner, runs the handler, merges the answer into
 `_answers` and calls the endpoint again, all inside ONE `submit()`. The probe is a runtime-built
-`Rsx_Form` on `/_sys` with a per-form `question_handler`; `Ajax.call` is replaced by a scripted
+`Rsx_Form` on `/_sys` with a per-form `question_handler`; `Ajax.call_detailed` and `Ajax.call` are replaced by a scripted
 fake for the duration and restored afterwards, because what is under test is the loop and not
 any endpoint.
 
@@ -60,7 +60,9 @@ any endpoint.
 | forms-question-10 | cancel is not an answer | the handler returns `Rsx_Form.CANCELLED` | `submit()` resolves false, exactly one call made, nothing rendered, the form still holding its values | implemented |
 | forms-question-11 | false is delivered as an answer | the handler returns `false` | the second call's body carries `_answers: {k: false}` and the original values; the first carries no `_answers` | implemented |
 | forms-question-12 | answers accumulate | two questions, two different answers | the third call's body carries both | implemented |
-| forms-question-13 | a runaway loop is a defect, not a wait | an endpoint that always asks | `MAX_QUESTION_ROUNDS + 1` calls, then a rendered error naming the endpoint, resolving false | implemented |
+| forms-question-13 | a re-ask is the defect, not a round count | an endpoint that asks the same key again after its answer | two calls, then a rendered error naming the endpoint and the key, resolving false | implemented |
+| forms-question-15 | distinct questions are not capped | two questions of the endpoint's own plus one per file for five files | eight calls, the last carrying all seven answers, resolving with the server result | implemented |
+| forms-question-16 | `call_answering()` follows the same rule | the seven-question script, then an endpoint re-asking a key | resolves the value after eight calls; the re-ask throws on the second call naming endpoint and key | implemented |
 | forms-question-14 | a missing handler cannot hide | both handlers cleared | `submit()` THROWS, the message names `set_question_handler()`, and nothing is rendered in the form | implemented |
 
 ## form_message_only_error.js (playwright) - a failure that names no field

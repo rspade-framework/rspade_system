@@ -386,14 +386,25 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
         dialog whose "No" button resolves with a bare false is indistinguishable
         from a dismissal, so give "No" a distinct token and map it.
 
-    MAX_QUESTION_ROUNDS
+    A RE-ASK IS THE DEFECT, NOT A ROUND COUNT
 
-        Rsx_Form.MAX_QUESTION_ROUNDS (5) is a DEFECT DETECTOR, not a duration
-        and not a guess about speed. Every prior answer is carried forward, so
-        an endpoint asking a sixth question inside one submission is asking
-        something it has already been told - it is ignoring _answers, and the
-        loop it started is infinite. The cap turns that into a rendered error
-        naming the endpoint instead of a tab that posts forever.
+        A submission may go through any number of question rounds, as long as
+        each round asks a key not yet answered in it - a form's own questions
+        plus one per uploaded file (the duplicate-upload question) is ordinary.
+        Every prior answer is carried forward, so an endpoint asking a key the
+        submission has ALREADY answered is ignoring _answers, and the loop it
+        started is infinite. That re-ask ends the submission with a rendered
+        error naming the endpoint and the key, instead of a tab that posts
+        forever:
+
+            Controller::method asked 'some_key' again after it was answered,
+            so the submission cannot finish. ...
+
+        The same message follows a question handler that answered null or
+        undefined: the server reads either as not answered (THE NULL RULE in
+        Form_Questions) and asks again. An endpoint that must ask about
+        something new keys the new question differently (Form_Edit keys its
+        conflict question on the version it is about).
 
     WHAT THE FRAMEWORK WILL NOT DO
 
@@ -505,10 +516,10 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
             const result = await Rsx_Form.call_answering(Tasks_Controller.attachments_add, { id, keys });
             if (Rsx_Form.is_cancelled(result)) return;
 
-        Its rounds are not capped, because a batch endpoint may ask one
-        question per item under a key per item. What it refuses is the defect
-        MAX_QUESTION_ROUNDS guards in a form: an endpoint asking a key it was
-        already answered throws, naming the endpoint. In PHP, an in-process
+        The rule is the form's (A RE-ASK IS THE DEFECT, NOT A ROUND COUNT), one
+        implementation for both: any number of distinct keys, and an endpoint
+        asking a key it was already answered throws, naming the endpoint and
+        the key. In PHP, an in-process
         Ajax::internal() raises AjaxQuestionException, carrying get_key() and
         get_question() - which is what a PHP test and rsx:ajax see.
 

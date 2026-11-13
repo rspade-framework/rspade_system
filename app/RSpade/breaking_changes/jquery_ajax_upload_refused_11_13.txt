@@ -1,0 +1,58 @@
+$.ajax() TO /_upload THROWS; UPLOADS GO THROUGH Ajax.upload(), WHICH REPORTS PROGRESS
+Date: 2026-11-13
+
+IF YOU DO NOTHING: any page of yours that posts a file to /_upload with $.ajax() throws
+    "$.ajax() to /_upload is prohibited" the moment the upload starts, and the file is never
+    sent.
+
+SUMMARY
+    Category 2: a call an application could make stopped being accepted.
+
+    $.ajax() to a local URL has always thrown, with one exemption: /_upload, which let a page
+    hand-roll an upload to attach its own xhr.upload progress listener. That exemption is
+    removed. Ajax.upload() now reports progress itself:
+
+        const result = await Ajax.upload(form_data, {
+            on_progress: (loaded, total) => { ... },
+        });
+
+    on_progress is called from the request's upload stream with increasing `loaded` values;
+    when the whole body was sent the last call is `loaded === total`, before the promise
+    settles. `total` is the size of the request body, slightly more than the file. A callback
+    that throws aborts the upload and rejects with that error. Without the option the call
+    behaves exactly as before: same answer, same errors, same size check, same CSRF handling.
+
+    A raw fetch() or XMLHttpRequest to /_upload is not refused, but restates what
+    Ajax.upload() already does (CSRF token, portal path, size check, error text).
+
+    Contract: php artisan rsx:man file_upload (FROM THE BROWSER: Ajax.upload()). Worked
+    example: system/app/RSpade/resource/reference_app/theme/components/view/record_attachments/record_attachments.js
+
+ACTION REQUIRED - CODE
+    1. Find hand-rolled uploads:
+           grep -rnE "_upload" rsx/ --include='*.js' | grep -vE 'Ajax\.upload'
+    2. Replace each with Ajax.upload():
+
+           BEFORE
+           $.ajax({
+               url: '/_upload', type: 'POST', data: form_data,
+               processData: false, contentType: false,
+               xhr: function () {
+                   const xhr = $.ajaxSettings.xhr();
+                   xhr.upload.addEventListener('progress', function (e) { show(e.loaded, e.total); });
+                   return xhr;
+               },
+           }).done(function (response) { use(response); });
+
+           AFTER
+           const result = await this.alive(Ajax.upload(form_data, {
+               on_progress: (loaded, total) => show(loaded, total),
+           }));
+           use(result);
+
+       Drop any CSRF header, session field or site id the old call added by hand: the
+       framework reads none of them from an upload.
+
+VERIFICATION
+    Upload a large file on each converted page: the progress display moves and the file
+    attaches. The browser console shows no "$.ajax() to /_upload is prohibited".
