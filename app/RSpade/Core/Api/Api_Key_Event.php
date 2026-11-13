@@ -20,20 +20,22 @@ use App\RSpade\Core\Session\Session;
  * path that mints or ends a key can forget them - the Settings screen, an administrator, the
  * command line, the /apidocs tester:
  *
- *   api_key.created    a key row was inserted (Api_Key_Model::generate())
+ *   api_key.created    a key row was inserted (Api_Key_Model::generate(), generate_tester_key())
  *   api_key.revoked    a LIVE key (not revoked, not expired) was revoked (is_revoked set), or
  *                      its row was deleted (rsx:api:key:delete --purge)
  *
  * with {api_key, user, actor, audit_session_id, ip_address}, and for api_key.revoked also
  * {how}: HOW_REVOKED or HOW_DELETED. api_key is the model - never the plaintext, which exists
- * only in generate()'s return; read name, key_prefix, scopes, read_only, expires_at and
- * is_temporary off it. user is the holder (the users row the key acts as), null if that row
+ * only in generate()'s return; read name, key_prefix, scopes, read_only, expires_at,
+ * is_temporary and is_tester_key() off it. user is the holder (the users row the key acts as), null if that row
  * is gone. A key reaching its expires_at fires nothing: nothing is written, and the expiry was
  * chosen at mint.
  *
  * TEMPORARY KEYS FIRE TOO. A key minted by rsx:api:key:temp carries is_temporary = 1; the
  * events report it like any other so an auditor may record it, and a handler that announces
- * keys to their holder skips it on that flag.
+ * keys to their holder skips it on that flag. An /apidocs tester key (is_tester_key(), bound
+ * to the browser session that minted it) fires too, and is skipped the same way: it cannot be
+ * used outside that session, so there is nothing for a notice to warn its holder about.
  *
  * AFTER COMMIT. Registered with the key's connection's afterCommit(): inside a transaction (a
  * #[Writer], a Site_Lock::write() section, DB::transaction()) the event fires once that

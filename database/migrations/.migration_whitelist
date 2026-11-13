@@ -856,6 +856,11 @@
             "created_at": "2026-11-12T23:11:38+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_is_temporary_to_api_keys"
+        },
+        "2026_11_13_012735_bind_api_tester_keys_to_their_browser_session.php": {
+            "created_at": "2026-11-13T01:27:35+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe bind_api_tester_keys_to_their_browser_session"
         }
     }
 }

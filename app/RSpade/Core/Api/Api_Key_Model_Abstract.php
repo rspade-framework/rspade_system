@@ -25,6 +25,12 @@ use App\RSpade\Core\Models\User_Model;
  *   script (rsx:api:key:temp), set at mint. It changes nothing about what the key may do; it
  *   is reported on the key events so a handler can tell such a key from a standing credential
  *   without comparing names.
+ * - A key may be a TESTER KEY: tester_session_id names the browser (_sessions.id) that minted
+ *   it for the /apidocs tester (generate_tester_key()). Such a key authenticates ONLY on a
+ *   request carrying that browser's session cookie while the browser is signed in as the key's
+ *   user (is_bound_to(), asked by Rsx_Api_Bearer::authenticate()); anywhere else it answers 401
+ *   exactly like an invalid key. It is not is_temporary: a CLI temporary key is bearer-only
+ *   and works from any script. Set at mint, never changed.
  * - A key may be SCOPED below its holder's authority: the scopes column carries one bare
  *   path-pattern grant per line, whose entire meaning lives in Api_Scopes. NULL means
  *   unrestricted; any scope makes the key deny-by-default. Scopes subtract only - they never
@@ -44,6 +50,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property bool $is_revoked
  * @property bool $read_only
  * @property bool $is_temporary
+ * @property int|null $tester_session_id
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
  *
@@ -72,6 +79,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property string $name
  * @property int $read_only
  * @property string $scopes
+ * @property int $tester_session_id
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
@@ -98,6 +106,15 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
 
     protected $table = '_api_keys';
 
+    /**
+     * key_hash is the SHA-256 of the whole key: never a payload field. With it a caller could
+     * not authenticate (lookup hashes the presented key), but it identifies the credential
+     * and invites an offline guess, so no serializer may carry it. The other columns are
+     * display data (key_prefix is the shown part), the key's own policy (scopes, read_only),
+     * or ids that grant nothing.
+     */
+    public static $neverExport = ['key_hash'];
+
     public static $enums = [];
 
     /**
@@ -108,8 +125,13 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      *     is_revoked (revoke()), or the row's deletion (rsx:api:key:delete --purge). A key that
      *     was already revoked or past its expiry fires nothing.
      *
-     * Both run on a model write only; a write that bypasses the model (raw SQL, ->raw_bulk())
-     * gets none of them.
+     * DELETING A KEY SIGNS OUT the user session its use was listed under, as revoke() and
+     * expiry do (Session::SIGN_OUT_API_KEY_DELETED), in the `deleting` hook - before the row
+     * goes, while the key's browser-less row still names it - so every deleter is covered.
+     * That row and the user session are kept (_sessions.api_key_id is nulled with the key).
+     *
+     * All of these run on a model write only; a write that bypasses the model (raw SQL,
+     * ->raw_bulk()) gets none of them.
      */
     protected static function booted()
     {
@@ -123,6 +145,10 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
             if ($model->wasChanged('is_revoked') && (bool) $model->is_revoked) {
                 Api_Key_Event::_after_ended($model, Api_Key_Event::HOW_REVOKED);
             }
+        });
+
+        static::deleting(function ($model) {
+            \App\RSpade\Core\Session\Session::_end_api_key_session((int) $model->id, \App\RSpade\Core\Session\Session::SIGN_OUT_API_KEY_DELETED);
         });
 
         static::deleted(function ($model) {
@@ -179,6 +205,94 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         bool $read_only = false,
         bool $is_temporary = false
     ): array {
+        return self::__mint($user_id, $name, $environment, $user_role_id, $expires_at, $scopes, $read_only, $is_temporary, null);
+    }
+
+    /**
+     * The name every /apidocs tester key carries, so it reads for what it is in
+     * Settings > API Keys. A label only: what makes a key a tester key is tester_session_id.
+     */
+    public const TESTER_KEY_NAME = 'API Tester (temporary)';
+
+    /**
+     * Mint a one-hour key for the /apidocs tester, BOUND TO THE BROWSER THAT MINTED IT.
+     *
+     * tester_session_id records $session_id (the minting browser's _sessions.id). From then
+     * on the key authenticates only on a request carrying that browser's session cookie while
+     * the browser is signed in as $user_id (is_bound_to(), asked by
+     * Rsx_Api_Bearer::authenticate() before any identity exists): a tester call from the
+     * console that minted it. Presented from a script, another browser, or this browser
+     * signed in as somebody else - or signed out - it answers 401 exactly as an invalid key.
+     * It expires at $expires_at like any key; its holder can revoke it sooner.
+     *
+     * NO NOTICE IS SENT FOR IT, deliberately. api_key.created / api_key.revoked still fire
+     * (Api_Key_Event), and the reference application's handler skips a tester key
+     * (is_tester_key()): the key cannot be used outside the session that minted it, so
+     * whoever holds that session already holds everything the key could do - a hijacked key
+     * gains nothing a "a key was created on your account" notice would warn about.
+     *
+     * Minted outside generate(), so an application's override of generate() does not see a
+     * tester key - the key's shape (name, environment, unscoped, read+write, the binding) is
+     * fixed here.
+     *
+     * @return array{key: string, model: Api_Key_Model}
+     */
+    public static function generate_tester_key(int $user_id, int $session_id, \Carbon\Carbon $expires_at): array
+    {
+        return self::__mint($user_id, static::TESTER_KEY_NAME, 'live', null, $expires_at, null, false, false, $session_id);
+    }
+
+    /**
+     * Is this a key minted for the /apidocs tester, bound to its minting browser?
+     */
+    public function is_tester_key(): bool
+    {
+        return $this->tester_session_id !== null;
+    }
+
+    /**
+     * May a request whose browser is $sign_in present this key? Always true for an unbound
+     * key. A TESTER key answers true only for the browser that minted it, signed in as the
+     * key's user; $sign_in is Session::_cookie_staff_sign_in() for the request (null: no
+     * cookie, or not signed in).
+     *
+     * "Signed in as the key's user" is the membership: the key's users row's login identity
+     * on that row's site.
+     *
+     * @param array{session_id: int, login_user_id: int, site_id: int}|null $sign_in
+     */
+    public function is_bound_to(?array $sign_in): bool
+    {
+        if (!$this->is_tester_key()) {
+            return true;
+        }
+
+        if ($sign_in === null || (int) $sign_in['session_id'] !== (int) $this->tester_session_id) {
+            return false;
+        }
+
+        // Read without the site scope: the API channel has no site declared yet.
+        $user = User_Model::without_site_scope(fn () => User_Model::find((int) $this->user_id));
+
+        return $user !== null
+            && (int) $sign_in['login_user_id'] === (int) $user->login_user_id
+            && (int) $sign_in['site_id'] === (int) $user->site_id;
+    }
+
+    /**
+     * The one insert behind generate() and generate_tester_key().
+     */
+    private static function __mint(
+        int $user_id,
+        string $name,
+        string $environment,
+        ?int $user_role_id,
+        ?\Carbon\Carbon $expires_at,
+        ?string $scopes,
+        bool $read_only,
+        bool $is_temporary,
+        ?int $tester_session_id
+    ): array {
         // {prefix}{env}_{32 random chars}, e.g. rsx_live_xxxxx. The leading token is
         // config('rsx.api.key_prefix') so a product's keys read as its own; lookup is by
         // hash of the whole key, so changing it never invalidates one already issued.
@@ -211,6 +325,7 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         // the rows that already existed, never a substitute for saying what this key is.
         $model->read_only = $read_only;
         $model->is_temporary = $is_temporary;
+        $model->tester_session_id = $tester_session_id;
         // Normalized before the row is written, so what is stored is what Api_Scopes reads
         // back - and a malformed scope throws here rather than at first request.
         $model->scopes = Api_Scopes::canonicalize($scopes);

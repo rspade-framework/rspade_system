@@ -725,8 +725,9 @@ FRAMEWORK EVENT CATALOG
                   plus, on api_key.revoked, how: revoked | deleted
                   (Api_Key_Event::HOW_*).
                   api_key is the model, never the plaintext: name,
-                  key_prefix, scopes, read_only, expires_at and is_temporary
-                  are read off it (a deleted key still carries them).
+                  key_prefix, scopes, read_only, expires_at, is_temporary and
+                  is_tester_key() are read off it (a deleted key still
+                  carries them).
                   user is the holder's users row. actor, audit_session_id
                   and ip_address mean what they mean on the password events:
                   the identity acting on the request (the impersonator while
@@ -735,6 +736,10 @@ FRAMEWORK EVENT CATALOG
                   is_temporary is set on every key rsx:api:key:temp mints:
                   the events fire for it, flagged, so a handler announcing
                   keys skips it on the flag rather than the name.
+                  is_tester_key() is true for an /apidocs tester key, bound
+                  to the browser session that minted it: the events fire for
+                  it too, and a handler announcing keys skips it - it cannot
+                  be used outside that session, so a notice warns of nothing.
             Return: ignored (it is an action). A throw after the commit is
                     reported, never answered: the key stands.
             Use for: recording the key on its holder's history and telling

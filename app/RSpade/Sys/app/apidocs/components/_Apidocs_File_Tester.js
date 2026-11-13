@@ -216,7 +216,9 @@ class _Apidocs_File_Tester extends Component {
         let res, text;
 
         try {
-            res = await fetch(url, { method: 'POST', headers, body: form_data });
+            // The session cookie rides with the key, as in _Apidocs_Tester: a console-minted
+            // key is bound to this browser's sign-in and refused without it.
+            res = await fetch(url, { method: 'POST', headers, body: form_data, credentials: 'same-origin' });
             text = await res.text();
         } catch (e) {
             this._render_message('Network error: ' + (e.message ? e.message : str(e)), 'error');

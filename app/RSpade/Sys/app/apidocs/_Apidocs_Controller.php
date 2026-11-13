@@ -76,7 +76,10 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
             ? User_Model::without_site_scope(fn () => User_Model::find((int) $model->user_id))
             : null;
 
-        if (!$model || !$holder || !$holder->is_active() || !$holder->is_api_access_enabled) {
+        // A tester key minted by ANOTHER browser (or for another user) is one the API itself
+        // refuses from here (Rsx_Api_Bearer::authenticate()), so it is refused here too.
+        if (!$model || !$holder || !$holder->is_active() || !$holder->is_api_access_enabled
+            || !$model->is_bound_to($model->is_tester_key() ? Session::_cookie_staff_sign_in($request) : null)) {
             Login_Throttle::record_failure();
 
             return response_error(Ajax::ERROR_VALIDATION, [
@@ -92,12 +95,25 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
     /**
      * Ajax: mint a one-hour API key for the caller's own user, for use in the tester.
      *
-     * THE PLAINTEXT EXISTS ONLY IN THIS RESPONSE. Api_Key_Model::generate() stores nothing
-     * but the SHA-256, so a key not kept by the browser here is gone - there is no second
-     * chance to read it, and no endpoint that could hand it back.
+     * THE KEY IS BOUND TO THIS BROWSER SESSION AND THIS SIGNED-IN USER
+     * (Api_Key_Model_Abstract::generate_tester_key(), tester_session_id = this browser's
+     * _sessions.id). It works only through this console: every tester call is a same-origin
+     * fetch() that carries the session cookie beside the Authorization header, and
+     * Rsx_Api_Bearer::authenticate() refuses the key (the uniform 401) unless that cookie names
+     * the minting browser, signed in as the key's user. Copied into a script, another browser,
+     * or this one after signing out, it is dead. It expires after its hour as before.
      *
-     * The key is named "API Tester (temporary)" so it reads for what it is in
-     * Settings > API Keys, where it can be revoked before its hour is up.
+     * NO CREATED/REVOKED NOTICE IS SENT FOR IT, deliberately: api_key.created still fires, and
+     * the reference application's Api_Key_Event_Handlers skips a tester key. The key cannot be
+     * used outside the session that minted it, so a hijacker would first need that session -
+     * which already does everything the key does - and the notice would warn of nothing.
+     *
+     * THE PLAINTEXT EXISTS ONLY IN THIS RESPONSE. Only the SHA-256 is stored, so a key not kept
+     * by the browser here is gone - there is no second chance to read it, and no endpoint that
+     * could hand it back.
+     *
+     * The key is named Api_Key_Model::TESTER_KEY_NAME ("API Tester (temporary)") so it reads
+     * for what it is in Settings > API Keys, where it can be revoked before its hour is up.
      *
      * TWO REFUSALS, TWO DIFFERENT ERRORS, and the difference is deliberate:
      *
@@ -134,13 +150,8 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
 
         $expires_at = now()->addHour();
 
-        $result = Api_Key_Model::generate(
-            $user_id,
-            'API Tester (temporary)',
-            'live',
-            null,
-            $expires_at
-        );
+        // The browser making this call: signed in, so its row exists.
+        $result = Api_Key_Model::generate_tester_key($user_id, (int) Session::get_session_id(), $expires_at);
 
         return [
             'key' => $result['key'],

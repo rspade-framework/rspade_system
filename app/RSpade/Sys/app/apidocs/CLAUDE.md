@@ -71,6 +71,23 @@ its own - it reads `--rsx-bg`, `--rsx-surface`, `--rsx-raised`, `--rsx-border`,
 pair `--rsx-get` / `--rsx-post` that the method pills use. A colour this module
 needs and the theme lacks is ADDED TO `theme/theme.scss`, never kept here.
 
+## The temporary key is bound to this browser session
+
+"Temporary Key" mints through `mint_temporary_key()` ->
+`Api_Key_Model::generate_tester_key()`: a one-hour key for the signed-in user whose
+`tester_session_id` is THIS browser's session row. The bearer check
+(`Rsx_Api_Bearer::authenticate()`) admits it only on a request carrying this browser's session
+cookie while it is signed in as the key's user, so every request the console sends with a key -
+`_Apidocs_Tester`, `_Apidocs_File_Tester`, the key bar's `/me` check - is a `fetch()` with
+`credentials: 'same-origin'`. From a script, another browser, or this one signed out or signed
+in as somebody else, the key is a 401 like an invalid one; `adopt_tester_key` refuses a tester
+key minted elsewhere the same way. It expires after its hour as before. The cookie only ever
+REFUSES: it is never the identity and never stands in for a key, and a pasted ordinary key
+ignores it. **No created/revoked notice is sent for it, deliberately**: the key cannot be used
+outside the session that minted it, so a hijacked copy gains nothing that session lacks and a
+notice would warn of nothing (the events still fire, flagged; the application's handler skips
+it). `Core/Api/CLAUDE.md`, Tester keys.
+
 The console's one dialog (the temporary-key confirm) is the theme's `_Sys_Modal.confirm()`,
 and its response pane pretty-prints through `_Sys_Code_Pane.pretty()`.
 

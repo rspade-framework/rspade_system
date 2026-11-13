@@ -4,8 +4,9 @@
  * Path-token params render as individual typed inputs (they build the URL); GET query params
  * render as typed inputs; POST endpoints get a raw JSON body textarea (prefilled from param
  * examples). The Send button reads the active key from Rsx_Storage (written by _Apidocs_Key_Bar),
- * then uses native fetch() with an Authorization: Bearer header - $.ajax is blocked; fetch is
- * not. The response pane shows a colored status badge, elapsed time, and pretty-printed JSON
+ * then uses native fetch() with an Authorization: Bearer header and the session cookie
+ * (credentials: 'same-origin', which a console-minted key requires) - $.ajax is blocked; fetch
+ * is not. The response pane shows a colored status badge, elapsed time, and pretty-printed JSON
  * (highlight.js). No key set -> an inline prompt to set one via the key bar.
  *
  * args: endpoint (object).
@@ -199,10 +200,14 @@ class _Apidocs_Tester extends Component {
             body = values.body_to_send;
         }
 
+        // credentials: 'same-origin' - the session cookie rides with the key, ALWAYS. A
+        // temporary key minted by this console is bound to this browser's sign-in and is
+        // refused (401) on a request without it (Rsx_Api_Bearer::authenticate()); any other
+        // key ignores the cookie, because the API channel never takes an identity from one.
         const started = performance.now();
         let res, text;
         try {
-            res = await fetch(url, { method: verb, headers, body });
+            res = await fetch(url, { method: verb, headers, body, credentials: 'same-origin' });
             text = await res.text();
         } catch (e) {
             this._render_message('Network error: ' + (e.message ? e.message : str(e)), 'error');

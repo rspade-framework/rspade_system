@@ -443,7 +443,9 @@ AUTHENTICATION
     Revoking the key signs its user session out ("API key revoked"); a key past
     expires_at is refused and its user session signed out ("API key expired"),
     at the refused call or by the hourly session sweep; deleting the key
-    (--purge) deletes its session and user session (ON DELETE CASCADE).
+    (rsx:api:key:delete --purge, or any delete through the model) signs it out
+    too ("API key deleted") and keeps the row and the user session as the
+    record of that sign-in (the row's api_key_id is nulled with the key).
     rsx:man session, API KEY SESSIONS.
 
     THE IDENTITY. The API identity is a distinct tier consulted ahead of the
@@ -466,8 +468,11 @@ AUTHENTICATION
         Session::set_site_id(..)       THROWS
         Session::put_value(..)         THROWS   (session values belong to a browser)
 
-    A browser cookie riding along on a tester fetch() is never read and never
-    re-set. No API response ever carries Set-Cookie. Calling _set_api_identity()
+    A browser cookie riding along on an API call never becomes the identity
+    and is never re-set; no API response ever carries Set-Cookie. It is READ
+    for exactly one question - whether an /apidocs tester key arrived from the
+    browser that minted it (TESTER KEYS) - and that answer can only REFUSE the
+    key. A cookie with no key is still 401 auth_required. Calling _set_api_identity()
     twice in one request is a bug and throws.
 
     THE IDENTITY IS SCOPED TO THE DISPATCH. Api_Dispatcher::dispatch() clears it
@@ -654,13 +659,21 @@ API KEYS
         Api_Key_Model::find_by_key($plaintext)   // sha256 lookup, non-revoked,
                                                  // null if expired
         $key->revoke();  $key->is_valid();  $key->get_user();
+        $key->delete();     // signs its user session out (API key deleted)
+        $key->is_tester_key();   // an /apidocs tester key (TESTER KEYS)
+
+    key_hash is in Api_Key_Model's $neverExport: no serializer carries it. A
+    screen listing keys returns the fields it renders, never the record - a
+    browser refuses an Api_Key_Model record (there is no JS model for it).
 
     Columns: user_id, name, key_hash, key_prefix ({prefix}{env}_ + first chars,
     for display), user_role_id (RESERVED - see below), scopes (TEXT NULL, the
     key's own scope set - see KEY SCOPES), read_only (TINYINT(1) NOT NULL
     DEFAULT 0 - GET requests only; see READ-ONLY KEYS), is_temporary (TINYINT(1)
     NOT NULL DEFAULT 0 - minted by rsx:api:key:temp; see KEY EVENTS),
-    last_used_at, expires_at, is_revoked, timestamps.
+    tester_session_id (BIGINT NULL - the browser that minted an /apidocs
+    tester key; see TESTER KEYS), last_used_at, expires_at, is_revoked,
+    timestamps.
 
     KEY PREFIX. config('rsx.api.key_prefix'), default 'rsx_', is the leading
     token on newly minted keys: {prefix}{environment}_{random} -> rsx_live_xxx.
@@ -694,14 +707,15 @@ API KEYS
     own hooks (Api_Key_Event), so no path that mints or ends a key can skip it
     - Settings > API Keys, an administrator, the /apidocs tester, the CLI:
 
-        api_key.created    a key was minted (generate())
+        api_key.created    a key was minted (generate(), generate_tester_key())
         api_key.revoked    a LIVE key was ended: revoke() (how: revoked), or
                            its row deleted (rsx:api:key:delete --purge;
                            how: deleted)
 
     Payload {api_key, user, actor, audit_session_id, ip_address} (+ how on
     revoked): the key MODEL (never the plaintext - read name, key_prefix,
-    scopes, read_only, expires_at, is_temporary off it), its holder's users
+    scopes, read_only, expires_at, is_temporary, is_tester_key() off it), its
+    holder's users
     row, the identity acting on the request (the impersonator while one is
     impersonating; null from a command), the audit session (store it, never
     the address) and the address. Both fire AFTER COMMIT: a rolled-back mint
@@ -713,14 +727,17 @@ API KEYS
     mints (generate(..., $is_temporary = true)); it grants and limits
     nothing. The events still fire for such a key, flagged, so an auditor can
     record it; a handler announcing keys to their holder skips it on the
-    flag, never on the name. The /apidocs tester's one-hour key is NOT
-    temporary in this sense: it is minted from a browser session, which is
-    exactly the case its holder must hear about.
+    flag, never on the name. An /apidocs TESTER KEY is not is_temporary - a
+    CLI temporary key is bearer-only and works from any script, a tester key
+    only from the browser that minted it - and is told apart by
+    is_tester_key(). Its events fire too, and the same handler skips it
+    (TESTER KEYS says why).
 
     The framework tells nobody itself. The reference application's handler
     records an action-log row on the holder's history and mails the holder a
-    SECURITY notice for every key that is not temporary (rsx:man email,
-    RECIPIENTS AND BLOCKLIST; rsx:man event_hooks, API Key Events).
+    SECURITY notice for every key that is neither temporary nor a tester key
+    (rsx:man email, RECIPIENTS AND BLOCKLIST; rsx:man event_hooks, API Key
+    Events).
 
     THE PRESETS ARE THE APPLICATION'S, not the framework's - see PRESETS ARE APP
     DATA under KEY SCOPES. The reference implementation is
@@ -895,11 +912,41 @@ API KEYS
 
     TESTER KEYS. The docs page's tester normally takes a key the developer
     PASTES, created in Settings > API Keys like any other. It can also mint a
-    throwaway for itself (_Apidocs_Controller::mint_temporary_key): a live key
-    for the signed-in user, named 'API Tester (temporary)', expiring in one
-    hour. It is gated on the same Session::has_api_access() the page is, and it
-    is the browser twin of rsx:api:key:temp - except that it is not marked
-    is_temporary, so its holder is told of it like any other key (KEY EVENTS).
+    throwaway for itself (_Apidocs_Controller::mint_temporary_key ->
+    Api_Key_Model::generate_tester_key()): a live key for the signed-in user,
+    named 'API Tester (temporary)', expiring in one hour, gated on the same
+    Session::has_api_access() the page is.
+
+    A TESTER KEY IS BOUND TO THE BROWSER SESSION THAT MINTED IT AND TO ITS
+    SIGNED-IN USER. tester_session_id records the minting browser
+    (_sessions.id), and Rsx_Api_Bearer::authenticate() admits the key only
+    when the request carries that browser's session cookie and the browser is
+    signed in (staff, within its sign-in limits) as the key's user - the
+    membership, identity x site. The tester's fetch() always sends the cookie
+    (credentials: 'same-origin') beside the Authorization header. Anything
+    else - a script, curl, another browser, the same browser signed out or
+    signed in as somebody else - is the uniform 401 unauthorized of an invalid
+    key. So a tester key works ONLY THROUGH THE TESTER; it expires after its
+    hour like any key, and revoking it from Settings > API Keys ends it
+    sooner. A "Fill in values" code sample carrying it will not run outside
+    the console. Adopting a tester key minted by another browser is refused
+    the same way.
+
+    THE BINDING IS NARROW: the cookie is read only to REFUSE a tester key. It
+    never establishes an identity (the call still runs as the key's
+    cookie-less API identity on the key's own session row), never stands in
+    for the key (a cookie with no key is 401 auth_required), and is ignored for
+    every other key. The API channel runs no CSRF check: a tester call is
+    authorized by the bearer key, which a cross-site page cannot read or send.
+
+    NO NOTICE IS SENT FOR A TESTER KEY, deliberately. api_key.created and
+    api_key.revoked still fire for it (is_tester_key() true), and the
+    reference application's handler skips it: the key cannot be used outside
+    the session that minted it, so anyone holding a hijacked copy would also
+    need that signed-in session - which already does everything the key does.
+    A notice would warn of nothing. rsx:api:key:temp's keys stay as they are:
+    bearer-only, no browser involved, no notice (they are minted by somebody
+    with a shell).
 
     ROLE OVERRIDE - RESERVED, NOT ENFORCED. user_role_id is intended to let a
     key run at a REDUCED role. It is NOT honored: a key always runs at the
@@ -2092,6 +2139,11 @@ TROUBLESHOOTING
         key into the _Apidocs_Key_Bar; create one first at Settings > API Keys. The
         tester fires a native fetch() - a blocked $.ajax error means something
         bypassed it.
+
+    A key minted by the tester answers 401 from a script or another browser
+        By design: a tester key is bound to the browser session that minted it
+        and its signed-in user (TESTER KEYS). Mint a key for a script with
+        rsx:api:key:temp or Settings > API Keys.
 
 SEE ALSO
     rsx:man file_upload - attachments, the upload gate, the claim window

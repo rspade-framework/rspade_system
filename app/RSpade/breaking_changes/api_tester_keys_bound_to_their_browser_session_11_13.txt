@@ -1,0 +1,71 @@
+API TESTER KEYS ARE BOUND TO THE BROWSER SESSION THAT MINTED THEM AND ANNOUNCE NOTHING; THE API KEY LIST RETURNS PLAIN FIELDS
+Date: 2026-11-13
+
+IF YOU DO NOTHING: an Api_Key_Event_Handlers ported from api_key_created_and_revoked_notices_11_12.txt keeps mailing a SECURITY "an API key was created on your account" notice (and an action-log row) every time somebody presses the /apidocs console's Temporary Key button, for a key that can no longer be used anywhere but that console.
+
+SUMMARY
+    Category 1. The framework changed underneath two template files you hold
+    a copy of:
+
+      - the /apidocs console's one-hour "API Tester (temporary)" key is now
+        BOUND to the browser session that minted it and its signed-in user
+        (Api_Key_Model::generate_tester_key(), _api_keys.tester_session_id,
+        $key->is_tester_key()). It authenticates only on a request carrying
+        that browser's session cookie, signed in as the key's user - a call
+        from the console; from a script, curl, another browser, or the same
+        browser signed out it answers 401 like an invalid key. The
+        api_key.created / api_key.revoked events still fire for it, flagged by
+        is_tester_key(), and the reference handler now skips it as it skips a
+        CLI temporary key: the key cannot be used outside the session that
+        minted it, so a notice warns of nothing. CLI keys (rsx:api:key:temp,
+        is_temporary) are unchanged: bearer-only, no notice.
+      - the Settings > API Keys list returned Api_Key_Model records, which the
+        browser refuses (model_record_without_class_in_bundle_10_12.txt): the
+        list hangs on "Loading..." for anybody not seeing developer
+        diagnostics. The reference grid returns plain fields.
+
+    Arriving with the framework, nothing to do: the migration
+    2026_11_13_012735_bind_api_tester_keys_to_their_browser_session (tester
+    keys minted before it end at once - they cannot be bound afterwards);
+    deleting a key (rsx:api:key:delete --purge, any model delete) signs out
+    the user session its use was listed under ("API key deleted") and keeps
+    that record; key_hash is in Api_Key_Model's $neverExport. An
+    Api_Key_Model override needs nothing: generate()'s signature is unchanged.
+    rsx:man external_api, TESTER KEYS.
+
+AFFECTED FILES
+    /rsx/handlers/Api_Key_Event_Handlers.php
+    /rsx/app/frontend/settings/api_keys/api_keys_datagrid.php
+
+CHANGES REQUIRED
+
+    File: /rsx/handlers/Api_Key_Event_Handlers.php
+    -------------------------------------------------------------------------
+    In __dispatch() (or wherever you announce keys), skip a tester key beside
+    a temporary one:
+
+        if ((bool) $api_key->is_temporary || $api_key->is_tester_key()) {
+            return;
+        }
+
+    File: /rsx/app/frontend/settings/api_keys/api_keys_datagrid.php
+    -------------------------------------------------------------------------
+    transform_records() must build each row from an allowlist of the fields
+    the list renders instead of unsetting columns from the model's row.
+    Replace it with the reference version:
+
+        system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/api_keys_datagrid.php
+
+    (rows {id, name, key_prefix, read_only, is_scoped, scope_summary, status,
+    created_at, last_used_at}; dates through Rsx_Time::to_iso(); add
+    `use App\RSpade\Core\Time\Rsx_Time;`). If your list template reads
+    another field, add it to the allowlist. Any other endpoint of yours that
+    returns an Api_Key_Model record to a page needs the same treatment.
+
+VERIFICATION
+    - Press Temporary Key on /apidocs and send a request: it answers. Then
+      php artisan rsx:mail:queue --tag=created shows no new
+      Api_Key_Notice_Email, and the holder's history no new row.
+    - curl the same key from a shell: 401 unauthorized.
+    - Open Settings > API Keys as a user who is not a developer: the rows
+      render and the console is clean.

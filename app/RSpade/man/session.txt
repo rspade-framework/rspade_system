@@ -474,6 +474,8 @@ SIGN-OUT REASONS
                                        N days
         SIGN_OUT_PASSWORD_CHANGED      Password changed       a new password saved through
                                                               the model (PASSWORD CHANGES)
+        SIGN_OUT_API_KEY_DELETED       API key deleted        the key's row was deleted
+                                                              through the model
 
     Every sign-out runs through one path (Session::_sign_out_user_sessions()),
     so the rules hold everywhere: a staff sign-in that ends takes the
@@ -744,7 +746,13 @@ API KEY SESSIONS
         - revoking the key signs its user session out (SIGN_OUT_API_KEY_REVOKED);
           a key past expires_at is refused and its user session signed out
           (SIGN_OUT_API_KEY_EXPIRED), by the refused call or the hourly sweep;
-        - deleting the key deletes its row and user session (ON DELETE CASCADE).
+        - deleting the key (rsx:api:key:delete --purge, any model delete) signs
+          its user session out (SIGN_OUT_API_KEY_DELETED) and keeps the row and
+          the user session; the row's api_key_id is nulled (ON DELETE SET NULL);
+        - an /apidocs tester key additionally requires the request to carry the
+          cookie of the browser that minted it, signed in as the key's user -
+          _cookie_staff_sign_in() reads that browser without loading it or
+          establishing anything (rsx:man external_api, TESTER KEYS).
 
     An identity installed with no key (Api_Tester_Key asking which endpoints a
     user's gates admit) writes nothing and answers get_session_id() null.

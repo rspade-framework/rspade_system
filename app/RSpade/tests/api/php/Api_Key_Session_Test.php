@@ -25,7 +25,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * that user session x client address x user agent, so the same key from two addresses is one
  * session row and two audit sessions. The key's use is listed where its owner is signed in,
  * revoking the key signs that user session out, an EXPIRED key signs it out (when presented,
- * or by the hourly cleanup), and deleting the key deletes both rows.
+ * or by the hourly cleanup), and DELETING the key signs it out too, keeping both rows.
  *
  * Each call is authenticated the way the API dispatcher does it - Rsx_Api_Bearer::authenticate()
  * on a Request carrying the key - with that Request bound as the current request, which is what
@@ -229,7 +229,12 @@ class Api_Key_Session_Test extends Rsx_Test_Abstract
         static::__assert_null(DB::table('_user_sessions')->where('id', $live_user_session_id)->value('signed_out_at'), 'the live key is not');
     }
 
-    public static function test_deleting_the_key_deletes_its_row_and_user_session()
+    /**
+     * Deleting the key (rsx:api:key:delete --purge, or any delete through the model) signs its
+     * user session out, as revoking and expiry do: SIGN_OUT_API_KEY_DELETED. The key's row and
+     * user session are kept as the record of that sign-in; the row no longer names the key.
+     */
+    public static function test_deleting_the_key_signs_its_user_session_out_and_keeps_the_record()
     {
         $minted = static::__mint_key();
 
@@ -238,9 +243,36 @@ class Api_Key_Session_Test extends Rsx_Test_Abstract
         $user_session_id = Session::get_user_session_id();
         Session::_reset_api_identity();
 
-        DB::table('_api_keys')->where('id', $minted['model']->id)->delete();
+        $minted['model']->delete();
 
-        static::__assert_equals(0, DB::table('_sessions')->where('id', $session_id)->count(), 'the row goes with the key');
-        static::__assert_equals(0, DB::table('_user_sessions')->where('id', $user_session_id)->count(), 'and its user session');
+        $user_session = DB::table('_user_sessions')->where('id', $user_session_id)->first();
+
+        static::__assert_not_null($user_session, 'the user session is kept');
+        static::__assert_not_null($user_session->signed_out_at, 'and signed out');
+        static::__assert_equals(Session::SIGN_OUT_API_KEY_DELETED, (int) $user_session->sign_out_reason_id);
+        static::__assert_equals('API key deleted', Session::sign_out_reason_label(Session::SIGN_OUT_API_KEY_DELETED));
+        static::__assert_null(DB::table('_sessions')->where('id', $session_id)->value('api_key_id'), 'the row no longer names the deleted key');
+        static::__assert_equals(1, DB::table('_sessions')->where('id', $session_id)->count(), 'the row is kept');
+    }
+
+    /**
+     * rsx:api:key:delete --purge is a model delete, so it signs the session out too.
+     */
+    public static function test_the_purge_command_signs_its_user_session_out()
+    {
+        $minted = static::__mint_key();
+
+        static::__api_call($minted['key'], '10.40.0.1');
+        $user_session_id = Session::get_user_session_id();
+        Session::_reset_api_identity();
+
+        \Illuminate\Support\Facades\Artisan::call('rsx:api:key:delete', ['id' => (string) $minted['model']->id, '--purge' => true, '--force' => true]);
+
+        static::__assert_equals(0, DB::table('_api_keys')->where('id', $minted['model']->id)->count(), 'the key is gone');
+        static::__assert_equals(
+            Session::SIGN_OUT_API_KEY_DELETED,
+            (int) DB::table('_user_sessions')->where('id', $user_session_id)->value('sign_out_reason_id'),
+            'its user session is signed out as deleted'
+        );
     }
 }

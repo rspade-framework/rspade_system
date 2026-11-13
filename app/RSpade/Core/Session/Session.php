@@ -287,6 +287,14 @@ class Session extends Rsx_System_Model_Abstract
      */
     const SIGN_OUT_PASSWORD_CHANGED = 16;
 
+    /**
+     * The API key the user session stood for was deleted (rsx:api:key:delete --purge, or any
+     * other delete through Api_Key_Model) - _end_api_key_session() from the model's delete
+     * path. The browser-less row and this user session are kept, as for every sign-out; the
+     * row's api_key_id is nulled with the key.
+     */
+    const SIGN_OUT_API_KEY_DELETED = 17;
+
     /** Labels for the SIGN_OUT_* reasons, for screens that list user sessions. */
     const SIGN_OUT_REASON_LABELS = [
         self::SIGN_OUT_SIGNED_OUT => 'Signed out',
@@ -305,6 +313,7 @@ class Session extends Rsx_System_Model_Abstract
         self::SIGN_OUT_API_KEY_EXPIRED => 'API key expired',
         self::SIGN_OUT_BROWSER_UNUSED => 'Browser unused',
         self::SIGN_OUT_PASSWORD_CHANGED => 'Password changed',
+        self::SIGN_OUT_API_KEY_DELETED => 'API key deleted',
     ];
 
     /**
@@ -511,13 +520,13 @@ class Session extends Rsx_System_Model_Abstract
      * Set-Cookie is emitted. Throws on a second call.
      *
      * ONE SESSION ROW PER API KEY. With $api_key_id, the key's own _sessions row (TYPE_API,
-     * api_key_id unique, deleted with the key) is found - or minted on the key's first call -
+     * api_key_id unique, nulled when the key is deleted) is found - or minted on the key's first call -
      * together with a user session (REALM_API) for the key's owner bound to it, so the key's
      * use is listed where the owner is signed in (get_sessions_for_user()) and the request's
      * acts are audited under it. get_session_id() and get_user_session_id() answer those two
      * rows for the rest of the request. Both are stamped used at most once a minute, the row
      * with the caller's address and user agent. Ending the user session from a screen does not
-     * stop the key - revoking the key does, and its row and user session go with it.
+     * stop the key - revoking or deleting the key does, and signs its user session out.
      *
      * Without $api_key_id (Api_Tester_Key asking which endpoints a user's gates admit) the
      * identity is installed alone and nothing is written: get_session_id() answers null.
@@ -564,13 +573,16 @@ class Session extends Rsx_System_Model_Abstract
      * Sign out the user session an API key's row carries, when the key stops working: a
      * revoked or expired key stays in the database, and so does its row, but nothing is
      * signed in through it any more (SIGN_OUT_API_KEY_REVOKED / SIGN_OUT_API_KEY_EXPIRED). A
-     * key that was never used, or whose user session is already signed out, has nothing to
-     * end. Deleting a key needs nothing - its row and user session are deleted with it.
+     * DELETED key ends the same way (SIGN_OUT_API_KEY_DELETED), called BEFORE the row goes:
+     * the key's browser-less row and its user session are kept (_sessions.api_key_id is ON
+     * DELETE SET NULL), so the listing shows the sign-in ended and why. A key that was never
+     * used, or whose user session is already signed out, has nothing to end.
      *
-     * FRAMEWORK INTERNAL - Api_Key_Model_Abstract::revoke() and find_by_key().
+     * FRAMEWORK INTERNAL - Api_Key_Model_Abstract::revoke(), its `deleting` hook and
+     * find_by_key().
      *
      * @param int $api_key_id
-     * @param int $reason SIGN_OUT_API_KEY_REVOKED or SIGN_OUT_API_KEY_EXPIRED
+     * @param int $reason SIGN_OUT_API_KEY_REVOKED, SIGN_OUT_API_KEY_EXPIRED or SIGN_OUT_API_KEY_DELETED
      * @return void
      */
     public static function _end_api_key_session(int $api_key_id, int $reason): void
@@ -584,6 +596,72 @@ class Session extends Rsx_System_Model_Abstract
             ->all();
 
         self::_sign_out_user_sessions($ids, $reason, false);
+    }
+
+    /**
+     * The staff sign-in of the BROWSER named by a request's session cookie, or null - read
+     * for one question only: "is this request's browser the one that minted this /apidocs
+     * tester key, signed in as its user" (Rsx_Api_Bearer::authenticate(), and the console's
+     * adopt_tester_key). Api_Key_Model_Abstract::is_bound_to() asks the question.
+     *
+     * NARROW ON PURPOSE. It reads; it never loads the row as this request's session, never
+     * stamps last_active, emits no cookie and establishes NO identity - an API request stays
+     * cookie-less, and its identity is still the key's (Session::_set_api_identity()). The
+     * answer can only REFUSE a key that otherwise authenticated; a cookie never authorizes
+     * anything on the API channel by itself.
+     *
+     * The browser counts as signed in exactly as a page of it would: an ACTIVE web (or
+     * rsx:debug harness) row, not unused past rsx.sessions.unused_session_days, whose staff
+     * pointer names a user session that is not signed out and has not outlived its sign-in
+     * limits (with the Ajax grace - a tester call is a call from an open page).
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return array{session_id: int, login_user_id: int, site_id: int}|null The browser and
+     *         the membership (identity x site) signed in on it
+     */
+    public static function _cookie_staff_sign_in(\Illuminate\Http\Request $request): ?array
+    {
+        $token = $request->cookies->get(Rsx_Session_Cookie::name());
+
+        if (!is_string($token) || $token === '') {
+            return null;
+        }
+
+        $row = DB::table('_sessions')
+            ->where('session_token', $token)
+            ->where('active', true)
+            ->whereIn('type_id', [self::TYPE_WEB, self::TYPE_PLAYWRIGHT])
+            ->first(['id', 'last_active', 'staff_user_session_id']);
+
+        if ($row === null || $row->staff_user_session_id === null) {
+            return null;
+        }
+
+        $unused_days = (int) config('rsx.sessions.unused_session_days');
+        if ($unused_days > 0 && $row->last_active !== null && \Carbon\Carbon::parse($row->last_active)->lt(now()->subDays($unused_days))) {
+            return null;
+        }
+
+        $user_session = DB::table('_user_sessions')
+            ->where('id', (int) $row->staff_user_session_id)
+            ->where('realm_id', self::REALM_STAFF)
+            ->whereNull('signed_out_at')
+            ->first();
+
+        if ($user_session === null || $user_session->login_user_id === null) {
+            return null;
+        }
+
+        $expiry = self::__expiry_of($user_session, 'staff');
+        if ($expiry !== null && now()->gte($expiry['at']->copy()->addMinutes((int) config('rsx.sessions.ajax_grace_minutes')))) {
+            return null;
+        }
+
+        return [
+            'session_id' => (int) $row->id,
+            'login_user_id' => (int) $user_session->login_user_id,
+            'site_id' => (int) $user_session->site_id,
+        ];
     }
 
     /**

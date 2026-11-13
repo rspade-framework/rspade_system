@@ -100,8 +100,10 @@ class _Apidocs_Key_Bar extends Component {
      *
      * ASKING IS NOT CEREMONY: this writes a real, live credential onto the user's own
      * account, one that shows up in Settings > API Keys and works against every endpoint
-     * they can reach. A button that does that on a single click, next to a text box, is one
-     * mis-click from a key nobody meant to create.
+     * they can reach - from this console only: the key is bound to this browser's sign-in
+     * (_Apidocs_Controller::mint_temporary_key()), and a script holding it gets a 401. A
+     * button that does that on a single click, next to a text box, is one mis-click from a
+     * key nobody meant to create.
      *
      * ASKED WITH THE FRAMEWORK APPLICATION'S OWN DIALOG (_Sys_Modal), never the
      * application's Modal: this is framework code running inside somebody else's page, and
@@ -113,7 +115,7 @@ class _Apidocs_Key_Bar extends Component {
     async _mint() {
         const confirmed = await _Sys_Modal.confirm(
             'Create a temporary API key?',
-            'This creates a real API key on your own user account, valid for one hour. It is held in this browser tab only, and you can revoke it sooner from Settings > API Keys.',
+            'This creates a real API key on your own user account, valid for one hour. It works only in this console, from this browser while you stay signed in, and you can revoke it sooner from Settings > API Keys.',
             'Create Key',
             'Cancel'
         );
@@ -159,6 +161,9 @@ class _Apidocs_Key_Bar extends Component {
         try {
             response = await this.alive(fetch(_Apidocs_Key_Bar.verify_path(), {
                 headers: { 'Authorization': 'Bearer ' + value },
+                // A console-minted key is bound to this browser's sign-in, so it is checked the
+                // way the testers will send it: with the session cookie.
+                credentials: 'same-origin',
             }));
         } catch (e) {
             this._show_error('Could not reach the server to check that key.');

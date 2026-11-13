@@ -31,8 +31,9 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  *      matches, ahead of the gates and the application's Main::pre_dispatch.
  *
  * The rules are identical wherever the header is honored, because they are written once: the
- * key must resolve, its login identity must be live (not soft-deleted), and its user must be
- * BOTH active and permitted to use the API (users.is_api_access_enabled). A caller learns
+ * key must resolve, an /apidocs tester key must arrive from the browser that minted it, signed
+ * in as its user (see authenticate()), its login identity must be live (not soft-deleted), and
+ * its user must be BOTH active and permitted to use the API (users.is_api_access_enabled). A caller learns
  * that the key does not work, never WHY. The application's account policy
  * (Main::pre_dispatch) is asked on both channels too, and refuses with account_refused().
  */
@@ -94,6 +95,18 @@ class Rsx_Api_Bearer
 
         $key = Api_Key_Model::find_by_key($token);
         if (!$key) {
+            return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
+        }
+
+        // AN /apidocs TESTER KEY IS BOUND TO THE BROWSER THAT MINTED IT
+        // (Api_Key_Model_Abstract::generate_tester_key()). It authenticates only when this
+        // request carries that browser's session cookie and the browser is signed in as the
+        // key's user - a call from the tester that minted it. Anything else (no cookie, another
+        // browser, this browser signed out or signed in as somebody else) is the same uniform
+        // 401 an invalid key gets. The check is ONE-WAY: the cookie is read only to refuse; it
+        // never establishes an identity, never stands in for the key, and an ordinary key is
+        // not affected by it. The identity below is still the key's, cookie-less.
+        if (!$key->is_bound_to($key->is_tester_key() ? Session::_cookie_staff_sign_in($request) : null)) {
             return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
         }
 

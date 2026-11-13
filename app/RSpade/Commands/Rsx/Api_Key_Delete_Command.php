@@ -20,7 +20,9 @@ use App\RSpade\Core\Time\Rsx_Time;
  * calls survive with api_key_id cleared (ON DELETE SET NULL), no longer saying which key made
  * them, exactly when someone is trying to work out what it did.
  *
- * --purge removes the row outright, for a key created in error.
+ * --purge removes the row outright, for a key created in error. Either way the user session
+ * the key's use was listed under is signed out - SIGN_OUT_API_KEY_REVOKED, or for a purge
+ * SIGN_OUT_API_KEY_DELETED from the model's delete path (Api_Key_Model_Abstract::booted()).
  *
  * The key is named by ID, not by --user: an id already identifies exactly one key across
  * every user and site, and asking for the owner as well would only create a way to name the

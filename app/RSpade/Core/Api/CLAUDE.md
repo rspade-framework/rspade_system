@@ -88,8 +88,11 @@ the one point every answer passes, which also adds the timing fields.
   document's path is granted to every key. `validate()` is the
   ONE validator every write path runs, `matches()` the ONE matcher; scopes only subtract, and a
   malformed stored scope still counts, so the key fails closed.
-- `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display), revoke, expiry,
-  `read_only` and `is_temporary` fixed at mint, `scopes`. Its `booted()` hooks hand every
+- `Api_Key_Model(_Abstract).php` — hashed keys (prefix kept for display; `key_hash` in
+  `$neverExport`), revoke, expiry, `read_only` and `is_temporary` fixed at mint, `scopes`,
+  and `tester_session_id` (see Tester keys below). Deleting a key signs its listed user
+  session out (`SIGN_OUT_API_KEY_DELETED`, the `deleting` hook; the session rows are kept,
+  `_sessions.api_key_id` is `ON DELETE SET NULL`). Its `booted()` hooks hand every
   insert, revocation and deletion of a live key to `Api_Key_Event.php`, which fires
   `api_key.created` / `api_key.revoked` after commit with the acting identity
   (`Session::_acting_identity()`, shared with the password events) - the only place a key's
@@ -133,6 +136,25 @@ the one point every answer passes, which also adds the timing fields.
   (`Api_Catalog::versions_serving()`), granting on the first.
 - `Api_Cleanup_Service.php` — daily, chunked retention of the request log.
 - `Rsx_Webhook.php` — a stub that only logs events; no delivery exists.
+
+## Tester keys - bound to the browser session that minted them
+
+The `/apidocs` console's "Temporary Key" (`_Apidocs_Controller::mint_temporary_key()` ->
+`Api_Key_Model::generate_tester_key()`) records the minting browser in
+`_api_keys.tester_session_id`; a non-null value IS the tester-key marker (`is_tester_key()`),
+distinct from `is_temporary` (a CLI `rsx:api:key:temp` key: bearer-only, any script, no
+browser). `Rsx_Api_Bearer::authenticate()` - the one bearer check, for the API and the
+file-serving routes alike - admits a tester key only when the request's session cookie names
+that browser, signed in (staff, within its limits) as the key's user
+(`Session::_cookie_staff_sign_in()` + `is_bound_to()`); anything else is the uniform 401. So a
+tester key works ONLY through the tester (whose `fetch()` sends `credentials: 'same-origin'`)
+and expires after its hour as before. **The check is narrow and one-way**: the cookie is read
+only to refuse, never loaded as the request's session, never an identity, never a substitute
+for the key, and ignored for every other key; the API channel still runs no CSRF (the bearer
+key is the authorization). **No created/revoked notice is sent for a tester key, on purpose**:
+`api_key.created` / `api_key.revoked` fire flagged and the reference handler skips it, because
+the key cannot be used outside the session that minted it - a hijacked copy gains nothing that
+session does not already have, so a notice would warn of nothing.
 
 ## Invariants
 

@@ -270,7 +270,9 @@ RECIPIENTS AND BLOCKLIST
     Pick by what the message IS, not by how much you want it delivered. SECURITY is for
     a message the recipient is waiting for in order to get in, sent because of something
     they just did, or for a warning that somebody just acted on the recipient's OWN
-    account (its password was changed, an API key was created on it or revoked, its
+    account (its password was changed, an API key was created on it or revoked - not a
+    CLI temporary key or an /apidocs tester key, which only work from the shell or the
+    browser session that minted them; rsx:man external_api, TESTER KEYS - its
     second factor was failed until the challenge was destroyed) - a notice they must get
     even if they opted out of everything - never for a notice the site decides to send
     about anything else. Its body says what to do
