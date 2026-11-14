@@ -472,6 +472,7 @@ framework model's own record.
 | META-INH-01 | `$metadata['extends'] === 'X'` (either operand order) is flagged in a rule file; a fast path followed by `*_is_subclass_of()` is not | php | fixture rule bodies under a `CodeQuality/Rules/` scratch dir | 1 / 1 / 0 / 0 | implemented (`Meta_Inherit_Extends_Comparison_Rule_Test`) | 2026-09-25 |
 | PARSE-BODY-01 | Php_Parser::method_body() finds a reserved-word or by-reference method, is case-insensitive, is not ended early by a brace in a string or comment, and returns null for an abstract or absent method | php | a nowdoc fixture class | bodies / null | implemented (`Php_Parser_Method_Body_Test`) | 2026-09-25 |
 | PARSE-STRUCT-01 | Php_Parser's structure validators are armed: executed code at file scope is reported (classless and class files); an anonymous class body is class scope (`return new class` clean, other `new class` one T_NEW); a file under `resource/` is not judged | php | fixtures under a scratch `rsx/` tree | violations / none | implemented (`Php_Parser_File_Structure_Test`) | 2026-10-28 |
+| PARSE-BRACE-01 | Php_Parser pairs braces with a stack: a block closed right after `"{$a}"`, an interpolation longer than ten tokens, `"${name}"`, nested interpolation, heredoc/nowdoc - each keeps class depth (a later static property is recorded) and file depth (only the function after the class is a global function); a file interpolating parses like the same file concatenating | php | fixtures under a scratch `rsx/` tree | same scope facts / identical structure | implemented (`Php_Parser_Brace_Pairing_Test`) | 2026-11-14 |
 | CONV-LAYOUT-01a | a layout in a module of either realm is clean: rsx/app/(module)/ and rsx/portal/(module)/, any depth | php | staff and portal layout paths | 0 findings | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | CONV-LAYOUT-01b | a layout directly in a realm root, or outside both realms, is a convention finding naming where it belongs; a view that is not a layout is never examined | php | rsx/app/x_layout, rsx/portal/x_layout, rsx/lib/.../x_layout, a non-layout view | 1 / 1 / 1 / 0 | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | RULE-SELF-GUARD-01 | no rule's `check()` keeps a function-level static: a tree-wide rule declares `KIND_CROSS_FILE` + `depends_on()` and the driver calls it once per pass, so a self-guard only ever skips the rule in a second pass (`Rule_Self_Guard_Test`, a structural sweep, nothing whitelisted) | php | every file under `CodeQuality/Rules/`, `check()` body tokenized, comments dropped | no file listed | implemented | 2026-10-19 |
@@ -577,6 +578,18 @@ nothing.
 | SPT-06 | scope: vendored and minified stylesheets are skipped; framework core and `Sys/` are checked like any other | php | the same text at four paths | 0 / 0 / 1 / 1 | implemented | 2026-10-20 |
 | SPT-07 | the driver's file-level exception marker suppresses the rule | php | temp file with and without the marker | 1 / 0 | implemented | 2026-10-20 |
 
+## JS-THIS-01 - no naked `this` in a static method (`This_Usage_Rule_Test`)
+
+The analysis parses with the Babel parser (ESTree output) so it reads the syntax the transform
+accepts; a file it cannot parse is a violation, never a clean file.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| THIS-01 | a DECORATED class is analyzed | php | `@route` / `@layout` SPA action, naked `this` in a static method, `this` in an instance method | 1 violation, the static method's line | implemented | 2026-11-13 |
+| THIS-02 | a class with `static #` / `#` members, a static block, BigInt, `?.` and `??` is analyzed | php | that class, naked `this` in a static method | 1 violation, the static method's line | implemented | 2026-11-13 |
+| THIS-03 | the sanctioned forms in the same syntax are clean | php | class name in a static method, `const CurrentClass = this`, instance-method and arrow `this`, decorated + private members | 0 violations | implemented | 2026-11-13 |
+| THIS-04 | a file the analyzer cannot parse is ONE violation naming the parse error | php | `return 1 +;` | 1 violation, "does not parse", the error's line | implemented | 2026-11-13 |
+
 ## JS-RAW-HTML-01 - raw HTML written into the page (`Raw_Html_Write_Rule_Test`)
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -676,3 +689,71 @@ PHP-FQCN-MODEL-01 (ModelFqcnReference_CodeQualityRule), via `Model_Fqcn_Referenc
 | MFR-NON-MODEL | a framework class that is not a model is not flagged | php | `\...\Lib\Portal\Rsx_Portal` | 0 violations | implemented | 2026-11-12 |
 | MFR-USE-AND-COMMENTS | use lines, docblocks and comments are allowed | php | fixture with all three | 0 violations | implemented | 2026-11-12 |
 | MFR-MODEL-FILE-EXEMPT | a framework model file itself is exempt | php | fixture checked as Lib/Portal/Portal_User_Model_Abstract.php | 0 violations | implemented | 2026-11-12 |
+
+MODEL-COLUMNS-01's `money` key and its casts-shadow check, and MODEL-MONEY-01
+(ModelMoneyColumns_CodeQualityRule), via `Model_Money_Rules_Test`. MODEL-COLUMNS-01 fixtures are
+loaded from temp files and handed to `evaluate_class()`; MODEL-MONEY-01 is driven through its
+`evaluate_class($fqcn, $file, $table, $table_columns)` seam over the money_fixtures table
+(tests/money, `Money_Fixture_Tables`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MM-01 | `money` is an allowed key, a flag and an exclusive kind | php | the rule's constants | in all three | implemented | 2026-11-13 |
+| MM-02 | money alone and beside never_export, revision_exclude and derived passes | php | a fixture with all four | 0 violations | implemented | 2026-11-13 |
+| MM-03 | `'money' => 1` is fatal | php | fixture | 1 violation, "a flag is the literal true" | implemented | 2026-11-13 |
+| MM-04 | money beside enum or text_type is fatal | php | fixtures | "declares enum and money" / "declares text_type and money" | implemented | 2026-11-13 |
+| MM-05 | a `$casts` entry shadowing a money column is fatal, with the exact message | php | `$casts = ['budget' => 'decimal:2']` | 1 violation | implemented | 2026-11-13 |
+| MM-06 | a `casts()` method shadows the same way | php | `casts()` returning `['budget' => 'float']` | the violation | implemented | 2026-11-13 |
+| MM-07 | a concrete child casting an inherited money column is reported at the child | php | abstract parent declaring money, child with `$casts` and no `$columns` | the violation names the child | implemented | 2026-11-13 |
+| MM-08 | a cast on a column that is not money is ordinary | php | `$casts = ['hours' => 'float']` | 0 violations | implemented | 2026-11-13 |
+| MM-09 | `Rsx_Schema` exposes DECIMAL precision and scale, null for every other type | php | money_fixtures | 15/2, 19/2, 8/3; null for FLOAT, DOUBLE, VARCHAR | implemented | 2026-11-13 |
+| MM-10 | MODEL-MONEY-01 reports DECIMAL(19,2) and DECIMAL(8,3) money columns | php | Money_Wide_Fixture_Model | 2 violations naming each COLUMN_TYPE | implemented | 2026-11-13 |
+| MM-11 | MODEL-MONEY-01 is clean on DECIMAL(15,2) and DECIMAL(10,2) | php | Money_Fixture_Model | 0 violations | implemented | 2026-11-13 |
+| MM-12 | a money column the table lacks is left to MODEL-ENUM-01 | php | a column map without the column | 0 violations | implemented | 2026-11-13 |
+
+## Money: MODEL-DECIMAL-01 (`Model_Decimal_Rule_Test`)
+
+MODEL-DECIMAL-01 (rsx:check) requires an entry in `$columns` for every DECIMAL, FLOAT and
+DOUBLE column of a model's own table. Driven through `evaluate_class($fqcn, $file, $table,
+$table_columns)` over the money_fixtures table (tests/money, `Money_Fixture_Tables`) with
+fixture models loaded from temp files, and through `check()` on the indexed
+`Money_Wide_Fixture_Model`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MD-01 | `['money' => true]`, `[]`, `['revision_exclude' => true]` and `never_export` beside money all count as declared | php | every DECIMAL/FLOAT/DOUBLE column declared | 0 violations | implemented | 2026-11-13 |
+| MD-02 | exactly the undeclared DECIMAL, FLOAT and DOUBLE columns are reported; VARCHAR, BIGINT and TIMESTAMP never | php | amount and price declared | doubled, hidden, hours, rate, ratio, score, wide | implemented | 2026-11-13 |
+| MD-03 | the DECIMAL finding text, verbatim: both example declarations and the man-page pointer; precision and scale as the table has them | php | hours DECIMAL(8,2); wide, rate | the owner's text | implemented | 2026-11-13 |
+| MD-04 | the FLOAT and DOUBLE finding text, verbatim | php | score FLOAT, ratio DOUBLE | the floating-point text | implemented | 2026-11-13 |
+| MD-05 | the production `check()` path reports an indexed model at its `$columns` line, inherited and declared entries counted | php | Money_Wide_Fixture_Model | six columns; suggestion names `rsx:man money` | implemented | 2026-11-13 |
+| MD-06 | a model whose table is absent is skipped | php | money_fixtures dropped | 0 violations | implemented | 2026-11-13 |
+| MD-07 | the framework classifies its own DECIMAL column `_tasks.progress_percent` as not money | php | Task_Run_Model | declared, not money | implemented | 2026-11-13 |
+
+## Money: MODEL-MONEY-02 (`Model_Money_Usage_Rule_Test`)
+
+MODEL-MONEY-02 (rsx:check) reports an Rsx_Money used with PHP's comparison, truth, cast,
+arithmetic or string operators. The rule only parses its subject; fixtures are functions
+written to temp files, never loaded, whose receivers name the indexed `Money_Fixture_Model`
+(amount money, score not) and Rsx_Money. Receiver inference is
+`Support/Receiver_Inference_Visitor`, shared with MODEL-DERIVED-01.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MU-01 | every comparison operator is reported with the method to use; `===` / `!==` against anything but null | php | `== != <> < <= > >= <=> === !==` | one finding each, on the statement's line | implemented | 2026-11-13 |
+| MU-02 | truthiness is reported: if, elseif, while, do, for, ternary, `?:`, `!`, `&&`, `||`, and, or, xor, match (true), empty(), (bool) | php | `$r->amount` as a condition | "always true - even for $0.00" | implemented | 2026-11-13 |
+| MU-03 | casts and scalar functions are reported: (int) (float) (string), intval floatval boolval strval round number_format abs max min | php | `$r->amount` as the operand | the method to use instead | implemented | 2026-11-13 |
+| MU-04 | arithmetic, unary minus, the assignment forms, `.` / `.=` and interpolation are reported | php | `+ - * / % ** -x += -= *= /= . .= "{$x}"` | "it throws", the method to use | implemented | 2026-11-13 |
+| MU-05 | receivers are inferred from a typed parameter, a @var docblock, `Model::find()`, a builder chain ending `first()` read through `?->`, `Rsx_Money::from_*()`, a money method's result and `Rsx_Money::zero()` | php | one fixture each | reported | implemented | 2026-11-13 |
+| MU-06 | null checks and ordinary use are never reported: `=== null`, `!== null`, is_null, isset, `??`, `?->`, instanceof, an argument, a return, the methods | php | 12 statements | 0 violations | implemented | 2026-11-13 |
+| MU-07 | what is not evidently money is never reported: a column that is not money, an untyped receiver, a reassigned variable, an unknown class | php | fixtures | 0 violations | implemented | 2026-11-13 |
+
+## JS-DECORATOR-01 - decorators are whitelisted (`Decorator_Usage_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| DEC-CLASS-OK | whitelisted class decorators pass - with arguments, bare, stacked, a static decorator method | php | JS fixtures through the real parser, `evaluate_files()` | no throw | implemented | 2026-11-14 |
+| DEC-CLASS-JSDOC | a JSDoc marker in the class docblock (`@Instantiatable`) is not judged as a decorator | php | fixture | no throw | implemented | 2026-11-14 |
+| DEC-CLASS-UNKNOWN | an unknown class decorator (with arguments, bare) is FATAL naming file, line, class, decorator and the whitelisted names | php | fixtures | throws `FATAL: Class decorator not whitelisted` | implemented | 2026-11-14 |
+| DEC-CLASS-STACK | a stack with one unknown decorator names that one, on its line | php | four stacked decorators | throws naming `@probe_spa`, line 3 | implemented | 2026-11-14 |
+| DEC-CLASS-MEMBER | a member-expression class decorator is refused, as on a method | php | `@Probe_Decorators.probe_mark` | throws | implemented | 2026-11-14 |
+| DEC-METHOD | a whitelisted method decorator passes; an unknown one is FATAL | php | fixtures | no throw / throws `FATAL: Decorator not whitelisted` | implemented | 2026-11-14 |

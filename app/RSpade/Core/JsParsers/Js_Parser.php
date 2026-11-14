@@ -25,13 +25,23 @@ class Js_Parser
     protected const CACHE_NAMESPACE = 'js-parser';
 
     /**
+     * Node service module carrying the parser (its content is the cache fingerprint)
+     */
+    protected const PARSER_SERVICE_MODULE = 'app/RSpade/Core/JsParsers/resource/parser-service.js';
+
+    /**
+     * Cached parser fingerprint (computed once per process)
+     */
+    protected static ?string $parser_fingerprint = null;
+
+    /**
      * Parse a JavaScript file using Node.js AST parser with caching
      */
     public static function parse($file_path)
     {
-        // Keyed by the file's build hash - the same key this cache always used, now spelled
-        // through the shared helper rather than a private path.
-        $cached_data = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, '', 'json');
+        // Keyed by the file's build hash, with the parser's fingerprint as the VARIANT: a
+        // change to what the parser extracts retires every entry it wrote before.
+        $cached_data = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, static::__variant(), 'json');
 
         if ($cached_data !== null) {
             $parsed_data = json_decode($cached_data, true);
@@ -41,7 +51,7 @@ class Js_Parser
             }
 
             // Cache is corrupt, drop it and continue to parse
-            File_Content_Cache::forget(self::CACHE_NAMESPACE, $file_path, '', 'json');
+            File_Content_Cache::forget(self::CACHE_NAMESPACE, $file_path, static::__variant(), 'json');
         }
 
         // Parse the file (original logic continues below)
@@ -190,7 +200,30 @@ class Js_Parser
             return;
         }
 
-        File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, '', 'json', $json_data);
+        File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, static::__variant(), 'json', $json_data);
+    }
+
+    /**
+     * The parse cache's variant: `_` + a 12-char md5 of the parser module's content.
+     *
+     * A parse depends on the source bytes AND on what parser-service.js extracts from them,
+     * so the module's content is part of the key. Computed once per process.
+     *
+     * @return string
+     */
+    private static function __variant(): string
+    {
+        if (static::$parser_fingerprint === null) {
+            $module = base_path(self::PARSER_SERVICE_MODULE);
+
+            if (!is_file($module)) {
+                shouldnt_happen("JavaScript parser module is missing: {$module}");
+            }
+
+            static::$parser_fingerprint = substr(md5_file($module), 0, 12);
+        }
+
+        return '_' . static::$parser_fingerprint;
     }
 
     /**

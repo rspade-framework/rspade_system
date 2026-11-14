@@ -22,15 +22,15 @@ class Responsive {
      * @private
      */
     static _get_breakpoint(name) {
-        if (this._cache[name] !== undefined) {
-            return this._cache[name];
+        if (Responsive._cache[name] !== undefined) {
+            return Responsive._cache[name];
         }
 
         const styles = getComputedStyle(document.documentElement);
         const value = styles.getPropertyValue(`--bp-${name}`).trim();
         const parsed = parseInt(value, 10);
 
-        this._cache[name] = parsed;
+        Responsive._cache[name] = parsed;
         return parsed;
     }
 
@@ -49,7 +49,7 @@ class Responsive {
      * @returns {boolean}
      */
     static is_mobile() {
-        return !this.is_desktop();
+        return !Responsive.is_desktop();
     }
 
     /**
@@ -58,7 +58,7 @@ class Responsive {
      * @returns {boolean}
      */
     static is_desktop() {
-        return this._viewport() >= this._get_breakpoint('desktop');
+        return Responsive._viewport() >= Responsive._get_breakpoint('desktop');
     }
 
     /**
@@ -66,7 +66,7 @@ class Responsive {
      * @returns {boolean}
      */
     static is_phone() {
-        return this._viewport() < this._get_breakpoint('tablet');
+        return Responsive._viewport() < Responsive._get_breakpoint('tablet');
     }
 
     /**
@@ -74,8 +74,8 @@ class Responsive {
      * @returns {boolean}
      */
     static is_tablet() {
-        const vp = this._viewport();
-        return vp >= this._get_breakpoint('tablet') && vp < this._get_breakpoint('desktop');
+        const vp = Responsive._viewport();
+        return vp >= Responsive._get_breakpoint('tablet') && vp < Responsive._get_breakpoint('desktop');
     }
 
     /**
@@ -83,8 +83,8 @@ class Responsive {
      * @returns {boolean}
      */
     static is_desktop_sm() {
-        const vp = this._viewport();
-        return vp >= this._get_breakpoint('desktop') && vp < this._get_breakpoint('desktop-md');
+        const vp = Responsive._viewport();
+        return vp >= Responsive._get_breakpoint('desktop') && vp < Responsive._get_breakpoint('desktop-md');
     }
 
     /**
@@ -92,8 +92,8 @@ class Responsive {
      * @returns {boolean}
      */
     static is_desktop_md() {
-        const vp = this._viewport();
-        return vp >= this._get_breakpoint('desktop-md') && vp < this._get_breakpoint('desktop-lg');
+        const vp = Responsive._viewport();
+        return vp >= Responsive._get_breakpoint('desktop-md') && vp < Responsive._get_breakpoint('desktop-lg');
     }
 
     /**
@@ -101,8 +101,8 @@ class Responsive {
      * @returns {boolean}
      */
     static is_desktop_lg() {
-        const vp = this._viewport();
-        return vp >= this._get_breakpoint('desktop-lg') && vp < this._get_breakpoint('desktop-xl');
+        const vp = Responsive._viewport();
+        return vp >= Responsive._get_breakpoint('desktop-lg') && vp < Responsive._get_breakpoint('desktop-xl');
     }
 
     /**
@@ -110,6 +110,6 @@ class Responsive {
      * @returns {boolean}
      */
     static is_desktop_xl() {
-        return this._viewport() >= this._get_breakpoint('desktop-xl');
+        return Responsive._viewport() >= Responsive._get_breakpoint('desktop-xl');
     }
 }

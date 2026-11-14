@@ -192,7 +192,9 @@ API REFERENCE
         __assert_equals_approx($expected, $actual, $epsilon = 0.005,
                                $message = null)
             Passes when abs($expected - $actual) <= $epsilon. The default
-            epsilon is a half-cent - the money default. Use this for any float.
+            epsilon is 0.005. Use this for any float. An amount of money is
+            exact (rsx:man money): assert its to_decimal() with
+            __assert_equals.
 
         __assert_null($value, $message = 'Value should be null')
         __assert_not_null($value, $message = 'Value should not be null')

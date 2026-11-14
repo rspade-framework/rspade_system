@@ -113,22 +113,29 @@ destructor already reaps what this process spawned.
 - `Js_Parser.php` - PHP client (cache + marshaling + `Js_Exception` vocabulary)
 - `resource/parser-service.js` - the `parser` subsystem
 - Cache: the shared derived cache, namespace `js-parser`
-  (`tmp/derived/js-parser/`), keyed by `_rsx_file_hash_for_build()` through
-  `App\RSpade\Core\Cache\File_Content_Cache`. Checked FIRST - only a miss reaches the
-  service, so a fully cached manifest build never starts node.
+  (`tmp/derived/js-parser/`), keyed by `_rsx_file_hash_for_build()` with a fingerprint of
+  `parser-service.js` as the VARIANT, through `App\RSpade\Core\Cache\File_Content_Cache`.
+  Checked FIRST - only a miss reaches the service, so a fully cached manifest build never
+  starts node. The fingerprint retires cached PARSES when the parser changes; a manifest
+  file record is still carried forward until its file changes, so a reader that needs a
+  newly extracted field calls `Js_Parser::parse()` itself (JS-DECORATOR-01 does, for
+  `decorator_sites`).
+- A class record's `decorators` merges the ES decorators with the JSDoc markers
+  (`@Instantiatable`); `decorator_sites` (`[{name, line}]`) holds only the ES decorators
+  APPLIED to the class.
 - `Js_Parser::parse($file_path)` / `Js_Parser::extract_metadata($file_path)`
 
 ## JS Transformer (Babel)
 - `Js_Transformer.php` - PHP client (cache + toolchain fingerprint + error vocabulary)
 - `resource/babel-service.js` - the `babel` subsystem
 - Cache: the shared derived cache, namespace `babel` (`tmp/derived/babel/`),
-  keyed by `_rsx_file_hash_for_build()` with the target + toolchain fingerprint as the
-  VARIANT, through `App\RSpade\Core\Cache\File_Content_Cache`
-- `Js_Transformer::transform($path, $target)` / `transform_string($code, $path, $target)`
-- `Js_Transformer::transform_to_file($path, $target)` returns the CACHE ENTRY'S PATH. The
+  keyed by `_rsx_file_hash_for_build()` with the toolchain fingerprint as the VARIANT,
+  through `App\RSpade\Core\Cache\File_Content_Cache`
+- `Js_Transformer::transform($path)` / `transform_string($code, $path)`
+- `Js_Transformer::transform_to_file($path)` returns the CACHE ENTRY'S PATH. The
   bundle compiler hands the concatenator that file directly instead of writing a second
   copy of the same bytes under a name of its own.
-- `Js_Transformer::transform_derived_copy($copy, $original, $target)` - UNCACHED, for bytes
+- `Js_Transformer::transform_derived_copy($copy, $original)` - UNCACHED, for bytes
   derived from a source file (the strict-production string-obfuscation pass,
   `Minifier::obfuscate_strings()`, called from `BundleCompiler`). It takes its helper-prefix
   identity from the ORIGINAL path, so the generated names match the original's own transform,
@@ -139,7 +146,8 @@ destructor already reaps what this process spawned.
 - Applies Babel: decorators, class properties, optional chaining, nullish coalescing
 - Prefixes generated helper functions with a file hash to prevent namespace collisions in the
   shared bundle scope
-- Target presets: `modern`, `es6`, `es5`
+- ONE browser target (Chrome 90 / Firefox 88 / Safari 14 / Edge 90), `BROWSER_TARGETS` in
+  `babel-service.js` - not configurable
 - Generates inline source maps for debugging
 
 ### Decorator class-binding (vendored fork)
@@ -155,7 +163,7 @@ when `@babel/compat-data` 7.29.3 changed the destructuring baseline.
 generated helpers and (2) carries a **fail-closed contract assertion** - it records decorated
 class declarations pre-transform and throws (naming class + file) if any lost its
 program-scope binding post-transform. The module also exports `transformFileContent` /
-`createPrefixPlugin` / `targetPresets` / `preprocessDecorators` so the `js_transform` test
+`createPrefixPlugin` / `preprocessDecorators` so the `js_transform` test
 concern can drive the real path directly.
 
 `Js_Transformer.php` folds a toolchain FINGERPRINT (fork bundle + `babel-service.js` +

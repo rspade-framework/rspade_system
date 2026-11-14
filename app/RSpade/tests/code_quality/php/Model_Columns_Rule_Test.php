@@ -123,7 +123,7 @@ class Model_Columns_Rule_Test extends Rsx_Test_Abstract
     public static function test_the_allowed_keys_are_exactly_the_declared_kinds()
     {
         static::__assert_equals(
-            ['enum', 'text_type', 'type_ref', 'never_export', 'revision_exclude', 'derived', 'from'],
+            ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'derived', 'from'],
             ModelColumns_CodeQualityRule::ALLOWED_KEYS,
             'the one list a new kind extends'
         );

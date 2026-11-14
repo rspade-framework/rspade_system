@@ -170,7 +170,7 @@ class BundleCompiler
 
     /**
     * Mapping from babel-transformed files to their original source files
-    * ['tmp/derived/babel/<hash>_<target>_<fingerprint>.js' => 'app/RSpade/Core/Js/SomeFile.js']
+    * ['tmp/derived/babel/<hash>_<fingerprint>.js' => 'app/RSpade/Core/Js/SomeFile.js']
     */
     protected array $babel_file_mapping = [];
 
@@ -1700,6 +1700,17 @@ class BundleCompiler
             }
         }
 
+        // Both types babel-transform their JavaScript (_compile_js_files()), so the compiled
+        // output depends on the transform toolchain as well as on the sources: a changed
+        // babel-service.js, decorator fork or @babel/core must recompile the bundle exactly
+        // as a changed source does. The fingerprint is the transform cache's own
+        // (Js_Transformer::toolchain_fingerprint()), and it is content-derived, so the key
+        // stays identical across byte-identical checkouts. A sealed build never consults
+        // this key to serve (_check_production_cache()), so it stays as built.
+        if (static::_babel_active()) {
+            $hashes[] = 'babel:' . \App\RSpade\Core\JsParsers\Js_Transformer::toolchain_fingerprint();
+        }
+
         // Sort the collected content hashes so the cache key (and therefore the
         // bundle output FILENAME) depends only on the SET of inputs, never on the
         // order in which files were resolved. Bundle file resolution order follows
@@ -1712,6 +1723,16 @@ class BundleCompiler
         $final_key = md5(serialize($hashes));
 
         return $final_key;
+    }
+
+    /**
+    * Whether bundle JavaScript is babel-transformed: the transform is switched on and
+    * decorators are enabled. Read by the compile and by the cache key alike.
+    */
+    protected static function _babel_active(): bool
+    {
+        return config('rsx.javascript.babel.transform_enabled', true)
+            && config('rsx.javascript.decorators', true);
     }
 
     /**
@@ -3310,9 +3331,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         }
 
         // Transform JavaScript files if Babel is enabled and decorators are used
-        $babel_enabled = config('rsx.javascript.babel.transform_enabled', true);
-        $decorators_enabled = config('rsx.javascript.decorators', true);
-        $babel_active = $babel_enabled && $decorators_enabled;
+        $babel_active = static::_babel_active();
 
         // Strict production: the eligible files' ORIGINAL sources are obfuscated first, and
         // each rewritten copy is babel-transformed itself where its file is transformed at

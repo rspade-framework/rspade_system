@@ -343,6 +343,14 @@ function parseFileContent(content, filePath, jsonOutput) {
                 const jsdocDecorators = extractJSDocDecorators(path.node.leadingComments);
                 const allDecorators = [...esDecorators, ...jsdocDecorators];
 
+                // The decorators APPLIED to the class - ES syntax only, each with the line it
+                // is written on. `decorators` also carries the JSDoc markers (@Instantiatable),
+                // which are comments rather than applications; JS-DECORATOR-01 validates these.
+                const decoratorSites = esDecorators.map((decorator, index) => ({
+                    name: decorator[0],
+                    line: path.node.decorators[index].loc.start.line
+                }));
+
                 const classInfo = {
                     name: className,
                     extends: path.node.superClass ? path.node.superClass.name : null,
@@ -351,6 +359,7 @@ function parseFileContent(content, filePath, jsonOutput) {
                     properties: {},
                     staticProperties: {},
                     decorators: allDecorators,
+                    decorator_sites: decoratorSites,
                     duplicateMethods: []  // Track methods defined more than once
                 };
 

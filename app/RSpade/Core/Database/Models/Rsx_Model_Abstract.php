@@ -16,6 +16,9 @@ use App\RSpade\Core\Database\Migration_Guard;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Database\Money\Rsx_Money;
+use App\RSpade\Core\Database\Money\Rsx_Money_Core;
+use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
 use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
@@ -609,6 +612,7 @@ abstract class Rsx_Model_Abstract extends Model
      *     ]],
      *     'description'   => ['text_type' => Rich_Text::class],
      *     'fileable_type' => ['type_ref' => true],
+     *     'budget'        => ['money' => true],
      *     'api_secret'    => ['never_export' => true],
      *     'view_count'    => ['revision_exclude' => true],
      *     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
@@ -627,6 +631,10 @@ abstract class Rsx_Model_Abstract extends Model
      *   type_ref         - literal true, on the {relation}_type column of a polymorphic pair: the
      *                      column stores a _type_refs integer id and reads as a class name, and
      *                      stock morph relations work over it (rsx:man polymorphic).
+     *   money            - literal true, on a DECIMAL(p,2) column (p at most 18): the column
+     *                      reads as an Rsx_Money value object, accepts an Rsx_Money, a decimal
+     *                      string or whole-unit int on assignment, refuses a float, and travels
+     *                      as a {__MONEY: "1234.56"} envelope (rsx:man money).
      *   never_export     - literal true: toArray() - the one serializer behind fetch(),
      *                      relationships, the page's user object and the external API - removes
      *                      the column after Laravel built the array, so makeVisible() and
@@ -645,7 +653,7 @@ abstract class Rsx_Model_Abstract extends Model
      *                      other tables). The framework writes the column on save(): on an
      *                      INSERT, and on every UPDATE in which a `from` column changed. The
      *                      value is assigned through setAttribute(), so the column's own kind
-     *                      (enum, text_type, type_ref) still applies. Requires `from`.
+     *                      (enum, text_type, type_ref, money) still applies. Requires `from`.
      *   from             - the list of THIS record's columns the derive method reads (may be
      *                      [], may name another derived column, never the column itself).
      *                      Only allowed beside `derived`.
@@ -659,7 +667,7 @@ abstract class Rsx_Model_Abstract extends Model
      * they were; a derived column never appears in revision history. An explicit
      * ->raw_bulk()->update() of a `from` column writes no derived value: the caller rederives.
      *
-     * At most one of enum / text_type / type_ref per column; never_export and revision_exclude
+     * At most one of enum / text_type / type_ref / money per column; never_export and revision_exclude
      * combine with anything except that revision_exclude never sits beside derived (a derived
      * column is never recorded already). A flag is `true` or absent - a kind is removed by
      * replacing the entry, and `'column' => []` declares an explicitly plain column.
@@ -678,7 +686,7 @@ abstract class Rsx_Model_Abstract extends Model
      * not have is inert - Eloquent casts only attributes that exist).
      *
      * Read ONLY through columns() and its kind views (enum_columns(), enum_values(),
-     * text_type_columns(), type_ref_columns(), never_exported_columns(),
+     * text_type_columns(), type_ref_columns(), money_columns(), never_exported_columns(),
      * revision_excluded_columns(), derived_columns()) - never as a property. Every declared
      * column and every `from` name is checked against the model's table the first time a
      * model with derived columns saves, on rederive() and on Form_Edit::run()
@@ -768,6 +776,29 @@ abstract class Rsx_Model_Abstract extends Model
     }
 
     /**
+     * Every money column (rsx:man money): it reads as an Rsx_Money, is assigned through the
+     * money cast and travels as a {__MONEY} envelope. Every consumer of the declaration
+     * (getCasts(), Form_Edit, the query builder, the JS model stub) reads it here.
+     *
+     * @return array<int, string>
+     */
+    public static function money_columns(): array
+    {
+        return static::__column_views()['money'];
+    }
+
+    /**
+     * Whether a column is declared ['money' => true].
+     *
+     * @param string $column
+     * @return bool
+     */
+    public static function is_money_column(string $column): bool
+    {
+        return in_array($column, static::__column_views()['money'], true);
+    }
+
+    /**
      * Every column that never leaves the server in a payload. toArray(), the revision
      * redaction and the MODEL-NEVER-EXPORT-01 rule read the declaration here.
      *
@@ -806,7 +837,7 @@ abstract class Rsx_Model_Abstract extends Model
     /**
      * columns() and each kind view of it, built once per class and memoized.
      *
-     * @return array{columns: array, enum: array, text_type: array, type_ref: array, never_export: array, revision_exclude: array, derived: array}
+     * @return array{columns: array, enum: array, text_type: array, type_ref: array, money: array, never_export: array, revision_exclude: array, derived: array}
      */
     private static function __column_views(): array
     {
@@ -847,6 +878,7 @@ abstract class Rsx_Model_Abstract extends Model
             'enum' => [],
             'text_type' => [],
             'type_ref' => [],
+            'money' => [],
             'never_export' => [],
             'revision_exclude' => [],
             'derived' => [],
@@ -861,7 +893,7 @@ abstract class Rsx_Model_Abstract extends Model
             if (array_key_exists('text_type', $entry)) {
                 $views['text_type'][$column] = $entry['text_type'];
             }
-            foreach (['type_ref', 'never_export', 'revision_exclude'] as $flag) {
+            foreach (['type_ref', 'never_export', 'revision_exclude', 'money'] as $flag) {
                 if (($entry[$flag] ?? false) === true) {
                     $views[$flag][] = $column;
                 }
@@ -1219,7 +1251,7 @@ abstract class Rsx_Model_Abstract extends Model
      * table, and one model may be pointed at a different table.
      *
      * Precedence inside this map is FIRST WINS, in the original declaration order: boolean,
-     * datetime, date, time, then the type-ref columns.
+     * datetime, date, time, then the type-ref, text-type and money columns.
      *
      * @param string $table_name
      * @return array<string, string> column => cast
@@ -1280,6 +1312,15 @@ abstract class Rsx_Model_Abstract extends Model
         foreach (array_keys(static::text_type_columns()) as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Database\TextTypes\Rsx_Text_Cast::class;
+            }
+        }
+
+        // Apply the money cast to every money column. Nothing earlier casts a DECIMAL, so the
+        // money cast is never shadowed from inside this map; an explicit $casts entry would
+        // shadow it, which is why MODEL-COLUMNS-01 refuses one at build time.
+        foreach (static::money_columns() as $column) {
+            if (!isset($casts[$column])) {
+                $casts[$column] = \App\RSpade\Core\Database\Money\Rsx_Money_Cast::class;
             }
         }
 
@@ -1933,6 +1974,126 @@ EXAMPLE;
         }
 
         return $columns[$column]['max_length'] ?? null;
+    }
+
+    /**
+     * The largest amount a money column can hold (rsx:man money): the column's DECIMAL(p,s)
+     * maximum read from the live schema (Rsx_Schema), at whole cents - DECIMAL(15,2) is
+     * 9999999999999.99 - and never more than Rsx_Money's own maximum, so a column wider than
+     * the type (DECIMAL(19,2)) answers the type's limit. The column holds every amount from
+     * this negated up to this (a column as wide as the type, every Rsx_Money).
+     *
+     * The ONE definition of "how large may this amount be": money_from_submitted() and the
+     * money cast both refuse an amount beyond it, so an over-large amount is a field error
+     * at the door and a framework exception on assignment, never a database error.
+     *
+     * Throws LogicException when the column is not declared ['money' => true] or is not a
+     * DECIMAL (MODEL-MONEY-01 reports such a column), RuntimeException when the model's table
+     * does not exist in the connected database (as field_length() does).
+     *
+     * @param string $column Column name
+     * @return Rsx_Money
+     */
+    public static function money_limit(string $column): Rsx_Money
+    {
+        $cache_key = 'money_limit|' . static::class . '|' . $column;
+        $cached = Rsx_Schema::derived($cache_key);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        if (!static::is_money_column($column)) {
+            throw new LogicException(static::class . "::{$column} is not a money column: its \$columns entry has no 'money'.");
+        }
+
+        $class_name = Manifest::_normalize_class_name(get_called_class());
+        $columns = Rsx_Schema::model_columns($class_name);
+
+        if ($columns === null) {
+            throw new RuntimeException(
+                "money_limit(): the table of {$class_name} does not exist in the connected database. "
+                . 'Run `php artisan migrate`.'
+            );
+        }
+
+        $precision = $columns[$column]['precision'] ?? null;
+        $scale = $columns[$column]['scale'] ?? null;
+
+        if ($precision === null || $scale === null) {
+            throw new LogicException(
+                static::class . "::{$column} is declared money but is not a DECIMAL column (MODEL-MONEY-01)."
+            );
+        }
+
+        // The column's maximum in cents has (precision - scale + 2) digits: 10^(digits) - 1
+        // for two or more places (the places past the second cannot hold a whole cent), and
+        // whole units of (10^precision - 1) for fewer. Nineteen digits or more is beyond the
+        // signed 64-bit range of cents, so the type's own maximum is the limit.
+        $digits = $precision - $scale + 2;
+
+        if ($digits >= 19) {
+            $limit = Rsx_Money::from_cents(PHP_INT_MAX);
+        } elseif ($scale >= 2) {
+            $limit = Rsx_Money::from_cents(Rsx_Money_Core::pow10($digits) - 1);
+        } else {
+            $limit = Rsx_Money::from_cents((Rsx_Money_Core::pow10($precision) - 1) * Rsx_Money_Core::pow10(2 - $scale));
+        }
+
+        Rsx_Schema::remember_derived($cache_key, $limit);
+
+        return $limit;
+    }
+
+    /**
+     * A money field as a form or API submitted it, for this column: Rsx_Money::from_submitted()
+     * (null and blank are null), then refused when the amount is beyond money_limit($column).
+     * Every refusal is an Rsx_Money_Exception that is_input_problem() - its message is the
+     * field's error, ready for response_form_error():
+     *
+     *     try {
+     *         $budget = Project_Model::money_from_submitted('budget', $params['budget'] ?? null);
+     *     } catch (Rsx_Money_Exception $e) {
+     *         return response_form_error('Please correct the errors below', ['budget' => $e->getMessage()]);
+     *     }
+     *
+     * @param string $column A money column of this model
+     * @param mixed $value The submitted value
+     * @return Rsx_Money|null
+     */
+    public static function money_from_submitted(string $column, mixed $value): ?Rsx_Money
+    {
+        $amount = Rsx_Money::from_submitted($value);
+
+        if ($amount !== null) {
+            static::_refuse_beyond_money_limit($column, $amount);
+        }
+
+        return $amount;
+    }
+
+    /**
+     * Throw Rsx_Money_Exception::column_range() when an amount is beyond what the column can
+     * hold. The one check behind money_from_submitted() and the money cast's set().
+     *
+     * Compared against the limit and its negation, never through abs(): Rsx_Money's most
+     * negative amount has no positive counterpart. A column as wide as the type has no check
+     * to make - every Rsx_Money fits it.
+     *
+     * @param string $column A money column of this model
+     * @param Rsx_Money $amount
+     * @return void
+     */
+    public static function _refuse_beyond_money_limit(string $column, Rsx_Money $amount): void
+    {
+        $limit = static::money_limit($column);
+
+        if ($limit->to_cents_string() === (string) PHP_INT_MAX) {
+            return;
+        }
+
+        if ($amount->greater_than($limit) || $amount->less_than($limit->negate())) {
+            throw Rsx_Money_Exception::column_range();
+        }
     }
 
     /**

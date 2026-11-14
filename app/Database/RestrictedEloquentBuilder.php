@@ -6,6 +6,7 @@ use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
+use App\RSpade\Core\Database\Money\Rsx_Money;
 use App\RSpade\Core\Database\Migration_Guard;
 use App\RSpade\Core\Database\Orm_Fetch_Preload;
 use App\RSpade\Core\Database\Rsx_Result_Set;
@@ -23,6 +24,8 @@ use App\RSpade\Lib\Revisions\Revision_Parent_Registry;
  * - All eager loading methods throw exceptions (with/withCount/etc)
  * - DELETE without WHERE clause throws exception to prevent accidental mass deletion
  * - Automatic type_ref column conversion in WHERE clauses
+ * - An Rsx_Money compared or written in a raw statement binds as its canonical decimal
+ *   string, and sum_money() totals a money column as an Rsx_Money
  */
 class RestrictedEloquentBuilder extends Builder
 {
@@ -142,6 +145,20 @@ class RestrictedEloquentBuilder extends Builder
     }
 
     /**
+     * An Rsx_Money bound into SQL is its canonical decimal string ("1234.50"); any other
+     * value is returned as is. Applied to every where-family value and every raw update
+     * value, whatever the column: the value object refuses string conversion, so binding it
+     * unconverted would throw inside PDO.
+     *
+     * @param mixed $value
+     * @return mixed
+     */
+    protected function _convert_money_value($value)
+    {
+        return $value instanceof Rsx_Money ? $value->to_decimal() : $value;
+    }
+
+    /**
      * Convert the value of a TWO-ARGUMENT where-family call (`orWhere($column, $value)`).
      *
      * where() decides which argument holds the value from its OWN func_num_args(), so any
@@ -186,7 +203,7 @@ class RestrictedEloquentBuilder extends Builder
                 if (is_string($col) && $this->_is_type_ref_column($col)) {
                     $converted[$col] = $this->_convert_type_ref_value($val, $col);
                 } else {
-                    $converted[$col] = $val;
+                    $converted[$col] = $this->_convert_money_value($val);
                 }
             }
             return parent::where($converted, $operator, $value, $boolean);
@@ -203,6 +220,12 @@ class RestrictedEloquentBuilder extends Builder
                 $value = $this->_convert_type_ref_value($value, $column);
             }
         }
+
+        // An operator is never an amount of money, so whichever argument holds the value
+        // (the 2-arg form puts it in $operator) is converted. orWhere / whereNot / orWhereNot
+        // all arrive here.
+        $operator = $this->_convert_money_value($operator);
+        $value = $this->_convert_money_value($value);
 
         return parent::where($column, $operator, $value, $boolean);
     }
@@ -277,6 +300,8 @@ class RestrictedEloquentBuilder extends Builder
             if (is_array($values)) {
                 $values = array_map(fn($v) => $this->_convert_type_ref_value($v, $column), $values);
             }
+        } elseif (is_array($values)) {
+            $values = array_map(fn($v) => $this->_convert_money_value($v), $values);
         }
 
         return parent::whereIn($column, $values, $boolean, $not);
@@ -317,6 +342,91 @@ class RestrictedEloquentBuilder extends Builder
     public function orWhereNotIn($column, $values)
     {
         return $this->whereIn($column, $values, 'or', true);
+    }
+
+    /**
+     * whereBetween() with each bound that is an Rsx_Money bound as its decimal string.
+     *
+     * @param string|\Illuminate\Contracts\Database\Query\Expression $column
+     * @param iterable $values
+     * @param string $boolean
+     * @param bool $not
+     * @return $this
+     */
+    public function whereBetween($column, iterable $values, $boolean = 'and', $not = false)
+    {
+        if (is_array($values)) {
+            $values = array_map(fn($v) => $this->_convert_money_value($v), $values);
+        }
+
+        $this->query->whereBetween($column, $values, $boolean, $not);
+
+        return $this;
+    }
+
+    /**
+     * orWhereBetween() through whereBetween()'s conversion.
+     *
+     * @param string|\Illuminate\Contracts\Database\Query\Expression $column
+     * @param iterable $values
+     * @return $this
+     */
+    public function orWhereBetween($column, iterable $values)
+    {
+        return $this->whereBetween($column, $values, 'or');
+    }
+
+    /**
+     * whereNotBetween() through whereBetween()'s conversion.
+     *
+     * @param string|\Illuminate\Contracts\Database\Query\Expression $column
+     * @param iterable $values
+     * @param string $boolean
+     * @return $this
+     */
+    public function whereNotBetween($column, iterable $values, $boolean = 'and')
+    {
+        return $this->whereBetween($column, $values, $boolean, true);
+    }
+
+    /**
+     * orWhereNotBetween() through whereBetween()'s conversion.
+     *
+     * @param string|\Illuminate\Contracts\Database\Query\Expression $column
+     * @param iterable $values
+     * @return $this
+     */
+    public function orWhereNotBetween($column, iterable $values)
+    {
+        return $this->whereBetween($column, $values, 'or', true);
+    }
+
+    /**
+     * The total of a money column over the query's rows, as an Rsx_Money: SUM() read raw
+     * (null over no rows, never Laravel's sum() int 0) and rounded half-up to two places by
+     * Rsx_Money::from_aggregate() - an exact no-op for a DECIMAL(p,2) total. A total outside
+     * the range Rsx_Money holds throws. The model must declare the column money.
+     *
+     * A grouped total is selectRaw('SUM(col) AS total') plus Rsx_Money::from_aggregate() per
+     * row.
+     *
+     * @param string $column
+     * @return Rsx_Money
+     */
+    public function sum_money(string $column): Rsx_Money
+    {
+        $model = $this->getModel();
+
+        if (!$model instanceof Rsx_Model_Abstract || !$model::is_money_column($column)) {
+            throw new \LogicException(
+                class_basename($model) . "::{$column} is not a money column: sum_money() totals a column declared "
+                . "['money' => true] in \$columns. See: php artisan rsx:man money"
+            );
+        }
+
+        $raw = $this->toBase()->aggregate('sum', [$column]);
+
+        return Rsx_Money::from_aggregate($raw);
     }
 
     /**
@@ -734,11 +844,12 @@ class RestrictedEloquentBuilder extends Builder
         $this->_refuse_derived_column_write($values);
 
         // Escape hatch, a plain model with no surface, or a raw Expression value (DB::raw('n+1')
-        // cannot be applied per-record safely): one raw statement.
+        // cannot be applied per-record safely): one raw statement, which goes through no cast -
+        // an Rsx_Money value is written as its decimal string.
         if ($this->_raw_bulk || $this->_values_contain_expression($values) || !$this->_has_side_effect_surface()) {
             $this->_assert_site_lock_permits_raw_write('update');
 
-            return parent::update($values);
+            return parent::update(array_map(fn($v) => $this->_convert_money_value($v), $values));
         }
 
         // User bulk update on a model with a realtime/lifecycle surface: set the new values on

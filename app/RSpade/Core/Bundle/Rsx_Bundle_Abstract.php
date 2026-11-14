@@ -652,6 +652,10 @@ abstract class Rsx_Bundle_Abstract
         // pattern the two languages could not both print fails the page, not one browser.
         $rsxapp_data['datetime_display'] = \App\RSpade\Core\Time\Rsx_Timestamp_Format::display_patterns();
 
+        // The application's money display (rsx.money.display), validated here, which
+        // Rsx_Money.format() and Rsx_Money.from_text() read in the browser exactly as PHP does.
+        $rsxapp_data['money_display'] = \App\RSpade\Core\Database\Money\Rsx_Money::display();
+
         // The signed-in staff user's EXPLICIT zone, or null: automatic, a portal page, or
         // nobody signed in. Rsx_Timezone_Cookie.js keeps the rsx_tz cookie current exactly
         // when this is null, and clears it otherwise. user_timezone above stays the zone

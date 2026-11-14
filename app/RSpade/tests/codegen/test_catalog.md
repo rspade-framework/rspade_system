@@ -31,6 +31,7 @@
 | CODEGEN-26 | Command output spans CTI detail columns `(detail: <table>)`, emits BEM/typed enum members, and DATE/DATETIME as `string` not Carbon | php | `build_metadata(Party_Model)` | detail lines + `type_id__label` + `string $created_at` present, no `\Carbon\Carbon` | implemented (Constants_Regenerate_Metadata_Test) | 2026-07-30 |
 | CODEGEN-KINDS-01 | Each column's `@property` line states its declared kind: enum (constants, capped at five + "and N more", plus the `__*` pointer), text type (typed as the FQCN value-object class), type ref (`string`), derived (`@property-read`, method + `from`, "never assigned"), never exported, not recorded in revisions, and combinations joined by `; ` | php | `build_metadata(Column_Kinds_Fixture_Model)` on a table the test creates | one exact line per column | implemented (Constants_Regenerate_Metadata_Test) | 2026-11-13 |
 | CODEGEN-KINDS-02 | The `@property` type is what a read returns: DECIMAL `string` noted `decimal`, JSON without an array cast `string` noted `json`, TINYINT(1) `bool` | php | same fixture (`amount`, `total`, `payload`, `is_open`) | exact lines | implemented (Constants_Regenerate_Metadata_Test) | 2026-11-13 |
+| CODEGEN-KINDS-03 | A money column is typed `\App\RSpade\Core\Database\Money\Rsx_Money` noted `money: a value object, two decimal places, never a float` (never the plain `decimal` note), other notes appended with `; ` | php | same fixture (`budget`, `fee` with revision_exclude) | exact lines | implemented (Constants_Regenerate_Metadata_Test) | 2026-11-13 |
 | CODEGEN-ORDER-01 | Generated `@property` lines (kind notes allowed after the name) are sorted by column NAME within the base group and within each `(detail: <table>)` group, base group first | php | Column_Order_Fixture_Model tables built by CREATE TABLE in non-alphabetical order | both groups in byte order, no detail column in the base group | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
 | CODEGEN-ORDER-02 | One schema reached by two histories (CREATE TABLE vs CREATE + ALTER TABLE ADD COLUMN) generates byte-identical docblock and constants block | php | same fixture, rebuilt with ALTER-appended columns | physical orders differ (precondition); build_metadata() output identical | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
 
@@ -57,6 +58,7 @@ damage-prevention tests, not reporting tests.
 | FIXER-ATTR-03 | The ordinary single-attribute case still works | php | plain `#[Relationship]` | detected | implemented | 2026-08-11 |
 | FIXER-ATTR-04 | Absence is still reported as absence (the fixer must still ADD it) | php | no `#[Relationship]` present | not detected | implemented | 2026-08-11 |
 | FIXER-ATTR-05 | Existing duplicates collapse to one, other attributes untouched | php | three stacked `#[Relationship]` + `#[Auth]` | 1 remaining, `#[Auth]` kept | implemented | 2026-08-11 |
+| FIXER-BRACE-01 | The #[Relationship] pass tracks class depth by pairing braces (`Php_Parser::_block_brace()`): after a block closed right after `"{$a}"`, an interpolation longer than ten tokens, or `"${name}"`, the next relationship method is still seen at class level and attributed, and the inserted line is the file's only change (it still parses, braces unchanged) | php | a model whose first method interpolates, then `posts()` returning `hasMany()` (`Php_Fixer_Brace_Pairing_Test`) | `#[\Relationship]` before `posts()`; content otherwise byte-identical | implemented | 2026-11-14 |
 | FIXER-ATTR-06 | De-duplication does not merge across separate methods | php | two methods, one attribute each | 2 remaining | implemented | 2026-08-11 |
 
 FIXER-ATTR-01 is the defect a downstream field report raised on 2026-08-08: the old detector walked backwards
@@ -109,3 +111,15 @@ order) read by `Rsx_Js_Model.is_derived_column()`, emitted only when there are a
 | CODEGEN-DERIVED-NONE | a model with no derived columns bakes no `__DERIVED_COLUMNS` and no derived line | php | No_Appends_Fixture_Model | absent | implemented | 2026-11-13 |
 | CODEGEN-DERIVED-JS-ACCESSOR | Rsx_Js_Model.js defines `is_derived_column()` over the baked list | php | the source | present | implemented | 2026-11-13 |
 
+## Model_Stub_Money_Test (php)
+
+The generated stub declares a model's MONEY columns: a baked `static __MONEY_COLUMNS` read by
+`Rsx_Js_Model.is_money_column()`, emitted only when there are any, and `editor_component_for()`
+answering `'Money_Input'` for one. Fixtures: Column_Kinds_Fixture_Model, No_Appends_Fixture_Model.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CODEGEN-MONEY-DECLARED | `__MONEY_COLUMNS` lists the money columns in declaration order | php | Column_Kinds_Fixture_Model | `["budget","fee"]` | implemented | 2026-11-13 |
+| CODEGEN-MONEY-NONE | a model with no money columns bakes no `__MONEY_COLUMNS` | php | No_Appends_Fixture_Model | absent | implemented | 2026-11-13 |
+| CODEGEN-MONEY-EDITOR | `editor_component_for()` answers `'Money_Input'` for a money column before the text-type lookup, and still throws for a column of neither kind | php | Column_Kinds_Fixture_Model | the branch and message present | implemented | 2026-11-13 |
+| CODEGEN-MONEY-JS-ACCESSOR | Rsx_Js_Model.js defines `is_money_column()` over the baked list | php | the source | present | implemented | 2026-11-13 |

@@ -460,6 +460,21 @@ class Rsx_Js_Model {
     }
 
     /**
+     * Whether a column is a MONEY column of this model (declared ['money' => true] in PHP):
+     * it arrives as an Rsx_Money and is edited with <Money_Input>. Read from the stub's
+     * baked __MONEY_COLUMNS, absent on a model that has none.
+     *
+     * @param {string} column - Column name
+     * @returns {boolean}
+     */
+    static is_money_column(column) {
+        const CurrentClass = this;
+        const money = CurrentClass.__MONEY_COLUMNS ?? [];
+
+        return money.includes(column);
+    }
+
+    /**
      * Watch this model's record for changes (for NON-component code).
      *
      * Sugar over Rsx_Realtime.watch('Model_Changed_Topic', {model, id}, cb). Inside a
@@ -477,13 +492,14 @@ class Rsx_Js_Model {
      * @returns {Promise<{stop: Function}>} Handle — call .stop() to stop watching
      */
     static async watch_changes(id, cb) {
-        if (!this.__REALTIME) {
+        const CurrentClass = this;
+        if (!CurrentClass.__REALTIME) {
             throw new Error(
-                this.getModelName() + ' does not declare realtime emission — set ' +
+                CurrentClass.getModelName() + ' does not declare realtime emission — set ' +
                 '`public static $realtime = true;` on the PHP model to watch its changes.'
             );
         }
-        return Rsx_Realtime.watch('Model_Changed_Topic', { model: this.getModelName(), id: int(id) }, cb);
+        return Rsx_Realtime.watch('Model_Changed_Topic', { model: CurrentClass.getModelName(), id: int(id) }, cb);
     }
 
     /**
@@ -582,7 +598,8 @@ class Rsx_Js_Model {
      * Recursively instantiate ORM models in response data
      *
      * Looks for objects with __MODEL property and instantiates the appropriate
-     * JavaScript model class from the Manifest registry. A {__MODEL} record whose class is
+     * JavaScript model class from the Manifest registry; a {__MONEY} envelope becomes an
+     * Rsx_Money and a {__TEXT} envelope its text type. A {__MODEL} record whose class is
      * not in the bundle THROWS (as a {__TEXT} value with no class does): every model a
      * response carries must be included in the bundle that receives it.
      *
@@ -602,6 +619,14 @@ class Rsx_Js_Model {
 
         // Handle objects
         if (typeof data === 'object') {
+            // A {__MONEY: "1234.56"} envelope is a money column's value (or any Rsx_Money a
+            // response carried). It rehydrates into Rsx_Money - one framework class, so no
+            // name is resolved. Only an object whose single own key is __MONEY is one.
+            const own_keys = Object.keys(data);
+            if (own_keys.length === 1 && own_keys[0] === Rsx_Money.ENVELOPE_KEY) {
+                return Rsx_Money.from_envelope(data);
+            }
+
             // A {__TEXT, raw} envelope is a declared TEXT column's value. It rehydrates
             // into the JS class of the same name, whose PRINTER renders it and whose
             // EDITOR edits it - the browser mirror of the PHP text type. Checked before

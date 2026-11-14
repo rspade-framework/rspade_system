@@ -31,7 +31,7 @@ public static $columns = [
 ];
 ```
 
-A text type is one kind of `$columns` entry - never beside `enum` or `type_ref` on the same column; the grammar, inheritance and accessors (`text_type_columns()`) are skill `rspade:models`.
+A text type is one kind of `$columns` entry - never beside `enum`, `type_ref` or `money` on the same column; the grammar, inheritance and accessors (`text_type_columns()`) are skill `rspade:models`.
 
 **The content is a black box to your code.** A user may enter anything. To the application
 the value is as nebulous as an image: it can be empty, stored, displayed. It is *not* a

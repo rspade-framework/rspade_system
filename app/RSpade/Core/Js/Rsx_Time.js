@@ -65,7 +65,7 @@ class Rsx_Time {
         if (window.rsxapp) {
             // Set timezone from rsxapp (always set, may be logged-in user's or default)
             if (window.rsxapp.user_timezone) {
-                this._user_timezone = window.rsxapp.user_timezone;
+                Rsx_Time._user_timezone = window.rsxapp.user_timezone;
             }
 
             // The house patterns, validated by the same rule the server applied
@@ -73,14 +73,14 @@ class Rsx_Time {
                 const patterns = window.rsxapp.datetime_display;
                 Rsx_Timestamp_Format.validate_pattern(patterns.date, 'rsx.datetime.display.date');
                 Rsx_Timestamp_Format.validate_pattern(patterns.time, 'rsx.datetime.display.time');
-                this._display_patterns = {date: patterns.date, time: patterns.time};
+                Rsx_Time._display_patterns = {date: patterns.date, time: patterns.time};
             }
 
             // Calculate initial server time offset from page load time
             if (window.rsxapp.server_time) {
-                const server_ms = this.parse(window.rsxapp.server_time).getTime();
+                const server_ms = Rsx_Time.parse(window.rsxapp.server_time).getTime();
                 const client_ms = Date.now();
-                this._server_time_offset = server_ms - client_ms;
+                Rsx_Time._server_time_offset = server_ms - client_ms;
             }
         }
     }
@@ -97,19 +97,19 @@ class Rsx_Time {
     static sync_from_ajax(config) {
         if (!config) return;
 
-        const timezone_changed = !this._timezone_frozen && config.user_timezone && config.user_timezone !== this._user_timezone;
+        const timezone_changed = !Rsx_Time._timezone_frozen && config.user_timezone && config.user_timezone !== Rsx_Time._user_timezone;
 
         // Adopt the envelope's zone - unless this page has frozen its zone
-        if (config.user_timezone && !this._timezone_frozen) {
-            this._user_timezone = config.user_timezone;
+        if (config.user_timezone && !Rsx_Time._timezone_frozen) {
+            Rsx_Time._user_timezone = config.user_timezone;
         }
 
         // Only sync server time on first AJAX response or timezone change
-        if (config.server_time && (!this._ajax_synced || timezone_changed)) {
-            const server_ms = this.parse(config.server_time).getTime();
+        if (config.server_time && (!Rsx_Time._ajax_synced || timezone_changed)) {
+            const server_ms = Rsx_Time.parse(config.server_time).getTime();
             const client_ms = Date.now();
-            this._server_time_offset = server_ms - client_ms;
-            this._ajax_synced = true;
+            Rsx_Time._server_time_offset = server_ms - client_ms;
+            Rsx_Time._ajax_synced = true;
         }
     }
 
@@ -118,7 +118,7 @@ class Rsx_Time {
      * browser's zone changes under an open page).
      */
     static _freeze_timezone() {
-        this._timezone_frozen = true;
+        Rsx_Time._timezone_frozen = true;
     }
 
     // =========================================================================
@@ -131,7 +131,7 @@ class Rsx_Time {
      * @returns {Date}
      */
     static now() {
-        return new Date(Date.now() + this._server_time_offset);
+        return new Date(Date.now() + Rsx_Time._server_time_offset);
     }
 
     /**
@@ -140,7 +140,7 @@ class Rsx_Time {
      * @returns {string}
      */
     static now_iso() {
-        return this.to_iso(this.now());
+        return Rsx_Time.to_iso(Rsx_Time.now());
     }
 
     /**
@@ -149,7 +149,7 @@ class Rsx_Time {
      * @returns {number}
      */
     static now_ms() {
-        return this.now().getTime();
+        return Rsx_Time.now().getTime();
     }
 
     // =========================================================================
@@ -179,7 +179,7 @@ class Rsx_Time {
 
         if (typeof input === 'string') {
             // Date-only strings are NOT datetimes
-            if (this.DATE_ONLY_PATTERN.test(input)) {
+            if (Rsx_Time.DATE_ONLY_PATTERN.test(input)) {
                 return false;
             }
 
@@ -212,7 +212,7 @@ class Rsx_Time {
         }
 
         // REJECT date-only strings - these should use Rsx_Date
-        if (typeof input === 'string' && this.DATE_ONLY_PATTERN.test(input)) {
+        if (typeof input === 'string' && Rsx_Time.DATE_ONLY_PATTERN.test(input)) {
             throw new Error(
                 `Rsx_Time.parse() received date-only string '${input}'. ` +
                 "Use Rsx_Date.parse() for dates without time components."
@@ -252,7 +252,7 @@ class Rsx_Time {
      * @returns {string} IANA timezone identifier
      */
     static get_user_timezone() {
-        return this._user_timezone;
+        return Rsx_Time._user_timezone;
     }
 
     /**
@@ -265,12 +265,12 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_in_timezone(time, format_options, timezone) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return '';
 
         const options = {
             ...format_options,
-            timeZone: timezone || this._user_timezone
+            timeZone: timezone || Rsx_Time._user_timezone
         };
 
         return new Intl.DateTimeFormat('en-US', options).format(date);
@@ -285,9 +285,9 @@ class Rsx_Time {
      * @returns {string}
      */
     static get_timezone_abbr(time, timezone) {
-        const epoch = this._epoch_to_format(time);
+        const epoch = Rsx_Time._epoch_to_format(time);
         if (epoch === null) return '';
-        return Rsx_Timestamp_Format.zone_abbreviation(epoch, timezone || this._user_timezone);
+        return Rsx_Timestamp_Format.zone_abbreviation(epoch, timezone || Rsx_Time._user_timezone);
     }
 
     // =========================================================================
@@ -307,9 +307,9 @@ class Rsx_Time {
      * @returns {string|null}
      */
     static local_date(time, zone) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return null;
-        const p = this._zone_parts(date.getTime(), zone);
+        const p = Rsx_Time._zone_parts(date.getTime(), zone);
         return p.year + '-' + p.month + '-' + p.day;
     }
 
@@ -321,9 +321,9 @@ class Rsx_Time {
      * @returns {string|null}
      */
     static local_clock(time, zone) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return null;
-        const p = this._zone_parts(date.getTime(), zone);
+        const p = Rsx_Time._zone_parts(date.getTime(), zone);
         return p.hour + ':' + p.minute;
     }
 
@@ -351,11 +351,11 @@ class Rsx_Time {
         // the one from a day after; a clock neither reproduces does not exist (the jump).
         const wall = Date.UTC(+d[1], +d[2] - 1, +d[3], +c[1], +c[2], c[3] ? +c[3] : 0);
         const day = 86400000;
-        const before = wall - this._zone_offset_ms(wall - day, zone);
-        if (this._zone_wall_ms(before, zone) === wall) return this.to_iso(new Date(before));
-        const after = wall - this._zone_offset_ms(wall + day, zone);
-        if (this._zone_wall_ms(after, zone) === wall) return this.to_iso(new Date(after));
-        return this.to_iso(new Date(before));
+        const before = wall - Rsx_Time._zone_offset_ms(wall - day, zone);
+        if (Rsx_Time._zone_wall_ms(before, zone) === wall) return Rsx_Time.to_iso(new Date(before));
+        const after = wall - Rsx_Time._zone_offset_ms(wall + day, zone);
+        if (Rsx_Time._zone_wall_ms(after, zone) === wall) return Rsx_Time.to_iso(new Date(after));
+        return Rsx_Time.to_iso(new Date(before));
     }
 
     /**
@@ -367,7 +367,7 @@ class Rsx_Time {
      * @returns {string} ISO 8601 UTC
      */
     static day_start_utc(date, zone) {
-        return this.combine_date_and_time(date, '00:00', zone);
+        return Rsx_Time.combine_date_and_time(date, '00:00', zone);
     }
 
     /**
@@ -379,7 +379,7 @@ class Rsx_Time {
      * @returns {string} ISO 8601 UTC
      */
     static day_after_utc(date, zone) {
-        return this.day_start_utc(Rsx_Date.add_days(date, 1), zone);
+        return Rsx_Time.day_start_utc(Rsx_Date.add_days(date, 1), zone);
     }
 
     /**
@@ -400,14 +400,14 @@ class Rsx_Time {
 
     /** The wall clock an instant shows in a zone, as milliseconds read as if UTC. */
     static _zone_wall_ms(ms, zone) {
-        const p = this._zone_parts(ms, zone);
+        const p = Rsx_Time._zone_parts(ms, zone);
         return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
     }
 
     /** The zone's offset from UTC at an instant, in milliseconds (whole seconds). */
     static _zone_offset_ms(ms, zone) {
         const whole = Math.floor(ms / 1000) * 1000;
-        return this._zone_wall_ms(whole, zone) - whole;
+        return Rsx_Time._zone_wall_ms(whole, zone) - whole;
     }
 
     /**
@@ -417,7 +417,7 @@ class Rsx_Time {
      * @returns {string|null}
      */
     static to_iso(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return null;
         return date.toISOString();
     }
@@ -429,7 +429,7 @@ class Rsx_Time {
      * @returns {number|null}
      */
     static to_ms(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return null;
         return date.getTime();
     }
@@ -446,8 +446,8 @@ class Rsx_Time {
      * @returns {number} Seconds (negative if end < start)
      */
     static diff_seconds(start, end) {
-        const start_date = this.parse(start);
-        const end_date = this.parse(end);
+        const start_date = Rsx_Time.parse(start);
+        const end_date = Rsx_Time.parse(end);
         if (!start_date || !end_date) return 0;
         return Math.floor((end_date.getTime() - start_date.getTime()) / 1000);
     }
@@ -459,7 +459,7 @@ class Rsx_Time {
      * @returns {number}
      */
     static seconds_until(time) {
-        return this.diff_seconds(this.now(), time);
+        return Rsx_Time.diff_seconds(Rsx_Time.now(), time);
     }
 
     /**
@@ -469,7 +469,7 @@ class Rsx_Time {
      * @returns {number}
      */
     static seconds_since(time) {
-        return this.diff_seconds(time, this.now());
+        return Rsx_Time.diff_seconds(time, Rsx_Time.now());
     }
 
     /**
@@ -521,7 +521,7 @@ class Rsx_Time {
      * @returns {string}
      */
     static relative(time) {
-        const seconds = this.seconds_since(time);
+        const seconds = Rsx_Time.seconds_since(time);
         const abs_seconds = Math.abs(seconds);
         const is_past = seconds >= 0;
 
@@ -564,7 +564,7 @@ class Rsx_Time {
      * @returns {Date}
      */
     static add(time, seconds) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) throw new Error('Cannot parse time');
         return new Date(date.getTime() + seconds * 1000);
     }
@@ -577,7 +577,7 @@ class Rsx_Time {
      * @returns {Date}
      */
     static subtract(time, seconds) {
-        return this.add(time, -seconds);
+        return Rsx_Time.add(time, -seconds);
     }
 
     // =========================================================================
@@ -591,9 +591,9 @@ class Rsx_Time {
      * @returns {boolean}
      */
     static is_past(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return false;
-        return date.getTime() < this.now().getTime();
+        return date.getTime() < Rsx_Time.now().getTime();
     }
 
     /**
@@ -603,9 +603,9 @@ class Rsx_Time {
      * @returns {boolean}
      */
     static is_future(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return false;
-        return date.getTime() > this.now().getTime();
+        return date.getTime() > Rsx_Time.now().getTime();
     }
 
     /**
@@ -615,9 +615,9 @@ class Rsx_Time {
      * @returns {boolean}
      */
     static is_today(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         if (!date) return false;
-        return this.format_date(date) === this.format_date(this.now());
+        return Rsx_Time.format_date(date) === Rsx_Time.format_date(Rsx_Time.now());
     }
 
     // =========================================================================
@@ -629,7 +629,7 @@ class Rsx_Time {
      * A date-only value throws (parse()).
      */
     static _epoch_to_format(time) {
-        const date = this.parse(time);
+        const date = Rsx_Time.parse(time);
         return date ? Math.floor(date.getTime() / 1000) : null;
     }
 
@@ -642,9 +642,9 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_timestamp(time, timezone) {
-        const epoch = this._epoch_to_format(time);
+        const epoch = Rsx_Time._epoch_to_format(time);
         if (epoch === null) return '';
-        return Rsx_Timestamp_Format.timestamp(epoch, timezone || this._user_timezone, this._user_timezone, this._display_patterns);
+        return Rsx_Timestamp_Format.timestamp(epoch, timezone || Rsx_Time._user_timezone, Rsx_Time._user_timezone, Rsx_Time._display_patterns);
     }
 
     /**
@@ -655,9 +655,9 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_timestamp_short(time, timezone) {
-        const epoch = this._epoch_to_format(time);
+        const epoch = Rsx_Time._epoch_to_format(time);
         if (epoch === null) return '';
-        return Rsx_Timestamp_Format.timestamp_short(epoch, timezone || this._user_timezone, this._user_timezone, this._epoch_to_format(this.now()));
+        return Rsx_Timestamp_Format.timestamp_short(epoch, timezone || Rsx_Time._user_timezone, Rsx_Time._user_timezone, Rsx_Time._epoch_to_format(Rsx_Time.now()));
     }
 
     /**
@@ -671,11 +671,11 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_time_range(start, end, timezone, short = false) {
-        const start_epoch = this._epoch_to_format(start);
+        const start_epoch = Rsx_Time._epoch_to_format(start);
         if (start_epoch === null) return '';
         return Rsx_Timestamp_Format.time_range(
-            start_epoch, this._epoch_to_format(end), timezone || this._user_timezone, this._user_timezone,
-            short, this._epoch_to_format(this.now()), this._display_patterns
+            start_epoch, Rsx_Time._epoch_to_format(end), timezone || Rsx_Time._user_timezone, Rsx_Time._user_timezone,
+            short, Rsx_Time._epoch_to_format(Rsx_Time.now()), Rsx_Time._display_patterns
         );
     }
 
@@ -687,9 +687,9 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_date(time, timezone) {
-        const epoch = this._epoch_to_format(time);
+        const epoch = Rsx_Time._epoch_to_format(time);
         if (epoch === null) return '';
-        return Rsx_Timestamp_Format.pattern(epoch, timezone || this._user_timezone, this._display_patterns.date);
+        return Rsx_Timestamp_Format.pattern(epoch, timezone || Rsx_Time._user_timezone, Rsx_Time._display_patterns.date);
     }
 
     /**
@@ -700,9 +700,9 @@ class Rsx_Time {
      * @returns {string}
      */
     static format_time(time, timezone) {
-        const epoch = this._epoch_to_format(time);
+        const epoch = Rsx_Time._epoch_to_format(time);
         if (epoch === null) return '';
-        return Rsx_Timestamp_Format.pattern(epoch, timezone || this._user_timezone, this._display_patterns.time);
+        return Rsx_Timestamp_Format.pattern(epoch, timezone || Rsx_Time._user_timezone, Rsx_Time._display_patterns.time);
     }
 
     // =========================================================================
@@ -779,14 +779,14 @@ class Rsx_Time {
      * Format component with validation (internal helper). Uses user's timezone.
      */
     static _format_component(time, options) {
-        return this.parse(time) ? this.format_in_timezone(time, options) : null;
+        return Rsx_Time.parse(time) ? Rsx_Time.format_in_timezone(time, options) : null;
     }
 
     /**
      * Get day of month (1-31). Uses user's timezone.
      */
     static day(time) {
-        const v = this._format_component(time, { day: 'numeric' });
+        const v = Rsx_Time._format_component(time, { day: 'numeric' });
         return v ? parseInt(v, 10) : null;
     }
 
@@ -794,7 +794,7 @@ class Rsx_Time {
      * Get day of week (0=Sunday, 6=Saturday). Uses user's timezone.
      */
     static dow(time) {
-        const dayName = this._format_component(time, { weekday: 'short' });
+        const dayName = Rsx_Time._format_component(time, { weekday: 'short' });
         if (!dayName) return null;
         const dayMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
         return dayMap[dayName] ?? null;
@@ -804,21 +804,21 @@ class Rsx_Time {
      * Get full day name ("Monday", "Tuesday", etc.). Uses user's timezone.
      */
     static dow_human(time) {
-        return this._format_component(time, { weekday: 'long' }) ?? '';
+        return Rsx_Time._format_component(time, { weekday: 'long' }) ?? '';
     }
 
     /**
      * Get short day name ("Mon", "Tue", etc.). Uses user's timezone.
      */
     static dow_short(time) {
-        return this._format_component(time, { weekday: 'short' }) ?? '';
+        return Rsx_Time._format_component(time, { weekday: 'short' }) ?? '';
     }
 
     /**
      * Get month (1-12). Uses user's timezone.
      */
     static month(time) {
-        const v = this._format_component(time, { month: '2-digit' });
+        const v = Rsx_Time._format_component(time, { month: '2-digit' });
         return v ? parseInt(v, 10) : null;
     }
 
@@ -826,21 +826,21 @@ class Rsx_Time {
      * Get full month name ("January", "February", etc.). Uses user's timezone.
      */
     static month_human(time) {
-        return this._format_component(time, { month: 'long' }) ?? '';
+        return Rsx_Time._format_component(time, { month: 'long' }) ?? '';
     }
 
     /**
      * Get short month name ("Jan", "Feb", etc.). Uses user's timezone.
      */
     static month_human_short(time) {
-        return this._format_component(time, { month: 'short' }) ?? '';
+        return Rsx_Time._format_component(time, { month: 'short' }) ?? '';
     }
 
     /**
      * Get year (e.g., 2025). Uses user's timezone.
      */
     static year(time) {
-        const v = this._format_component(time, { year: 'numeric' });
+        const v = Rsx_Time._format_component(time, { year: 'numeric' });
         return v ? parseInt(v, 10) : null;
     }
 
@@ -848,7 +848,7 @@ class Rsx_Time {
      * Get hour (0-23). Uses user's timezone.
      */
     static hour(time) {
-        const v = this._format_component(time, { hour: '2-digit', hour12: false });
+        const v = Rsx_Time._format_component(time, { hour: '2-digit', hour12: false });
         if (!v) return null;
         const hour = parseInt(v, 10);
         return hour === 24 ? 0 : hour; // "24" returned for midnight in some locales
@@ -858,7 +858,7 @@ class Rsx_Time {
      * Get minute (0-59). Uses user's timezone.
      */
     static minute(time) {
-        const v = this._format_component(time, { minute: '2-digit' });
+        const v = Rsx_Time._format_component(time, { minute: '2-digit' });
         return v ? parseInt(v, 10) : null;
     }
 }

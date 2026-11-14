@@ -1,0 +1,36 @@
+<%--
+Money_Display - an amount of money, or the honest absence of one
+
+Three states that never collapse into each other:
+
+  - a VALUE - printed with Rsx_Money.format() ($1,234.56, -$5.00, and $0.00, which is a value);
+  - NOTHING STORED - $value null: the $empty text, an em-dash unless given;
+  - REDACTED - $redacted true: the viewer may not see the figure, so "Hidden" is shown and no
+    amount is printed, whatever $value holds.
+
+    <Money_Display $value=project.budget />
+    <Money_Display $value=unallocated $negative="parentheses" $negative_red=true />
+    <Money_Display $value=null $empty="Not set" />
+    <Money_Display $redacted=true />
+
+Args:
+  $value         Rsx_Money or null; required unless $redacted. Anything else - a number, a
+                 string - is refused: an amount reaches the browser as an Rsx_Money.
+  $redacted      bool, default false.
+  $negative      'sign' (-$5.00, the default) or 'parentheses' (($5.00)).
+  $negative_red  bool: a negative amount is shown in the danger colour.
+  $empty         the text shown for null; default an em-dash.
+
+Tabular figures and no wrapping; no width, alignment or margin - the caller places it.
+
+See: php artisan rsx:man money
+--%>
+<Define:Money_Display tag="span">
+    <% if (this.args.redacted === true) { %>
+        <span class="Money_Display__redacted" title="You do not have access to this figure">Hidden</span>
+    <% } else if (this.args.value === null || this.args.value === undefined) { %>
+        <span class="Money_Display__empty"><% if (this.args.empty !== undefined) { %><%= this.args.empty %><% } else { %>&mdash;<% } %></span>
+    <% } else { %>
+        <span class="Money_Display__figure<%= this.args.negative_red && this.args.value.is_negative() ? ' Money_Display__figure--negative' : '' %>"><%= this.args.value.format({negative: this.args.negative ?? 'sign'}) %></span>
+    <% } %>
+</Define:Money_Display>

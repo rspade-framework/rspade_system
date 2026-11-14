@@ -98,14 +98,15 @@ escape, a sanitizer or a component.
 ### When NOT to use it
 
 **Do not register a printer to format things.** It is not a text-transform hook, not a
-place for date or currency formatting, and not a display-logic seam. `Formatters` and
-`Rsx_Time` exist for that and are callable from a template directly. A printer exists so
-a VALUE TYPE can render itself; if you are reaching for one to avoid typing a function
-call, it is the wrong tool.
+place for date or number formatting, and not a display-logic seam. `Rsx_Time` and the
+application's formatters exist for that and are callable from a template directly. A
+printer exists so a VALUE TYPE can render itself; if you are reaching for one to avoid
+typing a function call, it is the wrong tool.
 
-In RSpade there is exactly **one** registration, made by `Rsx_Text_Abstract`, and it
-covers every text type by delegating to the type. An application adds a printer only when
-it has value objects of its own.
+In RSpade there is **one registration per framework value family**: `Rsx_Text_Abstract`
+covers every text type by delegating to the type (a component descriptor), and `Rsx_Money`
+prints an amount as the string `format()` returns (`$1,234.50`, escaped like any string -
+rsx:man money). An application adds a printer only when it has value objects of its own.
 
 ### Registering
 
@@ -162,6 +163,7 @@ per cell is a component per row.
 ## See also
 
 `rsx:man text_types` - the feature both of these exist for
+`rsx:man money` - the other framework value type with a printer
 `rsx:man jqhtml` - ADVANCED: DYNAMIC COMPONENT TAGS, ADVANCED: VALUE PRINTERS
 `resource/reference_app/app/frontend/projects/edit/Projects_Edit_Action.jqhtml` - the shipped dynamic-tag example
 `resource/reference_app/theme/components/view/rich_text_display/` - a shipped printer component

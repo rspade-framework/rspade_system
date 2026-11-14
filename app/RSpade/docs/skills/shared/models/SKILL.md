@@ -1,13 +1,13 @@
 ---
 name: models
-description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), never_exported_columns(), revision_excluded_columns(), derived_columns()), derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
+description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), derived_columns()), derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
 ---
 
 # Writing a model
 
-A model extends `Rsx_Model_Abstract` (or `Rsx_Site_Model_Abstract` for a site-scoped table). This skill is the one complete reference for how a model declares its columns, plus the rules every model class meets. Deep dives: `rspade:model-enums`, `rspade:text-types`, `rspade:polymorphic`, `rspade:revisions`, `rspade:model-fetch`, `rspade:detail-tables`, `rspade:actors-and-authorship`, `rspade:realtime`. Derived columns in depth: [reference/derived-columns.md](reference/derived-columns.md). Contract: `rsx:man model`, `rsx:man derived_columns`.
+A model extends `Rsx_Model_Abstract` (or `Rsx_Site_Model_Abstract` for a site-scoped table). This skill is the one complete reference for how a model declares its columns, plus the rules every model class meets. Deep dives: `rspade:model-enums`, `rspade:text-types`, `rspade:money`, `rspade:polymorphic`, `rspade:revisions`, `rspade:model-fetch`, `rspade:detail-tables`, `rspade:actors-and-authorship`, `rspade:realtime`. Derived columns in depth: [reference/derived-columns.md](reference/derived-columns.md). Contract: `rsx:man model`, `rsx:man derived_columns`.
 
-**Before adding a column, ask of it every question in [Choosing a kind](#choosing-a-kind-for-a-new-column).** A column that should have been an enum, a text type, a type ref, a secret or a derived column and was left plain is a silent defect: nothing fails, the value is just wrong somewhere.
+**Before adding a column, ask of it every question in [Choosing a kind](#choosing-a-kind-for-a-new-column).** A column that should have been an enum, a text type, a type ref, money, a secret or a derived column and was left plain is a silent defect: nothing fails, the value is just wrong somewhere.
 
 ## Column declarations: `public static $columns`
 
@@ -21,6 +21,7 @@ public static $columns = [
     ]],
     'description'   => ['text_type' => Rich_Text::class],
     'fileable_type' => ['type_ref' => true],
+    'budget'        => ['money' => true],
     'api_secret'    => ['never_export' => true],
     'view_count'    => ['revision_exclude' => true],
     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
@@ -32,14 +33,16 @@ public static $columns = [
 | `enum` | integer-keyed map of value => properties | a BIGINT whose integers have constants, labels and custom properties |
 | `text_type` | a `Rsx_Text_Abstract` subclass | a TEXT column read as a value object, filtered on every write |
 | `type_ref` | `true` | the `_type` half of a polymorphic pair: stores a `_type_refs` id, reads as a class name |
+| `money` | `true` | a DECIMAL(p,2) amount read as an `Rsx_Money`, never a float |
 | `never_export` | `true` | a secret: never in any payload, redacted in revisions |
 | `revision_exclude` | `true` | not recorded in revision history |
 | `derived` + `from` | method name + list of this record's columns | STORED, computed by the model on save, never assigned |
 
 **The grammar** (checked at manifest build by `MODEL-COLUMNS-01`, a FATAL - a malformed entry would otherwise fail silently):
 
-- Only those seven keys; anything else is an error. A flag is the literal `true` or absent - never `false`.
-- At most ONE of `enum` / `text_type` / `type_ref` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already). A `derived` column may also be an enum, text type or type ref - its value is assigned through `setAttribute()`, so the kind still applies.
+- Only those eight keys; anything else is an error. A flag is the literal `true` or absent - never `false`.
+- At most ONE of `enum` / `text_type` / `type_ref` / `money` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already). A `derived` column may also be an enum, text type, type ref or money - its value is assigned through `setAttribute()`, so the kind still applies.
+- A money or text-type column carries no `$casts` entry - the declaration is its cast.
 - `derived` and `from` come together; see [Derived columns](#derived-columns).
 - `'column' => []` declares an explicitly plain column.
 - **A model with nothing to declare declares nothing** - no `$columns = []`.
@@ -62,11 +65,13 @@ The effective declaration overlays every class from `Rsx_Model_Abstract` down to
 | `Model::enum_columns()` / `Model::enum_values('col')` | all enum maps / one column's map - THROWS `"X_Model::col is not an enum column"` for any other column |
 | `Model::text_type_columns()` / `text_type_or_null('col')` | column => type class |
 | `Model::type_ref_columns()` | the type-ref columns, the audit ones included |
+| `Model::money_columns()` / `is_money_column('col')` | the money columns / whether one is |
+| `Model::money_limit('col')` | the largest `Rsx_Money` the column's DECIMAL holds |
 | `Model::never_exported_columns()` | the secrets |
 | `Model::revision_excluded_columns()` | `revision_exclude` columns plus every derived column |
 | `Model::derived_columns()` | column => `['method', 'from']`, in dependency order |
 
-`Model::enum_values('status_id')` is how code reaches an enum's raw map (a label table, a validation list); prefer the generated helpers below for everything they cover. JS: `Model.is_derived_column('col')`; the enum helpers are on the JS model too.
+`Model::enum_values('status_id')` is how code reaches an enum's raw map (a label table, a validation list); prefer the generated helpers below for everything they cover. JS: `Model.is_derived_column('col')`, `Model.is_money_column('col')`; the enum helpers are on the JS model too.
 
 ## The kinds
 
@@ -96,6 +101,15 @@ The column (TEXT) reads as a value object of that type: filtered by its sanitize
 ```
 
 A polymorphic reference is ALWAYS the BIGINT pair `{relation}_type` + `{relation}_id`; the `_type` column stores a `_type_refs` integer id and reads/writes as a class basename (`'Client_Model'`), so stock `morphTo()` / `morphMany()` work over it. Never a VARCHAR class name, never two nullable FKs. `POLY-01` (build FATAL) refuses a morph relation over an undeclared type column. The audit `*_by_type` columns are already declared by the base. Depth: `rspade:polymorphic`.
+
+### `money` - an amount of money
+
+```php
+'budget'        => ['money' => true],      // DECIMAL(15,2) NULL
+'hour_estimate' => [],                     // a DECIMAL that is NOT money - say so
+```
+
+The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` (or null): exact, immutable, never a float, compared and computed only with its methods, printed by `<%= %>`, edited by `<Money_Input>`, travelling to JS and the API as a `{__MONEY}` envelope. Assign an `Rsx_Money`, a decimal string (`'29.99'`) or whole-unit int; a float throws. An endpoint reads input with `Model::money_from_submitted('col', $value)`; a total is `->sum_money('col')`. **Every DECIMAL, FLOAT and DOUBLE column is declared money or `[]`** (`MODEL-DECIMAL-01`, `rsx:check`). Depth: `rspade:money`.
 
 ### `never_export` - a secret
 
@@ -141,7 +155,7 @@ The full treatment - every refusal message, the dependents pattern in code, the 
 
 | Concern | Where it lives |
 |---|---|
-| Dates, datetimes, TINYINT(1) booleans, JSON | read from the live schema: booleans cast to `bool`, dates stay ISO **strings** (never `->format()`; a `'date'`/`'datetime'` cast is blocked by `rsx:check`), DECIMAL reads as a string |
+| Dates, datetimes, TINYINT(1) booleans, JSON | read from the live schema: booleans cast to `bool`, dates stay ISO **strings** (never `->format()`; a `'date'`/`'datetime'` cast is blocked by `rsx:check`), a non-money DECIMAL (declared `[]`) reads as a string |
 | Length of a varchar | the schema: `Model::field_length('col')` |
 | Relationships | `#[Relationship]` methods |
 | A computed value JS must see, not stored | an APPENDED PROPERTY: `$appends` + a delegating accessor (below) |
@@ -159,13 +173,14 @@ The full treatment - every refusal message, the dependents pattern in code, the 
  * @property int $priority enum: PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH, PRIORITY_URGENT (also $priority__label and the other $priority__* properties)
  * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description text type: a value object, filtered on write
  * @property string $taskable_type type ref: a model class name, stored as a type-ref id
+ * @property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float
  * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
  * @property string $password never exported to the browser
  * @property string $last_seen_at not recorded in revisions
  * @property string $hour_estimate decimal
 ```
 
-`@property-read` marks a derived column (never assign it). DECIMAL and uncast JSON read as `string` (noted `decimal` / `json`); TINYINT(1) as `bool`; dates and datetimes as `string`. A reader of a model file learns every column's mechanics from this header plus `$columns`.
+`@property-read` marks a derived column (never assign it). A money column reads as `Rsx_Money`; any other DECIMAL and uncast JSON read as `string` (noted `decimal` / `json`); TINYINT(1) as `bool`; dates and datetimes as `string`. A reader of a model file learns every column's mechanics from this header plus `$columns`.
 
 ## Choosing a kind for a new column
 
@@ -173,12 +188,13 @@ Ask, in order, for EVERY column you add:
 
 1. **Is it a fixed set of states or types?** -> BIGINT + `enum`. Never a VARCHAR of words, never a boolean that will grow a third state.
 2. **Is it text with an encoding** - HTML from an editor, a notation with embedded references? -> TEXT + `text_type`. Plain text stays undeclared.
-3. **Does it point at a record of one of SEVERAL models?** -> a BIGINT `{relation}_type` + `{relation}_id` pair, `type_ref` on the `_type` column, plus `$fact_groups` when one form field edits the pair.
-4. **Would its disclosure be a security event** (hash, token, secret, key/value bag)? -> `never_export`.
-5. **Is it computed from other data and never typed by a person?** -> `derived` + `from`, with a derive method. If a person may ALSO set it when no rule applies, that is two columns (source + derived).
-6. **Does it change without anybody changing it** (counter, last-seen, cached aggregate) on a `$revisions` model? -> `revision_exclude` (a derived column needs nothing).
-7. **Is it a computed value JS needs but nobody queries?** -> not a column: an appended property.
-8. **Is it edited as one thing with other columns?** -> `$fact_groups`.
+3. **Is it an amount of money?** -> `DECIMAL(15,2)` (p <= 18) + `money`. Any other DECIMAL, FLOAT or DOUBLE is declared `[]` (not money) - `MODEL-DECIMAL-01` requires one or the other.
+4. **Does it point at a record of one of SEVERAL models?** -> a BIGINT `{relation}_type` + `{relation}_id` pair, `type_ref` on the `_type` column, plus `$fact_groups` when one form field edits the pair.
+5. **Would its disclosure be a security event** (hash, token, secret, key/value bag)? -> `never_export`.
+6. **Is it computed from other data and never typed by a person?** -> `derived` + `from`, with a derive method. If a person may ALSO set it when no rule applies, that is two columns (source + derived).
+7. **Does it change without anybody changing it** (counter, last-seen, cached aggregate) on a `$revisions` model? -> `revision_exclude` (a derived column needs nothing).
+8. **Is it a computed value JS needs but nobody queries?** -> not a column: an appended property.
+9. **Is it edited as one thing with other columns?** -> `$fact_groups`.
 
 None of these -> a plain column, declared nowhere.
 

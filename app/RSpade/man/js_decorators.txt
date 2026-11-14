@@ -1,17 +1,21 @@
     js_decorators - RSX JavaScript decorator system with whitelist validation
 
 SYNOPSIS
-    JavaScript decorators for enhancing static methods with explicit whitelist control
+    JavaScript decorators on classes and class methods, using the TC39 decorators
+    proposal (version 2023-11), with explicit whitelist control
 
 DESCRIPTION
-    The RSX framework supports JavaScript decorators for enhancing static methods.
-    Unlike standard JavaScript decorators, RSX requires explicit whitelisting
-    using the @decorator marker to prevent arbitrary code injection and maintain
-    framework security.
+    The RSX framework supports JavaScript decorators on classes and on class
+    methods, static and instance alike. They follow the TC39 decorators proposal,
+    version 2023-11: a decorator is a function called with (value, context), never
+    the (target, key, descriptor) signature of the older proposal.
+
+    Unlike standard JavaScript, RSX requires a decorator to be whitelisted with the
+    @decorator marker before it may be applied to a class or a class method.
 
     Key differences from standard decorators:
     - Standard: Any function can be used as decorator
-    - RSX: Only functions marked with @decorator can be used
+    - RSX: Only functions marked with @decorator can be used on a class or a method
 
     Benefits:
     - Prevents accidental decorator misuse
@@ -19,14 +23,37 @@ DESCRIPTION
     - Clear separation between decorator definitions and applications
     - Bundle ordering ensures decorator.js loads first
 
+    The framework's own decorators:
+        @route, @layout, @spa, @title, @auth, @spinner_until_ready, @portal_spa
+                    class decorators for SPA actions (Core/SPA/Spa_Decorators.js;
+                    rsx:man spa)
+        @mutex, @mutex('id')
+                    method decorator: one call of the method at a time, per
+                    instance or per id (Core/Js/Mutex.js)
+        @debounce(ms)
+                    method decorator: the debounce() of Core/Js/async.js
+                    applied to a method
+
 DECORATOR WHITELIST SYSTEM
     Whitelist Requirement:
-        Only functions/methods marked with @decorator can be used as decorators
-        elsewhere in the codebase.
+        A decorator applied to a class, or to a class method - static or instance -
+        must be the name of a function or method marked with @decorator.
 
     Validation:
-        Decorator usage validated when the manifest builds.
-        Invalid decorator usage causes build failures with clear error messages.
+        Rule JS-DECORATOR-01 checks every class decorator and every method decorator
+        against the whitelist when the manifest builds, and a global function carrying
+        any decorator other than the @decorator marker fails it. A failure is a
+        manifest-build FATAL naming the file, the class, the decorator and - for a
+        class decorator - its line and the whitelisted names. The check runs whether
+        or not decorators are enabled (rsx.javascript.decorators).
+
+        A decorator is whitelisted under its BARE name. A member-expression decorator
+        (@Some_Class.some_method) is recorded under its dotted name, which no
+        whitelist entry carries, so it fails on a class and on a method alike: apply
+        a static decorator method by its bare name.
+
+        A JSDoc marker in the class's docblock (@Instantiatable) is a comment, not a
+        decorator application, and is never checked against the whitelist.
 
     Bundle Ordering:
         Framework ensures decorator.js loads first in bundles to guarantee
@@ -51,230 +78,213 @@ JAVASCRIPT FILE STRUCTURE REQUIREMENTS
         - let or var declarations at top level
         - Any other code outside the three allowed types
 
+THE DECORATOR SIGNATURE (TC39 2023-11)
+    Every decorator is called with two arguments:
+
+        function my_decorator(value, context) { ... }
+
+        value       What is being decorated: the class itself for a class
+                    decorator, the method function for a method decorator.
+        context     An object describing it:
+                      kind            'class' or 'method' (also 'getter',
+                                      'setter', 'field', 'accessor')
+                      name            the class or method name
+                      static          true for a static member
+                      private         true for a #private member
+                      access          get/has accessors for the member
+                      addInitializer  register a function to run when the
+                                      class (or instance) is initialized
+
+    The return value REPLACES what was decorated: a class decorator may return a
+    replacement class, a method decorator a replacement function. Returning
+    nothing (undefined) keeps the original.
+
+    A decorator with arguments is a FACTORY: @route('/contacts') calls
+    route('/contacts'), and the function that call returns is the decorator.
+
+    Evaluation order: the decorator expressions are evaluated top to bottom, then
+    applied bottom to top - the decorator nearest the declaration runs first.
+
 DEFINING DECORATORS
-    Standalone Functions (Non-ES6):
-        @decorator
-        function myCustomDecorator(target, key, descriptor) {
-            // Decorator implementation
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
-                console.log(`Calling ${key} with`, args);
-                return original.apply(this, args);
+    Mark the definition with @decorator in its JSDoc. In a file with no ES6 class,
+    a bare @decorator line directly above the function works too (the transform
+    rewrites it into the JSDoc form).
+
+    Class Decorator (the shape of @route, Core/SPA/Spa_Decorators.js):
+        /**
+         * @decorator
+         * Tag an action with its section.
+         */
+        function section(section_name) {
+            return function (value, context) {
+                value._section = section_name;
+                return value;
             };
-            return descriptor;
         }
 
-        @decorator
-        function logExecutionTime(target, key, descriptor) {
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
-                const start = performance.now();
-                const result = original.apply(this, args);
-                const end = performance.now();
-                console.log(`${key} executed in ${end - start}ms`);
-                return result;
+        @section('Billing')
+        class Invoices_Index_Action extends Spa_Action { }
+
+    Method Decorator (the shape of @debounce, Core/Js/async.js):
+        /**
+         * @decorator
+         * Log each call of the decorated method.
+         */
+        function log_calls(label) {
+            return function (value, context) {
+                if (context.kind !== 'method') {
+                    throw new Error(`@log_calls can only be applied to methods, not ${context.kind}`);
+                }
+                return function (...args) {
+                    console.log(`${label}: ${context.name}`, args);
+                    return value.apply(this, args);
+                };
             };
-            return descriptor;
         }
 
-    ES6 Class Methods:
-        class MyDecorators {
-            @decorator
-            static validateParams(target, key, descriptor) {
-                const original = descriptor.value;
-                descriptor.value = function(...args) {
-                    if (args.length === 0) {
-                        throw new Error(`${key} requires at least one parameter`);
-                    }
-                    return original.apply(this, args);
-                };
-                return descriptor;
-            }
+    Method Decorator Without Arguments (the shape of @mutex, Core/Js/Mutex.js):
+        A decorator applied bare (@my_decorator, no parentheses) is called
+        directly with (value, context):
 
+        /**
+         * @decorator
+         */
+        function trace(value, context) {
+            return function (...args) {
+                console.log(`enter ${context.name}`);
+                return value.apply(this, args);
+            };
+        }
+
+    Static Method Of A Class:
+        A static method marked @decorator is whitelisted under its method name:
+
+        class My_Decorators {
             @decorator
-            static cacheResult(target, key, descriptor) {
-                const cache = new Map();
-                const original = descriptor.value;
-                descriptor.value = function(...args) {
-                    const cacheKey = JSON.stringify(args);
-                    if (cache.has(cacheKey)) {
-                        return cache.get(cacheKey);
-                    }
-                    const result = original.apply(this, args);
-                    cache.set(cacheKey, result);
-                    return result;
-                };
-                return descriptor;
+            static audit(value, context) {
+                return value;
             }
         }
 
     Framework Core Decorator:
-        The framework provides a core decorator function in
-        /app/RSpade/Core/Js/decorator.js that marks functions as
-        decorator implementations.
+        The framework provides the @decorator marker itself in
+        /app/RSpade/Core/Js/decorator.js: a function that returns what it is given,
+        so @decorator applied to a method is a no-op at run time.
 
 USING DECORATORS
-    Static Method Decoration:
-        Once whitelisted with @decorator, decorators can be used on static methods:
+    On A Class:
+        @route('/contacts')
+        @layout('Frontend_Layout')
+        @spa('Frontend_Spa_Controller::index')
+        @auth('is_logged_in')
+        class Contacts_Index_Action extends Spa_Action { }
 
-        class MyClass {
-            @myCustomDecorator
-            static myMethod() {
-                return "result";
-            }
+    On A Method (static or instance):
+        class Contact_Search extends Component {
+            @debounce(250)
+            async search(term) { ... }
 
-            @logExecutionTime
-            @validateParams
-            static processData(data) {
-                // Process data with timing and validation
-                return data.map(item => item.toUpperCase());
-            }
+            @mutex
+            async save() { ... }
+
+            @log_calls('Contacts')
+            static reindex() { ... }
         }
 
     Multiple Decorators:
-        Multiple decorators can be applied to the same method.
-        They execute in reverse order (bottom to top):
+        Applied bottom to top - the one nearest the declaration runs first, and
+        each receives what the one below it returned:
 
-        class DataProcessor {
-            @logExecutionTime      // Executes second (outer)
-            @validateParams        // Executes first (inner)
+        class Data_Processor {
+            @log_calls('outer')    // Applied second: wraps the debounced method
+            @debounce(250)         // Applied first: wraps the original method
             static transform(data) {
                 return data.transform();
             }
         }
 
+        @layout is written outermost first for the same reason: each @layout
+        prepends its layout, so the first one written ends up first in the chain.
+
 DECORATOR RESTRICTIONS
-    Static Methods Only:
-        Decorators can only be applied to static methods, not instance methods.
-
-        class Example {
-            @myDecorator
-            static validMethod() {        // + Valid - static method
-                return "works";
-            }
-
-            @myDecorator
-            invalidMethod() {             // - Invalid - instance method
-                return "fails";
-            }
-        }
-
     Global Function Limitations:
-        Global functions can only use @decorator, not other decorators.
+        A global function may carry only the @decorator marker, no other
+        decorator.
 
-        @decorator
-        function validGlobalDecorator() {  // + Valid - marking as decorator
-            // implementation
-        }
+        /**
+         * @decorator
+         */
+        function valid_global_decorator(value, context) { }   // + Valid - marking as decorator
 
-        @someOtherDecorator
-        function invalidGlobalUsage() {    // - Invalid - using decorator
-            // This will fail validation
-        }
+        @some_other_decorator
+        function invalid_global_usage() { }                   // - Invalid - FATAL at build
 
     Whitelist Validation:
-        Only functions/methods marked with @decorator can be used as decorators.
+        Only functions/methods marked with @decorator can be used on a class or a
+        method.
 
-        @decorator
-        function authorizedDecorator() {   // + Valid - explicitly whitelisted
-            // implementation
+        function unauthorized_function(value, context) { }    // Not marked
+
+        class My_Class {
+            @log_calls('x')
+            static valid_usage() { }       // + Valid - whitelisted decorator
+
+            @unauthorized_function
+            static invalid_usage() { }     // - Invalid - not whitelisted
         }
 
-        function unauthorizedFunction() {  // Cannot be used as decorator
-            // implementation
-        }
-
-        class MyClass {
-            @authorizedDecorator
-            static validUsage() {          // + Valid - using whitelisted decorator
-                return "works";
-            }
-
-            @unauthorizedFunction
-            static invalidUsage() {        // - Invalid - not whitelisted
-                return "fails";
-            }
-        }
+        @route('/reports')                 // + Valid - whitelisted decorator
+        @rout('/reports/:id')              // - Invalid - FATAL at build, misspelled
+        class Reports_Action extends Spa_Action { }
 
 COMMON DECORATOR PATTERNS
-    Logging Decorator:
-        @decorator
-        function logCalls(target, key, descriptor) {
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
-                console.log(`Calling ${target.name}.${key}`, args);
-                const result = original.apply(this, args);
-                console.log(`${target.name}.${key} returned`, result);
-                return result;
-            };
-            return descriptor;
-        }
-
-    Async Error Handling:
-        @decorator
-        function catchAsync(target, key, descriptor) {
-            const original = descriptor.value;
-            descriptor.value = async function(...args) {
+    Async Error Logging:
+        /**
+         * @decorator
+         */
+        function log_async_errors(value, context) {
+            return async function (...args) {
                 try {
-                    return await original.apply(this, args);
+                    return await value.apply(this, args);
                 } catch (error) {
-                    console.error(`Error in ${target.name}.${key}:`, error);
+                    console.error(`Error in ${context.name}:`, error);
                     throw error;
                 }
             };
-            return descriptor;
-        }
-
-    Rate Limiting:
-        @decorator
-        function rateLimit(target, key, descriptor) {
-            const calls = new Map();
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
-                const now = Date.now();
-                const lastCall = calls.get(key) || 0;
-                if (now - lastCall < 1000) {
-                    throw new Error(`${key} called too frequently`);
-                }
-                calls.set(key, now);
-                return original.apply(this, args);
-            };
-            return descriptor;
         }
 
     Parameter Validation:
-        @decorator
-        function requireParams(target, key, descriptor) {
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
+        /**
+         * @decorator
+         */
+        function require_params(value, context) {
+            return function (...args) {
                 if (args.some(arg => arg === undefined || arg === null)) {
-                    throw new Error(`${key} requires all parameters to be defined`);
+                    throw new Error(`${context.name} requires all parameters to be defined`);
                 }
-                return original.apply(this, args);
+                return value.apply(this, args);
             };
-            return descriptor;
+        }
+
+    Per-Instance Setup (addInitializer):
+        /**
+         * @decorator
+         */
+        function bound(value, context) {
+            context.addInitializer(function () {
+                this[context.name] = this[context.name].bind(this);
+            });
         }
 
 DECORATOR IMPLEMENTATION DETAILS
-    Decorator Function Signature:
-        function myDecorator(target, key, descriptor) {
-            // target: The class being decorated
-            // key: The method name being decorated
-            // descriptor: Property descriptor for the method
-
-            const original = descriptor.value;
-            descriptor.value = function(...args) {
-                // Pre-execution logic
-                const result = original.apply(this, args);
-                // Post-execution logic
-                return result;
-            };
-            return descriptor;
-        }
-
     Preserving Method Context:
-        Always use original.apply(this, args) to preserve method context
-        and parameter passing.
+        A replacement method is a plain function (not an arrow) that calls
+        value.apply(this, args), so the method keeps its receiver and arguments.
+
+    Checking What Was Decorated:
+        A decorator meant for one kind of declaration checks context.kind and
+        throws on any other, as @mutex does - a silent no-op on the wrong kind
+        hides the mistake.
 
     Return Value Handling:
         Decorators can modify return values, but should be careful not to
@@ -286,18 +296,15 @@ DECORATOR IMPLEMENTATION DETAILS
 
 MANIFEST INTEGRATION
     Build-Time Validation:
-        The manifest system validates decorator usage during build:
+        The manifest system validates method decorators during build:
         1. Scans for @decorator markers
         2. Builds whitelist of authorized decorators
-        3. Validates all decorator usage against whitelist
-        4. Fails build if unauthorized decorators found
+        3. Validates every decorator on a class or a class method against the whitelist
+        4. Fails the build if an unauthorized decorator is found
 
     Bundle Processing:
-        During bundle compilation:
-        1. decorator.js loaded first
-        2. Decorator definitions processed
-        3. Decorator applications validated
-        4. Bundle compilation completes or fails with clear errors
+        During bundle compilation decorator.js is placed first, then the other
+        non-class files (where decorator functions live), then the class files.
 
 TRANSFORM PIPELINE
     App JS is transpiled to browser-compatible code by the Babel transform server
@@ -324,7 +331,7 @@ TRANSFORM PIPELINE
         matcher that appended the binding by pattern-matching Babel's output; that matcher
         broke when @babel/compat-data 7.29.3 moved the destructuring baseline to Safari
         14.1 (preset-env then rewrote the matched shape before the matcher could see it -
-        a silent miss producing a white screen; the es5 target was always broken).
+        a silent miss producing a white screen).
 
     Fail-Closed Contract Assertion:
         The transform server records every top-level decorated class declaration before
@@ -349,18 +356,31 @@ TRANSFORM PIPELINE
         server is spawned on demand per build process and shut down at process end (not a
         persistent daemon), so a code change is picked up by the next build.
 
+
 TROUBLESHOOTING
     Unauthorized Decorator Error:
-        Error: "Decorator 'functionName' not whitelisted"
-        Solution: Add @decorator marker to function definition
+        Error: "FATAL: Decorator not whitelisted"
+        Solution: Add the @decorator marker to the decorator's definition
 
-    Decorator Not Found:
-        Error: "Decorator 'decoratorName' not found"
-        Solution: Ensure decorator definition loaded before usage
+    Unauthorized Class Decorator Error:
+        Error: "FATAL: Class decorator not whitelisted"
+        Solution: Correct a misspelled decorator to one the message lists, mark
+        your own decorator's definition @decorator, or move a marker such as
+        @Instantiatable into the class's docblock comment
 
-    Instance Method Decoration:
-        Error: "Decorators can only be applied to static methods"
-        Solution: Change method to static or remove decorator
+    Decorator On A Global Function:
+        Error: "FATAL: Global function cannot use decorator"
+        Solution: Remove the decorator; a global function carries only @decorator
+
+    A Decorator Written For The Older Proposal:
+        Symptom: a TypeError such as "Cannot read properties of undefined (reading
+        'value')" when the class is defined - the decorator reads descriptor.value,
+        and there is no descriptor in the (value, context) signature.
+        Solution: Rewrite it to take (value, context) and return the replacement
+
+    Decorator On The Wrong Kind Of Declaration:
+        Error: "@mutex can only be applied to methods" (and the like)
+        Solution: Apply it to a method, or check context.kind in your own decorator
 
     Build-Time Validation Failures:
         Check manifest build output for specific decorator validation errors
@@ -368,23 +388,20 @@ TROUBLESHOOTING
 
 TESTING DECORATORS
     Unit Testing Decorator Logic:
-        // Test decorator implementation
-        const mockDescriptor = {
-            value: jest.fn(() => 'original')
-        };
-        const decorated = myDecorator({}, 'testMethod', mockDescriptor);
-        const result = decorated.value();
-        expect(result).toBe('original');
+        // Call the decorator with a method and a context, then call the result
+        const decorated = require_params(function (a) { return a; }, { kind: 'method', name: 'probe' });
+        expect(decorated.call(null, 1)).toBe(1);
+        expect(() => decorated.call(null, undefined)).toThrow();
 
     Integration Testing:
         // Test decorated methods
-        class TestClass {
-            @myDecorator
-            static testMethod() {
-                return 'test';
+        class Test_Class {
+            @require_params
+            static test_method(a) {
+                return a;
             }
         }
-        expect(TestClass.testMethod()).toBe('test');
+        expect(Test_Class.test_method('test')).toBe('test');
 
 PERFORMANCE CONSIDERATIONS
     Decorator Overhead:
@@ -431,7 +448,8 @@ DECORATOR PARAMETER RESTRICTIONS
         This restriction is enforced by the JS-DECORATOR-IDENT-01 code quality
         rule, which runs at manifest build time for immediate feedback.
 
+
 SEE ALSO
+    spa - SPA actions and the @route / @layout / @spa / @auth decorators
     bundle_api - Bundle loading and compilation
-    manifest_api - Build-time validation system
     coding_standards - JavaScript coding patterns

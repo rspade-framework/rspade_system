@@ -281,31 +281,20 @@ class Php_Parser
         $in_function = false;
         $in_class = false;
 
+        $brace_stack = [];
+
         // Token-based extraction for basic info
         for ($i = 0; $i < count($tokens); $i++) {
-            // Skip string interpolation braces (T_CURLY_OPEN indicates {$var} inside strings)
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_CURLY_OPEN) {
-                continue;
-            }
-
-            // Track braces to know scope
-            if ($tokens[$i] === '{') {
+            // Track block braces to know scope; a string interpolation's braces are paired
+            // and ignored
+            $brace = self::_block_brace($tokens[$i], $brace_stack);
+            if ($brace === 1) {
                 $brace_depth++;
-            } elseif ($tokens[$i] === '}') {
-                // Check if this is closing string interpolation
-                $is_string_interpolation = false;
-                for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                    if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                        $is_string_interpolation = true;
-                        break;
-                    }
-                }
-                if (!$is_string_interpolation) {
-                    $brace_depth--;
-                    if ($brace_depth === 0) {
-                        $in_function = false;
-                        $in_class = false;
-                    }
+            } elseif ($brace === -1) {
+                $brace_depth--;
+                if ($brace_depth === 0) {
+                    $in_function = false;
+                    $in_class = false;
                 }
             }
 
@@ -653,28 +642,11 @@ class Php_Parser
         $violations = [];
         $check_brace_depth = 0;
 
-        for ($i = 0; $i < count($tokens); $i++) {
-            // Skip string interpolation braces
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_CURLY_OPEN) {
-                continue;
-            }
+        $brace_stack = [];
 
-            // Track brace depth to only check global scope
-            if ($tokens[$i] === '{') {
-                $check_brace_depth++;
-            } elseif ($tokens[$i] === '}') {
-                // Check if this is closing string interpolation
-                $is_string_interpolation = false;
-                for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                    if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                        $is_string_interpolation = true;
-                        break;
-                    }
-                }
-                if (!$is_string_interpolation) {
-                    $check_brace_depth--;
-                }
-            }
+        for ($i = 0; $i < count($tokens); $i++) {
+            // Track block brace depth to only check global scope
+            $check_brace_depth += self::_block_brace($tokens[$i], $brace_stack);
 
             // Only check includes at global scope (outside class definition)
             if ($check_brace_depth === 0 && is_array($tokens[$i]) && in_array($tokens[$i][0], [T_INCLUDE, T_INCLUDE_ONCE, T_REQUIRE, T_REQUIRE_ONCE])) {
@@ -728,29 +700,17 @@ class Php_Parser
         $in_define_call = false;
         $define_paren_depth = 0;
 
-        for ($i = 0; $i < count($tokens); $i++) {
-            // Skip string interpolation braces
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_CURLY_OPEN) {
-                continue;
-            }
+        $brace_stack = [];
 
-            // Track braces for scope
-            if ($tokens[$i] === '{') {
+        for ($i = 0; $i < count($tokens); $i++) {
+            // Track block braces for scope
+            $brace = self::_block_brace($tokens[$i], $brace_stack);
+            if ($brace === 1) {
                 $validation_brace_depth++;
-            } elseif ($tokens[$i] === '}') {
-                // Check if this is closing string interpolation
-                $is_string_interpolation = false;
-                for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                    if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                        $is_string_interpolation = true;
-                        break;
-                    }
-                }
-                if (!$is_string_interpolation) {
-                    $validation_brace_depth--;
-                    if ($validation_brace_depth === 0) {
-                        $in_function_scope = false;
-                    }
+            } elseif ($brace === -1) {
+                $validation_brace_depth--;
+                if ($validation_brace_depth === 0) {
+                    $in_function_scope = false;
                 }
             }
 
@@ -893,6 +853,48 @@ class Php_Parser
             'global_functions' => $structure['global_functions'],
             'global_constants' => $structure['global_constants'],
         ];
+    }
+
+    /**
+     * Pair one token's braces and say whether it opens or closes a BLOCK.
+     *
+     * Every opening brace is closed by a plain '}' token: a code '{', and inside a string
+     * the interpolation openers T_CURLY_OPEN ("{$a}") and T_DOLLAR_OPEN_CURLY_BRACES
+     * ("${a}"). So which one a '}' closes is answered by a stack, never by distance: an
+     * opener pushes what it is, a '}' pops it, and only a popped BLOCK is a scope change.
+     * Every token walker that tracks scope calls this - this parser's, Php_Fixer's and
+     * MigrationValidator's - so they agree on every file: an interpolation of any length,
+     * nested interpolation, a block closed right after one.
+     *
+     * @param array|string $token One token_get_all() token
+     * @param array        $stack The walk's brace stack (true = block, false = interpolation)
+     * @return int 1 when the token opens a block, -1 when it closes one, otherwise 0
+     */
+    public static function _block_brace($token, array &$stack): int
+    {
+        if (is_array($token)) {
+            if ($token[0] === T_CURLY_OPEN || $token[0] === T_DOLLAR_OPEN_CURLY_BRACES) {
+                $stack[] = false;
+            }
+
+            return 0;
+        }
+
+        if ($token === '{') {
+            $stack[] = true;
+
+            return 1;
+        }
+
+        if ($token === '}') {
+            if ($stack === []) {
+                shouldnt_happen("A '}' closes no open brace - the file passed the syntax check, so its braces pair");
+            }
+
+            return array_pop($stack) ? -1 : 0;
+        }
+
+        return 0;
     }
 
     /**
@@ -1046,6 +1048,7 @@ class Php_Parser
         $class_found = false;
         $in_class = false;
         $brace_depth = 0;
+        $brace_stack = [];
 
         for ($i = 0; $i < count($tokens); $i++) {
             // Track when we find a class declaration
@@ -1070,13 +1073,9 @@ class Php_Parser
                 }
             }
 
-            // Skip string interpolation braces
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_CURLY_OPEN) {
-                continue;
-            }
-
-            // Track braces
-            if ($tokens[$i] === '{') {
+            // Track block braces; a string interpolation's braces are paired and ignored
+            $brace = self::_block_brace($tokens[$i], $brace_stack);
+            if ($brace === 1) {
                 if ($class_found && $brace_depth === 0) {
                     // This is the opening brace of the class
                     $in_class = true;
@@ -1085,20 +1084,10 @@ class Php_Parser
                 if ($in_class) {
                     $brace_depth++;
                 }
-            } elseif ($tokens[$i] === '}') {
-                // Check if this is closing string interpolation
-                $is_string_interpolation = false;
-                for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                    if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                        $is_string_interpolation = true;
-                        break;
-                    }
-                }
-                if (!$is_string_interpolation && $in_class) {
-                    $brace_depth--;
-                    if ($brace_depth === 0) {
-                        $in_class = false;
-                    }
+            } elseif ($brace === -1 && $in_class) {
+                $brace_depth--;
+                if ($brace_depth === 0) {
+                    $in_class = false;
                 }
             }
 

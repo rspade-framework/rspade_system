@@ -636,7 +636,6 @@ JAVASCRIPT
     'javascript' => [
         'babel' => [
             'transform_enabled' => env('BABEL_TRANSFORM', true),
-            'target' => env('BABEL_TARGET', 'modern'),  # modern|es6|es5
         ],
         # There is no babel cache_dir setting. Every per-source-file derived
         # cache lives under tmp/derived/<namespace>/ and is
@@ -645,8 +644,9 @@ JAVASCRIPT
         'decorators' => true,
     ]
 
-    Babel transform of decorators, transform target, and cache directory.
-    Private fields (#private) use native browser support, not transpilation.
+    Babel transform of decorators, class fields (private members included),
+    optional chaining and nullish coalescing. The transform has ONE browser
+    target, set in the transform itself and not configurable.
 
 CONSOLE DEBUG
     'console_debug' => [
@@ -1135,6 +1135,23 @@ DATETIME
     tier - portal accounts carry no timezone column - so it starts at the
     cookie. An external API request, a task and a command have no cookie.
     See: php artisan rsx:man time
+
+MONEY
+    'money' => [
+        'display' => [
+            'symbol' => '$',                # '' = no symbol
+            'symbol_position' => 'before',  # 'before' or 'after'
+            'symbol_spacing' => false,      # true: one U+00A0 between symbol and number
+            'decimal_separator' => '.',     # '.' or ','
+            'group_separator' => ',',       # ',' '.' "'" ' ' U+00A0 U+202F or '' (none)
+        ],
+    ]
+
+    How Rsx_Money::format() prints and Rsx_Money::from_text() reads an amount,
+    identically in PHP and the browser (shipped as rsxapp.money_display). One
+    currency per application; set it in rsx/resource/config/rsx.php. Validated
+    when first read; an invalid value throws naming the key
+    ("rsx.money.display.<key> must be ..."). See: php artisan rsx:man money
 
 DEPENDENCIES
     'dependencies' => [

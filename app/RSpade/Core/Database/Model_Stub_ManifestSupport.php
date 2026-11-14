@@ -422,6 +422,13 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $content .= '    static __DERIVED_COLUMNS = ' . json_encode(array_keys($derived_columns)) . ";\n";
         }
 
+        // The model's money columns, baked ONLY when it has some, for
+        // Rsx_Js_Model.is_money_column() and editor_component_for().
+        $money_columns = $fqcn::money_columns();
+        if ($money_columns !== []) {
+            $content .= '    static __MONEY_COLUMNS = ' . json_encode(array_values($money_columns)) . ";\n";
+        }
+
         $content .= "\n";
 
         // Generate non-enum constants first (static properties)
@@ -635,15 +642,18 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "    }\n\n";
 
         $content .= "    /**\n";
-        $content .= "     * The input component that edits a column, for a dynamic tag:\n";
+        $content .= "     * The input component that edits a money or text-type column, for a dynamic tag:\n";
         $content .= "     *     <{Project_Model.editor_component_for('description')} \$name=\"description\" />\n";
         $content .= "     * @param {string} column - Column name\n";
         $content .= "     * @returns {string} Component name\n";
         $content .= "     */\n";
         $content .= "    static editor_component_for(column) {\n";
+        $content .= "        if (this.is_money_column(column)) {\n";
+        $content .= "            return 'Money_Input';\n";
+        $content .= "        }\n";
         $content .= "        const type = this.text_type_or_null(column);\n";
         $content .= "        if (!type) {\n";
-        $content .= "            shouldnt_happen(`\${this.name}.\${column} has no declared text type, so no editor is derivable from it. Name the input component directly.`);\n";
+        $content .= "            shouldnt_happen(`\${this.name}.\${column} is neither a money column nor a column with a declared text type, so no editor is derivable from it. Name the input component directly.`);\n";
         $content .= "        }\n";
         $content .= "        return type.editor_component();\n";
         $content .= "    }\n\n";

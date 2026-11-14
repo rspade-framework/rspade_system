@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: "Writing and running migrations - make:migration:safe, raw SQL via DB::statement() (the Schema builder is prohibited), forward-only, no model class in a migration (MIGRATION-MODEL-01) and no model write while up() runs, Rsx_Rederive::enqueue() and the rederive step that closes every migrate, rsx:derived:check / rsx:derived:rebuild, automatic audit columns, the snapshot rollback, migrate --dump-rollback, and the column kinds a model declares in $columns (enum, type_ref, text_type, derived). Use when adding a table, column or index, backfilling data, changing what a derived column is computed from, or on 'refused: a migration is executing', 'Rederiving cached values', 'Rederiving cached values failed', or a migrate that fails or reports every migration as unauthorized."
+description: "Writing and running migrations - make:migration:safe, raw SQL via DB::statement() (the Schema builder is prohibited), forward-only, no model class in a migration (MIGRATION-MODEL-01) and no model write while up() runs, Rsx_Rederive::enqueue() and the rederive step that closes every migrate, rsx:derived:check / rsx:derived:rebuild, automatic audit columns, the snapshot rollback, migrate --dump-rollback, and the column kinds a model declares in $columns (enum, type_ref, text_type, money, derived). Use when adding a table, column or index, backfilling data, changing what a derived column is computed from, or on 'refused: a migration is executing', 'Rederiving cached values', 'Rederiving cached values failed', or a migrate that fails or reports every migration as unauthorized."
 ---
 
 # RSX Database Migrations
@@ -217,6 +217,8 @@ The migration carries the STORAGE type only. What the column means is the model'
 | enum (status, type, role) | `BIGINT` | `'status_id' => ['enum' => [...]]` | `rspade:model-enums` |
 | polymorphic reference | `BIGINT` `_type` + `_id` pair | `'owner_type' => ['type_ref' => true]` | `rspade:polymorphic` |
 | rich text / custom notation | `TEXT` | `'body' => ['text_type' => Rich_Text::class]` | `rspade:text-types` |
+| an amount of money | `DECIMAL(15,2)` (p <= 18, scale 2) | `'price' => ['money' => true]` | `rspade:money` |
+| any other DECIMAL / FLOAT / DOUBLE | the value's type | `'hours' => []` - declared NOT money (`MODEL-DECIMAL-01`) | `rspade:models` |
 | secret (hash, token) | any | `'api_token' => ['never_export' => true]` | `rspade:models` |
 | computed and stored | the value's type | `'total' => ['derived' => 'derive_total', 'from' => [...]]` | `rspade:models` |
 | type-specific 1:1 fields | a detail table | `$detail_tables` (not `$columns`) | `rspade:detail-tables` |

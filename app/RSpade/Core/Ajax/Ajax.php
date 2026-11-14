@@ -23,6 +23,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Api\Request_Payload_Redactor;
 use App\RSpade\Core\Auth\Auth_Gates;
+use App\RSpade\Core\Database\Money\Rsx_Money;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Exceptions\Infrastructure_Outage;
@@ -287,6 +288,9 @@ class Ajax
         unset($params[Request_History::REF_PARAM]);
         $sent_params = $params;
 
+        // Money envelopes first: a money value is never read as text, and an array carrying
+        // __MONEY beside __TEXT is refused by the money check (exactly one key).
+        $params = Rsx_Money::_wrap_request_envelopes($params);
         $params = Rsx_Text_Abstract::wrap_request_envelopes($params);
 
         // The call is its own unit, whatever called it. A fresh Turnstile latch, so a batch

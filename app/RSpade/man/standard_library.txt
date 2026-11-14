@@ -67,9 +67,10 @@ PHP EXTENSIONS
         intl        Locale-aware formatting and collation: NumberFormatter,
                     IntlDateFormatter, Collator, Normalizer. Reach for it when
                     output must follow a locale rather than a hardcoded format.
-        bcmath      Arbitrary-precision DECIMAL strings. Money is brick/money
-                    (below), which does not need it; reach for bcmath for
-                    non-money exact decimals - rates, measurements, statistics.
+        bcmath      Arbitrary-precision DECIMAL strings. Money is Rsx_Money
+                    (rsx:man money), which does not need it; reach for bcmath
+                    for non-money exact decimals - rates, measurements,
+                    statistics.
         soap        SOAP clients and servers for the integrations that still
                     speak it - payroll, logistics, government gateways.
 
@@ -123,33 +124,22 @@ COMPOSER PACKAGES
             rsx:man sanitize_rich_text_html.
 
         brick/money
-            Money arithmetic. Reach for it the moment an amount is added,
-            multiplied, split, converted or rounded: a Money carries its currency
-            and an exact decimal, so a total cannot silently drift, two
-            currencies cannot be added, and the rounding mode is something you
-            state rather than something the CPU picks.
+            Multi-currency money: a Money carrying its currency code, currency
+            conversion, an application's own work across several currencies.
+            An application's amounts are NOT held in it: an amount of the
+            application's one currency is Rsx_Money, the framework's exact
+            money type and column kind (rsx:man money), identical in PHP and
+            JavaScript. Reach for brick/money only when a figure must carry a
+            currency of its own.
 
-            NEVER do money arithmetic in a float. 0.1 + 0.2 is not 0.3 in any
-            language that has doubles, and the error compounds across a line-item
-            loop until an invoice is off by a cent that nobody can find.
-
-                use Brick\Money\Money;
-                use Brick\Math\RoundingMode;
-
-                $line  = Money::of('19.99', 'USD')->multipliedBy(3);
-                $total = $line->plus(Money::of('4.95', 'USD'));
-                $each  = $total->dividedBy(7, RoundingMode::HalfUp);
-
-                echo $total->getAmount();      // exact decimal, never a float
-                echo $total->formatTo('en_US'); // "$64.92"
+            NEVER do money arithmetic in a float, in either. 0.1 + 0.2 is not
+            0.3 in any language that has doubles, and the error compounds
+            across a line-item loop until an invoice is off by a cent that
+            nobody can find.
 
             brick/math comes with it and is the exact-decimal type underneath
             (BigDecimal, BigInteger, BigRational). It is not separately exposed;
             reach for it through brick/money.
-
-            Worked example:
-            system/app/RSpade/resource/reference_app/lib/formatters.php
-            (Formatters::currency).
 
         phpoffice/phpspreadsheet
             Reading and writing real spreadsheets - xlsx, xls, ods, and CSV when
@@ -320,3 +310,4 @@ SEE ALSO
     npm                  JavaScript packages and Asset Bundles
     crud                 DataGrid_Abstract::build_csv and the export pattern
     csv_exports          league/csv in both directions, and the template's export
+    money                Rsx_Money, the exact amount type and column kind

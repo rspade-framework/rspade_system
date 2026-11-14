@@ -908,9 +908,6 @@ return [
             // Enable Babel transformation for decorators
             'transform_enabled' => env('BABEL_TRANSFORM', true),
 
-            // Target environment for transformation (modern, es6, es5)
-            'target' => env('BABEL_TARGET', 'modern'),
-
             // There is no cache_dir here. Every per-source-file derived cache lives under
             // tmp/derived/<namespace>/ and is addressed through
             // App\RSpade\Core\Cache\File_Content_Cache - one location, not a setting.
@@ -918,8 +915,6 @@ return [
 
         // Enable decorator support (parsed and optionally transformed)
         'decorators' => true,
-
-        // Note: Private fields (#private) use native browser support, not transpiled
 
         // How long to wait for a spawned node RPC helper to answer its first ping.
         //
@@ -3022,6 +3017,20 @@ return [
 
         // Default duration for new events in minutes (for Schedule_Input component)
         'default_duration' => 60,
+    ],
+
+    'money' => [
+        // How Rsx_Money::format() prints and Rsx_Money::from_text() reads an amount, identically in
+        // PHP and the browser (shipped as rsxapp.money_display). One currency per application.
+        // Application behaviour: set it in rsx/resource/config/rsx.php. Validated when first read;
+        // an invalid value throws naming the key.
+        'display' => [
+            'symbol' => '$',                // printed and accepted; '' = no symbol
+            'symbol_position' => 'before',  // 'before' ($1.00) or 'after' (1,00 EUR-style)
+            'symbol_spacing' => false,      // true: one U+00A0 between symbol and number
+            'decimal_separator' => '.',     // '.' or ','
+            'group_separator' => ',',       // ',' '.' "'" ' ' "\u{00A0}" "\u{202F}" or '' (no grouping)
+        ],
     ],
 
     /*

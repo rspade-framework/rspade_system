@@ -2,7 +2,7 @@ OVERVIEW
 
 All RSX models must extend Rsx_Model_Abstract, which provides:
 - Column declarations: one $columns property says what each column holds
-  (enum, text type, type ref, secret, revision exclusion, derived value)
+  (enum, text type, type ref, money, secret, revision exclusion, derived value)
 - Mass assignment prevention (explicit field assignment only)
 - Eager loading prevention (explicit queries only)
 - Ajax ORM fetch() system
@@ -25,6 +25,7 @@ property, one entry per column:
         ]],
         'description'   => ['text_type' => Rich_Text::class],
         'fileable_type' => ['type_ref' => true],
+        'budget'        => ['money' => true],
         'api_secret'    => ['never_export' => true],
         'view_count'    => ['revision_exclude' => true],
         'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id']],
@@ -35,16 +36,17 @@ Keys of an entry (anything else is an error):
     enum              integer-keyed map of value => properties (ENUM COLUMNS)
     text_type         class name of an Rsx_Text_Abstract subclass (TEXT TYPE COLUMNS)
     type_ref          true - the _type column of a polymorphic pair (TYPE REF COLUMNS)
+    money             true - a DECIMAL(p,2) amount read as Rsx_Money (MONEY COLUMNS)
     never_export      true - never sent in any payload (NEVER EXPORT COLUMNS)
     revision_exclude  true - not recorded in revision history (REVISION EXCLUDED COLUMNS)
     derived, from     derive method + this record's source columns (DERIVED COLUMNS)
 
 Rules of the grammar:
 - A flag is the literal true or absent; false is an error.
-- At most one of enum, text_type, type_ref per column. never_export combines
-  with anything; revision_exclude with anything except derived (a derived
-  column is never recorded already). A derived column may also be an enum,
-  text type or type ref: its computed value is assigned through
+- At most one of enum, text_type, type_ref, money per column. never_export
+  combines with anything; revision_exclude with anything except derived (a
+  derived column is never recorded already). A derived column may also be an
+  enum, text type, type ref or money: its computed value is assigned through
   setAttribute(), so the kind applies.
 - derived and from appear together.
 - 'column' => [] declares an explicitly plain column.
@@ -85,11 +87,16 @@ declare nothing, and a secret listed there would be sent to every browser.
        non-static method of the class taking no required argument, a from list
        naming the column itself, derived beside revision_exclude, derived
        columns depending on each other in a cycle, a replacing entry dropping
-       never_export or an audit type_ref, and the property names above.
+       never_export or an audit type_ref, a $casts entry on a money column,
+       and the property names above.
        MODEL-COLUMNS-02 (rsx:check): a direct Model::$columns read.
        MODEL-DERIVED-01 (rsx:check): an assignment of a derived column.
        MODEL-ENUM-01 (rsx:check): a declared or from column missing from the
        table.
+       MODEL-MONEY-01 (rsx:check): a money column that is not DECIMAL(p,2)
+       with p at most 18.
+       MODEL-DECIMAL-01 (rsx:check): a DECIMAL, FLOAT or DOUBLE column of the
+       model's table with no $columns entry (money, or [] for not money).
 
    Reading the declaration
        Model::$columns answers ONE class's declaration and misses everything
@@ -103,6 +110,8 @@ declare nothing, and a secret listed there would be sent to every browser.
        text_type_columns()           column => text type class
        text_type_or_null('col')      the column's text type, or null
        type_ref_columns()            every type-ref column, audit ones included
+       money_columns()               every money column
+       is_money_column('col')        whether the column is declared money
        never_exported_columns()      every never_export column
        revision_excluded_columns()   revision_exclude columns plus every
                                      derived column
@@ -110,7 +119,7 @@ declare nothing, and a secret listed there would be sent to every browser.
                                      in dependency order
 
        All are static and memoized per class. JavaScript: the enum helpers
-       below, and Model.is_derived_column('col').
+       below, Model.is_derived_column('col') and Model.is_money_column('col').
 
    Not declared in $columns
        Dates, datetimes and TINYINT(1) booleans are read from the live schema
@@ -131,13 +140,15 @@ declare nothing, and a secret listed there would be sent to every browser.
        * @property int $status enum: STATUS_PENDING, STATUS_DONE (also $status__label and the other $status__* properties)
        * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description text type: a value object, filtered on write
        * @property string $taskable_type type ref: a model class name, stored as a type-ref id
+       * @property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float
        * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
        * @property string $password never exported to the browser
        * @property string $last_seen_at not recorded in revisions
        * @property string $hour_estimate decimal
 
-       DECIMAL and JSON columns without an array cast read as strings (noted
-       decimal / json), TINYINT(1) as bool, dates and datetimes as strings.
+       A money column reads as Rsx_Money; any other DECIMAL, and a JSON column
+       without an array cast, reads as a string (noted decimal / json);
+       TINYINT(1) as bool; dates and datetimes as strings.
 
 ENUM COLUMNS
 
@@ -215,6 +226,29 @@ readers the encoding needs, and a JavaScript class of the
 same name naming the PRINTER and EDITOR components. The contract, two worked
 types and the security design are rsx:man text_types; the how-to is skill
 rspade:text-types.
+
+MONEY COLUMNS
+
+A DECIMAL(p,2) column holding an amount of money (p at most 18) is declared
+money:
+
+    public static $columns = [
+        'budget'        => ['money' => true],
+        'hour_estimate' => [],                  // a DECIMAL that is not money
+    ];
+
+It reads as an Rsx_Money (or null): an exact, immutable amount that is never a
+float, compared and computed only through its methods (equals(), add(),
+multiply($factor, $rounding), ...) and printed by plain interpolation
+(<%= project.budget %>). Assignment takes an Rsx_Money, a decimal string, an
+int of whole units or the {__MONEY} envelope and refuses a float, typed text
+and an amount beyond the column's limit (money_limit('col')). It travels to
+JavaScript and the external API as {"__MONEY": "1234.56"}, is edited by
+<Money_Input>, totalled by sum_money('col') and read from a submission by
+Model::money_from_submitted('col', $value). No $casts entry may name it. Every
+DECIMAL, FLOAT and DOUBLE column is declared money or not money
+(MODEL-DECIMAL-01). The contract is rsx:man money; the how-to is skill
+rspade:money.
 
 TYPE REF COLUMNS
 
@@ -1099,6 +1133,7 @@ SEE ALSO
 rsx:man model_fetch - Ajax ORM fetch system
 rsx:man derived_columns - Derived columns: declaration, save, rederive(), migrations
 rsx:man text_types - Text type columns
+rsx:man money - Money columns and Rsx_Money
 rsx:man polymorphic - Type-ref columns and polymorphic relations
 rsx:man class_override - Overriding a core model's column declarations
 rsx:man model_normalization - Database normalization process

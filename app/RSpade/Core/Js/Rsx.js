@@ -173,7 +173,7 @@ class Rsx {
     // underlining links to unimplemented # routes
     static trigger_refresh() {
         // Use Rsx.on('refresh', callback); to register a callback for refresh
-        this.trigger('refresh');
+        Rsx.trigger('refresh');
     }
 
     /**

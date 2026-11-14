@@ -69,7 +69,9 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
   - `_add_watch_target()` - registers a watch DIRECTORY (recursive scan) or FILE
   - `_bucket_for_path()` - the ONE vendor/app decision
   - `_split_vendor_app()` - buckets `bundle_files`; watch entries are already bucketed
-  - `_get_cache_key()` - per-bucket content hash over bundle files + watch files
+  - `_get_cache_key()` - per-bucket content hash over bundle files + watch files, plus the JS
+    transform toolchain fingerprint (`Js_Transformer::toolchain_fingerprint()`) while the
+    transform is on, so a changed transform recompiles both buckets
   - `_localize_css_externals()` - runs each compiled CSS output through the mirror
   - `_prepare_cdn_assets()` - mirrors every `cdn_assets` entry and names its `/_vendor/` file
   - `_get_model_stubs_for_js_classes()` - resolves each JS model class's generated stub from

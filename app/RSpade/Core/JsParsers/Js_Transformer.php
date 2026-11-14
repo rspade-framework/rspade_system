@@ -2,8 +2,8 @@
 /**
  * JavaScript Transformer using Babel
  *
- * Transpiles modern JavaScript features (decorators) to compatible code.
- * Private fields (#private) are NOT transpiled - native browser support is used.
+ * Transpiles modern JavaScript (decorators, class fields - private members included -
+ * optional chaining, nullish coalescing) for the one browser target every bundle is built for.
  *
  * CODING CONVENTION:
  * This file follows the coding convention where variable_names and function_names
@@ -49,12 +49,11 @@ class Js_Transformer
      * Transform a JavaScript file using Babel
      *
      * @param string $file_path Path to JavaScript file
-     * @param string $target Target environment (modern, es6, es5)
      * @return string Transformed JavaScript code
      */
-    public static function transform(string $file_path, string $target = 'modern'): string
+    public static function transform(string $file_path): string
     {
-        return file_get_contents(static::transform_to_file($file_path, $target));
+        return file_get_contents(static::transform_to_file($file_path));
     }
 
     /**
@@ -66,16 +65,15 @@ class Js_Transformer
      * `tmp/babel_<md5 of path>.js` scratch files that nothing ever invalidated.
      *
      * @param string $file_path Path to JavaScript file
-     * @param string $target Target environment (modern, es6, es5)
      * @return string Absolute path to the transformed file
      */
-    public static function transform_to_file(string $file_path, string $target = 'modern'): string
+    public static function transform_to_file(string $file_path): string
     {
         // The VARIANT carries everything the transform depends on beyond the source bytes:
-        // the target, and the toolchain fingerprint (transformer script + vendored decorator
-        // fork + @babel/core version), so swapping any of them invalidates every entry
+        // the toolchain fingerprint (transformer script + vendored decorator fork +
+        // @babel/core version), so swapping any of them invalidates every entry
         // automatically rather than serving the old tool's work.
-        $variant = '_' . $target . '_' . static::_toolchain_fingerprint();
+        $variant = '_' . static::toolchain_fingerprint();
 
         // The mtime guard is kept from the pre-consolidation scheme: a cache never gets
         // weaker in a move.
@@ -85,7 +83,7 @@ class Js_Transformer
             return File_Content_Cache::path(self::CACHE_NAMESPACE, $file_path, $variant, 'js');
         }
 
-        $result = static::_transform_without_cache($file_path, $target);
+        $result = static::_transform_without_cache($file_path);
 
         return File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, $variant, 'js', $result);
     }
@@ -95,10 +93,9 @@ class Js_Transformer
      *
      * @param string $js_code JavaScript code to transform
      * @param string $file_path Original file path (for hash generation)
-     * @param string $target Target environment (modern, es6, es5)
      * @return string Transformed JavaScript code
      */
-    public static function transform_string(string $js_code, string $file_path, string $target = 'modern'): string
+    public static function transform_string(string $js_code, string $file_path): string
     {
         // Create temporary file
         $temp_file = tempnam(sys_get_temp_dir(), 'babel_');
@@ -106,7 +103,7 @@ class Js_Transformer
 
         try {
             // Transform using temporary file
-            $result = static::_transform_without_cache($temp_file, $target, $file_path);
+            $result = static::_transform_without_cache($temp_file, $file_path);
             return $result;
         } finally {
             // Clean up temporary file
@@ -125,26 +122,23 @@ class Js_Transformer
      *
      * @param string $copy_path The derived file to transform
      * @param string $original_path The source file it was derived from
-     * @param string $target Target environment (modern, es6, es5)
      * @return string Transformed JavaScript code
      */
-    public static function transform_derived_copy(string $copy_path, string $original_path, string $target = 'modern'): string
+    public static function transform_derived_copy(string $copy_path, string $original_path): string
     {
-        return static::_transform_without_cache($copy_path, $target, $original_path);
+        return static::_transform_without_cache($copy_path, $original_path);
     }
 
     /**
      * Transform without using cache
      *
      * @param string $file_path Path to file to transform
-     * @param string $target Target environment
      * @param string|null $original_path Original file path for hash (if using temp file)
      * @return string Transformed code
      */
-    protected static function _transform_without_cache(string $file_path, string $target, ?string $original_path = null): string
+    protected static function _transform_without_cache(string $file_path, ?string $original_path = null): string
     {
-        // Use RPC server for transformation
-        return static::_transform_via_rpc($file_path, $target, $original_path);
+        return static::_transform_via_rpc($file_path, $original_path);
     }
 
     /**
@@ -154,17 +148,13 @@ class Js_Transformer
      * every cached transform:
      *   - the vendored decorator fork bundle (its content hash)
      *   - the @babel/core version string (from its package.json)
-     *   - the node service's babel module (its content hash)
-     *   - the one-shot transformer script (its content hash)
+     *   - the node service's babel module (its content hash), which carries the babel
+     *     options and the browser target
      *
-     * BOTH transform implementations are folded in, and they must stay that way: they
-     * carry the SAME babel options, so an edit to either changes what a transform
-     * produces. Hashing only one of them means editing the other silently serves
-     * every file from a cache built by the old options.
-     *
-     * This is the CACHE's fingerprint: it invalidates cached BYTES ON DISK. The service
-     * itself needs no such check - each PHP process spawns its own daemon from current disk
-     * and nobody ever inherits one.
+     * This is the CACHE's fingerprint: it invalidates cached BYTES ON DISK - the transform
+     * cache here, and the compiled bundles, whose cache key folds it in
+     * (BundleCompiler::_get_cache_key()). The service itself needs no such check - each PHP
+     * process spawns its own daemon from current disk and nobody ever inherits one.
      *
      * Computed once per process (static cache). Files are small / read once, so this is
      * cheap. Missing pieces contribute a marker rather than throwing here -- the transform
@@ -172,7 +162,7 @@ class Js_Transformer
      *
      * @return string 12-char hex fingerprint
      */
-    protected static function _toolchain_fingerprint(): string
+    public static function toolchain_fingerprint(): string
     {
         if (static::$toolchain_fingerprint !== null) {
             return static::$toolchain_fingerprint;
@@ -230,11 +220,10 @@ class Js_Transformer
      * what starts the service - a fully cached bundle compile never spawns node at all.
      *
      * @param string $file_path Path to file to transform
-     * @param string $target Target environment
      * @param string|null $original_path Original file path for hash (if using temp file)
      * @return string Transformed code
      */
-    protected static function _transform_via_rpc(string $file_path, string $target, ?string $original_path = null): string
+    protected static function _transform_via_rpc(string $file_path, ?string $original_path = null): string
     {
         // Use original path for hash generation if provided (for temp files).
         // Reduce it to a checkout-RELATIVE path: the transformer derives a private-
@@ -249,7 +238,6 @@ class Js_Transformer
             'files' => [
                 [
                     'path' => $file_path,
-                    'target' => $target,
                     'hash_path' => $hash_path
                 ]
             ]

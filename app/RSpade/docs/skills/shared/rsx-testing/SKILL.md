@@ -47,7 +47,7 @@ $e = static::__assert_throws(\RuntimeException::class, function () {
 }, 'expects a date');
 ```
 
-Assertions are strict (`===`); use `__assert_equals_approx()` for floats and money. `__skip()` is for a genuinely inapplicable environment (a missing optional binary), **never** to silence a failure.
+Assertions are strict (`===`); use `__assert_equals_approx()` for floats. An `Rsx_Money` is exact: assert `$m->to_decimal()` with `__assert_equals()`. `__skip()` is for a genuinely inapplicable environment (a missing optional binary), **never** to silence a failure.
 
 ## Time in a test
 

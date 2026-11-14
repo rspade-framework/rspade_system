@@ -63,6 +63,12 @@ THE TEMPLATE'S EXPORT
         A CSV written for another PROGRAM to read back may leave it off, since
         the prefix becomes part of the value.
 
+        A money column (rsx:man money) is an Rsx_Money, which refuses to become
+        a string: its cell is $record->budget?->to_decimal() (the exact
+        "1234.50", machine-readable) or ->format() for a person. A negative
+        amount's decimal begins with '-', so the formula guard prefixes it like
+        any such string.
+
     system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
         Frontend_Clients_Controller::export_csv - the endpoint. It resolves the
         grid selection (apply_selection), walks the WHOLE of it one keyset page at

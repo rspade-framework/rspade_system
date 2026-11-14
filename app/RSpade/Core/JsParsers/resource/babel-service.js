@@ -4,13 +4,13 @@
  * Transforms modern JavaScript (decorators, class properties) into the browser-compatible
  * code RSpade concatenates into a shared-scope, non-module bundle. The transformation
  * logic below - the generated-name prefixing, the fail-closed decorator class-binding
- * assertion, the target presets - is the whole of the framework's transform pipeline.
+ * assertion, the browser targets - is the whole of the framework's transform pipeline.
  *
  * Methods: babel.transform
  *
  * The framework's js_transform tests require this file directly for its exported
- * internals (transformFileContent, createPrefixPlugin, targetPresets,
- * preprocessDecorators), which is why they are exported alongside the handler.
+ * internals (transformFileContent, createPrefixPlugin, preprocessDecorators), which is why
+ * they are exported alongside the handler.
  *
  * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
@@ -87,28 +87,13 @@ function preprocessDecorators(content, filePath) {
     return processed;
 }
 
-// Target environment presets
-const targetPresets = {
-    modern: {
-        targets: {
-            chrome: '90',
-            firefox: '88',
-            safari: '14',
-            edge: '90'
-        }
-    },
-    es6: {
-        targets: {
-            chrome: '60',
-            firefox: '60',
-            safari: '10.1',
-            edge: '15'
-        }
-    },
-    es5: {
-        targets: {
-            ie: '11'
-        }
+// The browsers every bundle is transformed for - the one target of the transform.
+const BROWSER_TARGETS = {
+    targets: {
+        chrome: '90',
+        firefox: '88',
+        safari: '14',
+        edge: '90'
     }
 };
 
@@ -253,19 +238,29 @@ function createPrefixPlugin(fileHash) {
                     }
                 }
 
-                // Second pass: rename all references
+                // Second pass: rename each generated binding and every reference to it.
+                //
+                // The class-properties transform inserts the holders of private members -
+                // `var _x = new WeakMap()` for an instance `#x`, `var _X = {_: ...}` for a
+                // `static #X` - as top-level declarations it never registers in program
+                // scope. A scope rename only moves a REGISTERED binding, so without the
+                // re-crawl those holders keep their bare names, and two concatenated files
+                // that both declare `static #X` share one `var _X`: the later file's value
+                // silently wins for both classes. Re-crawling first makes every top-level
+                // declaration a binding, so every generated name is prefixed.
                 if (generatedNames.size > 0) {
-                    program.traverse({
-                        Identifier(idPath) {
-                            if (generatedNames.has(idPath.node.name)) {
-                                // Don't rename if it's already prefixed
-                                if (!idPath.node.name.startsWith(`_${fileHash}`)) {
-                                    const newName = `_${fileHash}${idPath.node.name}`;
-                                    idPath.scope.rename(idPath.node.name, newName);
-                                }
-                            }
+                    program.scope.crawl();
+                    for (const name of generatedNames) {
+                        if (name.startsWith(`_${fileHash}`)) continue;
+                        if (!program.scope.hasOwnBinding(name)) {
+                            throw new Error(
+                                `Generated top-level name "${name}" in ${file.opts.filename} has no ` +
+                                `program-scope binding after a scope crawl, so it cannot be ` +
+                                `prefixed and would be shared by every bundled file that declares it.`
+                            );
                         }
-                    });
+                        program.scope.rename(name, `_${fileHash}${name}`);
+                    }
                 }
 
                 // FAIL-CLOSED: every decorated class declaration must still bind its bare name
@@ -296,12 +291,11 @@ function createPrefixPlugin(fileHash) {
  * Transform a single JavaScript file
  * @param {string} content - File content
  * @param {string} filePath - File path for source mapping
- * @param {string} target - Target environment (modern, es6, es5)
  * @param {string} hashPath - Path to use for hash generation
  * @param {boolean} jsonOutput - Whether to output JSON format
  * @returns {object} Transform result or error object
  */
-function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
+function transformFileContent(content, filePath, hashPath, jsonOutput) {
     // Preprocess content before transformation
     content = preprocessDecorators(content, filePath);
 
@@ -339,7 +333,7 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
                 supportsDynamicImport: true,
             },
             presets: [
-                ['@babel/preset-env', targetPresets[target] || targetPresets.modern]
+                ['@babel/preset-env', BROWSER_TARGETS]
             ],
             plugins: [
                 // Apply custom prefixing plugin first
@@ -350,12 +344,13 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
                 // for decorated class declarations with static members. See
                 // resource/babel-plugin-decorators/README.md. Options are identical to the
                 // upstream plugin's.
-                // Note: We're NOT transforming private fields - native support only
                 [require('./babel-plugin-decorators'), {
                     version: '2023-11',
                 }],
 
-                // Transform class properties
+                // Transform class fields, public and private (`#x`, `static #x`) alike: each
+                // private member becomes a generated top-level holder, which the prefix
+                // plugin above renames per file.
                 '@babel/plugin-transform-class-properties',
 
                 // Transform optional chaining and nullish coalescing
@@ -412,18 +407,17 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
 
 module.exports = {
     /**
-     * {files: [{path, target, hash_path}, ...]} -> {results: {<path>: <transform result>}}
+     * {files: [{path, hash_path}, ...]} -> {results: {<path>: <transform result>}}
      */
     transform(request) {
         const results = {};
 
         for (const file of request.files) {
-            const fileTarget = file.target || 'modern';
             const fileHashPath = file.hash_path || file.path;
 
             try {
                 const content = fs.readFileSync(file.path, 'utf8');
-                results[file.path] = transformFileContent(content, file.path, fileTarget, fileHashPath, true);
+                results[file.path] = transformFileContent(content, file.path, fileHashPath, true);
             } catch (error) {
                 results[file.path] = {
                     status: 'error',
@@ -441,6 +435,5 @@ module.exports = {
     // Exported for the framework's js_transform tests - not part of the RPC surface.
     transformFileContent,
     createPrefixPlugin,
-    targetPresets,
     preprocessDecorators
 };

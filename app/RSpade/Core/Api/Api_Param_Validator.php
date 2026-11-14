@@ -3,6 +3,8 @@
 namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\UploadedFile;
+use App\RSpade\Core\Database\Money\Rsx_Money;
+use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\RequestHistory\Request_History;
 use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
@@ -23,6 +25,10 @@ use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
  *   begins with `{`, parses as a JSON object and carries a `__TEXT` key is an ENCODED text
  *   value and becomes the same typeless Rsx_Text_Request_Value the Ajax boundary produces,
  *   under the same shape check - a malformed one is a per-field error, never plain text;
+ * - reads a type:'money' param with Rsx_Money::_wrap_api_param(): a plain decimal string
+ *   ("1234.50"), the {"__MONEY": "..."} envelope as a JSON object or JSON-encoded into a
+ *   string, a JSON int of whole units or a JSON float; null or blank is null. The endpoint receives an Rsx_Money
+ *   (or null), and an Rsx_Money_Exception is the field's error with its own message;
  * - validates a type:'file' param, which is NOT coerced: it must arrive as an UploadedFile
  *   (a multipart part the dispatcher merged in) and that upload must have succeeded. The
  *   UploadedFile instance is passed through to the endpoint untouched.
@@ -91,7 +97,12 @@ class Api_Param_Validator
                 }
                 // Absent optional param: apply default only when one was declared.
                 if (array_key_exists('default', $spec) && $spec['default'] !== null) {
-                    $params[$name] = $spec['default'];
+                    // A money default is a literal in the attribute ('0.00'); the endpoint
+                    // receives it as the Rsx_Money a submitted value would be. A default that
+                    // is not an amount throws: the declaration is wrong, not the request.
+                    $params[$name] = $spec['type'] === 'money'
+                        ? Rsx_Money::_wrap_api_param($spec['default'])
+                        : $spec['default'];
                 }
                 continue;
             }
@@ -141,6 +152,18 @@ class Api_Param_Validator
             }
 
             return ['ok' => true, 'value' => $value];
+        }
+
+        // An amount of money: never coerced through a float. Read before the compound-value
+        // guard below, because the {"__MONEY": "..."} envelope may arrive as a JSON object in
+        // a JSON body - exactly what a read of the value returned. The refusal's message is
+        // written for the caller (This is not an amount of money., at most two places).
+        if ($type === 'money') {
+            try {
+                return ['ok' => true, 'value' => Rsx_Money::_wrap_api_param($value)];
+            } catch (Rsx_Money_Exception $e) {
+                return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
+            }
         }
 
         // Compound values never satisfy a scalar param. An UploadedFile is named explicitly
@@ -212,7 +235,7 @@ class Api_Param_Validator
                 return ['ok' => false, 'value' => null];
 
             default:
-                // Unreachable: the scan restricts types to the four above.
+                // Unreachable: the scan restricts types to the ones handled above.
                 shouldnt_happen("Api_Param_Validator: unsupported param type '{$type}'");
         }
     }

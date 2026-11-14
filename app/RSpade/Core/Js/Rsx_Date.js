@@ -40,9 +40,9 @@ class Rsx_Date {
         }
 
         // Already a valid date string
-        if (typeof input === 'string' && this.DATE_PATTERN.test(input)) {
+        if (typeof input === 'string' && Rsx_Date.DATE_PATTERN.test(input)) {
             // Validate it's a real date
-            if (this._is_valid_date_string(input)) {
+            if (Rsx_Date._is_valid_date_string(input)) {
                 return input;
             }
             return null;
@@ -88,11 +88,11 @@ class Rsx_Date {
             return false;
         }
 
-        if (!this.DATE_PATTERN.test(input)) {
+        if (!Rsx_Date.DATE_PATTERN.test(input)) {
             return false;
         }
 
-        return this._is_valid_date_string(input);
+        return Rsx_Date._is_valid_date_string(input);
     }
 
     /**
@@ -117,7 +117,7 @@ class Rsx_Date {
      * @returns {string}
      */
     static now() {
-        return this.today();
+        return Rsx_Date.today();
     }
 
     /**
@@ -152,7 +152,7 @@ class Rsx_Date {
      * @returns {string}
      */
     static format(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return '';
         }
@@ -175,7 +175,7 @@ class Rsx_Date {
      * @returns {string}
      */
     static format_iso(date) {
-        return this.parse(date) || '';
+        return Rsx_Date.parse(date) || '';
     }
 
     // =========================================================================
@@ -189,11 +189,11 @@ class Rsx_Date {
      * @returns {boolean}
      */
     static is_today(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return false;
         }
-        return parsed === this.today();
+        return parsed === Rsx_Date.today();
     }
 
     /**
@@ -203,11 +203,11 @@ class Rsx_Date {
      * @returns {boolean}
      */
     static is_past(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return false;
         }
-        return parsed < this.today();
+        return parsed < Rsx_Date.today();
     }
 
     /**
@@ -217,11 +217,11 @@ class Rsx_Date {
      * @returns {boolean}
      */
     static is_future(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return false;
         }
-        return parsed > this.today();
+        return parsed > Rsx_Date.today();
     }
 
     /**
@@ -233,8 +233,8 @@ class Rsx_Date {
      * @returns {number}
      */
     static diff_days(date1, date2) {
-        const d1 = this.parse(date1);
-        const d2 = this.parse(date2);
+        const d1 = Rsx_Date.parse(date1);
+        const d2 = Rsx_Date.parse(date2);
 
         if (!d1 || !d2) {
             return 0;
@@ -253,12 +253,12 @@ class Rsx_Date {
      * @returns {string}
      */
     static relative(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return '';
         }
 
-        const days = this.diff_days(this.today(), parsed);
+        const days = Rsx_Date.diff_days(Rsx_Date.today(), parsed);
 
         if (days === 0) {
             return 'Today';
@@ -285,7 +285,7 @@ class Rsx_Date {
      * @returns {string|null} "YYYY-MM-DD" or null if invalid input
      */
     static add_days(date, days) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return null;
         }
@@ -310,7 +310,7 @@ class Rsx_Date {
      * @returns {string|null} "YYYY-MM-DD" or null if invalid input
      */
     static start_of_week(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return null;
         }
@@ -334,7 +334,7 @@ class Rsx_Date {
      * @returns {string|null} "YYYY-MM-DD" or null if invalid input
      */
     static end_of_week(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return null;
         }
@@ -358,7 +358,7 @@ class Rsx_Date {
      * @returns {string|null} "YYYY-MM-DD" or null if invalid input
      */
     static start_of_month(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return null;
         }
@@ -374,7 +374,7 @@ class Rsx_Date {
      * @returns {string|null} "YYYY-MM-DD" or null if invalid input
      */
     static end_of_month(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) {
             return null;
         }
@@ -395,7 +395,7 @@ class Rsx_Date {
      * @returns {boolean}
      */
     static is_weekend(date) {
-        const dow = this.dow(date);
+        const dow = Rsx_Date.dow(date);
         if (dow === null) {
             return false;
         }
@@ -409,7 +409,7 @@ class Rsx_Date {
      * @returns {boolean}
      */
     static is_weekday(date) {
-        const dow = this.dow(date);
+        const dow = Rsx_Date.dow(date);
         if (dow === null) {
             return false;
         }
@@ -425,7 +425,7 @@ class Rsx_Date {
      * Returns null if invalid, throws on datetime input
      */
     static _to_js_date(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         if (!parsed) return null;
         const [year, month, day] = parsed.split('-').map(Number);
         return new Date(year, month - 1, day);
@@ -435,7 +435,7 @@ class Rsx_Date {
      * Get day of month (1-31)
      */
     static day(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         return parsed ? parseInt(parsed.split('-')[2], 10) : null;
     }
 
@@ -443,14 +443,14 @@ class Rsx_Date {
      * Get day of week (0=Sunday, 6=Saturday)
      */
     static dow(date) {
-        return this._to_js_date(date)?.getDay() ?? null;
+        return Rsx_Date._to_js_date(date)?.getDay() ?? null;
     }
 
     /**
      * Get full day name ("Monday", "Tuesday", etc.)
      */
     static dow_human(date) {
-        const d = this._to_js_date(date);
+        const d = Rsx_Date._to_js_date(date);
         return d ? new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(d) : '';
     }
 
@@ -458,7 +458,7 @@ class Rsx_Date {
      * Get short day name ("Mon", "Tue", etc.)
      */
     static dow_short(date) {
-        const d = this._to_js_date(date);
+        const d = Rsx_Date._to_js_date(date);
         return d ? new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(d) : '';
     }
 
@@ -466,7 +466,7 @@ class Rsx_Date {
      * Get month (1-12)
      */
     static month(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         return parsed ? parseInt(parsed.split('-')[1], 10) : null;
     }
 
@@ -474,7 +474,7 @@ class Rsx_Date {
      * Get full month name ("January", "February", etc.)
      */
     static month_human(date) {
-        const d = this._to_js_date(date);
+        const d = Rsx_Date._to_js_date(date);
         return d ? new Intl.DateTimeFormat('en-US', { month: 'long' }).format(d) : '';
     }
 
@@ -482,7 +482,7 @@ class Rsx_Date {
      * Get short month name ("Jan", "Feb", etc.)
      */
     static month_human_short(date) {
-        const d = this._to_js_date(date);
+        const d = Rsx_Date._to_js_date(date);
         return d ? new Intl.DateTimeFormat('en-US', { month: 'short' }).format(d) : '';
     }
 
@@ -490,7 +490,7 @@ class Rsx_Date {
      * Get year (e.g., 2025)
      */
     static year(date) {
-        const parsed = this.parse(date);
+        const parsed = Rsx_Date.parse(date);
         return parsed ? parseInt(parsed.split('-')[0], 10) : null;
     }
 }

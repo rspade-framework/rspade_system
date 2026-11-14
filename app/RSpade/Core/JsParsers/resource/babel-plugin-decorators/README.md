@@ -104,7 +104,7 @@ then bundled with esbuild. To rebuild (e.g. after a Babel upgrade):
          --outfile=/var/www/html/system/app/RSpade/Core/JsParsers/resource/babel-plugin-decorators/index.js
 
 5. Bump `version` and `rspade.patch_revision` in `package.json`, then run the
-   `js_transform` framework test concern to confirm the binding is emitted at every target.
+   `js_transform` framework test concern to confirm the binding is emitted.
 
 ## Babel 8 layout note
 

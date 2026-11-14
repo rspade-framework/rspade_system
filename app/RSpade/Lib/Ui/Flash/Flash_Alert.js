@@ -73,11 +73,11 @@ class Flash_Alert {
      * @private
      */
     static _init() {
-        if (this._container) return;
+        if (Flash_Alert._container) return;
 
         // Create floating alert container
-        this._container = $('<div id="floating-alert-container" class="floating-alert-container"></div>');
-        $('body').append(this._container);
+        Flash_Alert._container = $('<div id="floating-alert-container" class="floating-alert-container"></div>');
+        $('body').append(Flash_Alert._container);
 
         // Register page navigation handler (only once)
         window.addEventListener('beforeunload', () => {
@@ -93,15 +93,15 @@ class Flash_Alert {
      */
     static _cleanup_for_navigation() {
         console.log('[Flash_Alert] Cleaning up for navigation:', {
-            working_queue_before: this._queue.length,
-            persistence_queue: this._persistence_queue.length,
+            working_queue_before: Flash_Alert._queue.length,
+            persistence_queue: Flash_Alert._persistence_queue.length,
         });
 
-        if (this._container) {
+        if (Flash_Alert._container) {
             const now = Date.now();
 
             // Process each visible alert
-            this._container.find('.alert-wrapper').each((index, wrapper) => {
+            Flash_Alert._container.find('.alert-wrapper').each((index, wrapper) => {
                 const $wrapper = $(wrapper);
                 const message_text = $wrapper.find('.alert').text().trim();
 
@@ -141,10 +141,10 @@ class Flash_Alert {
         }
 
         // Clear working queue (stop processing new alerts)
-        this._queue = [];
+        Flash_Alert._queue = [];
 
         // Stop processing
-        this._is_in_progress = false;
+        Flash_Alert._is_in_progress = false;
 
         // DO NOT touch _persistence_queue or sessionStorage
         // They will be restored on the next page load
@@ -159,7 +159,7 @@ class Flash_Alert {
     static _save_queue_state() {
         const state = {
             last_updated: Date.now(),
-            messages: this._persistence_queue.map((item) => ({
+            messages: Flash_Alert._persistence_queue.map((item) => ({
                 message: item.message,
                 level: item.level,
                 timeout: item.timeout,
@@ -268,14 +268,14 @@ class Flash_Alert {
             console.log('[Flash_Alert] Messages after restoration:', {
                 to_show_immediately: messages_to_show_immediately.length,
                 to_queue: messages_to_queue.length,
-                persistence_queue_length: this._persistence_queue.length,
+                persistence_queue_length: Flash_Alert._persistence_queue.length,
             });
 
             // Re-save persistence queue to sessionStorage
-            this._save_queue_state();
+            Flash_Alert._save_queue_state();
 
             // Ensure container is initialized before displaying
-            this._init();
+            Flash_Alert._init();
 
             // Display fade-in complete messages immediately (no delay, no fade-in)
             // These are displayed outside the normal queue, so don't affect _is_in_progress
@@ -292,10 +292,10 @@ class Flash_Alert {
             });
 
             // Start queue processing for messages that still need fade-in
-            if (this._queue.length > 0) {
+            if (Flash_Alert._queue.length > 0) {
                 console.log('[Flash_Alert] Starting queue processing for messages needing fade-in');
-                if (!this._is_in_progress) {
-                    this._process_queue();
+                if (!Flash_Alert._is_in_progress) {
+                    Flash_Alert._process_queue();
                 }
             }
         } catch (e) {
@@ -309,8 +309,8 @@ class Flash_Alert {
      * @private
      */
     static _remove_from_persistence_queue(message, level) {
-        const original_count = this._persistence_queue.length;
-        this._persistence_queue = this._persistence_queue.filter((msg) => {
+        const original_count = Flash_Alert._persistence_queue.length;
+        Flash_Alert._persistence_queue = Flash_Alert._persistence_queue.filter((msg) => {
             return !(msg.level === level && msg.message === message);
         });
 
@@ -318,11 +318,11 @@ class Flash_Alert {
             message: message,
             level: level,
             original_count: original_count,
-            remaining_count: this._persistence_queue.length,
+            remaining_count: Flash_Alert._persistence_queue.length,
         });
 
         // Save updated persistence queue to sessionStorage
-        this._save_queue_state();
+        Flash_Alert._save_queue_state();
     }
 
     /**
@@ -330,11 +330,11 @@ class Flash_Alert {
      * @private
      */
     static _mark_fade_in_complete(message, level) {
-        const msg = this._persistence_queue.find((m) => m.level === level && m.message === message);
+        const msg = Flash_Alert._persistence_queue.find((m) => m.level === level && m.message === message);
         if (msg) {
             msg.fade_in_complete = true;
             console.log('[Flash_Alert] Marked fade-in complete:', { message, level });
-            this._save_queue_state();
+            Flash_Alert._save_queue_state();
         }
     }
 
@@ -343,11 +343,11 @@ class Flash_Alert {
      * @private
      */
     static _set_fadeout_start_time(message, level, fadeout_start_time) {
-        const msg = this._persistence_queue.find((m) => m.level === level && m.message === message);
+        const msg = Flash_Alert._persistence_queue.find((m) => m.level === level && m.message === message);
         if (msg) {
             msg.fadeout_start_time = fadeout_start_time;
             console.log('[Flash_Alert] Set fadeout start time:', { message, level, fadeout_start_time });
-            this._save_queue_state();
+            Flash_Alert._save_queue_state();
         }
     }
 
@@ -358,7 +358,7 @@ class Flash_Alert {
      * @param {string} position - Position: 'top' or 'bottom' (default: 'top')
      */
     static success(message, timeout = null, position = 'top') {
-        this._show(message, 'success', timeout, position);
+        Flash_Alert._show(message, 'success', timeout, position);
     }
 
     /**
@@ -368,7 +368,7 @@ class Flash_Alert {
      * @param {string} position - Position: 'top' or 'bottom' (default: 'top')
      */
     static error(message, timeout = null, position = 'top') {
-        this._show(message, 'danger', timeout, position);
+        Flash_Alert._show(message, 'danger', timeout, position);
     }
 
     /**
@@ -378,7 +378,7 @@ class Flash_Alert {
      * @param {string} position - Position: 'top' or 'bottom' (default: 'top')
      */
     static info(message, timeout = null, position = 'top') {
-        this._show(message, 'info', timeout, position);
+        Flash_Alert._show(message, 'info', timeout, position);
     }
 
     /**
@@ -388,7 +388,7 @@ class Flash_Alert {
      * @param {string} position - Position: 'top' or 'bottom' (default: 'top')
      */
     static warning(message, timeout = null, position = 'top') {
-        this._show(message, 'warning', timeout, position);
+        Flash_Alert._show(message, 'warning', timeout, position);
     }
 
     /**
@@ -400,7 +400,7 @@ class Flash_Alert {
      * @private
      */
     static _show(message, level = 'info', timeout = null, position = 'top') {
-        this._init();
+        Flash_Alert._init();
 
         // Add to BOTH queues with timestamp
         const message_data = {
@@ -411,15 +411,15 @@ class Flash_Alert {
             queued_at: Date.now(),
         };
 
-        this._queue.push(message_data);
-        this._persistence_queue.push(message_data);
+        Flash_Alert._queue.push(message_data);
+        Flash_Alert._persistence_queue.push(message_data);
 
         // Save persistence queue to sessionStorage
-        this._save_queue_state();
+        Flash_Alert._save_queue_state();
 
         // Process queue if not already processing
-        if (!this._is_in_progress) {
-            this._process_queue();
+        if (!Flash_Alert._is_in_progress) {
+            Flash_Alert._process_queue();
         }
     }
 
@@ -431,29 +431,29 @@ class Flash_Alert {
         const now = Date.now();
 
         console.log('[Flash_Alert] Processing queue:', {
-            working_queue_length: this._queue.length,
-            persistence_queue_length: this._persistence_queue.length,
-            is_in_progress: this._is_in_progress,
-            time_since_last: now - this._last_alert_time,
+            working_queue_length: Flash_Alert._queue.length,
+            persistence_queue_length: Flash_Alert._persistence_queue.length,
+            is_in_progress: Flash_Alert._is_in_progress,
+            time_since_last: now - Flash_Alert._last_alert_time,
         });
 
         // Display next alert if enough time has passed (2.5s minimum between alerts)
-        if (now - this._last_alert_time >= 2500 && this._queue.length > 0) {
+        if (now - Flash_Alert._last_alert_time >= 2500 && Flash_Alert._queue.length > 0) {
             // Remove from working queue (shift) but stays in persistence queue until fadeout
-            const alert_data = this._queue.shift();
+            const alert_data = Flash_Alert._queue.shift();
             console.log('[Flash_Alert] Displaying alert from queue:', alert_data);
-            console.log('[Flash_Alert] Working queue after shift:', this._queue.length);
-            this._display_alert(alert_data);
-            this._last_alert_time = now;
+            console.log('[Flash_Alert] Working queue after shift:', Flash_Alert._queue.length);
+            Flash_Alert._display_alert(alert_data);
+            Flash_Alert._last_alert_time = now;
         }
 
         // Schedule next queue check if more alerts pending
-        if (this._queue.length > 0) {
+        if (Flash_Alert._queue.length > 0) {
             console.log('[Flash_Alert] Scheduling next queue check in 2.5s');
             setTimeout(() => this._process_queue(), 2500);
         } else {
             console.log('[Flash_Alert] Working queue empty, stopping processing');
-            this._is_in_progress = false;
+            Flash_Alert._is_in_progress = false;
         }
     }
 
@@ -466,7 +466,7 @@ class Flash_Alert {
     static _display_alert({ message, level, timeout, position = 'top', fade_in_complete = false, fadeout_start_time = null }, is_immediate = false) {
         // Only set in_progress if this is a queued display (not an immediate restored alert)
         if (!is_immediate) {
-            this._is_in_progress = true;
+            Flash_Alert._is_in_progress = true;
         }
 
         console.log('[Flash_Alert] Displaying alert:', {
@@ -479,8 +479,9 @@ class Flash_Alert {
 
         // Check if an alert with the same message is already displayed
         let duplicate_found = false;
-        this._container.find('.alert-wrapper').each(function () {
-            const existing_message = $(this).find('.alert').text().trim();
+        Flash_Alert._container.find('.alert-wrapper').each(function () {
+            const $element = $(this);
+            const existing_message = $element.find('.alert').text().trim();
             if (existing_message === message) {
                 duplicate_found = true;
                 return false; // Break loop
@@ -516,10 +517,10 @@ class Flash_Alert {
         // Add to floating container based on position
         if (position === 'top') {
             // Top position - append (newer alerts below older ones)
-            this._container.css('justify-content', 'flex-start').append($alert_container);
+            Flash_Alert._container.css('justify-content', 'flex-start').append($alert_container);
         } else {
             // Bottom position - prepend (newer alerts above older ones)
-            this._container.css('justify-content', 'flex-end').prepend($alert_container);
+            Flash_Alert._container.css('justify-content', 'flex-end').prepend($alert_container);
         }
 
         // Fade in (skip if already completed fade-in on previous page)
@@ -567,7 +568,7 @@ class Flash_Alert {
             });
 
             // Store fadeout start time in persistence queue
-            this._set_fadeout_start_time(message, level, new_fadeout_start_time);
+            Flash_Alert._set_fadeout_start_time(message, level, new_fadeout_start_time);
         }
 
         // Track fadeout state on the wrapper element for hover pause/resume

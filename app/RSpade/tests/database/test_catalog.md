@@ -154,6 +154,7 @@ migrations row on the test database.
 | db-sc-05 | a cache hit reads nothing from the schema | forget, read, reset, read | one query on the miss; none from this process's copy; none on the hit | implemented | 2026-10-12 |
 | db-sc-06 | `reset()` drops everything this process derived | a derived memo and the state key memo | both gone | implemented | 2026-10-12 |
 | db-sc-07 | a schema change is seen once the state key moves, and not before | `ALTER TABLE` on a framework table, then a migrations row | invisible after the DDL alone; visible, with its length, after the row | implemented | 2026-10-12 |
+| db-sc-08 | a DECIMAL column carries its `precision` and `scale`; every other type carries null for both | `_tasks` against `SHOW COLUMNS` | the declared digits; nulls elsewhere | implemented | 2026-11-13 |
 
 ## Field_Length_Test (php, no DB writes) - the ONE column-length definition
 

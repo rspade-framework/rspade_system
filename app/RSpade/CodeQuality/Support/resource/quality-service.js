@@ -1,9 +1,10 @@
 /**
  * QUALITY subsystem of the node service (prefix `quality`).
  *
- * JavaScript linting (Babel parser), this-usage analysis (Acorn), raw-HTML-write detection,
- * breadcrumb-origin facts, raw navigation and code-opened tabs (Babel parser) for rsx:check
- * and the manifest-time rules.
+ * JavaScript linting, this-usage analysis, raw-HTML-write detection, breadcrumb-origin facts,
+ * raw navigation and code-opened tabs for rsx:check and the manifest-time rules. Every
+ * analysis parses with the Babel parser; the this-usage analysis asks it for an ESTree AST
+ * and walks that with acorn-walk.
  *
  * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html, quality.analyze_via,
  *          quality.analyze_navigation, quality.analyze_new_tab
@@ -17,7 +18,6 @@ const path = require('path');
 // Resolve to system/node_modules since that's where packages are installed
 const systemDir = path.resolve(__dirname, '../../../../..');
 const babelParser = require(path.join(systemDir, 'node_modules', '@babel', 'parser'));
-const acorn = require(path.join(systemDir, 'node_modules', 'acorn'));
 const walk = require(path.join(systemDir, 'node_modules', 'acorn-walk'));
 
 // =============================================================================
@@ -64,8 +64,38 @@ function lintFile(content, filePath) {
 }
 
 // =============================================================================
-// THIS-USAGE ANALYSIS LOGIC (Acorn Parser)
+// THIS-USAGE ANALYSIS LOGIC (Babel parser, ESTree output, acorn-walk) - JS-THIS-01
 // =============================================================================
+
+/**
+ * The walker base for the this-usage analysis: acorn-walk's own, plus a generic step for
+ * any node type it has no entry for (a Babel-only node such as `Import`), which visits
+ * every child node. Without it the walk would throw on the first such node.
+ */
+const THIS_WALK_BASE = new Proxy(walk.base, {
+    get(base, type) {
+        if (base[type]) {
+            return base[type];
+        }
+        return (node, state, visit) => {
+            for (const key of Object.keys(node)) {
+                if (AST_META_KEYS.has(key)) {
+                    continue;
+                }
+                const child = node[key];
+                if (Array.isArray(child)) {
+                    for (const item of child) {
+                        if (item && typeof item.type === 'string') {
+                            visit(item, state);
+                        }
+                    }
+                } else if (child && typeof child.type === 'string') {
+                    visit(child, state);
+                }
+            }
+        };
+    }
+});
 
 // Known jQuery callback methods - used for better remediation messages
 const JQUERY_CALLBACKS = new Set([
@@ -86,16 +116,27 @@ const JQUERY_CALLBACKS = new Set([
 function analyzeThisUsage(content, filePath) {
     const lines = content.split('\n');
 
+    // The same syntax the transform accepts - decorators, class fields, private members,
+    // static blocks, BigInt, optional chaining - with the AST in ESTree shape, which is what
+    // acorn-walk and the checks below read.
     let ast;
     try {
-        ast = acorn.parse(content, {
-            ecmaVersion: 2020,
+        ast = babelParser.parse(content, {
             sourceType: 'module',
-            locations: true
+            plugins: [...NAVIGATION_PARSE_PLUGINS, 'classStaticBlock', 'estree']
         });
     } catch (e) {
-        // Parse error - return empty violations
-        return { violations: [], error: `Parse error: ${e.message}` };
+        // A file this analysis cannot read is a FINDING, never a clean file: reporting no
+        // violations here is how a third of the class files once went unchecked.
+        const line = e.loc ? e.loc.line : 1;
+        return {
+            violations: [{
+                line: line,
+                message: `JS-THIS-01 could not analyze this file - it does not parse: ${e.message}`,
+                codeSnippet: (lines[line - 1] || '').trim(),
+                remediation: `Fix the syntax error; the 'this' usage check runs once the file parses.`
+            }]
+        };
     }
 
     const violations = [];
@@ -104,6 +145,9 @@ function analyzeThisUsage(content, filePath) {
     // First pass: identify all classes and their types
     walk.simple(ast, {
         ClassDeclaration(node) {
+            if (!node.id) {
+                return;
+            }
             const hasStaticInit = node.body.body.some(member =>
                 member.static && member.key?.name === 'init'
             );
@@ -111,7 +155,7 @@ function analyzeThisUsage(content, filePath) {
                 isStatic: hasStaticInit
             });
         }
-    });
+    }, THIS_WALK_BASE);
 
     // Helper to check if first line of function has valid pattern
     function checkFirstLinePattern(funcNode) {
@@ -164,7 +208,7 @@ function analyzeThisUsage(content, filePath) {
         }
 
         // Check for '$var = $(this)' pattern
-        if (firstDecl.id.name.startsWith('$') &&
+        if (firstDecl.id.name?.startsWith('$') &&
             firstDecl.init.type === 'CallExpression' &&
             firstDecl.init.callee.name === '$' &&
             firstDecl.init.arguments.length === 1 &&
@@ -386,7 +430,7 @@ function analyzeThisUsage(content, filePath) {
                 });
             }
         }
-    });
+    }, THIS_WALK_BASE);
 
     return { violations: violations };
 }
@@ -1421,13 +1465,14 @@ module.exports = {
                 results[file] = {
                     status: 'success',
                     violations: result.violations,
-                    error: result.error || null
+                    error: null
                 };
             } catch (error) {
+                // An unreadable file or an analyzer fault - the PHP client throws on it.
                 results[file] = {
                     status: 'error',
                     error: {
-                        type: 'FileReadError',
+                        type: error.constructor.name,
                         message: error.message
                     }
                 };

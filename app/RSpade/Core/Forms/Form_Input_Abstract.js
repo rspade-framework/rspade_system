@@ -104,10 +104,11 @@
  */
 class Form_Input_Abstract extends Component {
     /**
-     * The NAME of the declared TEXT column type this input edits ('Rich_Text'), or null
-     * for an ordinary string input. A name rather than a class reference: an input
-     * component is defined before rsx/lib/ in a bundle, so naming the class directly
-     * would read it before its declaration is initialised. See _assert_accepts().
+     * The NAME of the value type this input edits - a declared TEXT column type
+     * ('Rich_Text') or 'Rsx_Money' - or null for an ordinary string input. A name rather
+     * than a class reference: an input component is defined before rsx/lib/ in a bundle,
+     * so naming the class directly would read it before its declaration is initialised.
+     * See _assert_accepts().
      */
     static ACCEPTS = null;
 
@@ -316,7 +317,7 @@ class Form_Input_Abstract extends Component {
      *
      * An input that edits a declared TEXT column type names it:
      *
-     *     class Wysiwyg_Input extends Form_Input_Abstract { static ACCEPTS = Rich_Text; }
+     *     class Wysiwyg_Input extends Form_Input_Abstract { static ACCEPTS = 'Rich_Text'; }
      *
      * and is then the only widget that column can be wired to. Both directions are
      * refused, because both are real mistakes: a Rich_Text value reaching a plain
@@ -324,13 +325,19 @@ class Form_Input_Abstract extends Component {
      * and a Raw_Text value reaching a WYSIWYG would start accepting HTML into a column
      * whose type says it holds none.
      *
-     * An input with no ACCEPTS edits ordinary strings and refuses every text value.
+     * A money column is the same: its input declares ACCEPTS = 'Rsx_Money' and takes an
+     * Rsx_Money or null, and nothing else edits one - a plain input would stringify the
+     * amount, and the value object refuses to become a string.
+     *
+     * An input with no ACCEPTS edits ordinary strings and refuses every value object (a
+     * text value or an Rsx_Money).
      *
      * @param {*} value
      */
     _assert_accepts(value) {
         const accepts_name = this.constructor.ACCEPTS;
-        const is_text_value = value instanceof Rsx_Text_Abstract;
+        const is_money_value = value instanceof Rsx_Money;
+        const is_value_object = value instanceof Rsx_Text_Abstract || is_money_value;
 
         if (accepts_name) {
             const accepts = Manifest.get_class_by_name(accepts_name);
@@ -339,22 +346,29 @@ class Form_Input_Abstract extends Component {
             if (!accepts) {
                 shouldnt_happen(
                     `${this.constructor.name} declares ACCEPTS = '${accepts_name}', but no such ` +
-                    `text type is in this bundle.`
+                    `value type is in this bundle.`
                 );
             }
 
             if (value !== null && value !== undefined && !(value instanceof accepts)) {
                 shouldnt_happen(
                     `${this.constructor.name} ($name="${this.args.name}") edits ${accepts_name} values, ` +
-                    `but was given ${is_text_value ? value.constructor.name : typeof value}. ` +
-                    `Check the column's text_type in the model's $columns declaration.`
+                    `but was given ${is_value_object ? value.constructor.name : typeof value}. ` +
+                    `Check the column's kind (text_type or money) in the model's $columns declaration.`
                 );
             }
 
             return;
         }
 
-        if (is_text_value) {
+        if (is_money_value) {
+            shouldnt_happen(
+                `${this.constructor.name} ($name="${this.args.name}") edits plain strings, but was ` +
+                `given an Rsx_Money. That column is a money column - use <Money_Input>.`
+            );
+        }
+
+        if (is_value_object) {
             shouldnt_happen(
                 `${this.constructor.name} ($name="${this.args.name}") edits plain strings, but was ` +
                 `given a ${value.constructor.name} value. That column has a declared text type - ` +

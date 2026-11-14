@@ -3433,8 +3433,9 @@ ADVANCED: VALUE PRINTERS - INTERPOLATING AN OBJECT
     This is how a framework hands templates TYPED VALUES instead of
     pre-stringified ones: the value carries its own encoding, and the template
     interpolates it without choosing an escape, a sanitizer or a component.
-    RSpade uses it for declared text types (rsx:man text_types), which is the
-    only use of it in this framework.
+    RSpade registers one printer per framework value family: declared text
+    types (rsx:man text_types) and amounts of money, which print as
+    Rsx_Money.format() (rsx:man money).
 
         jqhtml.add_object_printer(function (value) {
             if (!(value instanceof My_Value)) {

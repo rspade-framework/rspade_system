@@ -34,6 +34,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  *   type          the simplified type (see simplify_type(); tinyint(1) is 'boolean')
  *   max_length    characters, for varchar/char; null for every other type
+ *   precision     total digits, for decimal (DECIMAL(15,2) is 15); null for every other type
+ *   scale         digits after the point, for decimal (DECIMAL(15,2) is 2); null for every
+ *                 other type
  *   nullable      bool
  *   key           MySQL's COLUMN_KEY ('PRI', 'UNI', 'MUL', '')
  *   default       MySQL's COLUMN_DEFAULT
@@ -70,7 +73,7 @@ class Rsx_Schema
      * reduced-volatility database; the version suffix is bumped when the stored shape
      * changes in a way the code key would not already notice.
      */
-    private const CACHE_KEY = RsxCache::RVC_PREFIX . 'rsx_schema_tables_v1';
+    private const CACHE_KEY = RsxCache::RVC_PREFIX . 'rsx_schema_tables_v2';
 
     /**
      * This process's copy of the whole database's column map, or null before the first read.
@@ -342,7 +345,7 @@ class Rsx_Schema
         $rows = DB::select(
             'SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, COLUMN_TYPE AS column_type,'
             . ' IS_NULLABLE AS is_nullable, COLUMN_KEY AS column_key, COLUMN_DEFAULT AS column_default,'
-            . ' EXTRA AS extra'
+            . ' EXTRA AS extra, NUMERIC_PRECISION AS numeric_precision, NUMERIC_SCALE AS numeric_scale'
             . ' FROM information_schema.COLUMNS'
             . ' WHERE TABLE_SCHEMA = DATABASE()'
             . ' ORDER BY TABLE_NAME, ORDINAL_POSITION'
@@ -351,9 +354,14 @@ class Rsx_Schema
         $tables = [];
 
         foreach ($rows as $row) {
+            $type = self::simplify_type($row->column_type);
+            $is_decimal = $type === 'decimal';
+
             $tables[$row->table_name][$row->column_name] = [
-                'type' => self::simplify_type($row->column_type),
+                'type' => $type,
                 'max_length' => self::varchar_length($row->column_type),
+                'precision' => $is_decimal ? (int) $row->numeric_precision : null,
+                'scale' => $is_decimal ? (int) $row->numeric_scale : null,
                 'nullable' => ($row->is_nullable === 'YES'),
                 'key' => $row->column_key,
                 'default' => $row->column_default,

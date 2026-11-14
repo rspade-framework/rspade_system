@@ -17,8 +17,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * artifact a strict production build serves must still answer to every authored name. A
  * test on the Babel output alone cannot see a minifier rename: the decorator transform emits
  * `_<hash>_Name = Name`, and a minifier allowed to drop the class's own name binding leaves
- * an anonymous class expression whose `.name` JS infers from that hashed alias (or, at es5,
- * a mangled single letter). Every decorated SPA action then dispatched to a jqhtml
+ * an anonymous class expression whose `.name` JS infers from that hashed alias. Every decorated SPA action then dispatched to a jqhtml
  * "Component with defaults" and no SPA page rendered - in strict production only, because
  * development and debug builds do not minify.
  *
@@ -34,8 +33,6 @@ class Js_Minify_Names_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    private const TARGETS = ['modern', 'es6', 'es5'];
-
     /** Decorated (statics branch, title metadata, surviving-declaration branch) and plain. */
     private const CLASS_FIXTURES = [
         'Fixture_Static_Action',
@@ -49,14 +46,13 @@ class Js_Minify_Names_Test extends Rsx_Test_Abstract
      * plus a Terser pass takes as long as the machine needs, and a cap would only fail a
      * loaded box.
      */
-    private static function __minified_facts(string $fixture, string $target): array
+    private static function __minified_facts(string $fixture): array
     {
         $process = new Process([
             'node',
             base_path('app/RSpade/tests/js_transform/resource/harness.js'),
             'minified',
             $fixture,
-            $target,
         ]);
         $process->setWorkingDirectory(base_path());
         $process->setTimeout(null);
@@ -64,7 +60,7 @@ class Js_Minify_Names_Test extends Rsx_Test_Abstract
 
         if (!$process->isSuccessful()) {
             static::__fail(
-                "Harness failed (minified {$fixture} {$target}):\n" .
+                "Harness failed (minified {$fixture}):\n" .
                 $process->getOutput() . "\n" . $process->getErrorOutput()
             );
         }
@@ -79,28 +75,26 @@ class Js_Minify_Names_Test extends Rsx_Test_Abstract
 
     /**
      * Every class fixture - decorated or not - answers to its authored name AFTER
-     * minification, at every transform target. The decorated ones are the regression: the
+     * minification. The decorated ones are the regression: the
      * minified class must not answer to the transform's `_<hash>_<Name>` alias.
      */
-    public static function test_class_names_survive_minification_all_targets()
+    public static function test_class_names_survive_minification()
     {
         foreach (self::CLASS_FIXTURES as $fixture) {
-            foreach (self::TARGETS as $target) {
-                $facts = static::__minified_facts($fixture, $target);
+            $facts = static::__minified_facts($fixture);
 
-                // Control: the transform itself never moved the name.
-                static::__assert_equals(
-                    $fixture,
-                    $facts['transformed']['class_name'] ?? null,
-                    "transformed {$fixture} [{$target}] does not answer to its authored name"
-                );
-                static::__assert_equals(
-                    $fixture,
-                    $facts['minified']['class_name'] ?? null,
-                    "minified {$fixture} [{$target}] answers to '" . ($facts['minified']['class_name'] ?? 'null') .
-                    "' - the minifier renamed a class the runtime resolves by name (keep_classnames)"
-                );
-            }
+            // Control: the transform itself never moved the name.
+            static::__assert_equals(
+                $fixture,
+                $facts['transformed']['class_name'] ?? null,
+                "transformed {$fixture} does not answer to its authored name"
+            );
+            static::__assert_equals(
+                $fixture,
+                $facts['minified']['class_name'] ?? null,
+                "minified {$fixture} answers to '" . ($facts['minified']['class_name'] ?? 'null') .
+                "' - the minifier renamed a class the runtime resolves by name (keep_classnames)"
+            );
         }
     }
 
@@ -108,22 +102,20 @@ class Js_Minify_Names_Test extends Rsx_Test_Abstract
      * A top-level function declaration and a named function nested inside an IIFE (mangle
      * scope) both keep their names through minification.
      */
-    public static function test_function_names_survive_minification_all_targets()
+    public static function test_function_names_survive_minification()
     {
-        foreach (self::TARGETS as $target) {
-            $facts = static::__minified_facts('Fixture_Named_Functions', $target);
+        $facts = static::__minified_facts('Fixture_Named_Functions');
 
-            static::__assert_equals(
-                'fixture_top_level_function',
-                $facts['minified']['top'] ?? null,
-                "minified top-level function renamed [{$target}]"
-            );
-            static::__assert_equals(
-                'fixture_inner_helper',
-                $facts['minified']['inner'] ?? null,
-                "minified nested function renamed [{$target}] (keep_fnames)"
-            );
-        }
+        static::__assert_equals(
+            'fixture_top_level_function',
+            $facts['minified']['top'] ?? null,
+            "minified top-level function renamed"
+        );
+        static::__assert_equals(
+            'fixture_inner_helper',
+            $facts['minified']['inner'] ?? null,
+            "minified nested function renamed (keep_fnames)"
+        );
     }
 
     /**

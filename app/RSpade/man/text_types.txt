@@ -120,8 +120,8 @@ DECLARING A COLUMN
             'description' => ['text_type' => Rich_Text::class],
         ];
 
-    A text type is one kind per column: never beside 'enum' or 'type_ref'
-    on the same entry (MODEL-COLUMNS-01). Model::text_type_columns() answers
+    A text type is one kind per column: never beside 'enum', 'type_ref' or
+    'money' on the same entry (MODEL-COLUMNS-01). Model::text_type_columns() answers
     every declared column.
 
     From then on:
@@ -774,6 +774,7 @@ SEE ALSO
     rsx:man model - COLUMN DECLARATIONS: the $columns grammar
     rsx:man form_input - the input value contract
     rsx:man csv_exports - where to_plain_text() lands in an export
+    rsx:man money - the other value-object column kind (Rsx_Money)
     rsx:man external_api - param types, the 422 validation envelope
     skill rspade:text-types - use cases, writing a custom type, the tagged-entities example
 

@@ -20,14 +20,13 @@ vendored, patched fork `app/RSpade/Core/JsParsers/resource/babel-plugin-decorato
 README.md). A former output-shape matcher in the transformer was retired because
 `@babel/compat-data` 7.29.3 moved the destructuring baseline to Safari 14.1 and made
 preset-env rewrite the matched shape before the matcher could see it (silent miss -> white
-screen; the es5 target was always broken this way).
+screen).
 
 ## Source files under test
 
 - `app/RSpade/Core/JsParsers/resource/babel-service.js` -- transform pipeline,
-  exporting `transformFileContent` / `createPrefixPlugin` / `targetPresets` /
-  `preprocessDecorators` beside its RPC handler, and carrying the fail-closed contract
-  assertion (pre/post) that fails the build if any decorated class loses its binding.
+  exporting `transformFileContent` / `createPrefixPlugin` / `preprocessDecorators` beside
+  its RPC handler, and carrying the fail-closed contract assertion (pre/post) that fails the build if any decorated class loses its binding.
 - `app/RSpade/Core/JsParsers/resource/babel-plugin-decorators/` -- the vendored decorator
   fork (esbuild bundle + patch + regeneration docs).
 - `app/RSpade/Core/Bundle/resource/minify-service.js` -- the strict-production minifier
@@ -61,14 +60,19 @@ documents the fork architecture and the binding contract).
   - see `App\RSpade\Core\Naming\Rsx_Identifier`) exist in JS, while Babel's own helpers and
   uids still get the file hash. Covered by `php` (JT-06..JT-09).
 - The producer-side binding fix: every decorated class keeps a reachable bare-name binding
-  at modern / es6 / es5, and executes correctly (static fields, methods, prototype chain,
-  decorator execution, replacement decorators). Covered by `php`.
+  and executes correctly (static fields, methods, prototype chain, decorator execution,
+  replacement decorators). Covered by `php`.
+- Private members stay private to their file: the transform lowers `static #X` to a
+  top-level `var _X = {_: ...}` and an instance `#x` to `var _x = new WeakMap()`, and the
+  prefix plugin must hash-prefix those holders like any other generated name, or two
+  concatenated classes with the same private name share one holder. Covered by `php`
+  (`Js_Private_Field_Transform_Test`, JT-13..JT-15).
 - The fail-closed contract assertion: a dropped binding fails the build loudly. Covered by
   `php` (runs the real assertion against a fork-less config).
 - NAMES SURVIVE MINIFICATION: a decorated class (statics branch, title metadata, surviving
   declaration), a plain class, a top-level function and a function nested in mangle scope
-  all answer to their authored `.name` after the REAL transform AND the REAL minify service,
-  at every target; and the class registry refuses a renamed class at boot. Covered by `php`
+  all answer to their authored `.name` after the REAL transform AND the REAL minify service;
+  and the class registry refuses a renamed class at boot. Covered by `php`
   (`Js_Minify_Names_Test`, JT-10..JT-12). A test on the Babel output alone cannot see a
   minifier rename, which is how the defect shipped: a downstream field report (2026-10-05)
   had every decorated SPA action answering to `_<hash>_<Name>` in strict production only.
@@ -97,6 +101,9 @@ documents the fork architecture and the binding contract).
   `.name` before and after, and `manifest_identity` feeds the real `Manifest._define` a
   correctly named and a renamed class. Lives under `resource/` so the
   manifest does not scan it as framework JS.
+- `resource/private_fields.js` -- transforms the two private-member fixtures through the
+  real `babel.transform` handler, concatenates them into one script, evaluates it in a `vm`
+  sandbox and prints what each class reads back plus the holder names it emitted.
 - `resource/fixtures/*.js` -- the decorated/undecorated class fixtures (cases a-e), plus the
   framework-application-prefix fixtures (`_Fixture_Sys_Sidebar`, `_Fixture_Sys_Action`) and
   the authored-underscore non-class fixture (`Fixture_Authored_Underscores`), and the

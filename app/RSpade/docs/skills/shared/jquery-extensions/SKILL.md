@@ -232,7 +232,7 @@ $input.rsx_numeric({time: true});
 
 A single digit after the colon is minutes as written, so `1:5` is 1:05 and not 1:50. The conversion happens at the getter, the setter (`.val('2:15')` displays `2.25`) and blur; while the field is FOCUSED the colon form is left as typed so it can still be edited. Trailing zeros are not padded - `1.5`, never `1.50`. A plain decimal is already decimal hours and is left alone.
 
-`Currency_Input` is this filter with `commas` and a `prefix` and `Time_Entry_Input` is it with `time`; each one's whole class body is the call. A PIN is NOT a numeric field - `0042` is not `42`.
+`Time_Entry_Input` is this filter with `time`; its whole class body is the call. A PIN is NOT a numeric field - `0042` is not `42`, and neither is an amount of money: a money column is edited by `Money_Input`, which never filters and whose value is an `Rsx_Money` (skill `rspade:money`).
 
 ---
 

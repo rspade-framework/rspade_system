@@ -17,6 +17,11 @@ use Illuminate\Foundation\Http\Middleware\TrimStrings as Middleware;
  *   - A TEXT-TYPE ENVELOPE ({__TEXT, raw, empty}, rsx:man text_types): its raw is the
  *     encoded content exactly as the editor produced it, and the declared type is what
  *     sanitizes it. The whole envelope passes through untouched.
+ *
+ * A MONEY ENVELOPE ({__MONEY: "1234.56"}, rsx:man money) needs no exception: its value is the
+ * canonical two-place string, which carries no surrounding whitespace, so trimming cannot
+ * change it. A typed amount is an ordinary string here, and Rsx_Money::from_text() trims the
+ * whitespace a person's entry may carry anyway.
  */
 class TrimStrings extends Middleware
 {

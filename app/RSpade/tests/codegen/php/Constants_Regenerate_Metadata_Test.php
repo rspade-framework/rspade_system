@@ -25,8 +25,9 @@ use App\RSpade\Tests\Codegen\Php\Column_Kinds_Fixture_Model;
  *     never `\Carbon\Carbon`.
  *
  * Each column's @property line also states the column's declared kind - enum, text type,
- * type ref, derived, never exported, not recorded in revisions - and the type its attribute
- * actually reads as (DECIMAL and uncast JSON as string, a boolean column as bool), pinned
+ * type ref, money, derived, never exported, not recorded in revisions - and the type its
+ * attribute actually reads as (DECIMAL and uncast JSON as string, a money column as Rsx_Money,
+ * a boolean column as bool), pinned
  * against Column_Kinds_Fixture_Model on a table this class creates.
  *
  * The CTI SUBJECT is derived, never named: the framework declares no CTI model of its own, so
@@ -105,6 +106,8 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
             view_count INT NULL,
             amount DECIMAL(10,2) NULL,
             total DECIMAL(10,2) NULL,
+            budget DECIMAL(15,2) NULL,
+            fee DECIMAL(10,2) NULL,
             payload JSON NULL,
             is_open TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
@@ -132,6 +135,9 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
             // Derived: read-only, naming its method and sources; a DECIMAL reads as a string.
             ' * @property-read string $total decimal; derived: computed by derive_total() from amount, view_count; never assigned',
             ' * @property string $amount decimal',
+            // Money: typed as the value object, and it wins over the plain DECIMAL note.
+            ' * @property \\App\\RSpade\\Core\\Database\\Money\\Rsx_Money $budget money: a value object, two decimal places, never a float',
+            ' * @property \\App\\RSpade\\Core\\Database\\Money\\Rsx_Money $fee money: a value object, two decimal places, never a float; not recorded in revisions',
             // JSON with no array cast reads as the JSON string.
             ' * @property string $payload json',
             // A boolean column reads as bool through its automatic cast.

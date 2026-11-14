@@ -24,6 +24,8 @@ use App\RSpade\Tests\Codegen\Php\Codegen_Fixture_Text;
  *   secret     - never exported
  *   view_count - not recorded in revisions
  *   total      - a derived DECIMAL computed from amount and view_count
+ *   budget     - a money column (DECIMAL(15,2))
+ *   fee        - a money column that is also not recorded in revisions
  */
 class Column_Kinds_Fixture_Model extends Rsx_Model_Abstract
 {
@@ -50,6 +52,8 @@ class Column_Kinds_Fixture_Model extends Rsx_Model_Abstract
         'secret' => ['never_export' => true],
         'view_count' => ['revision_exclude' => true],
         'total' => ['derived' => 'derive_total', 'from' => ['amount', 'view_count']],
+        'budget' => ['money' => true],
+        'fee' => ['money' => true, 'revision_exclude' => true],
     ];
 
     public function derive_total(): ?string

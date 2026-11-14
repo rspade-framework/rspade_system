@@ -200,7 +200,8 @@ THE FRAMEWORK LIBRARY
     login_redirect_wiring
         The intended URL survives every sign-in hop, through Login_Redirect.
     money_never_in_a_float
-        No amount is computed in a float; brick/money does the arithmetic.
+        No amount is held or computed outside Rsx_Money: carriers, string
+        arithmetic and JS comparisons the money rules cannot see.
     portal_session_boundary
         Portal-reachable code reads Portal_Session and forks on the
         experience, never on identity.

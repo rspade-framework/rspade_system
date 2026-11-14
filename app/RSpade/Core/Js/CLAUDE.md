@@ -66,6 +66,10 @@ components - because the first SPA page draws before `app_ready`.
 - `Rsx_Storage.js` — scoped session/local storage, non-critical data only.
 - `Rsx_Time.js`, `Rsx_Date.js`, `Rsx_Timezone_Cookie.js` — the JS twins of the PHP time
   classes (identical API); `.expect` files are their test expectations.
+- `Rsx_Money.js`, `Rsx_Money_Core.js`, `Rsx_Money_Exception.js` — the JS twin of the PHP
+  money type (`Core/Database/Money/`): the same algorithms step for step on BigInt, one own
+  property (`_decimal`), the jqhtml object printer and cache class, the display read from
+  `rsxapp.money_display` (`rsx:man money`).
 - `Rsx_Realtime.js` — websocket subscriptions (`this.subscribe()` on components).
 - `Mutex.js` (`@mutex`), `ReadWriteLock.js` (`rwlock`), `decorator.js` (the `@decorator`
   marker) — decorator and locking primitives.
@@ -81,7 +85,7 @@ components - because the first SPA page draws before `app_ready`.
 
 - **One implementation per algorithm.** Where PHP owns a rule (a text type's encoding, a
   permission's resolution), the JS side reads the server's answer instead of re-implementing
-  it; where both languages carry a twin (`Rsx_Time`, `Login_Redirect`), the API is identical.
+  it; where both languages carry a twin (`Rsx_Time`, `Rsx_Money`, `Login_Redirect`), the API is identical.
 - Static methods never use naked `this`; jQuery callbacks alias `$(this)` (`JS-THIS-01`).
 - No `setTimeout` debounce or timeout of your own: `debounce()` in `async.js` is the one.
 

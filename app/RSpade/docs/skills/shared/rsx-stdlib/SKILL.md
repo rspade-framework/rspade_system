@@ -1,6 +1,6 @@
 ---
 name: rsx-stdlib
-description: "The shared utility library in PHP and JS - type checks, escape_html / sanitize_rich_text_html / nl2brhtml / html_to_text, debounce, rwlock, deep_equal, Rsx_Storage, Rsx.url_hash_*, the response_* and array_* helpers, Arr::first, Manifest reflection, and the guaranteed third-party tier (brick/money, league/csv, commonmark, libphonenumber, playwright PDFs). Use before hand-writing any utility or installing a package for money, CSV, markdown, phone numbers or PDFs, or for an exact signature."
+description: "The shared utility library in PHP and JS - type checks, escape_html / sanitize_rich_text_html / nl2brhtml / html_to_text, debounce, rwlock, deep_equal, Rsx_Storage, Rsx.url_hash_*, the response_* and array_* helpers, Arr::first, Manifest reflection, Rsx_Money for amounts, and the guaranteed third-party tier (brick/money, league/csv, commonmark, libphonenumber, playwright PDFs). Use before hand-writing any utility or installing a package for money, CSV, markdown, phone numbers or PDFs, or for an exact signature."
 ---
 
 # RSpade standard library
@@ -28,7 +28,7 @@ Those two man pages carry the full rosters with exact signatures. The judgment w
 - **`bytes_to_human()`** renders an ACTUAL size. The configured upload ceiling has its own label function.
 - JS `rwlock`/`rwlock_read` are IN-PAGE locks; server/cluster locking is `RsxLocks`, a different system.
 - **`Arr::first()` / `Arr::last()`, never a global `array_first()`/`array_last()` with a callback** - PHP 8.5 owns those names natively (array only, no callback, no default), so the framework's helpers of that name were removed (`rsx:man helpers`).
-- **`$(input).rsx_numeric({decimals, commas, prefix, time})` is the ONE numeric filter** - `.val()` answers the raw number both ways, `time: true` accepts H:MM and answers decimal hours; `Currency_Input` and `Time_Entry_Input` are this filter. Hand-rolled digit filtering in a component is never the answer (skill `rspade:jquery-extensions`).
+- **`$(input).rsx_numeric({decimals, commas, prefix, time})` is the ONE numeric filter** - `.val()` answers the raw number both ways, `time: true` accepts H:MM and answers decimal hours; `Time_Entry_Input` is this filter. An amount of money is NOT a numeric field: it is `Money_Input` (skill `rspade:money`). Hand-rolled digit filtering in a component is never the answer (skill `rspade:jquery-extensions`).
 - **QR codes are `Rsx_Qr_Code::generate($text)`** - never a QR package (skill `rspade:qr-codes`).
 
 ## The third-party tier
@@ -37,7 +37,7 @@ Declared in `rsx.dependencies.exposed_composer` / `exposed_npm` and guaranteed p
 
 | Need | Use |
 |---|---|
-| Money | **`brick/money`** - **a float NEVER holds an amount**; `Money::of($string, 'USD')`, exact arithmetic, the `RoundingMode` stated at every rounding |
+| Money | **`Rsx_Money`** (framework core, PHP + JS, the `money` column kind) - **a float NEVER holds an amount**; skill `rspade:money`. `brick/money` is present for multi-currency work only (a figure carrying its own currency code, conversion) |
 | Phone numbers | **`giggsey/libphonenumber-for-php`** + JS `google-libphonenumber` - store E.164; `isPossibleNumber()`, not `isValidNumber()` |
 | Spreadsheets (xlsx) | `phpoffice/phpspreadsheet` |
 | CSV, read and write | **`league/csv`, for ALL CSV** - never hand-roll one; a grid export is `DataGrid_Abstract::build_csv()` (`rsx:man csv_exports`) |

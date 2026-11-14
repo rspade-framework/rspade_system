@@ -10,10 +10,10 @@ class ReadWriteLock {
      * @private
      */
     static #get_lock(name) {
-        let s = this.#locks.get(name);
+        let s = ReadWriteLock.#locks.get(name);
         if (!s) {
             s = { readers: 0, writer_active: false, reader_q: [], writer_q: [] };
-            this.#locks.set(name, s);
+            ReadWriteLock.#locks.set(name, s);
         }
         return s;
     }
@@ -23,7 +23,7 @@ class ReadWriteLock {
      * @private
      */
     static #schedule(name) {
-        const s = this.#get_lock(name);
+        const s = ReadWriteLock.#get_lock(name);
         if (s.writer_active || s.readers > 0) return;
 
         // run one writer if queued
@@ -102,7 +102,7 @@ class ReadWriteLock {
      * @param {string} name
      */
     static force_unlock(name) {
-        this.#locks.delete(name);
+        ReadWriteLock.#locks.delete(name);
     }
 
     /**
@@ -111,7 +111,7 @@ class ReadWriteLock {
      * @returns {{readers: number, writer_active: boolean, reader_q: number, writer_q: number}}
      */
     static pending(name) {
-        const s = this.#locks.get(name);
+        const s = ReadWriteLock.#locks.get(name);
         if (!s) return { readers: 0, writer_active: false, reader_q: 0, writer_q: 0 };
         return {
             readers: s.readers,

@@ -186,6 +186,8 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             1 => ['constant' => 'POOL_ON_DEMAND', 'label' => 'On demand'],
             2 => ['constant' => 'POOL_SCHEDULED', 'label' => 'Scheduled'],
         ]],
+        // A percentage of the run's progress, not money.
+        'progress_percent' => [],
     ];
 
     /** The status ids a run can still leave: pending and running. */

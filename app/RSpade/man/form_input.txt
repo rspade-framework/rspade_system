@@ -259,10 +259,11 @@ VALUE COERCION
     }
 
     TYPED VALUES: ACCEPTS
-        An input built to edit a declared TEXT column type (rsx:man
-        text_types) names that type - `static ACCEPTS = 'Rich_Text'`, a class
-        NAME, since inputs evaluate before rsx/lib in a bundle - and val()
-        then takes and returns the value OBJECT. The base class refuses a
+        An input built to edit a value object - a declared TEXT column type
+        (rsx:man text_types) or an amount of money (rsx:man money) - names
+        that type - `static ACCEPTS = 'Rich_Text'`, `static ACCEPTS =
+        'Rsx_Money'`, a class NAME, since inputs evaluate before rsx/lib in a
+        bundle - and val() then takes and returns the value OBJECT. The base class refuses a
         mismatch in both directions: a typed value reaching an input with no
         ACCEPTS, and a bare string or a value of another type reaching a
         typed input. The refusal is the contract. An input never wraps a
@@ -270,13 +271,28 @@ VALUE COERCION
         the widget the one place deciding what encoding a string has. A
         string arriving at a typed input is a call-site bug ('' as a form
         default, a hand-built payload) and the throw is what surfaces it.
-        Inside the widget, _get_value() returns Type.from_editor(...) and
-        _set_value() reads value.to_storage(); nothing else converts.
+        Inside a text-type widget, _get_value() returns Type.from_editor(...)
+        and _set_value() reads value.to_storage(); nothing else converts. An
+        input with no ACCEPTS given an Rsx_Money throws "... edits plain
+        strings, but was given an Rsx_Money. That column is a money column -
+        use <Money_Input>."
+
+THE CORE INPUT: Money_Input
+
+    <Money_Input $name="budget" [$placeholder="0.00"] />
+
+    Edits a money column (rsx:man money). The person types the amount as the
+    display configuration prints it; typing is never filtered, and on blur a
+    parsed entry is tidied to the plain form. val() answers an Rsx_Money, null
+    for a blank box, or - when the text does not parse - the typed STRING, so
+    the endpoint's Model::money_from_submitted() refuses it with its own
+    message (the one typed input whose value may be a string: it validates
+    nothing itself). val(v) takes an Rsx_Money or null. No $max_length.
 
 THE CORE INPUT: Code_Input
 
-    One concrete input ships in framework core beside the base class, because the
-    framework's own second-factor screens are built on it (rsx:man two_factor):
+    Ships in framework core beside the base class, because the framework's own
+    second-factor screens are built on it (rsx:man two_factor):
 
         <Code_Input $name="code" [$length=6] [$align="center"] [$disabled]
                     [$autofill_id="code"] />
@@ -382,9 +398,9 @@ BUILT-IN INPUTS
 
         field_length('column') answers from the page's field-length script (the
         live schema's lengths for the models in the page's bundle - rsx:man
-        bundle_api) and returns null for a non-varchar column. Subclasses (Phone_Text_Input,
-        Currency_Input) are exempt from the requirement - they have intrinsic
-        limits.
+        bundle_api) and returns null for a non-varchar column. Subclasses
+        (Phone_Text_Input, Time_Entry_Input) are exempt from the requirement -
+        they have intrinsic limits.
 
     Select_Input                  dropdown with a static options array (TomSelect)
     Select_With_Description_Input dropdown with a description line per option
@@ -505,6 +521,7 @@ SEE ALSO
     rsx:man form_conventions - the form contract this input plugs into
     rsx:man jqhtml - component lifecycle and templates
     rsx:man modals - dialogs that host a form
+    rsx:man money - Money_Input and the value it edits
     system/app/RSpade/resource/reference_app/theme/components/inputs/CLAUDE.md
 
 RSX Framework                     August 2026                   FORM_INPUT(3)

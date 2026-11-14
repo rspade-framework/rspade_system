@@ -20,34 +20,18 @@
  * install. A test-tree fixture page could not serve this: the test trees enter the manifest
  * only while rsx:test runs, and this drives the ordinary web server.
  *
- * Self-contained: mints its own dev-auth headers through the node twin of Dev_Auth_Token,
- * so it runs with a bare `node text_value_rendering.js`.
+ * Opens /_sys through the shared _lib/playwright/sys_page.js (signed in, SPA booted), so it
+ * runs with a bare `node text_value_rendering.js`.
  *
  * Exit 0 on pass, 1 on any failure. Prints PASS:/FAIL: lines.
  */
-const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
-const { chromium } = require('/var/www/html/system/node_modules/playwright');
+const { open_sys_page, poll_until } = require('../../_lib/playwright/sys_page.js');
 
-const BASE_URL = 'http://localhost';
-const ROUTE = '/_sys';
 const ROUTE_EXPECTED = '/_sys';
-const USER_ID = 1;
 
 function fail(msg) {
     console.log('FAIL: text value rendering - ' + msg);
     process.exitCode = 1;
-}
-
-async function await_spa_ready(page) {
-    await page.evaluate(() => new Promise((resolve) => {
-        if (typeof Rsx !== 'undefined' && Rsx.on) {
-            Rsx.on('_debug_ready', () => resolve());
-            setTimeout(resolve, 15000);
-        } else {
-            setTimeout(resolve, 3000);
-        }
-    }));
-
 }
 
 /**
@@ -282,55 +266,15 @@ async function probe_tostring_throws(page) {
 }
 
 (async () => {
-    const browser = await chromium.launch({ args: ['--no-sandbox'] });
+    const { browser, page } = await open_sys_page();
 
     try {
-        const context = await browser.newContext({ ignoreHTTPSErrors: true });
-        const page = await context.newPage();
-
-        // The dev-auth token is bound to the URL it authorises, and only the FIRST document
-        // request needs it - the session cookie carries from there. A context-wide header
-        // would be a token for the wrong URL on every subsequent request.
-        const auth_headers = { ...dev_auth_headers(ROUTE, USER_ID), 'X-Playwright-Test': '1' };
-        let initial_doc_sent = false;
-
-        await page.route('**/*', async (route, request) => {
-            const url = request.url();
-
-            if (!url.startsWith(BASE_URL)) {
-                await route.continue();
-                return;
-            }
-
-            const headers = { ...request.headers() };
-
-            if (!initial_doc_sent && request.resourceType() === 'document') {
-                Object.assign(headers, auth_headers);
-                initial_doc_sent = true;
-            } else {
-                headers['X-Playwright-Test'] = '1';
-            }
-
-            await route.continue({ headers });
-        });
-
-        const response = await page.goto(BASE_URL + ROUTE, { waitUntil: 'commit' });
-
-        if (!response || response.status() !== 200) {
-            fail(`${ROUTE} returned ${response ? response.status() : 'no response'}`);
-            await browser.close();
-            return;
-        }
-
-        await await_spa_ready(page);
-
         // Assert we are actually on the page this test claims. A dev-auth failure lands on
         // /login, where the framework JS these probes touch still exists - so every probe
         // would pass while testing the wrong page.
-        const landed = await page.evaluate(() => location.pathname);
+        const landed = await poll_until(page, 'the booted page reports its path', () => location.pathname);
         if (landed !== ROUTE_EXPECTED) {
             fail(`expected to land on ${ROUTE_EXPECTED}, got ${landed} - dev auth did not take`);
-            await browser.close();
             return;
         }
 

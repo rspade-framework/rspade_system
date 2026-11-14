@@ -76,23 +76,23 @@ class Rsx_Storage {
      */
     static _init() {
         // Check if already initialized
-        if (this._scope_suffix !== null) {
+        if (Rsx_Storage._scope_suffix !== null) {
             return;
         }
 
         // Check storage availability
-        this._session_available = this._is_storage_available('sessionStorage');
-        this._local_available = this._is_storage_available('localStorage');
+        Rsx_Storage._session_available = Rsx_Storage._is_storage_available('sessionStorage');
+        Rsx_Storage._local_available = Rsx_Storage._is_storage_available('localStorage');
 
         // Calculate current scope suffix
-        this._scope_suffix = Rsx.scope_key();
+        Rsx_Storage._scope_suffix = Rsx.scope_key();
 
         // Validate scope for both storages
-        if (this._session_available) {
-            this._validate_scope(sessionStorage, 'session');
+        if (Rsx_Storage._session_available) {
+            Rsx_Storage._validate_scope(sessionStorage, 'session');
         }
-        if (this._local_available) {
-            this._validate_scope(localStorage, 'local');
+        if (Rsx_Storage._local_available) {
+            Rsx_Storage._validate_scope(localStorage, 'local');
         }
     }
 
@@ -126,19 +126,19 @@ class Rsx_Storage {
             const stored_scope = storage.getItem('_rsx_scope_key');
 
             // If scope key exists and has changed, clear only RSpade keys
-            if (stored_scope !== null && stored_scope !== this._scope_suffix) {
+            if (stored_scope !== null && stored_scope !== Rsx_Storage._scope_suffix) {
                 console.log(`[Rsx_Storage] Scope changed for ${type}Storage, clearing RSpade keys only:`, {
                     old_scope: stored_scope,
-                    new_scope: this._scope_suffix,
+                    new_scope: Rsx_Storage._scope_suffix,
                 });
-                this._clear_rsx_keys(storage);
-                storage.setItem('_rsx_scope_key', this._scope_suffix);
+                Rsx_Storage._clear_rsx_keys(storage);
+                storage.setItem('_rsx_scope_key', Rsx_Storage._scope_suffix);
             } else if (stored_scope === null) {
                 // First time RSpade is using this storage - just set the key, don't clear
                 console.log(`[Rsx_Storage] Initializing scope for ${type}Storage (first use):`, {
-                    new_scope: this._scope_suffix,
+                    new_scope: Rsx_Storage._scope_suffix,
                 });
-                storage.setItem('_rsx_scope_key', this._scope_suffix);
+                storage.setItem('_rsx_scope_key', Rsx_Storage._scope_suffix);
             }
         } catch (e) {
             console.error(`[Rsx_Storage] Failed to validate scope for ${type}Storage:`, e);
@@ -181,7 +181,7 @@ class Rsx_Storage {
      * @private
      */
     static _build_key(key) {
-        return `rsx::${key}::${this._scope_suffix}`;
+        return `rsx::${key}::${Rsx_Storage._scope_suffix}`;
     }
 
     /**
@@ -190,13 +190,13 @@ class Rsx_Storage {
      * @param {*} value - Value to store (will be JSON serialized)
      */
     static session_set(key, value) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._session_available) {
+        if (!Rsx_Storage._session_available) {
             return;
         }
 
-        this._set_item(sessionStorage, key, value, 'session');
+        Rsx_Storage._set_item(sessionStorage, key, value, 'session');
     }
 
     /**
@@ -205,13 +205,13 @@ class Rsx_Storage {
      * @returns {*|null} Parsed value or null if not found/unavailable
      */
     static session_get(key) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._session_available) {
+        if (!Rsx_Storage._session_available) {
             return null;
         }
 
-        return this._get_item(sessionStorage, key);
+        return Rsx_Storage._get_item(sessionStorage, key);
     }
 
     /**
@@ -219,13 +219,13 @@ class Rsx_Storage {
      * @param {string} key - Storage key
      */
     static session_remove(key) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._session_available) {
+        if (!Rsx_Storage._session_available) {
             return;
         }
 
-        this._remove_item(sessionStorage, key);
+        Rsx_Storage._remove_item(sessionStorage, key);
     }
 
     /**
@@ -234,13 +234,13 @@ class Rsx_Storage {
      * @param {*} value - Value to store (will be JSON serialized)
      */
     static local_set(key, value) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._local_available) {
+        if (!Rsx_Storage._local_available) {
             return;
         }
 
-        this._set_item(localStorage, key, value, 'local');
+        Rsx_Storage._set_item(localStorage, key, value, 'local');
     }
 
     /**
@@ -249,13 +249,13 @@ class Rsx_Storage {
      * @returns {*|null} Parsed value or null if not found/unavailable
      */
     static local_get(key) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._local_available) {
+        if (!Rsx_Storage._local_available) {
             return null;
         }
 
-        return this._get_item(localStorage, key);
+        return Rsx_Storage._get_item(localStorage, key);
     }
 
     /**
@@ -263,13 +263,13 @@ class Rsx_Storage {
      * @param {string} key - Storage key
      */
     static local_remove(key) {
-        this._init();
+        Rsx_Storage._init();
 
-        if (!this._local_available) {
+        if (!Rsx_Storage._local_available) {
             return;
         }
 
-        this._remove_item(localStorage, key);
+        Rsx_Storage._remove_item(localStorage, key);
     }
 
     /**
@@ -282,9 +282,9 @@ class Rsx_Storage {
      */
     static _set_item(storage, key, value, type) {
         // Validate scope before every write
-        this._validate_scope(storage, type);
+        Rsx_Storage._validate_scope(storage, type);
 
-        const scoped_key = this._build_key(key);
+        const scoped_key = Rsx_Storage._build_key(key);
 
         try {
             const serialized = JSON.stringify(value);
@@ -305,8 +305,8 @@ class Rsx_Storage {
                 console.warn(`[Rsx_Storage] Quota exceeded for ${type}Storage, clearing RSpade keys and retrying`);
 
                 // Clear only RSpade keys and retry once
-                this._clear_rsx_keys(storage);
-                storage.setItem('_rsx_scope_key', this._scope_suffix);
+                Rsx_Storage._clear_rsx_keys(storage);
+                storage.setItem('_rsx_scope_key', Rsx_Storage._scope_suffix);
 
                 try {
                     const serialized = JSON.stringify(value);
@@ -328,7 +328,7 @@ class Rsx_Storage {
      * @private
      */
     static _get_item(storage, key) {
-        const scoped_key = this._build_key(key);
+        const scoped_key = Rsx_Storage._build_key(key);
 
         try {
             const serialized = storage.getItem(scoped_key);
@@ -349,7 +349,7 @@ class Rsx_Storage {
      * @private
      */
     static _remove_item(storage, key) {
-        const scoped_key = this._build_key(key);
+        const scoped_key = Rsx_Storage._build_key(key);
 
         try {
             storage.removeItem(scoped_key);

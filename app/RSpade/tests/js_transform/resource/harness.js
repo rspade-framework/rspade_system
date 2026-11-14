@@ -8,11 +8,11 @@
  * assertion trips when the binding is dropped.
  *
  * Modes:
- *   node harness.js runtime <Fixture_Name> <target>   -> transform + eval, print facts JSON
- *   node harness.js emit <Fixture_Name> <target>      -> print the raw transformed source
+ *   node harness.js runtime <Fixture_Name>            -> transform + eval, print facts JSON
+ *   node harness.js emit <Fixture_Name>               -> print the raw transformed source
  *   node harness.js assert_negative                   -> run the assertion against a
  *                                                        binding-dropping (fork-less) config
- *   node harness.js minified <Fixture_Name> <target>  -> transform, then minify through the
+ *   node harness.js minified <Fixture_Name>           -> transform, then minify through the
  *                                                        REAL minify service (Terser, as a
  *                                                        strict production build runs it),
  *                                                        eval, print the `.name` facts JSON
@@ -38,12 +38,12 @@ function fixture_path(name) {
     return path.join(FIXTURES, name + '.js');
 }
 
-function transform(name, target) {
+function transform(name) {
     const file = fixture_path(name);
     const content = fs.readFileSync(file, 'utf8');
-    const res = server.transformFileContent(content, file, target, file, true);
+    const res = server.transformFileContent(content, file, file, true);
     if (res.status !== 'success') {
-        throw new Error('transform failed for ' + name + ' [' + target + ']: ' + JSON.stringify(res.error));
+        throw new Error('transform failed for ' + name + ': ' + JSON.stringify(res.error));
     }
     return res.result;
 }
@@ -69,8 +69,8 @@ function build_sandbox(decorator_ran) {
     };
 }
 
-function runtime_facts(name, target) {
-    const code = transform(name, target);
+function runtime_facts(name) {
+    const code = transform(name);
     const decorator_ran = {};
     const sandbox = build_sandbox(decorator_ran);
     sandbox.__captured = undefined;
@@ -89,7 +89,6 @@ function runtime_facts(name, target) {
     const cls = sandbox.__captured;
     const facts = {
         name,
-        target,
         bare_name_defined: typeof cls === 'function',
         decorator_ran,
     };
@@ -167,13 +166,13 @@ function eval_and_read(code, expression, filename) {
 // again after the real minify service has run over it. The minify module is required
 // in-process (its exported RPC handler), so the options under test are exactly the ones a
 // strict production build uses.
-async function minified_facts(name, target) {
-    const transformed = transform(name, target);
+async function minified_facts(name) {
+    const transformed = transform(name);
     const minify = require(MINIFY_SERVICE);
     const response = await minify.minify({ files: [{ type: 'js', content: transformed, filename: name + '.js' }] });
     const result = response.results[name + '.js'];
     if (result.status !== 'success') {
-        throw new Error('minify failed for ' + name + ' [' + target + ']: ' + JSON.stringify(result.error));
+        throw new Error('minify failed for ' + name + ': ' + JSON.stringify(result.error));
     }
 
     const read = (code, label) => {
@@ -186,7 +185,6 @@ async function minified_facts(name, target) {
 
     return {
         name,
-        target,
         transformed: read(transformed, 'transformed'),
         minified: read(result.result, 'minified'),
     };
@@ -224,23 +222,23 @@ let output;
 
 if (mode === 'minified') {
     // Async (the minify handler is); prints its own JSON line.
-    minified_facts(process.argv[3], process.argv[4] || 'modern').then(
+    minified_facts(process.argv[3]).then(
         (facts) => console.log(JSON.stringify(facts)),
         (error) => { console.error(error.stack || String(error)); process.exitCode = 1; }
     );
 } else if (mode === 'runtime') {
-    output = runtime_facts(process.argv[3], process.argv[4] || 'modern');
+    output = runtime_facts(process.argv[3]);
 } else if (mode === 'emit') {
     // Raw transformed source, printed as-is rather than as JSON facts, so a test can assert
     // on the emitted TEXT (the fork's `var <Name> =` binding). NEVER process.exit() here -
     // a pipe write is asynchronous and exiting truncates it.
-    process.stdout.write(transform(process.argv[3], process.argv[4] || 'modern'));
+    process.stdout.write(transform(process.argv[3]));
 } else if (mode === 'assert_negative') {
     output = assert_negative();
 } else if (mode === 'manifest_identity') {
     output = manifest_identity();
 } else {
-    console.error('Usage: node harness.js runtime <Fixture_Name> <target> | node harness.js emit <Fixture_Name> <target> | node harness.js assert_negative | node harness.js minified <Fixture_Name> <target> | node harness.js manifest_identity');
+    console.error('Usage: node harness.js runtime <Fixture_Name> | node harness.js emit <Fixture_Name> | node harness.js assert_negative | node harness.js minified <Fixture_Name> | node harness.js manifest_identity');
     process.exit(1);
 }
 

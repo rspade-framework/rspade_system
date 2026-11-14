@@ -56,6 +56,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Lib/Developer/Debug',  // Debug components (JS_Tree_Debug_*)
                 'app/RSpade/Core/Preview',  // Document preview components (Document_Preview + viewers)
                 'app/RSpade/Lib/Ui/RecordAuthor',  // Authorship display components (Record_Author)
+                'app/RSpade/Lib/Ui/Money',  // Money display (Money_Display); Money_Input is in Core/Forms
                 'app/RSpade/Lib/Geo/Ip/ui',  // The DB-IP attribution beside a shown location (Geo_Ip_Credit); the rest of Lib/Geo/Ip is server-only
                 'app/RSpade/Lib/SignIn/Turnstile',  // Cloudflare Turnstile widget (Turnstile_Input)
                 'app/RSpade/Lib/SignIn/TwoFactor',  // Second-factor components (Totp_Enrollment, Passkey_Register, Two_Factor_Challenge, Passkey_Sign_In) + Rsx_Two_Factor.js

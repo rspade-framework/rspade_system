@@ -40,6 +40,7 @@ Both trees are always present, and nothing about a class depends on which one it
 | `Ui/DarkMode` | `Rsx_Dark_Mode` and its preference endpoint |
 | `Ui/RecordAuthor` | `<Record_Author>` |
 | `Ui/Qr` | `Rsx_Qr_Code` |
+| `Ui/Money` | `<Money_Display>` (an amount, nothing stored, or redacted; `rsx:man money`) |
 | `Settings` | `Rsx_Settings`, the `Has_Preference_Variables` trait |
 | `Operations/Health` | `rsx:health` / `rsx:heal`: the runner and the `#[Health_Check]` rows (`CLAUDE.md`) |
 | `Operations/Metrics` | `Rsx_Metrics` |

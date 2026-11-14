@@ -1,0 +1,29 @@
+<%--
+Money_Input - an amount of money
+
+The input for a money column (['money' => true] in the model's $columns): its value is an
+Rsx_Money, never a number or a string the page has to parse.
+
+    <Money_Input $name="budget" $placeholder="0.00" />
+
+$name          - the field name (form contract).
+$placeholder   - optional placeholder text.
+
+The person types the amount as text, exactly as the configured display prints it
+(rsx.money.display: the symbol, the separators) - "$1,234.56", "1234.5", "-5", "(500.00)".
+Nothing typed is filtered or rewritten while typing. On blur, text that parses is tidied to
+the plain form (1234.50); text that does not parse is left exactly as typed.
+
+val() answers an Rsx_Money, null for an empty box, or - when the text does not parse - the
+typed STRING itself, which the endpoint's Model::money_from_submitted('col', $value) refuses
+with its own message. Browser code reading val() tests `instanceof Rsx_Money` before calling a method on
+it. val(v) takes an Rsx_Money or null; a string is refused.
+
+The field is a Bootstrap .form-control, so its look is the application's own.
+
+See: php artisan rsx:man money
+--%>
+<Define:Money_Input extends="Form_Input_Abstract" tag="div">
+    <input type="text" inputmode="decimal" autocomplete="off" class="form-control" $sid="field"
+           placeholder="<%= this.args.placeholder ?? '' %>" />
+</Define:Money_Input>

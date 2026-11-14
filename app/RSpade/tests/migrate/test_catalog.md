@@ -350,3 +350,12 @@ with its output captured verbatim. Fixtures are the derived_columns concern's.
 | REDERIVE-DRAIN-CAP | N queued tables allow N + 2 passes; the WARNING names the unsettled table; not fatal | php | unstable + skipped table | 4 passes, WARNING, Done | implemented | 2026-11-13 |
 | REDERIVE-DRAIN-FAILURE | a throwing derive fails the step; every queued table stays queued | php | plain + throwing unstable | false; both still queued | implemented | 2026-11-13 |
 | REDERIVE-DRAIN-POSITION | the drain is the last step of execute_migrations(), after the revision dictionary, not skipped on --framework-only | php | source | ordered offsets | implemented | 2026-11-13 |
+
+## Migration_Validator_Remove_Down_Test (php)
+
+`MigrationValidator::remove_down_method()` finds the end of down() by pairing braces
+(`Php_Parser::_block_brace()`), so an interpolation in down() never shifts the count.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MIG-REMOVE-DOWN-BRACES | down() is removed and up() kept whole when down() holds blocks closed right after `"{$a}"`, an interpolation longer than ten tokens, or `"${name}"`; a control without interpolation | php | scratch migration file per shape | true; file = class with up() only; parses | implemented | 2026-11-14 |

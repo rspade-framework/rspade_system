@@ -1,0 +1,538 @@
+MONEY(1)                          RSpade Manual                          MONEY(1)
+
+NAME
+    money - Rsx_Money, an exact amount of money in PHP and JavaScript, and the
+    money column kind that stores one
+
+TAGS
+    models, forms, stdlib
+
+SYNOPSIS
+    // Migration: the column is DECIMAL(p,2), p at most 18
+    DB::statement("ALTER TABLE projects ADD COLUMN budget DECIMAL(15,2) NULL");
+
+    // Model
+    public static $columns = [
+        'budget'        => ['money' => true],
+        'hour_estimate' => [],                 // a DECIMAL that is not money
+    ];
+
+    $project->budget                           Rsx_Money, or null
+    $project->budget->format()                 "$1,234.50"
+    $project->budget->to_decimal()             "1234.50"
+
+    // An endpoint reads a submitted amount through the column's door
+    $budget = Project_Model::money_from_submitted('budget', $params['budget'] ?? null);
+
+    // Arithmetic is methods; rounding is always named
+    $tax   = $subtotal->percent('7.25', Rsx_Money::ROUND_HALF_UP);
+    $total = $subtotal->add($tax);
+    $parts = $total->allocate([1, 1, 1]);
+
+    // A database total
+    Project_Model::where('parent_project_id', $id)->sum_money('budget');
+
+    // Templates
+    <%= project.budget %>
+    <Money_Input $name="budget" />
+    <Money_Display $value=project.budget />
+
+DESCRIPTION
+    A float cannot hold most amounts of money exactly (0.1 + 0.2 is
+    0.30000000000000004), and the error accumulates silently through every
+    loop that adds line items. A DECIMAL column read through Eloquent is a
+    string, which invites a float conversion and exactly that loop.
+
+    Rsx_Money is an exact amount: an immutable count of cents in the signed
+    64-bit range, always two decimal places. The PHP class
+    (App\RSpade\Core\Database\Money\Rsx_Money) and the JavaScript class of the
+    same name implement every algorithm step for step, so both languages give
+    the identical result, or the identical refusal, for the same call. No
+    float takes part in any calculation; every quantity is an integer checked
+    against the range at every step; every rounding is named by the caller.
+
+    A model column declared ['money' => true] reads as an Rsx_Money, so the
+    exact value is what every layer - endpoint, form, template, API, query -
+    receives. An application has one currency: the symbol and separators are
+    display configuration (DISPLAY CONFIGURATION), never part of the value.
+    There is no currency code on an amount and no conversion between
+    currencies.
+
+DECLARING A COLUMN
+    'col' => ['money' => true] in the model's $columns (rsx:man model, COLUMN
+    DECLARATIONS):
+
+        - The column is DECIMAL(p,2) with p at most 18 (MODEL-MONEY-01).
+          DECIMAL(18,2)'s largest value is inside the range Rsx_Money holds; a
+          wider column could store an amount no Rsx_Money can represent.
+        - money is a flag: the literal true. It excludes enum, text_type and
+          type_ref on the same column and combines with derived, never_export
+          and revision_exclude (MODEL-COLUMNS-01, manifest build).
+        - No $casts entry names a money column: the declaration is its cast
+          (Rsx_Money_Cast), and a cast beside it would shadow it
+          (MODEL-COLUMNS-01).
+        - Every DECIMAL, FLOAT and DOUBLE column of a model's table is
+          declared, money or not money ('col' => []) - MODEL-DECIMAL-01. A
+          FLOAT or DOUBLE column holding money is converted to DECIMAL(p,2) by
+          a migration and declared money.
+
+    Reading the declaration:
+
+        Model::money_columns()          every money column
+        Model::is_money_column('col')   whether the column is money
+        Model::money_limit('col')       the largest amount the column holds
+        Model.is_money_column('col')    the same, on the JS model
+
+    money_limit() reads the column's DECIMAL(p,s) from the live schema and
+    answers its maximum at whole cents (DECIMAL(15,2): 9999999999999.99),
+    never more than the type's own maximum. The column holds every amount
+    from the limit negated up to the limit. It throws a LogicException for a
+    column not declared money ("X::col is not a money column: its $columns
+    entry has no 'money'.") or not a DECIMAL ("X::col is declared money but
+    is not a DECIMAL column (MODEL-MONEY-01)."), and a RuntimeException when
+    the table does not exist in the connected database.
+
+    The generated model header marks the column:
+
+        * @property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float
+
+    The cast. A read hydrates the stored string (null stays null). An
+    assignment takes an Rsx_Money, a strict decimal string ("29.99",
+    "250000"), an int of whole units or the {__MONEY} envelope array, and
+    stores the canonical two-place string - exactly what MySQL returns, so an
+    unchanged amount is never dirty and records no revision. It refuses:
+
+        a float          argument: "X::col is a money column; a float is
+                         never assigned to it. Assign
+                         Rsx_Money::from_decimal('1.00') or the decimal
+                         string."
+        typed text       format: "This is not an amount of money." ("$1,234"
+                         - read a person's input with money_from_submitted())
+        any other type   argument: "X::col is a money column; it takes an
+                         Rsx_Money, a decimal string, an int of whole units or
+                         a {__MONEY} envelope, got <type>."
+        beyond the limit range: "This amount is larger than this field can
+                         hold."
+
+THE VALUE
+    The canonical form is -?(0|[1-9][0-9]*).[0-9]{2}: "0.00", "5.00",
+    "-0.01", "1234.50". There is no negative zero: "-0.00", "(0.00)" and a
+    float -0.0 all read as 0.00. The range is
+
+        largest     92233720368547758.07
+        smallest   -92233720368547758.08
+
+    and a value or an intermediate step outside it throws (range). The value
+    is immutable: every operation returns a new instance (or one of its
+    arguments: clamp(), min(), max()).
+
+    It is never a number and never a string:
+
+        PHP   (string), interpolation and concatenation throw LogicException
+              "Rsx_Money cannot be converted to a string: use to_decimal()
+              for the exact value or format() for display." Arithmetic
+              operators throw TypeError. NOT intercepted, and silent: == and
+              < compare the two objects' properties, === compares identity,
+              and every object is true in a condition, !, &&, ?: and
+              empty(). MODEL-MONEY-02 reports these.
+
+        JS    Every coercion to a primitive throws ("Rsx_Money cannot be
+              converted to a primitive: use to_decimal(), format(), compare()
+              or the questions (equals, less_than, ...).") - +m, m + 1,
+              m < n, m == 5, a template literal, String(m), Number(m), and an
+              explicit m.toString(). NOT intercepted, and silent: === is
+              identity and every object is truthy. No rule lints JavaScript.
+
+    So "has an amount" is `!== null`, "is zero" is is_zero(), and equality is
+    equals().
+
+    Questions:
+
+        equals($other)                  false for null
+        Rsx_Money::same($a, $b)         null-safe: both null is the same
+        compare($other)                 -1, 0 or 1
+        less_than($o), less_than_or_equal($o),
+        greater_than($o), greater_than_or_equal($o)
+        is_zero(), is_negative(), is_positive()
+        is_between($low, $high)         inclusive; low > high is argument
+
+    Every Rsx_Money argument must be an Rsx_Money - a string, a number or a
+    null (except where stated) is an argument error.
+
+WAYS IN
+    Rsx_Money::from_decimal($x)
+        A plain decimal string ("1234.5", "1.500", "-.5"; no symbol, no
+        grouping, no exponent, no whitespace), an int of WHOLE units (5 is
+        5.00; JS: a BigInt or a safe-integer Number), or a float whose
+        shortest form has at most 15 significant digits. More than two
+        significant decimals is refused (scale); trailing zeros are not
+        significant.
+
+    Rsx_Money::from_cents($x)
+        An int count of cents, or a string of one ("-5", "0"). JS: a BigInt,
+        a safe-integer Number or an integer string. A float is refused.
+
+    Rsx_Money::from_text($s)
+        What a person typed, read through the display configuration:
+        "$1,234.56", "1234.5", "-$99.99", "$-99.99", "(500.00)", "1.500".
+        Leading and trailing whitespace (including U+00A0, U+2009, U+202F) is
+        ignored; the symbol is optional; a sign and parentheses together are
+        refused; grouping must be exact ("1,234" reads, "12,34" and "1234,5"
+        do not, with ',' grouping). More than two significant decimals is
+        refused, never rounded.
+
+    Rsx_Money::from_submitted($x)
+        A form or API field. null and blank (whitespace only) are NULL - no
+        amount, never zero; an Rsx_Money is returned as is; a string is
+        read by from_text(); an int is whole units; a float goes through the
+        float door; an array carrying __MONEY is the envelope. Anything else
+        is format. Every refusal is an input problem (format, scale, range).
+
+    Model::money_from_submitted('col', $x)
+        from_submitted(), then a refusal (range, "This amount is larger than
+        this field can hold.") when the amount is beyond money_limit('col').
+        The endpoint's door for a money field (IN AN ENDPOINT).
+
+    Rsx_Money::from_aggregate($x)
+        An SQL total: null (SUM over no rows) is 0.00; an int is whole units;
+        a decimal string or a float - floating-point residue included - is
+        ROUNDED half-up to two places by integer arithmetic ("10.005" is
+        10.01). The one door that rounds; never for a figure a person entered.
+
+    Rsx_Money::from_storage($s)
+        The canonical string a DECIMAL(p,2) column returns. Anything else is
+        argument.
+
+    Rsx_Money::from_envelope($e)
+        ['__MONEY' => '1234.56'] (JS {__MONEY: '1234.56'}) - the only key,
+        holding the canonical string. Anything else is argument.
+
+    Rsx_Money::zero()
+        0.00.
+
+    FLOATS. Wherever a float is accepted as a figure or a factor
+    (from_decimal(), from_submitted(), a factor, rate or divisor), it is read
+    as its shortest round-trip decimal and refused when that needs more than
+    15 significant digits: from_decimal(19.99) is 19.99, from_decimal(0.1 +
+    0.2) is refused ("This number carries floating-point residue; pass it as
+    a decimal string."). A NaN, an infinity or a float that prints in
+    exponent form is refused too. Integer-only arguments (from_cents(),
+    multiply_fraction(), divide(), allocate(), places) never take a float.
+
+OUTPUT
+    to_decimal()          "1234.56", "-0.01", "0.00" - the canonical string,
+                          for data (a CSV cell, a log, a raw query)
+    to_cents_string()     "123456", "-5", "0"
+    to_envelope()         ['__MONEY' => '1234.56']; also what json_encode()
+                          (PHP, JsonSerializable) and JSON (JS, toJSON())
+                          produce
+    format($options)      the amount for display through the display
+                          configuration: "$1,234.56", "-$1,234.56"
+    to_input_text()       what an edit box shows: no symbol, no grouping
+                          ("-1234.56")
+
+    format() options, any subset of an associative array (JS: an object):
+
+        negative    'sign' (default, "-$5.00") or 'parentheses' ("($5.00)")
+        symbol      bool, default true
+        grouped     bool, default true
+
+    An unknown option or a wrong value is argument.
+
+ARITHMETIC
+    add($other), subtract($other)
+    negate(), abs()
+    multiply($factor, $rounding)
+        This amount times a decimal factor, rounded once. A factor is an int,
+        a decimal string ("1.5") or a residue-free float.
+    multiply_fraction($numerator, $denominator, $rounding)
+        This amount times numerator / denominator, integers, one calculation
+        and one rounding: 17 of 30 days is multiply_fraction(17, 30, ...).
+        A zero denominator is division.
+    percent($rate, $rounding)
+        rate percent of this amount: percent('7.25', ...) is 7.25%.
+    divide($divisor)
+        Integer division of the cents by an integer divisor, answering
+        ['quotient' => Rsx_Money, 'remainder' => Rsx_Money] (JS
+        {quotient, remainder}): quotient x divisor + remainder is the amount,
+        and the remainder carries the amount's sign. 100.00 / 3 is 33.33
+        remainder 0.01.
+    divide_rounded($divisor, $rounding)
+        This amount divided by a decimal divisor, rounded once. A zero
+        divisor is division.
+    round_to($unit, $rounding)
+        The nearest multiple of an Rsx_Money unit (1.00, 100.00, 0.05) under
+        the mode; a unit that is not positive is argument.
+    clamp($low, $high)
+        low when below it, high when above it, else this; low > high is
+        argument.
+    allocate($ratios)
+        Split by a list of non-negative integer ratios (not empty, not all
+        zero): largest remainder, ties to the earlier element. The parts sum
+        exactly to the amount and a zero ratio receives nothing:
+        100.00->allocate([1, 1, 1]) is 33.34, 33.33, 33.33.
+
+    EVERY STEP IS CHECKED. Each primitive step (an add, a multiply inside an
+    algorithm) is checked on its true result, and one that leaves the range
+    throws range even when the final answer would fit. So the largest amount
+    times '0.5' throws (the amount times 5 is computed first), and sum() of a
+    list near the range can depend on the order of its elements.
+
+ROUNDING
+    Every method that can leave a fraction of a cent takes the mode as a
+    REQUIRED argument; there is no default:
+
+        Rsx_Money::ROUND_HALF_UP     nearest; a half goes away from zero
+        Rsx_Money::ROUND_HALF_EVEN   nearest; a half goes to the even
+                                     neighbour (no drift over many roundings)
+        Rsx_Money::ROUND_UP          any remainder away from zero
+        Rsx_Money::ROUND_DOWN        any remainder dropped (toward zero)
+        Rsx_Money::ROUND_EXACT       any remainder throws rounding
+
+    The constants' values are 'half_up', 'half_even', 'up', 'down', 'exact';
+    anything else, or a missing mode, is argument (PHP: a missing argument is
+    an ArgumentCountError).
+
+LISTS AND PROPORTIONS
+    Static, over a list (PHP list, JS Array) of Rsx_Money. A null element is
+    refused (argument): an absent figure summed as zero would hide the
+    absence, so the caller filters first.
+
+        Rsx_Money::sum($list)                       an empty list is 0.00
+        Rsx_Money::min($list), ::max($list)         the FIRST element holding
+                                                    the extreme; empty is
+                                                    argument
+        Rsx_Money::average($list, $rounding)        empty is argument
+        Rsx_Money::running_totals($list)            the total after each
+                                                    element
+
+    Proportions answer DECIMAL STRINGS, never money and never floats:
+
+        ratio_to($other, $places, $rounding)
+            this / other with places decimals: 50.00 to 200.00 is "0.25".
+            other zero is division.
+        percent_change_to($other, $places, $rounding)
+            (other - this) / this x 100: 100.00 to 107.25 is "7.25". this
+            zero is division.
+
+    places is a non-negative integer.
+
+IN AN ENDPOINT
+    The template's project save (rsx/app/frontend/projects/):
+
+        $budget = null;
+        try {
+            $budget = Project_Model::money_from_submitted('budget', $params['budget'] ?? null);
+        } catch (Rsx_Money_Exception $e) {
+            if (!$e->is_input_problem()) {
+                throw $e;
+            }
+            $errors['budget'] = $e->getMessage();
+        }
+
+    An input problem's message is written for the person; hand it to the
+    field error unchanged. Any other reason is the calculation or the code
+    and is left to fail loud. The application's own rules (not negative, a
+    cap) are written with the methods. Form_Edit::set('budget', $budget)
+    compares amounts exactly, so 1234.5 against a stored 1234.50 is no change,
+    and a conflict question's row for a money column has kind money with the
+    values formatted (rsx:man form_conventions).
+
+    At the Ajax boundary every {__MONEY} envelope in the request parameters
+    becomes an Rsx_Money before the endpoint runs. Only toJSON() writes an
+    envelope, so a malformed one (another key beside __MONEY, a value that is
+    not canonical) is a client bug: it throws argument and fails the request.
+
+FORMS
+    <Money_Input $name="budget" $placeholder="0.00" /> (framework core) edits
+    a money column. The person types the amount as the display prints it;
+    typing is never filtered, and on blur a parsed entry is tidied to the
+    plain form (1234.50). Its value is one of:
+
+        an Rsx_Money     the text parses
+        null             the box is blank
+        the typed STRING the text does not parse - so the endpoint refuses it
+                         with its own message rather than receiving "no value"
+
+    val(v) takes an Rsx_Money or null; a string (a '' seed) throws. A form
+    seeds it with the record's value or null. It takes no $max_length.
+
+    Every input declares what it edits: Money_Input declares ACCEPTS =
+    'Rsx_Money', and an input with no ACCEPTS given an Rsx_Money throws
+    ("<Input> ($name=\"x\") edits plain strings, but was given an Rsx_Money.
+    That column is a money column - use <Money_Input>."). For a dynamic tag,
+    Model.editor_component_for('col') answers 'Money_Input' for a money
+    column (rsx:man form_input).
+
+PRINTING
+    <%= m %> prints m.format(), escaped - an object printer registered by
+    Rsx_Money. Null prints nothing: guard it, or use Money_Display. In
+    ATTRIBUTE position (title="<%= m %>") printers are not consulted and the
+    value refuses to become a string; write m.format() or m.to_decimal().
+
+    <Money_Display $value=... /> (app/RSpade/Lib/Ui/Money) keeps three states
+    apart:
+
+        a value          format(): "$1,234.56", "-$5.00", "$0.00"
+        nothing stored   $value null: $empty, an em-dash by default
+        redacted         $redacted=true: "Hidden", no figure printed
+
+    Args: $value (Rsx_Money or null; anything else throws), $redacted,
+    $negative ('sign' | 'parentheses'), $negative_red (a negative amount in
+    the danger colour), $empty. Tabular figures, no wrapping; the caller
+    places it.
+
+    In the browser a money column of a fetched record, a relationship or an
+    Ajax response arrives as an Rsx_Money (an envelope is rehydrated
+    wherever it appears in a response), and an Rsx_Money in a cached
+    component's this.data is restored as one. An Rsx_Money passed as an
+    ARGUMENT to a component with on_load() is not a plain object, so the
+    component's args are not keyable and it is not cached; pass an id or
+    define cache_id().
+
+    DataGrid_Abstract::transform_records() receives toArray() rows, so a money
+    column there is the envelope array ['__MONEY' => '1234.56']: leave it,
+    or rebuild it with Rsx_Money::from_envelope(). A CSV cell writes
+    $record->budget?->to_decimal(). A revision records the canonical strings;
+    a history screen formats one with Rsx_Money::from_storage($raw)->format().
+
+QUERIES
+    An Rsx_Money given as a value to where(), orWhere(), whereNot(),
+    whereIn() / whereNotIn() and their or-forms, whereBetween() /
+    whereNotBetween() and their or-forms, or to a raw update() binds as its
+    canonical decimal string:
+
+        Project_Model::where('budget', '>=', Rsx_Money::from_decimal('10000'))
+
+    ->sum_money('col') totals a declared money column over the query's rows
+    as an Rsx_Money (0.00 for no rows; SQL skips a NULL). On a column not
+    declared money it throws LogicException ("X::col is not a money column:
+    sum_money() totals a column declared ['money' => true] in $columns.").
+    Laravel's ->sum() answers a number and is never used for money. A grouped
+    total is selectRaw('..., SUM(col) AS total') plus
+    Rsx_Money::from_aggregate($row->total) per row.
+
+THE EXTERNAL API
+    A read returns a money column as the envelope, {"__MONEY": "1234.56"} -
+    the same serializer as Ajax.
+
+    A write declares the param money:
+
+        #[Api_Param('price', type: 'money', required: false, default: '0.00')]
+
+    Accepted: a plain decimal string ("1234.50" - no symbol, no grouping),
+    the envelope as a JSON object or JSON-encoded into a string, a JSON int of
+    whole units, a residue-free JSON float. null or blank is null. The
+    endpoint receives an Rsx_Money or null; a refusal is a 422 with the money
+    message as the field's error. A default is a literal and reaches the
+    endpoint as an Rsx_Money. The param is not checked against a column's
+    limit: pass it through Model::money_from_submitted('col', ...) before
+    assigning it (rsx:man external_api).
+
+DISPLAY CONFIGURATION
+    rsx.money.display, set in rsx/resource/config/rsx.php, drives format()
+    and from_text() identically in PHP and the browser (shipped as
+    window.rsxapp.money_display):
+
+        'money' => [
+            'display' => [
+                'symbol'            => '$',       // '' = no symbol
+                'symbol_position'   => 'before',  // or 'after'
+                'symbol_spacing'    => false,     // true: one U+00A0 between
+                'decimal_separator' => '.',       // or ','
+                'group_separator'   => ',',       // ',' '.' "'" ' ' U+00A0
+                                                  // U+202F or '' (none)
+            ],
+        ],
+
+    The symbol contains no digit, sign, parenthesis, point, comma, apostrophe
+    or whitespace, and the group separator differs from the decimal one. An
+    invalid value throws when first read, naming the key:
+    "rsx.money.display.<key> must be <rule>; got <value>."
+
+RULES
+    MODEL-MONEY-01 (rsx:check, high)
+        A column declared money is not DECIMAL(p,2) with p at most 18.
+    MODEL-DECIMAL-01 (rsx:check, high)
+        A DECIMAL, FLOAT or DOUBLE column of the model's own table has no
+        $columns entry. Declare ['money' => true] or [] (not money).
+    MODEL-MONEY-02 (rsx:check, high)
+        A money value is an operand of a comparison (==, !=, <, <=, >, >=,
+        <=>, === / !== against anything but null), a logical operator or a
+        condition, a cast, empty(), intval / floatval / boolval / strval /
+        round / number_format / abs / max / min / array_sum, an arithmetic
+        operator, concatenation or interpolation. The finding names the
+        method to use. A money value is one the rule can prove: a declared
+        column through an evident model, a variable typed or assigned from
+        one, an Rsx_Money call answering one. A null check, ??, ?->, isset()
+        and passing or returning the value are never reported.
+    MODEL-COLUMNS-01 (manifest build, FATAL)
+        A money flag that is not true, money beside enum / text_type /
+        type_ref, or a $casts entry on a money column.
+
+    Each rsx:check rule is suppressed for a file by @<RULE>-EXCEPTION. What
+    no rule sees is the conformance audit money_never_in_a_float
+    (rsx:man conformance_audits).
+
+ERRORS
+    Every refusal by Rsx_Money is an Rsx_Money_Exception (PHP extends
+    InvalidArgumentException; JS extends Error). $e->reason is one of six;
+    $e->is_input_problem() answers true for exactly format, scale and range,
+    whose messages are written for a person.
+
+    format     input problem
+        "This is not an amount of money."
+            Text or a value that is not an amount; a malformed submitted
+            envelope; a NaN, infinity or exponent-form float figure.
+        "This number carries floating-point residue; pass it as a decimal
+        string."
+            A float needing more than 15 significant digits.
+    scale      input problem
+        "An amount of money has at most two decimal places."
+    range      input problem
+        "This amount is outside the range the system can hold."
+            A value or any intermediate step outside the signed 64-bit range
+            of cents.
+        "This amount is larger than this field can hold."
+            Beyond a money column's money_limit() - from
+            money_from_submitted() or an assignment.
+    rounding   not an input problem
+        "This calculation does not come to a whole number of cents, and
+        rounding was not allowed."
+            ROUND_EXACT met a remainder.
+    division   not an input problem
+        "An amount of money cannot be divided by zero."
+    argument   not an input problem - the calling CODE is wrong
+        "Rsx_Money::<method>(): <what was wrong>."
+            A wrong type, a null, a missing or unknown mode, an empty list,
+            low > high, a malformed envelope or stored string. The cast's two
+            argument messages are under DECLARING A COLUMN.
+
+    The messages are constants on the class (MESSAGE_FORMAT,
+    MESSAGE_RESIDUE, MESSAGE_SCALE, MESSAGE_RANGE, MESSAGE_COLUMN_RANGE,
+    MESSAGE_ROUNDING, MESSAGE_DIVISION) and identical in both languages.
+    String conversion is not an Rsx_Money_Exception: PHP throws
+    LogicException, JS fails a sanity check (THE VALUE).
+
+LIMITS
+    The range is -92233720368547758.08 to 92233720368547758.07, and every
+    step of a calculation is held to it.
+
+    A column holds what its DECIMAL(p,2) holds (money_limit()), checked by
+    money_from_submitted() and on assignment - never left to the database's
+    out-of-range error. The browser has no money_limit(); the server's
+    refusal is the field error.
+
+    One currency per application. Rsx_Money carries no currency code, and
+    the display configuration is application-wide.
+
+SEE ALSO
+    rsx:man model - COLUMN DECLARATIONS, the $columns grammar
+    rsx:man form_input - Money_Input and ACCEPTS
+    rsx:man form_conventions - Form_Edit and the conflict question
+    rsx:man external_api - the money param type
+    rsx:man text_types - the other value-object column kind
+    rsx:man standard_library - the shared library around it
+    rsx:man conformance_audits - money_never_in_a_float
+    skill rspade:money - the how-to, worked examples and gotchas
+    skill rspade:models - writing a model, choosing a column's kind

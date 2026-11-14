@@ -296,9 +296,9 @@ class Rsx_Jq_Helpers {
          * options win and there is only ever one set. `rsx_numeric(false)` takes the
          * handlers off and leaves the raw number in the box.
          *
-         * `Currency_Input` is this filter with `commas` and a `prefix`, and
-         * `Time_Entry_Input` is it with `time`; it is what every numeric input invokes, so
-         * no component filters digits by hand.
+         * `Time_Entry_Input` is this filter with `time`; it is what every numeric input
+         * invokes, so no component filters digits by hand. An amount of money is not a
+         * numeric field: it is `Money_Input`, which never filters (rsx:man money).
          *
          * @param {Object|false} options
          * @returns {jQuery}

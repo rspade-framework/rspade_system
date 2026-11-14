@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Models;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\Model_Declared_Casts;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -37,8 +38,12 @@ use App\RSpade\Core\Manifest\Manifest;
  *      `$neverExport` or `$revision_exclude`: the framework reads column declarations from
  *      `$columns` only, so such a property declares nothing - a "never exported" secret
  *      declared there would be sent to the browser.
+ *   9. No concrete model's explicit casts (the `$casts` default or a `casts()` answer) name a
+ *      money column of its effective declaration: the money cast is attached only where no
+ *      cast exists, so such an entry shadows it - the column would read as a string and
+ *      accept a float. Reported at every concrete model that inherits or declares one.
  *
- * Cross-file: checks 6 and 7 read the ancestors' declarations, so the rule re-runs when any
+ * Cross-file: checks 6, 7 and 9 read the ancestors' declarations, so the rule re-runs when any
  * PHP file or the class indexes move. The declarations are read by reflection over the
  * loaded classes (they are values, not syntax).
  *
@@ -51,13 +56,13 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
     private const RULE_ID = 'MODEL-COLUMNS-01';
 
     /** Every key a column entry may carry. */
-    public const ALLOWED_KEYS = ['enum', 'text_type', 'type_ref', 'never_export', 'revision_exclude', 'derived', 'from'];
+    public const ALLOWED_KEYS = ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'derived', 'from'];
 
     /** Keys whose only legal value is the literal true. */
-    public const FLAG_KEYS = ['type_ref', 'never_export', 'revision_exclude'];
+    public const FLAG_KEYS = ['type_ref', 'money', 'never_export', 'revision_exclude'];
 
     /** Keys of which a column carries at most one: each is a different kind of value. */
-    public const EXCLUSIVE_KEYS = ['enum', 'text_type', 'type_ref'];
+    public const EXCLUSIVE_KEYS = ['enum', 'text_type', 'type_ref', 'money'];
 
     /**
      * Static property names the framework does not read on a model: column declarations live
@@ -79,7 +84,7 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
     {
         return 'A model\'s $columns entries must use the known keys, literal true flags, one kind per column, '
             . 'well-formed values and derived declarations, never drop an inherited never_export or audit type_ref, '
-            . 'and no model declares the column statics the framework does not read';
+            . 'no explicit cast shadows a money column, and no model declares the column statics the framework does not read';
     }
 
     public function get_file_patterns(): array
@@ -162,6 +167,7 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
         $class_name = class_basename($fqcn);
 
         $this->check_unread_statics($fqcn, $abs_file, $contents, $class_name);
+        $this->check_money_casts($fqcn, $abs_file, $contents, $class_name);
 
         $property = new \ReflectionProperty($fqcn, 'columns');
 
@@ -232,6 +238,59 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         $this->check_derived_cycles($abs_file, $contents, $declaration_line, $class_name, array_merge($inherited, $declared));
+    }
+
+    /**
+     * CHECK 9: no explicit cast shadows the money cast on a money column of the effective
+     * declaration. Abstract classes are not judged: every concrete descendant inherits their
+     * casts and is reported itself.
+     */
+    private function check_money_casts(string $fqcn, string $abs_file, string $contents, string $class_name): void
+    {
+        // @PHP-REFLECT-01-EXCEPTION - this rule runs while the manifest is being built and judges classes the manifest does not index
+        if ((new \ReflectionClass($fqcn))->isAbstract()) {
+            return;
+        }
+
+        $effective = $this->inherited_columns($fqcn);
+        $property = new \ReflectionProperty($fqcn, 'columns');
+
+        if ($property->getDeclaringClass()->getName() === $fqcn && is_array($property->getValue())) {
+            foreach ($property->getValue() as $column => $entry) {
+                if (is_string($column) && is_array($entry)) {
+                    $effective[$column] = $entry;
+                }
+            }
+        }
+
+        $casts = null;
+
+        foreach ($effective as $column => $entry) {
+            if (($entry['money'] ?? null) !== true) {
+                continue;
+            }
+
+            $casts ??= Model_Declared_Casts::of($fqcn);
+
+            if (!array_key_exists($column, $casts)) {
+                continue;
+            }
+
+            $cast = is_string($casts[$column]) ? $casts[$column] : get_debug_type($casts[$column]);
+            $line = $this->line_of($contents, '/\$casts\s*=|function\s+casts\s*\(/');
+
+            $this->add_violation(
+                $abs_file,
+                $line,
+                "{$class_name} declares a cast for '{$column}' ('{$cast}'), which is a money column. The money cast is "
+                . "attached only where no cast exists, so this entry shadows it: the column would read as a string and "
+                . 'accept a float.',
+                $this->line_text($contents, $line),
+                "Remove '{$column}' from the model's casts. Its \$columns money declaration is the column's cast.\n"
+                . 'See: php artisan rsx:man money',
+                'critical'
+            );
+        }
     }
 
     /**

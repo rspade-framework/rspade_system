@@ -68,6 +68,8 @@ The failure looks like a broken manifest build with a class-not-found deep in th
 | a file / streamed response | sent as it is (downloads are exempt) |
 | `null`, a list, `[]`, a scalar, a Collection | **refused**: a 500 naming the endpoint (`Every external API response body is a JSON object ... a list goes inside an object (['items' => $list])`), a writer rolled back |
 
+**A money column (skill `rspade:money`) reads as the envelope `{"__MONEY": "1234.56"}`, and a write takes it through `#[Api_Param('price', type: 'money')]`**: a plain decimal string (`"1234.50"`, no symbol or grouping), the envelope as a JSON object or JSON-encoded string, a JSON int of whole units or a residue-free JSON float; blank or null is null. The endpoint receives an `Rsx_Money` (or null), a refusal is a 422 with the money message on that field, and a default is a literal (`default: '0.00'`). The column's own limit is not checked by the param: read it through `Model::money_from_submitted('col', $params['price'])` before assigning.
+
 **A model's DERIVED column (skill `rspade:models`) is a response field and a filter, never an `#[Api_Param]` of a write** - the write takes its source column, and a client sending the derived one gets 422 "Unknown parameter" like any undeclared key.
 
 There is no 204. Error shape is always `{"error":{"code","message","fields"?, ...documented extras}}`, built only by `Api_Dispatcher::_error()` - branch on `error.code`, never the message.

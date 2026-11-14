@@ -1459,16 +1459,17 @@ class Rsx_Realtime {
         // (__first_load_started). An async function would yield at its first await and miss
         // the latch. We still return a promise resolving to the handle (callers may await).
         Component.prototype.subscribe = function (topic, filter, callback) {
+            const that = this;
             const [r_topic, r_filter, r_callback] = Rsx_Realtime._resolve_subscribe_args(topic, filter, callback);
 
-            if (!this._realtime_specs) {
-                Rsx_Realtime._adopt_component(this);
+            if (!that._realtime_specs) {
+                Rsx_Realtime._adopt_component(that);
             }
 
             // Idempotent per (topic, filter) for this component instance. A repeat call
             // returns the same promise WITHOUT registering another gate or callback.
             const key = Rsx_Realtime._canonical_key(r_topic, r_filter);
-            const existing = this._realtime_specs.get(key);
+            const existing = that._realtime_specs.get(key);
             if (existing) {
                 return existing.promise;
             }
@@ -1479,9 +1480,9 @@ class Rsx_Realtime {
             // outside the component refers to it while it is closed.
             const spec = { topic: r_topic, filter: r_filter, callback: r_callback, handle: null, token: null, resolve: null };
             spec.promise = new Promise((resolve) => { spec.resolve = resolve; });
-            this._realtime_specs.set(key, spec);
+            that._realtime_specs.set(key, spec);
 
-            if (this._realtime_stopped) {
+            if (that._realtime_stopped) {
                 spec.resolve(Rsx_Realtime._inert_handle());
 
                 return spec.promise;
@@ -1496,7 +1497,7 @@ class Rsx_Realtime {
             // before it is inserted): nothing is opened; the 'attach' listener opens it,
             // and the resync that every opening fires refetches, so such a component loads
             // once before it is subscribed and once after.
-            if (!this.$[0].isConnected) {
+            if (!that.$[0].isConnected) {
                 return spec.promise;
             }
 
@@ -1506,7 +1507,7 @@ class Rsx_Realtime {
             // live — no fetch-then-resync duplicate. Post-load subscriptions (on_ready)
             // skip the gate and behave as fetch-then-revalidate, exactly as before.
             const realtime_active = Rsx_Realtime.is_enabled();
-            const pre_load = realtime_active && this.__first_load_started !== true;
+            const pre_load = realtime_active && that.__first_load_started !== true;
 
             let first_callback = r_callback;
             let resolve_established_gate = null;
@@ -1528,7 +1529,7 @@ class Rsx_Realtime {
                 // Register the gate SYNCHRONOUSLY (before any await). gate_load throws only
                 // if the latch already flipped — the pre_load check IS the guard, so if it
                 // somehow throws, let it (fail loud).
-                this.gate_load(Promise.race([established_gate, timeout]));
+                that.gate_load(Promise.race([established_gate, timeout]));
 
                 // Swallow the FIRST resync IFF the ack won the race (arrived before the
                 // timeout): that resync IS the gated load's revalidation, so re-running it
@@ -1546,7 +1547,7 @@ class Rsx_Realtime {
                 };
             }
 
-            Rsx_Realtime._open_spec(this, spec, first_callback, resolve_established_gate);
+            Rsx_Realtime._open_spec(that, spec, first_callback, resolve_established_gate);
 
             return spec.promise;
         };

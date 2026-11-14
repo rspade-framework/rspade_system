@@ -12,7 +12,7 @@ class Rsx_Js_Transform_Command extends FrameworkDeveloperCommand
      *
      * @var string
      */
-    protected $signature = 'rsx:js:transform {file : JavaScript file to transform} {--target=modern : Target environment (modern, es6, es5)}';
+    protected $signature = 'rsx:js:transform {file : JavaScript file to transform}';
 
     /**
      * The console command description.
@@ -27,7 +27,6 @@ class Rsx_Js_Transform_Command extends FrameworkDeveloperCommand
     public function handle(): int
     {
         $file = $this->argument('file');
-        $target = $this->option('target');
 
         // Make path absolute if relative
         if (!str_starts_with($file, '/')) {
@@ -45,12 +44,11 @@ class Rsx_Js_Transform_Command extends FrameworkDeveloperCommand
         }
 
         $this->info("Transforming: " . str_replace(base_path() . '/', '', $file));
-        $this->info("Target: $target");
         $this->newLine();
 
         try {
             // This will throw on any error (missing deps, parse error, etc)
-            $transformed = Js_Transformer::transform($file, $target);
+            $transformed = Js_Transformer::transform($file);
 
             // Output to stdout for piping
             $this->getOutput()->write($transformed);

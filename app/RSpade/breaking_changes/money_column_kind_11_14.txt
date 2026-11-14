@@ -1,0 +1,123 @@
+MONEY IS A DECLARED COLUMN KIND (Rsx_Money); EVERY DECIMAL, FLOAT AND DOUBLE COLUMN IS DECLARED MONEY OR NOT MONEY
+Date: 2026-11-14
+
+IF YOU DO NOTHING: `php artisan rsx:check` fails with MODEL-DECIMAL-01 for every DECIMAL,
+    FLOAT and DOUBLE column of your models until each one is declared money or explicitly not
+    money; and an application that built its own money value type on the text-type base keeps
+    two parallel ways to hold an amount, with its own type missing the range and float checks
+    described below.
+
+SUMMARY
+    Category 2: a new column kind, and a declaration every numeric-fraction column now owes.
+
+    - `'budget' => ['money' => true]` in a model's `$columns` makes a DECIMAL column an
+      `Rsx_Money` value object in PHP and in the browser: exactly two decimal places, held as
+      a decimal string, never a float. The column must be DECIMAL with two places and at most
+      18 digits (MODEL-MONEY-01).
+    - `Rsx_Money` has no numeric conversion and refuses operators: arithmetic is methods
+      (`add`, `subtract`, `multiply`, `percent`, `multiply_fraction`, `divide`,
+      `divide_rounded`, `allocate`, `sum`, `average`, ...), every step is range-checked, and
+      rounding is always named (`Rsx_Money::ROUND_HALF_UP`, `ROUND_HALF_EVEN`, `ROUND_UP`,
+      `ROUND_DOWN`, `ROUND_EXACT`).
+    - MODEL-DECIMAL-01 (rsx:check): every DECIMAL, FLOAT and DOUBLE column of a model's table
+      has a `$columns` entry - money, or explicitly not money.
+    - MODEL-MONEY-02 (rsx:check): a money value used as a condition, compared with an
+      operator, cast, or used in arithmetic or string interpolation is reported, with the
+      method to call instead.
+    - Framework components `<Money_Input>` and `<Money_Display>`; an application component of
+      either name fails the manifest build (a framework component name cannot be redeclared).
+
+    Contract: php artisan rsx:man money. Skill: rspade:money. Worked example:
+    system/app/RSpade/resource/reference_app/models/project_model.php (`budget`) and
+    system/app/RSpade/resource/reference_app/app/frontend/projects/ (save endpoint, edit
+    form, view with a total and a remainder).
+
+ACTION REQUIRED - DECLARE EVERY DECIMAL, FLOAT AND DOUBLE COLUMN
+    1. List them:
+           php artisan rsx:check
+       Each MODEL-DECIMAL-01 finding names a model, a column and its type.
+    2. For each, add one line to that model's `$columns`:
+           'budget'        => ['money' => true],   // an amount of money
+           'hour_estimate' => [],                  // not money: hours, a quantity, a percentage
+       A FLOAT or DOUBLE column cannot hold money exactly: declare it not money, or convert
+       it to DECIMAL(n,2) in a migration first and then declare it money.
+    3. A column declared money that is not DECIMAL with two places, or is wider than 18
+       digits, is reported by MODEL-MONEY-01: alter the column in a migration (raw SQL), or
+       declare it not money.
+    4. Run `php artisan rsx:constants:regenerate`; each money column's generated header line
+       then reads `@property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: ...`.
+
+ACTION REQUIRED - CODE THAT READS A NEWLY DECLARED MONEY COLUMN
+    The attribute is now an object (or null), where it was a string. Find the readers:
+           grep -rn "budget" rsx/ --include='*.php' --include='*.js' --include='*.jqhtml'
+    and convert each:
+
+        BEFORE                                         AFTER
+        (float) $p->budget, $p->budget + 0             (no numeric form exists - use the methods)
+        $p->budget > 1000                              $p->budget->greater_than(Rsx_Money::from_decimal('1000'))
+        if ($p->budget)                                if ($p->budget !== null) / ->is_zero() / ->is_positive()
+        $a->total + $b->total                          $a->total->add($b->total)
+        round($p->budget * 0.0725, 2)                  $p->budget->percent('7.25', Rsx_Money::ROUND_HALF_UP)
+        number_format($p->budget, 2)                   $p->budget->format()
+        Model::sum('budget')                           Model::query()->sum_money('budget')
+        $p->budget = (float) $params['budget'];        $p->budget = Model::money_from_submitted('budget', $params['budget'] ?? null);
+        CSV / export cell                              $p->budget?->to_decimal()
+        JS: project.budget * qty                       project.budget.multiply(qty, Rsx_Money.ROUND_HALF_UP)
+        JS: if (project.budget)                        if (project.budget !== null)
+        template: <%= format(project.budget) %>        <%= project.budget %>   (prints the formatted amount)
+
+    A float assigned to a money column throws. `Model::money_from_submitted()` reads a form or
+    API field: blank is null; more than two decimal places, unparseable text and an amount too
+    large for the column throw an `Rsx_Money_Exception` whose `is_input_problem()` is true -
+    answer it as the field's error:
+
+        try {
+            $budget = Project_Model::money_from_submitted('budget', $params['budget'] ?? null);
+        } catch (Rsx_Money_Exception $e) {
+            if (!$e->is_input_problem()) {
+                throw $e;
+            }
+            return response_form_error('Please correct the errors below', ['budget' => $e->getMessage()]);
+        }
+
+    In a form, the field is `<Money_Input $name="budget" />`, seeded with null or the value,
+    never `''`. In a DataGrid's `transform_records()` a money column is its wire envelope
+    (`['__MONEY' => '1234.50']`), not an object: leave it for the browser, or rebuild it with
+    `Rsx_Money::from_decimal($record['budget']['__MONEY'])`.
+
+ACTION REQUIRED - AN APPLICATION'S OWN MONEY TYPE
+    An application that wrote its own money value classes (for example on `Rsx_Text_Abstract`,
+    declared with `text_type`) replaces them with `Rsx_Money`:
+
+    1. Declarations: `'amount' => ['text_type' => Your_Amount_Type::class]` becomes
+       `'amount' => ['money' => true]`.
+    2. A type with more than two decimal places (a per-unit rate) has no money equivalent:
+       declare the column not money (`[]`), keep it a decimal string, and pass it as the
+       FACTOR of a multiply, which names its rounding:
+           $line_total = Rsx_Money::from_decimal('1.00')->multiply($rate_string, Rsx_Money::ROUND_HALF_UP);
+           $mileage    = $per_mile->multiply($miles, Rsx_Money::ROUND_HALF_UP);
+    3. Method mapping, by what each did:
+
+           the stored / canonical string           to_decimal()
+           integer minor units                     to_cents_string()   (a string; from_cents() takes it back)
+           a float                                 (none - removed by design)
+           parse what a person typed               Rsx_Money::from_text()
+           a form or API field                     Model::money_from_submitted('col', $value)
+           an SQL SUM or other total               Rsx_Money::from_aggregate()  /  sum_money('col')
+           quantity x rate with a rounding mode    multiply($factor, $mode)
+           split with no cent lost                 allocate($ratios)
+           is-empty tests                          === null   (zero is a value: is_zero())
+
+    4. Differences to check where your type was more permissive: an intermediate step that
+       leaves the signed 64-bit range in cents THROWS even when the final figure would fit; a
+       float carrying floating-point residue (0.1 + 0.2) is refused everywhere but
+       `from_aggregate()`; `(-5)`, `+5` and misplaced grouping such as `12,34` are refused as
+       typed text; a list function refuses a null element.
+    5. Delete the application's own classes, inputs and display component once nothing
+       references them, and any lint exemption or history-format declaration that existed
+       only for them.
+
+VERIFICATION
+    php artisan rsx:check                 - no MODEL-DECIMAL-01, MODEL-MONEY-01 or MODEL-MONEY-02 finding
+    php artisan rsx:debug <a page>        - an amount prints formatted; a form round-trips a value and a blank
+    A save with `12.345` in a money field answers a field error and writes nothing.

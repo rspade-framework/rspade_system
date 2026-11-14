@@ -143,9 +143,12 @@ class Rsx_Schema_Test extends Rsx_Test_Abstract
 
         $expected = [];
         foreach (DB::select("SHOW COLUMNS FROM `{$table}`") as $column) {
+            $is_decimal = preg_match('/^decimal\((\d+),(\d+)\)/', $column->Type, $digits) === 1;
             $expected[$column->Field] = [
                 'type' => Rsx_Schema::simplify_type($column->Type),
                 'max_length' => Rsx_Schema::varchar_length($column->Type),
+                'precision' => $is_decimal ? (int) $digits[1] : null,
+                'scale' => $is_decimal ? (int) $digits[2] : null,
                 'nullable' => ($column->Null === 'YES'),
                 'key' => $column->Key,
                 'default' => $column->Default,
@@ -182,6 +185,34 @@ class Rsx_Schema_Test extends Rsx_Test_Abstract
             'field_length() is the max_length of the same map'
         );
         static::__assert_null($model_columns['is_developer']['max_length'], 'a non-character column has no length');
+    }
+
+    public static function test_a_decimal_column_carries_its_precision_and_scale()
+    {
+        Rsx_Schema::forget();
+
+        $decimal = null;
+        $other_types = [];
+        foreach (DB::select('SHOW COLUMNS FROM `_tasks`') as $column) {
+            if (preg_match('/^decimal\((\d+),(\d+)\)/', $column->Type, $digits) === 1) {
+                $decimal ??= ['name' => $column->Field, 'precision' => (int) $digits[1], 'scale' => (int) $digits[2]];
+            } else {
+                $other_types[] = $column->Field;
+            }
+        }
+
+        static::__assert_not_null($decimal, 'the framework table _tasks carries a DECIMAL column');
+
+        $shape = Rsx_Schema::table_columns('_tasks')[$decimal['name']];
+        static::__assert_equals('decimal', $shape['type']);
+        static::__assert_equals($decimal['precision'], $shape['precision'], 'precision is the declared total digits');
+        static::__assert_equals($decimal['scale'], $shape['scale'], 'scale is the declared digits after the point');
+
+        foreach ($other_types as $name) {
+            $other = Rsx_Schema::table_columns('_tasks')[$name];
+            static::__assert_null($other['precision'], "{$name} is not DECIMAL: no precision");
+            static::__assert_null($other['scale'], "{$name} is not DECIMAL: no scale");
+        }
     }
 
     public static function test_the_accessors_agree_with_each_other()

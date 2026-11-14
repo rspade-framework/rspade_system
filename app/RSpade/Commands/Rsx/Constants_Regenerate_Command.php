@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Codegen\Model_Codegen_Rewriter;
 use App\RSpade\Core\Database\DetailTables\Detail_Tables_Resolver;
+use App\RSpade\Core\Database\Money\Rsx_Money;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
@@ -516,6 +517,7 @@ class Constants_Regenerate_Command extends Command
      *   enum: STATUS_OPEN, STATUS_DONE (also $status__label and the other $status__* properties)
      *   text type: a value object, filtered on write          (typed as the text-type class)
      *   type ref: a model class name, stored as a type-ref id (typed string)
+     *   money: a value object, two decimal places, never a float  (typed as Rsx_Money)
      *   derived: computed by derive_x() from a, b; never assigned  (tagged @property-read)
      *   never exported to the browser
      *   not recorded in revisions
@@ -524,7 +526,7 @@ class Constants_Regenerate_Command extends Command
      *
      * The kinds come from the model's column declarations (columns() and its views); the
      * type from the schema, corrected for the casts a read goes through: a boolean column
-     * reads as bool, a DECIMAL as a string, and a JSON column as an array only when the
+     * reads as bool, a DECIMAL as a string (a money column as Rsx_Money), and a JSON column as an array only when the
      * model casts it to one. $tag (the CTI detail marker) follows the name.
      */
     protected function property_line(Rsx_Model_Abstract $model, string $table, string $column, string $tag = ''): string
@@ -534,10 +536,11 @@ class Constants_Regenerate_Command extends Command
         $php_type = $this->map_database_type_to_php($db_type);
         $cast = $model->getCasts()[$column] ?? null;
         $notes = [];
+        $is_money = $class::is_money_column($column);
 
         if ($cast === 'boolean' || $cast === 'bool') {
             $php_type = 'bool';
-        } elseif (str_starts_with($db_type, 'decimal')) {
+        } elseif (str_starts_with($db_type, 'decimal') && !$is_money) {
             $php_type = 'string';
             $notes[] = 'decimal';
         } elseif (str_starts_with($db_type, 'json')) {
@@ -567,6 +570,9 @@ class Constants_Regenerate_Command extends Command
         } elseif (in_array($column, $class::type_ref_columns(), true)) {
             $php_type = 'string';
             $notes[] = 'type ref: a model class name, stored as a type-ref id';
+        } elseif ($is_money) {
+            $php_type = '\\' . Rsx_Money::class;
+            $notes[] = 'money: a value object, two decimal places, never a float';
         }
 
         if (in_array($column, $class::never_exported_columns(), true)) {

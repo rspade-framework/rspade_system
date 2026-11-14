@@ -1,0 +1,17 @@
+// Money_Display - an amount of money, nothing stored, or redacted.
+//
+// Figures line up in a column (tabular numerals) and an amount never breaks across lines. No
+// width, alignment or margin: the caller places it.
+.Money_Display {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+
+    &__figure--negative {
+        color: var(--bs-danger);
+    }
+
+    &__empty,
+    &__redacted {
+        color: var(--bs-secondary-color);
+    }
+}

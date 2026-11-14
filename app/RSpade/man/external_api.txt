@@ -155,9 +155,9 @@ DECLARING ENDPOINTS
     #[Api_Param(name, type, required, default, description, example)]  (repeatable)
         name         The parameter name; matches a :token or a query/body key.
                      Names must be unique within an endpoint.
-        type         'string' | 'int' | 'float' | 'bool' | 'file'.
-                     Scalars, plus 'file' for a multipart upload part
-                     (array/json remains backlogged). A 'file' param is
+        type         'string' | 'int' | 'float' | 'bool' | 'file' | 'money'.
+                     Scalars, 'file' for a multipart upload part and 'money'
+                     for an amount (DECLARED MONEY COLUMNS, below). A 'file' param is
                      POST-only, can never be a :token, and can never carry a
                      default. See FILE ENDPOINTS.
         required     bool. A required param with no value -> 422.
@@ -189,7 +189,7 @@ DECLARING ENDPOINTS
         - a :token with no matching #[Api_Param]
         - duplicate #[Api_Param] names
         - required:true combined with a default
-        - a type outside {string, int, float, bool, file}
+        - a type outside {string, int, float, bool, file, money}
         - type 'file' on an endpoint that declares GET
         - type 'file' on a :route token
         - type 'file' carrying a default
@@ -244,6 +244,7 @@ PARAMETERS AND VALIDATION
         float  is_numeric()
         bool   truthy: 1 true yes on       falsy: 0 false no off
         string passthrough, except an ENCODED TEXT VALUE (below)
+        money  an Rsx_Money or null (DECLARED MONEY COLUMNS, below)
 
     DECLARED TEXT COLUMNS. A model column declared 'text_type' in $columns
     (Rich_Text and the like) is written through an ordinary 'string' param,
@@ -276,6 +277,23 @@ PARAMETERS AND VALIDATION
       into the string param; sending its raw alone stores the markup as
       literal text. The endpoint does nothing special - it assigns the param
       to the column. Full treatment: rsx:man text_types, THE EXTERNAL API.
+
+    DECLARED MONEY COLUMNS. A money column (rsx:man money) reads as the
+    envelope {"__MONEY": "1234.56"} and is written through a 'money' param:
+
+        #[Api_Param('price', type: 'money', required: false, default: '0.00')]
+
+      Accepted: a plain decimal string ("1234.50"; no symbol, grouping or
+      whitespace), the envelope as a JSON object or JSON-encoded into a
+      string, a JSON int of whole units, or a JSON float whose shortest form
+      has at most 15 significant digits. null or blank is null. The endpoint
+      receives an Rsx_Money (or null); a refusal is a 422 whose field message
+      is the money message ("This is not an amount of money.", "An amount of
+      money has at most two decimal places.", "This number carries
+      floating-point residue; pass it as a decimal string."). A default is a
+      literal and reaches the endpoint as an Rsx_Money. The param does not
+      know the column: Model::money_from_submitted('col', $params['price'])
+      checks the amount against the column's limit before assigning.
 
     INPUT PRECEDENCE (highest wins): route params > GET query > body.
     The body is parsed as JSON when Content-Type is application/json,
@@ -388,6 +406,7 @@ SERIALIZATION
         - never_export columns (password hashes, tokens, ...) are stripped,
           inherited declarations included
         - enum columns gain BEM-style magic properties: status_id__label, etc.
+        - a money column is the envelope {"__MONEY": "1234.56"}
         - a __MODEL key identifies the model class
       Never alias enum fields to shorter names; the double-underscore forms are
       the contract (see rsx:man model_fetch, rsx:man enums). Because the model
@@ -2156,6 +2175,7 @@ SEE ALSO
     rsx:man acls             Permission:: checks, role_id, the reserved override
     rsx:man model_fetch      redacting toArray(), enum magic properties
     rsx:man text_types       declared text columns: plain vs encoded writes
+    rsx:man money            the money param type and the read envelope
     rsx:man enums            enum __label / __MODEL export
     rsx:man dispatch         the dispatcher chain the API branch lives in
     rsx:man tasks            #[Task]/#[Exclusive]/#[Schedule] (the log cleanup)

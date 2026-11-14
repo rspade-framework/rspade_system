@@ -307,7 +307,7 @@ JQUERY HELPERS
             Form_Input_Abstract subclass reading this.$sid('input').val(), and
             any plain $(el).val(), get the number without knowing the filter is
             there - Text_Input's own _get_value()/_set_value() are what
-            Currency_Input inherits.
+            Time_Entry_Input inherits.
 
             FORMATTING IS INLINE. With the caret at the end the box is rewritten
             formatted on every keystroke; an edit mid-string writes the cleaned
@@ -358,11 +358,12 @@ JQUERY HELPERS
             typed, so it can still be edited. A plain decimal typed in time mode
             is already decimal hours and is left alone.
 
-            Currency_Input is this filter with commas and a prefix and
-            Time_Entry_Input is it with time, and it is what every numeric input
-            invokes - no component filters digits by hand. A code whose leading
-            zeros are significant (a PIN) is a string of digits rather than a
-            number, and is not a numeric field.
+            Time_Entry_Input is this filter with time, and it is what every
+            numeric input invokes - no component filters digits by hand. A code
+            whose leading zeros are significant (a PIN) is a string of digits
+            rather than a number, and is not a numeric field. Neither is an
+            amount of money: a money column is edited by Money_Input, which never
+            filters and whose value is an Rsx_Money (rsx:man money).
 
     Form Validation
 
@@ -639,12 +640,12 @@ EXAMPLES
             }
         });
 
-    Currency Field
-        // Digits, two decimals, separators and the symbol written as you type
-        $('#invoice_amount').rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+    Quantity Field
+        // Digits, two decimals and separators written as you type
+        $('#shipment_weight').rsx_numeric({decimals: 2, commas: true});
 
         // The endpoint gets the number, not the picture of it
-        await Invoice_Controller.save({amount: $('#invoice_amount').val()});
+        await Shipment_Controller.save({weight: $('#shipment_weight').val()});
 
     Hours Field
         // Digits and a colon; the colon becomes decimal hours on the way out

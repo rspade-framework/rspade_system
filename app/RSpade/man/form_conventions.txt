@@ -447,8 +447,8 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
                         null for a write nobody signed in made (a task, a script)
             fields      one row per field this submission would overwrite:
                 field     the form field, named as the input is
-                kind      value | enum | reference | formatted_text | structured |
-                          secret - what the values below can be
+                kind      value | enum | reference | money | formatted_text |
+                          structured | secret - what the values below can be
                 record    {type, id}: the record the field is stored on - the
                           record being saved, or a coupled record (EDITING A
                           RECORD, COUPLED RECORDS)
@@ -472,7 +472,8 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
             and times with its own formatters.
 
             Values are display text by kind: an enum's label, a referenced record's
-            name, a formatted text's plain text, the value itself; a secret and a
+            name, an amount's format() ("$1,234.50"), a formatted text's plain text,
+            the value itself; a secret and a
             structured value (an array, a JSON document) carry null - say only that it
             changed. A field stored in several columns, or changed through another
             column of its fact group, is structured: loaded, current and yours are

@@ -33,7 +33,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * - #[Api_Param] names are unique per method; required:true with a default is a contradiction.
  * - An #[Api_Param] name never starts with '_': that namespace is the system parameters'
  *   (_request_ref), which the dispatcher accepts undeclared.
- * - #[Api_Param] type is one of {string, int, float, bool, file} (default 'string').
+ * - #[Api_Param] type is one of {string, int, float, bool, file, money} (default 'string');
+ *   a money param reaches the endpoint as an Rsx_Money or null (Api_Param_Validator).
  * - type 'file' is POST-only, may never be a :route token, and may never carry a default -
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
  *   thing as a default upload.
@@ -93,7 +94,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
     // Allowed HTTP verbs and #[Api_Param] types for v1.
     private const ALLOWED_METHODS = ['GET', 'POST'];
-    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file'];
+    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file', 'money'];
 
     // Attributes forbidden on the same method as #[Api_Endpoint].
     private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint', 'Companion_Endpoint'];

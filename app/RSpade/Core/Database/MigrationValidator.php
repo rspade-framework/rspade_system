@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Database;
 use Illuminate\Database\Migrations\MigrationRepositoryInterface;
 use RuntimeException;
 use App\RSpade\Core\Database\MigrationPaths;
+use App\RSpade\Core\PHP\Php_Parser;
 
 /**
  * Migration Validator - Enforces raw SQL usage in migrations
@@ -299,37 +300,23 @@ class MigrationValidator
                     $down_start_pos = $positions[$start_index];
                     $in_down = true;
                     $brace_count = 0;
+                    $brace_stack = [];
                 }
             }
 
             // Track braces to find end of down() method
             if ($in_down) {
-                // Skip string interpolation braces
-                if (is_array($token) && $token[0] === T_CURLY_OPEN) {
-                    continue;
-                }
-
-                if (is_string($token)) {
-                    if ($token === '{') {
-                        $brace_count++;
-                    } elseif ($token === '}') {
-                        // Check if this is closing string interpolation
-                        $is_string_interpolation = false;
-                        for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                            if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                                $is_string_interpolation = true;
-                                break;
-                            }
-                        }
-                        if (!$is_string_interpolation) {
-                            $brace_count--;
-                            if ($brace_count === 0) {
-                                // Found closing brace of down() method
-                                $down_end_pos = $positions[$i] + 1; // Include the closing brace
-                                $in_down = false;
-                                break;
-                            }
-                        }
+                // A string interpolation's braces are paired and ignored
+                $brace = Php_Parser::_block_brace($token, $brace_stack);
+                if ($brace === 1) {
+                    $brace_count++;
+                } elseif ($brace === -1) {
+                    $brace_count--;
+                    if ($brace_count === 0) {
+                        // Found closing brace of down() method
+                        $down_end_pos = $positions[$i] + 1; // Include the closing brace
+                        $in_down = false;
+                        break;
                     }
                 }
             }

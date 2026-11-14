@@ -52,11 +52,13 @@ class Rsx_Text_Abstract {
      * @returns {Rsx_Text_Abstract|null}
      */
     static from_envelope(envelope) {
+        const CurrentClass = this;
+
         if (envelope.raw === null || envelope.raw === undefined) {
             return null;
         }
 
-        return new this(String(envelope.raw), envelope.empty ?? null);
+        return new CurrentClass(String(envelope.raw), envelope.empty ?? null);
     }
 
     /**
@@ -66,11 +68,13 @@ class Rsx_Text_Abstract {
      * @returns {Rsx_Text_Abstract|null}
      */
     static from_storage(raw) {
+        const CurrentClass = this;
+
         if (raw === null || raw === undefined) {
             return null;
         }
 
-        return new this(String(raw));
+        return new CurrentClass(String(raw));
     }
 
     /**
@@ -133,7 +137,8 @@ class Rsx_Text_Abstract {
      * @returns {Rsx_Text_Abstract}
      */
     static from_editor(raw) {
-        return new this(this.sanitize_encoded(String(raw ?? '')));
+        const CurrentClass = this;
+        return new CurrentClass(CurrentClass.sanitize_encoded(String(raw ?? '')));
     }
 
     /**
@@ -220,7 +225,8 @@ class Rsx_Text_Abstract {
      * @returns {Object|string}
      */
     static print(value) {
-        return { component: { name: this.printer_component(), args: { value: value } } };
+        const CurrentClass = this;
+        return { component: { name: CurrentClass.printer_component(), args: { value: value } } };
     }
 
     /**
@@ -235,11 +241,13 @@ class Rsx_Text_Abstract {
      * @returns {string}
      */
     static printer_component() {
-        if (!this.PRINTER) {
-            shouldnt_happen(`${this.name} must declare: static PRINTER = '<Component_Name>';`);
+        const CurrentClass = this;
+
+        if (!CurrentClass.PRINTER) {
+            shouldnt_happen(`${CurrentClass.name} must declare: static PRINTER = '<Component_Name>';`);
         }
 
-        return this.PRINTER;
+        return CurrentClass.PRINTER;
     }
 
     /**
@@ -248,10 +256,12 @@ class Rsx_Text_Abstract {
      * @returns {string}
      */
     static editor_component() {
-        if (!this.EDITOR) {
-            shouldnt_happen(`${this.name} must declare: static EDITOR = '<Input_Component_Name>';`);
+        const CurrentClass = this;
+
+        if (!CurrentClass.EDITOR) {
+            shouldnt_happen(`${CurrentClass.name} must declare: static EDITOR = '<Input_Component_Name>';`);
         }
 
-        return this.EDITOR;
+        return CurrentClass.EDITOR;
     }
 }

@@ -1886,6 +1886,7 @@ class Php_Fixer
         $in_class = false;
         $brace_depth = 0;
         $class_found = false;
+        $brace_stack = [];
 
         for ($i = 0; $i < count($tokens); $i++) {
             // Track class entry (same logic as __extract_static_properties)
@@ -1907,13 +1908,9 @@ class Php_Fixer
                 }
             }
 
-            // Skip string interpolation braces
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_CURLY_OPEN) {
-                continue;
-            }
-
-            // Track braces
-            if ($tokens[$i] === '{') {
+            // Track block braces; a string interpolation's braces are paired and ignored
+            $brace = Php_Parser::_block_brace($tokens[$i], $brace_stack);
+            if ($brace === 1) {
                 if ($class_found && $brace_depth === 0) {
                     $in_class = true;
                     $class_found = false;
@@ -1921,20 +1918,10 @@ class Php_Fixer
                 if ($in_class) {
                     $brace_depth++;
                 }
-            } elseif ($tokens[$i] === '}') {
-                // Check if this is closing string interpolation
-                $is_string_interpolation = false;
-                for ($j = $i - 1; $j >= max(0, $i - 10); $j--) {
-                    if (is_array($tokens[$j]) && $tokens[$j][0] === T_CURLY_OPEN) {
-                        $is_string_interpolation = true;
-                        break;
-                    }
-                }
-                if (!$is_string_interpolation && $in_class) {
-                    $brace_depth--;
-                    if ($brace_depth === 0) {
-                        $in_class = false;
-                    }
+            } elseif ($brace === -1 && $in_class) {
+                $brace_depth--;
+                if ($brace_depth === 0) {
+                    $in_class = false;
                 }
             }
 

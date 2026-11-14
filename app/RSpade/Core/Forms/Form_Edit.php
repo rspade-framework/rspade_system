@@ -12,6 +12,8 @@ use LogicException;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Database\Money\Rsx_Money;
+use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Forms\Form_Questions;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -124,6 +126,7 @@ class Form_Edit
     public const FIELD_FORMATTED_TEXT = 'formatted_text';
     public const FIELD_STRUCTURED = 'structured';
     public const FIELD_SECRET = 'secret';
+    public const FIELD_MONEY = 'money';
 
     private function __construct(Rsx_Model_Abstract $record, ?array $changed)
     {
@@ -751,9 +754,9 @@ class Form_Edit
     }
 
     /**
-     * What a column holds, for a renderer: a secret, a structured value (an array or JSON
-     * document), a declared text type, an enum, a reference to another record (a foreign key,
-     * or either half of a polymorphic pair), or a plain value.
+     * What a column holds, for a renderer: a secret, an amount of money, a structured value
+     * (an array or JSON document), a declared text type, an enum, a reference to another
+     * record (a foreign key, or either half of a polymorphic pair), or a plain value.
      */
     private function __kind(Rsx_Model_Abstract $model, string $column): string
     {
@@ -761,6 +764,11 @@ class Form_Edit
 
         if (in_array($column, $class::never_exported_columns(), true)) {
             return self::FIELD_SECRET;
+        }
+
+        // Before the object branch below, which would call an Rsx_Money structured.
+        if ($class::is_money_column($column) || $model->{$column} instanceof Rsx_Money) {
+            return self::FIELD_MONEY;
         }
 
         if ($class::text_type_or_null($column) !== null) {
@@ -797,9 +805,16 @@ class Form_Edit
         return $this->__display($model, $column, $value);
     }
 
-    /** Does the submission set the column to what is stored now? Compared stored-form and as shown. */
+    /**
+     * Does the submission set the column to what is stored now? Compared stored-form and as
+     * shown; an amount of money by its exact value.
+     */
     private function __same_value(Rsx_Model_Abstract $model, string $column, $stored, $submitted): bool
     {
+        if ($stored instanceof Rsx_Money || $submitted instanceof Rsx_Money || get_class($model)::is_money_column($column)) {
+            return $this->__same_money($stored, $submitted);
+        }
+
         $plain = fn ($value) => $value instanceof Rsx_Text_Abstract ? $value->to_plain_text() : $value;
 
         if (is_scalar($plain($stored)) || $stored === null) {
@@ -812,11 +827,42 @@ class Form_Edit
             && $this->__display($model, $column, $stored) === $this->__display($model, $column, $submitted);
     }
 
+    /**
+     * Two amounts of money, compared exactly. A submitted value that is not an Rsx_Money is
+     * read as the endpoint would read it (from_submitted(): blank is null); one that is not an
+     * amount at all differs from anything stored - assigning it throws, and the endpoint
+     * reports that.
+     */
+    private function __same_money($stored, $submitted): bool
+    {
+        if (!$submitted instanceof Rsx_Money) {
+            try {
+                $submitted = Rsx_Money::from_submitted($submitted);
+            } catch (Rsx_Money_Exception $e) {
+                return false;
+            }
+        }
+
+        if ($stored === null || $submitted === null) {
+            return $stored === null && $submitted === null;
+        }
+
+        return $stored instanceof Rsx_Money && $stored->equals($submitted);
+    }
+
     /** One value as a person reads it: an enum's label, a referenced record's name, plain text. */
     private function __display(Rsx_Model_Abstract $model, string $column, $value): string
     {
         if ($value instanceof Rsx_Text_Abstract) {
             return $value->to_plain_text();
+        }
+
+        if ($value instanceof Rsx_Money) {
+            return $value->format();
+        }
+
+        if (is_string($value) && $value !== '' && get_class($model)::is_money_column($column)) {
+            return $this->__display_money_string($value);
         }
 
         if ($value === null || $value === '') {
@@ -841,5 +887,29 @@ class Form_Edit
         }
 
         return is_scalar($value) ? (string) $value : json_encode($value);
+    }
+
+    /**
+     * A money column's value held as a string: a revision records the canonical stored
+     * string ("1234.50"); a submission that did not parse carries the text as typed, shown
+     * as it was typed.
+     */
+    private function __display_money_string(string $value): string
+    {
+        try {
+            $money = Rsx_Money::from_storage($value);
+        } catch (Rsx_Money_Exception $e) {
+            $money = null;
+        }
+
+        if ($money === null) {
+            try {
+                $money = Rsx_Money::from_submitted($value);
+            } catch (Rsx_Money_Exception $e) {
+                return $value;
+            }
+        }
+
+        return $money === null ? '' : $money->format();
     }
 }

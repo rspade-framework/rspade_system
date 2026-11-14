@@ -41,7 +41,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  * is appended to the hash. That is what makes a toolchain upgrade retire every entry it
  * invalidates instead of serving the old tool's work under a key that never moved. A
  * variant is a caller-chosen string; the convention is a leading underscore
- * (`_modern_<fingerprint>`), and anything outside [A-Za-z0-9._-] is replaced so a variant
+ * (`_<fingerprint>`), and anything outside [A-Za-z0-9._-] is replaced so a variant
  * can never escape its namespace directory.
  *
  * STALENESS. The hash IS the staleness test in development (mtime is inside it) and in

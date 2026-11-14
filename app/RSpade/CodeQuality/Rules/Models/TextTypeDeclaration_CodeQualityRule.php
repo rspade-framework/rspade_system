@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Models;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\Model_Declared_Casts;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -223,7 +224,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function check_casts_do_not_shadow(string $fqcn, string $abs_file, string $contents, array $text_type_columns): void
     {
-        $casts = $this->declared_casts($fqcn);
+        $casts = Model_Declared_Casts::of($fqcn);
 
         foreach (array_keys($text_type_columns) as $column) {
             if (!array_key_exists($column, $casts)) {
@@ -247,34 +248,6 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
                 'critical'
             );
         }
-    }
-
-    /**
-     * The explicit casts a model states: the $casts default plus a casts() method's answer,
-     * the two sources Eloquent's getCasts() merges before RSpade adds its own.
-     *
-     * @return array<string, mixed>
-     */
-    private function declared_casts(string $fqcn): array
-    {
-        $reflection = new \ReflectionClass($fqcn);
-        $casts = (array) ($reflection->getDefaultProperties()['casts'] ?? []);
-
-        if ($reflection->hasMethod('casts')) {
-            $method = $reflection->getMethod('casts');
-
-            if ($method->getDeclaringClass()->getName() !== \Illuminate\Database\Eloquent\Model::class) {
-                try {
-                    $method->setAccessible(true);
-                    $casts = array_merge($casts, (array) $method->invoke($reflection->newInstanceWithoutConstructor()));
-                } catch (\Throwable $unevaluable) {
-                    // A casts() body that needs a booted model cannot be read here; the rule
-                    // is fatal, so it skips what it cannot prove.
-                }
-            }
-        }
-
-        return $casts;
     }
 
     /**

@@ -77,7 +77,7 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
 
         // A file whose exact bytes have already been judged clean is not analyzed again.
         // The verdict lives in the shared Validation_Ledger, not in a directory of
-        // per-file JSON documents - see the docblock on parse_with_acorn().
+        // per-file JSON documents - see the docblock on analyze_file().
         $file_hash = static::__file_hash($file_path, $metadata);
         $ledger_id = static::__ledger_id();
 
@@ -85,8 +85,8 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Get violations from AST parser
-        $violations = $this->parse_with_acorn($file_path);
+        // Get violations from the AST analysis; a file it cannot parse is one violation
+        $violations = $this->analyze_file($file_path);
 
         if (empty($violations)) {
             if ($file_hash !== null) {
@@ -119,9 +119,8 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
      * files that DO violate are re-analyzed on every check, which is the cheap half of the
      * work and keeps their violations reported from live source rather than from a memo.
      */
-    private function parse_with_acorn(string $file_path): array
+    private function analyze_file(string $file_path): array
     {
-        // Analyze via RPC server (lazy starts if not running)
         return Js_CodeQuality_Rpc::analyze_this($file_path);
     }
 
@@ -148,8 +147,8 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
      * A GENERATIONAL ledger id: `JS-THIS-01@<fingerprint>`.
      *
      * The verdict depends on two things beyond the file's own bytes - this rule's own
-     * source, and the acorn analyzer in the node service's `quality` subsystem that
-     * actually walks the AST. Folding both into the id means editing either one retires
+     * source, and the analyzer in the node service's `quality` subsystem that actually
+     * parses and walks the AST. Folding both into the id means editing either one retires
      * every verdict the old logic issued, instead of letting a stale premise vouch for a
      * file the new logic would flag.
      */

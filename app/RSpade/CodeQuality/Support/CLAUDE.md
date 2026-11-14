@@ -232,9 +232,9 @@ to add a subsystem, and `/app/RSpade/Core/JsParsers/CLAUDE.md` for the short for
 ## Js_CodeQuality_Rpc - the `quality` subsystem of the node service
 
 ### Overview
-JavaScript linting and this-usage analysis run over the ONE node service, so the babel parser
-and acorn stay loaded across the thousands of files a check walks, instead of spawning a Node
-process per file.
+JavaScript linting and the AST analyses run over the ONE node service, so the babel parser
+stays loaded across the thousands of files a check walks, instead of spawning a Node process
+per file.
 
 ### Components
 - `Js_CodeQuality_Rpc.php` - PHP client (marshaling + caches)
@@ -249,7 +249,10 @@ from what was OBSERVED.
 
 ### RPC Methods
 - `quality.lint` -> `{results: {file: {status, error}}}` - Check JavaScript syntax using Babel parser
-- `quality.analyze_this` -> `{results: {file: {status, violations}}}` - Analyze 'this' usage patterns using Acorn
+- `quality.analyze_this` -> `{results: {file: {status, violations}}}` - 'this' usage (JS-THIS-01): Babel parser
+  with ESTree output (the syntax the transform accepts - decorators, class fields, private
+  members, static blocks), walked by acorn-walk. A file it cannot parse answers ONE violation
+  naming the parse error, never an empty list
 - `quality.analyze_raw_html` -> `{results: {file: {status, violations}}}` - Raw HTML writes (JS-RAW-HTML-01)
 - `quality.analyze_via` -> `{results: {file: {status, classes, args_reads, routes}}}` - Breadcrumb-origin facts (SPA-VIA-01)
 - `quality.analyze_navigation` -> `{results: {file: {status, findings, error}}}` - Raw location / history
@@ -273,10 +276,9 @@ Js_CodeQuality_Rpc::analyze_navigation($abs);  // JS-NAVIGATE-01 findings [{line
 Js_CodeQuality_Rpc::analyze_new_tab($abs);     // JS-NEW-TAB-01 findings [{line, kind, detail}]
 ```
 
-Both call `Rsx_Node_Service::ensure()` FIRST, outside their own marshaling try/catch, so a
-service that will not start fails LOUD instead of being reported as "no violations" - which
-matters most for `analyze_this()`, whose own failure path deliberately returns an empty
-violation list.
+Both call `Rsx_Node_Service::ensure()` FIRST, so a service that will not start fails LOUD
+instead of being reported as "no violations". `analyze_this()` throws on every failure to RUN
+the analysis (an RPC error, a missing result, a read error or an analyzer fault).
 
 ### Cache Integration
 Both lint and analyze_this have their own caching layers:
@@ -290,7 +292,7 @@ Both lint and analyze_this have their own caching layers:
 Cache is checked before RPC call - only files with stale cache are sent to the server.
 
 ### Error Handling
-Server failure -> fatal error for lint, silent failure for analyze_this.
+Server failure -> fatal error for lint and for analyze_this alike.
 
 ### Performance Impact
 Before RPC: Thousands of Node.js process spawns during rsx:check (~20+ seconds on first run)

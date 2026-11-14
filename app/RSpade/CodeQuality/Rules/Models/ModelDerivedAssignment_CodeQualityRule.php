@@ -4,8 +4,8 @@ namespace App\RSpade\CodeQuality\Rules\Models;
 
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
-use PhpParser\NodeVisitorAbstract;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\Receiver_Inference_Visitor;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
@@ -23,6 +23,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *     `X::` ending in `first` / `find` / `sole` (and their OrFail forms), a parameter typed `X`,
  *     or a `/** @var X $v *\/` docblock.
  *
+ * The inference is Support/Receiver_Inference_Visitor, shared with MODEL-MONEY-02.
+ *
  * The receiver must be inferred: a column name alone means nothing (one table's derived
  * column is another's ordinary one). Anything else goes unreported - the save-time guard is
  * the enforcement, this is the early warning. Rsx_Model_Abstract, which writes derived
@@ -32,12 +34,6 @@ use App\RSpade\Core\Manifest\Manifest;
  */
 class ModelDerivedAssignment_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    /** Static calls on a model class that answer one record of it. */
-    private const RECORD_FACTORIES = ['find', 'findOrFail', 'make_new', 'first', 'firstOrFail', 'firstOrNew', 'sole'];
-
-    /** The last call of a builder chain that answers one record. */
-    private const RECORD_TERMINALS = ['first', 'firstOrFail', 'find', 'findOrFail', 'sole'];
-
     public function get_id(): string
     {
         return 'MODEL-DERIVED-01';
@@ -81,144 +77,32 @@ class ModelDerivedAssignment_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $rule = $this;
         $found = [];
 
-        $visitor = new class($rule, $found) extends NodeVisitorAbstract {
-            /** @var array<int, string|null> class name per enclosing class */
-            private array $classes = [];
-
-            /** @var array<int, array<string, string>> variable => class name, per function scope */
-            private array $scopes = [[]];
-
-            private ModelDerivedAssignment_CodeQualityRule $rule;
-
+        $visitor = new class($found) extends Receiver_Inference_Visitor {
             private array $found;
 
-            public function __construct(ModelDerivedAssignment_CodeQualityRule $rule, array &$found)
+            public function __construct(array &$found)
             {
-                $this->rule = $rule;
                 $this->found = &$found;
             }
 
-            public function enterNode(Node $node)
+            protected function enter(Node $node): void
             {
-                if ($node instanceof Node\Stmt\ClassLike) {
-                    $this->classes[] = $node instanceof Node\Stmt\Class_ && $node->name !== null ? $node->name->toString() : null;
+                if (!($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp || $node instanceof Node\Expr\AssignRef)) {
+                    return;
                 }
 
-                if ($node instanceof Node\FunctionLike) {
-                    $scope = $node instanceof Node\Expr\ArrowFunction || $node instanceof Node\Expr\Closure
-                        ? end($this->scopes)
-                        : [];
+                $target = $node->var;
 
-                    foreach ($node->getParams() as $param) {
-                        $class = $this->class_of_type($param->type);
-                        if ($class !== null && $param->var instanceof Node\Expr\Variable && is_string($param->var->name)) {
-                            $scope[$param->var->name] = $class;
-                        }
-                    }
+                if ($target instanceof Node\Expr\PropertyFetch && $target->name instanceof Node\Identifier
+                    && $target->var instanceof Node\Expr\Variable && is_string($target->var->name)) {
+                    $receiver = $this->class_of_variable($target->var);
 
-                    $this->scopes[] = $scope;
-                }
-
-                if ($node instanceof Node\Stmt && $node->getDocComment() !== null
-                    && preg_match_all('/@var\s+\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)\s+\$([A-Za-z_][A-Za-z0-9_]*)/', $node->getDocComment()->getText(), $matches, PREG_SET_ORDER)) {
-                    foreach ($matches as $match) {
-                        $parts = explode('\\', $match[1]);
-                        $this->scopes[count($this->scopes) - 1][$match[2]] = end($parts);
+                    if (is_string($receiver) && $receiver !== '') {
+                        $this->found[] = [$receiver, $target->name->toString(), $node->getStartLine(), $target->var->name];
                     }
                 }
-
-                if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp || $node instanceof Node\Expr\AssignRef) {
-                    $target = $node->var;
-
-                    if ($target instanceof Node\Expr\PropertyFetch && $target->name instanceof Node\Identifier
-                        && $target->var instanceof Node\Expr\Variable && is_string($target->var->name)) {
-                        $receiver = $target->var->name === 'this'
-                            ? end($this->classes)
-                            : (end($this->scopes)[$target->var->name] ?? null);
-
-                        if (is_string($receiver) && $receiver !== '') {
-                            $this->found[] = [$receiver, $target->name->toString(), $node->getStartLine(), $target->var->name];
-                        }
-                    }
-
-                    if ($node instanceof Node\Expr\Assign && $target instanceof Node\Expr\Variable && is_string($target->name)) {
-                        $class = $this->class_of_expression($node->expr);
-                        if ($class !== null) {
-                            $this->scopes[count($this->scopes) - 1][$target->name] = $class;
-                        }
-                    }
-                }
-
-                return null;
-            }
-
-            public function leaveNode(Node $node)
-            {
-                if ($node instanceof Node\FunctionLike) {
-                    array_pop($this->scopes);
-                }
-
-                if ($node instanceof Node\Stmt\ClassLike) {
-                    array_pop($this->classes);
-                }
-
-                return null;
-            }
-
-            /** The class an expression evidently answers a record of, or null. */
-            private function class_of_expression(Node\Expr $expr): ?string
-            {
-                if ($expr instanceof Node\Expr\New_) {
-                    return $this->class_of_name($expr->class);
-                }
-
-                if ($expr instanceof Node\Expr\StaticCall && $expr->name instanceof Node\Identifier
-                    && in_array($expr->name->toString(), $this->rule->record_factories(), true)) {
-                    return $this->class_of_name($expr->class);
-                }
-
-                if ($expr instanceof Node\Expr\MethodCall && $expr->name instanceof Node\Identifier
-                    && in_array($expr->name->toString(), $this->rule->record_terminals(), true)) {
-                    $root = $expr->var;
-                    while ($root instanceof Node\Expr\MethodCall) {
-                        $root = $root->var;
-                    }
-
-                    if ($root instanceof Node\Expr\StaticCall) {
-                        return $this->class_of_name($root->class);
-                    }
-                }
-
-                return null;
-            }
-
-            private function class_of_type($type): ?string
-            {
-                if ($type instanceof Node\NullableType) {
-                    $type = $type->type;
-                }
-
-                return $type instanceof Node\Name ? $this->class_of_name($type) : null;
-            }
-
-            private function class_of_name($name): ?string
-            {
-                if (!$name instanceof Node\Name) {
-                    return null;
-                }
-
-                $last = $name->getLast();
-
-                if (in_array(strtolower($last), ['self', 'static'], true)) {
-                    $current = end($this->classes);
-
-                    return is_string($current) ? $current : null;
-                }
-
-                return $last;
             }
         };
 
@@ -252,18 +136,6 @@ class ModelDerivedAssignment_CodeQualityRule extends CodeQualityRule_Abstract
                 'high'
             );
         }
-    }
-
-    /** @return array<int, string> */
-    public function record_factories(): array
-    {
-        return self::RECORD_FACTORIES;
-    }
-
-    /** @return array<int, string> */
-    public function record_terminals(): array
-    {
-        return self::RECORD_TERMINALS;
     }
 
     /**

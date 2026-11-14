@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\JavaScript;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\RuntimeChecks\YoureDoingItWrongException;
+use App\RSpade\Core\JsParsers\Js_Parser;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
@@ -11,6 +12,8 @@ use App\RSpade\Core\Manifest\Manifest;
  * - Functions/methods marked with @decorator become whitelisted
  * - Global functions can only use @decorator
  * - Static and instance methods can only use whitelisted decorators
+ * - Classes can only use whitelisted decorators (the ES decorators applied to the class; the
+ *   JSDoc markers such as @Instantiatable are comments and are not decorators)
  * - Checks for duplicate global function names
  * - Checks for duplicate global const names
  * - Checks for conflicts between global function and const names
@@ -34,7 +37,7 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'Validates JavaScript decorator usage and whitelisting (static and instance methods)';
+        return 'Validates JavaScript decorator usage and whitelisting (classes, static and instance methods)';
     }
 
     public function get_file_patterns(): array
@@ -70,13 +73,23 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        $this->process_all_files();
+        $this->evaluate_files(Manifest::get_all());
     }
 
-    private function process_all_files(): void
+    /**
+     * Judge a set of file records shaped like Manifest::get_all() - path => metadata. The
+     * whitelist is built from these records alone. A path is project-relative (resolved
+     * against base_path()) or absolute.
+     *
+     * @param array<string,array> $files
+     * @throws YoureDoingItWrongException on the first violation
+     */
+    public function evaluate_files(array $files): void
     {
-        // Get all files from manifest
-        $files = Manifest::get_all();
+        $this->decorator_whitelist = [];
+        $this->all_global_functions = [];
+        $this->all_global_constants = [];
+        $this->all_global_names = [];
 
         // Step 1: Build decorator whitelist and collect all global functions
         foreach ($files as $path => $metadata) {
@@ -184,6 +197,11 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
 
             $class_name = $metadata['class'] ?? 'Unknown';
 
+            // Check the decorators applied to the class itself
+            if (!empty($metadata['class']) && !empty($metadata['decorators'])) {
+                $this->check_class_decorators($path, $metadata['class'], $metadata['decorators']);
+            }
+
             // Check static methods
             if (!empty($metadata['public_static_methods'])) {
                 foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
@@ -220,6 +238,64 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
         }
     }
 
+    /**
+     * Validate the decorators applied to a class against the whitelist.
+     *
+     * The record's `decorators` merges the ES decorators with the JSDoc markers
+     * (@Instantiatable), so it only nominates the class: when every name in it is
+     * whitelisted there is nothing to judge. Otherwise the parse's `decorator_sites` - the ES
+     * decorators alone, each with its line - is what is judged.
+     *
+     * @param string $path      File path as the manifest keys it
+     * @param string $class_name
+     * @param array  $decorators Compact format: [[name, [args]], ...]
+     */
+    private function check_class_decorators(string $path, string $class_name, array $decorators): void
+    {
+        $nominated = false;
+        foreach ($decorators as $decorator_data) {
+            if (!$this->is_allowed($decorator_data[0] ?? 'unknown')) {
+                $nominated = true;
+                break;
+            }
+        }
+
+        if (!$nominated) {
+            return;
+        }
+
+        $absolute_path = str_starts_with($path, '/') ? $path : base_path($path);
+        $parsed = Js_Parser::parse($absolute_path);
+
+        $class = null;
+        foreach ($parsed['classes'] ?? [] as $candidate) {
+            if (($candidate['name'] ?? null) === $class_name) {
+                $class = $candidate;
+                break;
+            }
+        }
+
+        if ($class === null || !isset($class['decorator_sites'])) {
+            shouldnt_happen("The JavaScript parse of {$path} has no decorator sites for class {$class_name}");
+        }
+
+        foreach ($class['decorator_sites'] as $site) {
+            if (!$this->is_allowed($site['name'])) {
+                $this->throw_unwhitelisted_class_decorator($site['name'], $class_name, $path, (int) $site['line']);
+            }
+        }
+    }
+
+    /**
+     * Whether a decorator name may be applied: the @decorator marker itself, or a whitelisted
+     * decorator. A member-expression decorator (`@Foo.bar`) is recorded under its dotted name,
+     * which no whitelist entry carries, so it is refused on classes and methods alike.
+     */
+    private function is_allowed(string $decorator_name): bool
+    {
+        return $decorator_name === 'decorator' || isset($this->decorator_whitelist[$decorator_name]);
+    }
+
     // Note: Duplicate/conflict checking methods removed
     // This functionality is now handled by BundleCompiler::_check_js_naming_conflicts()
     // which checks only the files being bundled, not all files in the project
@@ -242,11 +318,11 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
         $error_message .= "  function myFunction() { ... }\n\n";
         $error_message .= "CORRECT:\n";
         $error_message .= "  @decorator\n";
-        $error_message .= "  function myDecorator(target, key, descriptor) { ... }\n\n";
+        $error_message .= "  function myDecorator(value, context) { ... }\n\n";
         $error_message .= "WHY THIS RESTRICTION:\n";
         $error_message .= "- Global functions are processed differently than class methods\n";
         $error_message .= "- The @decorator marker identifies decorator implementations\n";
-        $error_message .= "- Other decorators can only be used on static class methods\n\n";
+        $error_message .= "- Other decorators can only be used on classes and class methods\n\n";
         $error_message .= "FIX OPTIONS:\n";
         $error_message .= "1. Remove the '@{$decorator_name}' decorator\n";
         $error_message .= "2. Move the function into a class as a static method\n";
@@ -272,15 +348,15 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
         $error_message .= "EXAMPLE OF WHITELISTING:\n";
         $error_message .= "  // Mark the decorator implementation:\n";
         $error_message .= "  @decorator\n";
-        $error_message .= "  function {$decorator_name}(target, key, descriptor) {\n";
-        $error_message .= "      // Decorator implementation\n";
-        $error_message .= "      return descriptor;\n";
+        $error_message .= "  function {$decorator_name}(value, context) {\n";
+        $error_message .= "      // value: the decorated method; return a replacement, or nothing\n";
+        $error_message .= "      return value;\n";
         $error_message .= "  }\n\n";
         $error_message .= "  // Or in a class:\n";
         $error_message .= "  class Decorators {\n";
         $error_message .= "      @decorator\n";
-        $error_message .= "      static {$decorator_name}(target, key, descriptor) {\n";
-        $error_message .= "          return descriptor;\n";
+        $error_message .= "      static {$decorator_name}(value, context) {\n";
+        $error_message .= "          return value;\n";
         $error_message .= "      }\n";
         $error_message .= "  }\n\n";
         $error_message .= "WHY THIS MATTERS:\n";
@@ -289,6 +365,41 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
         $error_message .= "- Ensures decorators are properly implemented\n\n";
         $error_message .= "FIX:\n";
         $error_message .= "Add @decorator to the '{$decorator_name}' function/method definition.\n";
+        $error_message .= "==========================================";
+
+        throw new YoureDoingItWrongException($error_message);
+    }
+
+    private function throw_unwhitelisted_class_decorator(string $decorator_name, string $class_name, string $path, int $line): void
+    {
+        $available = array_keys($this->decorator_whitelist);
+        sort($available);
+
+        $error_message = "==========================================\n";
+        $error_message .= "FATAL: Class decorator not whitelisted\n";
+        $error_message .= "==========================================\n\n";
+        $error_message .= "File: {$path}\n";
+        $error_message .= "Line: {$line}\n";
+        $error_message .= "Class: {$class_name}\n";
+        $error_message .= "Decorator: @{$decorator_name}\n\n";
+        $error_message .= "The decorator '@{$decorator_name}' applied to class '{$class_name}' is not whitelisted.\n\n";
+        $error_message .= "PROBLEM:\n";
+        $error_message .= "A class or method may only apply a decorator whose definition is marked\n";
+        $error_message .= "/** @decorator */ - a global function or a static method. No definition of\n";
+        $error_message .= "'{$decorator_name}' carries that marker, so the class would fail in the browser.\n\n";
+        $error_message .= "WHITELISTED DECORATORS:\n";
+        $error_message .= '  ' . (empty($available) ? '(none)' : '@' . implode(', @', $available)) . "\n\n";
+        $error_message .= "EXAMPLE OF WHITELISTING:\n";
+        $error_message .= "  /** @decorator */\n";
+        $error_message .= "  function {$decorator_name}(value, context) {\n";
+        $error_message .= "      // value: the decorated class; return a replacement, or nothing\n";
+        $error_message .= "      return value;\n";
+        $error_message .= "  }\n\n";
+        $error_message .= "FIX:\n";
+        $error_message .= "1. If '@{$decorator_name}' is a misspelling, correct it to a whitelisted decorator\n";
+        $error_message .= "2. If it is your own decorator, mark its definition /** @decorator */\n";
+        $error_message .= "3. If it is a marker such as @Instantiatable, write it in the class's docblock\n";
+        $error_message .= "   comment, not as a decorator\n";
         $error_message .= "==========================================";
 
         throw new YoureDoingItWrongException($error_message);
