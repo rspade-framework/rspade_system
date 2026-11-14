@@ -285,34 +285,4 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
             );
         }
     }
-
-    public static function test_a_request_string_is_an_envelope_only_when_it_is_a_json_object_with_a_text_key()
-    {
-        $envelope = json_encode(['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => '<b>x</b>', 'empty' => false]);
-        $wrapped = Rsx_Text_Abstract::wrap_api_param_envelope($envelope);
-
-        static::__assert_instance_of(Rsx_Text_Request_Value::class, $wrapped);
-        static::__assert_equals('<b>x</b>', $wrapped->_raw(), 'unfiltered until it reaches a column');
-
-        // Each of these is an ordinary string - plain text to a declared column.
-        foreach (['plain', '{hello}', '{"raw": "x"}', ' ' . $envelope, '[' . $envelope . ']'] as $ordinary) {
-            static::__assert_equals($ordinary, Rsx_Text_Abstract::wrap_api_param_envelope($ordinary));
-        }
-
-        static::__assert_null(Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text", "raw": null}'));
-    }
-
-    public static function test_a_request_string_identified_as_an_envelope_faces_the_ajax_shape_check()
-    {
-        static::__assert_throws(
-            \InvalidArgumentException::class,
-            fn () => Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text", "raw": ["x"]}'),
-            'non-string raw form'
-        );
-        static::__assert_throws(
-            \InvalidArgumentException::class,
-            fn () => Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text"}'),
-            'no raw form'
-        );
-    }
 }

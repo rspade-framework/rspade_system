@@ -116,7 +116,8 @@ class Rsx_Money_Cast implements CastsAttributes, SerializesCastableAttributes
 
     /**
      * How the value appears in toArray()/toJson(): the {__MONEY: "1234.56"} envelope the
-     * browser rehydrates into its Rsx_Money.
+     * browser rehydrates into its Rsx_Money. An external API body carries the decimal string
+     * instead: the API's response pass makes it plain (Api_Dispatcher::plain_body()).
      *
      * @param Model $model
      * @param string $key

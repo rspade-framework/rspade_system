@@ -53,7 +53,9 @@ use App\RSpade\Core\Rsx;
  * Param types are scalar (string/int/float/bool), which is a strict subset of JSON Schema, so
  * every type maps exactly - plus 'file', which is a multipart part rather than a value: an
  * operation declaring one emits a multipart/form-data requestBody with that property typed
- * string/format:binary, instead of the application/json object body every other POST gets. Responses carry the documented example; there is no
+ * string/format:binary, instead of the application/json object body every other POST gets -
+ * and 'money', an amount, which the API carries as a decimal STRING ("7708.80"): a string with
+ * the decimal pattern, never a JSON number. Responses carry the documented example; there is no
  * response SCHEMA because the framework never had one to project - an example alone is
  * valid OpenAPI and degrades honestly.
  */
@@ -70,7 +72,15 @@ class Api_Openapi
         // A multipart file part. OpenAPI spells binary content as a string with format
         // 'binary'; the requestBody media type is what actually makes it an upload.
         'file' => 'string',
+        // An amount of money travels as a decimal string ("7708.80"), never a JSON number.
+        'money' => 'string',
     ];
+
+    /**
+     * The decimal form a money param is documented with: an optional sign, digits and at
+     * most two decimal places. A response always carries exactly two ("7708.80").
+     */
+    private const MONEY_PATTERN = '^-?\\d+(\\.\\d{1,2})?$';
 
     /**
      * The OpenAPI 3.1 document for every published endpoint - all versions, or one.
@@ -386,6 +396,11 @@ class Api_Openapi
 
         if (($param['type'] ?? null) === 'file') {
             $schema['format'] = 'binary';
+        }
+
+        if (($param['type'] ?? null) === 'money') {
+            $schema['pattern'] = static::MONEY_PATTERN;
+            $schema['examples'] = ['7708.80'];
         }
 
         if (array_key_exists('default', $param) && $param['default'] !== null) {

@@ -15,16 +15,19 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
- * A BUNDLE'S FIELD-LENGTH SCRIPT: the column max lengths of the models a compiled bundle
- * carries, as one line of JavaScript the page loads after the bundle.
+ * A BUNDLE'S FIELD-LENGTH SCRIPT: the schema facts about the columns of the models a compiled
+ * bundle carries - each column's max length and each money column's limit - as two lines of
+ * JavaScript the page loads after the bundle.
  *
  *     Rsx.__field_length_data = {"Contact_Model": {"first_name": 100, ...}, ...};
+ *     Rsx.__money_limit_data = {"Project_Model": {"budget": "9999999999999.99"}, ...};
  *
- * WHY IT IS A SCRIPT OF ITS OWN. A column's length is a fact about the DATABASE; everything
- * else a model's JS stub declares is a fact about the model's code. Kept apart, a compiled
- * bundle is a function of code alone - a build needs no database, and a migration changes
- * no bundle - while the lengths are read at run time, from the schema as it is now.
- * Rsx_Js_Model.field_length() reads the object this assigns and stays synchronous.
+ * WHY IT IS A SCRIPT OF ITS OWN. A column's length and a money column's limit (its DECIMAL
+ * precision) are facts about the DATABASE; everything else a model's JS stub declares is a
+ * fact about the model's code. Kept apart, a compiled bundle is a function of code alone - a
+ * build needs no database, and a migration changes no bundle - while these are read at run
+ * time, from the schema as it is now. Rsx_Js_Model.field_length() and money_limit() read the
+ * objects this assigns and stay synchronous.
  *
  * WHICH MODELS. Exactly the ones whose stubs are in the bundle's compiled app script: the
  * model list the compiler wrote beside it (BundleCompiler::read_model_list()).
@@ -35,6 +38,10 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * toArray() strips those from every payload, so the client never holds one and can never
  * need its length. A model whose table does not exist in the connected database gets an
  * empty entry, so field_length() answers null for it rather than reporting a missing script.
+ *
+ * WHICH LIMITS. Every money column of the model (money_columns(), system columns excepted as
+ * above), each with the PHP model's own money_limit() answer as its canonical decimal string.
+ * A model with no money columns, or no table, gets an empty entry.
  *
  * THE URL NAMES THE BUNDLE'S OWN APP SCRIPT - /_field_lengths/<Bundle>__<hash>.js, where
  * <hash> is the one in <Bundle>__app.<hash>.js - so the script is exactly as reachable as
@@ -111,6 +118,9 @@ class Field_Length_Script
 
         $body = 'Rsx.__field_length_data = '
             . json_encode(self::lengths_for_models($list['models']), JSON_FORCE_OBJECT | JSON_UNESCAPED_SLASHES)
+            . ";\n"
+            . 'Rsx.__money_limit_data = '
+            . json_encode(self::money_limits_for_models($list['models']), JSON_FORCE_OBJECT | JSON_UNESCAPED_SLASHES)
             . ";\n";
 
         RsxCache::set($cache_key, $body);
@@ -149,6 +159,43 @@ class Field_Length_Script
                 if ($length !== null) {
                     $data[$model_class][$column] = $length;
                 }
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * model class => money column => the column's limit as a canonical decimal string, for
+     * the named models (see the class docblock for which columns).
+     *
+     * @param string[] $model_classes Simple model class names
+     * @return array<string, array<string, string>>
+     */
+    public static function money_limits_for_models(array $model_classes): array
+    {
+        $data = [];
+
+        foreach ($model_classes as $model_class) {
+            $record = Manifest::php_model_record($model_class);
+
+            if ($record === null) {
+                shouldnt_happen("Field_Length_Script: {$model_class} is in a bundle's model list and is not a model in the manifest");
+            }
+
+            $data[$model_class] = [];
+
+            // No table in the connected database (not migrated yet): an empty entry.
+            if (Rsx_Schema::model_columns($model_class) === null) {
+                continue;
+            }
+
+            foreach ($record['fqcn']::money_columns() as $column) {
+                if (str_starts_with($column, '_') && !str_starts_with($column, '__')) {
+                    continue;
+                }
+
+                $data[$model_class][$column] = $record['fqcn']::money_limit($column)->to_decimal();
             }
         }
 

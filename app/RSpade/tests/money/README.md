@@ -3,7 +3,7 @@
 ## Domain overview & applicability
 
 `Rsx_Money` is an amount of money: an immutable count of cents in the signed 64-bit range
-with exactly two decimal places, implemented twice - PHP and JavaScript - with the same
+with exactly two decimal places, held as its canonical decimal string, implemented twice - PHP and JavaScript - with the same
 algorithms step for step, so both languages give the identical result or the identical
 refusal for every call. No float or Number takes part in a calculation: every quantity is an
 integer checked by `Rsx_Money_Core`, and a step whose true result leaves the range throws
@@ -11,14 +11,15 @@ integer checked by `Rsx_Money_Core`, and a step whose true result leaves the ran
 display configuration, `rsx.money.display`, which the browser receives as
 `window.rsxapp.money_display`.
 
-The parity contract is the shared vector file `resource/money_vectors.json` (2156 cases).
+The parity contract is the shared vector file `resource/money_vectors.json` (2175 cases).
 Both runners load the same file; `resource/` is never scanned by the manifest. Each case
 names a call, its arguments in a small tagged encoding (`{"money": "1.23"}`, `{"int": "..."}`
 -> a PHP int / a JS BigInt, `{"float": ...}`, `{"rounding": "ROUND_*"}`,
 `{"missing": true}` -> JS `undefined`), an optional display `config`, and either the
 encoded result or the refusal (`reason`, plus the exact message unless the reason is
-`argument`). Two cases are `only: js`: a missing rounding mode (in PHP an
-`ArgumentCountError`, covered by `Money_Php_Language_Test`) and a Number past 2^53 as cents.
+`argument`). Three cases are `only: js`: a missing rounding mode (in PHP an
+`ArgumentCountError`, covered by `Money_Php_Language_Test`), a Number past 2^53 as cents, and
+the Number `-0` as cents (a PHP float is never cents).
 
 ## Source files
 
@@ -33,8 +34,11 @@ encoded result or the refusal (`reason`, plus the exact message unless the reaso
 - The column kind `['money' => true]`: `Core/Database/Money/Rsx_Money_Cast.php`;
   `Core/Database/Models/Rsx_Model_Abstract.php` (`money_columns()`, `is_money_column()`,
   `money_limit()`, `money_from_submitted()`, the schema-derived cast); `Rsx_Money::_wrap_request_envelopes()` (called by `Core/Ajax/Ajax.php`)
-  and `_wrap_api_param()` (called by `Core/Api/Api_Param_Validator.php`, the `money` param
-  type); `app/Database/RestrictedEloquentBuilder.php` (where-family conversion, raw update,
+  and `_from_api_param()` (called by `Core/Api/Api_Param_Validator.php`, the `money` param
+  type, which takes no envelope, and checks a param's `column:` against `money_limit()`;
+  `Core/Api/Api_Endpoint_ManifestSupport.php` checks the `column:` declaration at scan);
+  `Core/Database/Field_Length_Script.php` (`money_limits_for_models()`, the page's
+  `Rsx.__money_limit_data`, read by `Rsx_Js_Model.money_limit()`); `app/Database/RestrictedEloquentBuilder.php` (where-family conversion, raw update,
   `sum_money()`); `Core/Forms/Form_Edit.php` (`FIELD_MONEY`); `Core/Js/Rsx_Js_Model.js`
   (rehydrator, `is_money_column()`); `Core/Forms/Form_Input_Abstract.js` (`_assert_accepts()`);
   `Core/Database/Model_Stub_ManifestSupport.php`; `Commands/Rsx/Constants_Regenerate_Command.php`;
@@ -62,7 +66,8 @@ encoded result or the refusal (`reason`, plus the exact message unless the reaso
   - IMPLEMENTED
 - PHP only: the string-conversion guard, operator refusals, `ArgumentCountError` for a
   missing argument, a wrong type as `argument` (never `TypeError`), the float door's
-  independence from `precision` / `serialize_precision`, the 16-digit whole float, the core's
+  independence from `precision` / `serialize_precision`, a whole float in the safe range as an
+  integer (2^53 refused, a float refused as cents), the one instance property, the core's
   overflow edges, display validation per key, `json_encode()`. (php
   `Money_Php_Language_Test`) - IMPLEMENTED
 - Browser only: the `Symbol.toPrimitive` / `toString()` guard, `json_encode()` envelopes,
@@ -75,7 +80,9 @@ encoded result or the refusal (`reason`, plus the exact message unless the reaso
   never_export and derived (php `Money_Cast_Test`); each column's limit from its DECIMAL
   precision and scale, refused at the door and by the cast (php `Money_Column_Limit_Test`); queries and `sum_money()` (php
   `Money_Query_Test`); the Ajax boundary both ways (php `Money_Ajax_Hydration_Test` with
-  `Money_Ajax_Fixture_Controller`); the `money` API param (php `Money_Api_Param_Test`);
+  `Money_Ajax_Fixture_Controller`); the `money` API param, its `column:` limit and the scan
+  check of that declaration (php `Money_Api_Param_Test`); the page's money limits (php
+  `database/php/Field_Length_Script_Test`; playwright `forms/playwright/field_length_script.js`);
   Form_Edit (php `Money_Form_Edit_Test`); the browser rehydrator and input refusals
   (playwright `playwright/money_rehydrate.js`) - IMPLEMENTED
 - The input: `val()` is an Rsx_Money, null for a blank box, or the typed string when the text

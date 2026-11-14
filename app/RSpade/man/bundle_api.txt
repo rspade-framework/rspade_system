@@ -650,18 +650,21 @@ BUNDLE RENDERING
 
     Never call from controllers - only from Blade files.
 
-    THE FIELD-LENGTH SCRIPT. A column's max length is a fact about the DATABASE,
-    so it is not compiled into a bundle: the framework serves it, per bundle, as
-    one line of JavaScript -
+    THE FIELD-LENGTH SCRIPT. A column's max length and a money column's limit
+    are facts about the DATABASE, so they are not compiled into a bundle: the
+    framework serves them, per bundle, as two lines of JavaScript -
 
         Rsx.__field_length_data = {"Contact_Model": {"first_name": 100, ...}, ...};
+        Rsx.__money_limit_data = {"Project_Model": {"budget": "9999999999999.99"}, ...};
 
-    - and Model.field_length('column') reads that object, synchronously. It lists
-    exactly the models whose stubs are in the bundle's compiled app script (the
-    compiler records them in build/bundle_models/<Bundle>.json, in every mode; a
-    sealed build's seal covers that file), each varchar/char column with the PHP
-    model's own field_length() answer, single-underscore system columns left out.
-    A model whose table is not in the database yet gets an empty entry.
+    - and Model.field_length('column') and Model.money_limit('column') read
+    those objects, synchronously. Both list exactly the models whose stubs are
+    in the bundle's compiled app script (the compiler records them in
+    build/bundle_models/<Bundle>.json, in every mode; a sealed build's seal
+    covers that file): each varchar/char column with the PHP model's own
+    field_length() answer, and each money column with its money_limit() as a
+    decimal string (rsx:man money), single-underscore system columns left out.
+    A model whose table is not in the database yet gets an empty entry in both.
 
     The URL names the bundle's own app script hash, so the script is exactly as
     reachable as the bundle (any other name is a 404), and carries the STATE key

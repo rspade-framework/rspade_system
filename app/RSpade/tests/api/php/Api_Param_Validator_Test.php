@@ -8,7 +8,6 @@
 namespace App\RSpade\Tests\Api\Php;
 
 use App\RSpade\Core\Api\Api_Param_Validator;
-use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -207,39 +206,28 @@ class Api_Param_Validator_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Encoded text values on a string param
+    // A string param is a plain string: the API carries no text envelope
     // -------------------------------------------------------------------------
 
-    public static function test_a_string_param_carrying_a_text_envelope_becomes_a_request_value()
+    public static function test_a_string_param_reaches_the_endpoint_as_the_string_sent()
     {
         $specs = [static::__spec('body', 'string', true)];
-        $envelope = json_encode(['__TEXT' => 'Text_Fixture_Wrapped_Text', 'raw' => '<p>hi</p>']);
+        $envelope = json_encode(['__TEXT' => 'Text_Fixture_Wrapped_Text', 'raw' => '<p>hi</p>', 'empty' => false]);
 
-        $result = Api_Param_Validator::validate($specs, ['body' => $envelope]);
-
-        static::__assert_true($result['valid']);
-        static::__assert_instance_of(Rsx_Text_Request_Value::class, $result['params']['body'], 'the same wrapper the Ajax boundary produces');
-    }
-
-    public static function test_a_string_param_that_only_looks_like_json_stays_a_string()
-    {
-        $specs = [static::__spec('body', 'string', true)];
-
-        foreach (['{not json', '{"raw": "x"}', 'plain <b>text</b>'] as $ordinary) {
-            $result = Api_Param_Validator::validate($specs, ['body' => $ordinary]);
-            static::__assert_true($result['valid']);
-            static::__assert_equals($ordinary, $result['params']['body']);
+        foreach (['<p>hi</p>', 'plain <b>text</b>', '{not json', '{"raw": "x"}', $envelope] as $sent) {
+            $result = Api_Param_Validator::validate($specs, ['body' => $sent]);
+            static::__assert_true($result['valid'], json_encode($result['fields']));
+            static::__assert_equals($sent, $result['params']['body'], 'untouched - an envelope-shaped string included: ' . $sent);
         }
     }
 
-    public static function test_a_malformed_text_envelope_is_a_field_error_not_plain_text()
+    public static function test_a_json_object_in_a_string_param_is_refused()
     {
         $specs = [static::__spec('body', 'string', true)];
 
-        $result = Api_Param_Validator::validate($specs, ['body' => '{"__TEXT": "Text_Fixture_Wrapped_Text", "raw": 5}']);
+        $result = Api_Param_Validator::validate($specs, ['body' => ['__TEXT' => 'Text_Fixture_Wrapped_Text', 'raw' => '<p>hi</p>', 'empty' => false]]);
 
         static::__assert_false($result['valid']);
-        static::__assert_array_has_key('body', $result['fields']);
-        static::__assert_true(str_contains($result['fields']['body'], 'non-string raw form'), 'the shape-check message reaches the caller');
+        static::__assert_equals('Expected string', $result['fields']['body'] ?? null);
     }
 }

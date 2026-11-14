@@ -88,19 +88,19 @@ THE CONTRACT
        whole of the vocabulary, and it needs no special handling to use.
        Anything else throws, and the exception is the reminder.
 
-    7. THE ENVELOPE IS THE VALUE, EVERYWHERE IT TRAVELS. A typed value
-       leaves the server as {__TEXT, raw, empty} on EVERY payload - a
-       fetch(), a list, a relationship, an /api/vN response - and it is
-       never flattened to a string for a consumer's convenience, not for a
-       page, not for an external client. Flattening puts the guessing back:
-       the consumer is once again inferring an encoding from a bare string,
-       which is the failure this feature exists to end. The envelope is a
-       black box that only the widgets built for its type understand, and
-       that is the point - a template interpolates it with no hydration
-       call because the PRINTER is the one thing that can render it, and a
-       consumer that needs a plain rendition asks the endpoint to add one
-       deliberately (to_plain_text(), under its own key) rather than rewriting
-       the column's value.
+    7. THE ENVELOPE IS THE VALUE, EVERYWHERE THE BROWSER RECEIVES IT. A
+       typed value reaches the browser as {__TEXT, raw, empty} on EVERY Ajax
+       payload - a fetch(), a list, a relationship - and is never flattened
+       to a string for a page's convenience: the page would be inferring an
+       encoding from a bare string again, which is the failure this feature
+       exists to end. The envelope is a black box that only the widgets
+       built for its type understand, and that is the point - a template
+       interpolates it with no hydration call because the PRINTER is the one
+       thing that can render it, and a page that needs a plain rendition asks
+       the endpoint to add one deliberately (to_plain_text(), under its own
+       key) rather than rewriting the column's value. The EXTERNAL API is the
+       one exception, by design: it carries plain values, so a declared
+       column leaves /api/vN as its stored string (THE EXTERNAL API, below).
 
     8. AN EDITOR ACCEPTS ONLY ITS TYPE. An input component built to edit a
        declared type names it (`static ACCEPTS = 'Rich_Text'`) and THROWS
@@ -405,9 +405,8 @@ ASSIGNING A VALUE
       a typed value (Rich_Text)       already encoded and filtered; stored
                                       as is. A typed value of ANOTHER type
                                       throws - types do not convert.
-      a request envelope              ENCODED content from an editor or an
-        (Ajax or /api/vN)             API caller: sanitize_encoded(), then
-                                      stored.
+      a request envelope (Ajax)       ENCODED content from an editor:
+                                      sanitize_encoded(), then stored.
       a bare string                   PLAIN TEXT: encode_plain_text(), then
                                       sanitize_encoded(), then stored.
       an int, float or bool           stringified, then PLAIN TEXT as above.
@@ -430,7 +429,7 @@ ASSIGNING A VALUE
       markup, and the assignment owes Type::from_untrusted_encoded($html).
 
       Did it ARRIVE as prose - a spreadsheet cell, a typed sentence, an API
-      scalar? Assign it bare; the column escapes and wraps it. Do NOT
+      field documented as text? Assign it bare; the column escapes and wraps it. Do NOT
       hand-wrap prose in '<p>' first: the column does that, and your
       wrapper becomes visible tags.
 
@@ -488,54 +487,42 @@ ASSIGNING A VALUE
     column; text_type_or_null() is the one that answers null.
 
 THE EXTERNAL API
-    Reads: a declared column leaves /api/vN as its envelope, like every
-    other payload (contract rule 7).
+    The external API carries plain values: no {__TEXT} envelope appears on
+    /api/vN, in or out (rsx:man external_api, PLAIN VALUES).
 
-    Writes: an #[Api_Param] of type 'string' bound to a declared column
-    accepts two forms.
+    Reads: a declared column leaves /api/vN as its STORED STRING - HTML for
+    Rich_Text, the text itself for Raw_Text - and a text value an endpoint
+    puts straight into its answer does the same. The endpoint returns the
+    model; the dispatcher's response pass writes the string.
 
-      PLAIN TEXT. Any ordinary string. Assigned, it is a bare string:
-      escaped into the column's encoding and filtered.
+        {"description": "<p>Include the payment schedule.</p>"}
 
-          {"description": "Call back Tuesday\nRe: <invoice>"}
+    Writes: an #[Api_Param] of type 'string', and the ENDPOINT says which
+    door the string goes through - the client cannot, since a string carries
+    no encoding:
 
-      ENCODED CONTENT. The envelope, JSON-ENCODED INTO THE STRING - the
-      param is a string, so the envelope rides inside one, in a JSON body
-      and a form body alike:
+      PLAIN TEXT. Assigned bare, the string is escaped into the column's
+      encoding and filtered. Right for a field the API documents as text:
 
-          {"description": "{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi <b>there</b></p>\"}"}
+          $record->notes = $params['notes'];
 
-      Assigned, it is a request envelope: the column's sanitize_encoded() runs,
-      exactly as for a value posted by the browser's editor.
+      ENCODED. Passed through the type, the string IS its encoded form and
+      the type's sanitize_encoded() runs, exactly as for the browser's
+      editor:
 
-    A string param is an envelope when, and only when, ALL THREE hold:
+          $task->description = Rich_Text::from_untrusted_encoded($params['description']);
 
-      1. it begins with `{` (no leading whitespace);
-      2. it parses as JSON, to an object;
-      3. that object has a key named __TEXT.
+    Choose ENCODED for a column the API reads as its encoding (every
+    Rich_Text column): a client that reads the field and sends it back
+    unchanged then stores the same value, because the stored form is already
+    sanitized. A field read as HTML but written as plain text would store
+    the markup as visible tags on the first round trip. On a Raw_Text column
+    the two doors are the same. State the door in the param's description
+    ("Description, HTML (sanitized on save)").
 
-    Otherwise it is an ordinary string: "{hello}", a JSON object with no
-    __TEXT, a JSON array are all plain text.
-
-    An IDENTIFIED envelope then faces the same shape check an Ajax
-    envelope does, and fails the request if it is malformed (422,
-    code 'validation', the reason under that field) - it is never demoted
-    to plain text, because the caller claimed an encoding:
-
-      __TEXT      a non-empty string. Never resolved - the COLUMN decides
-                  the type, exactly as on the Ajax path; the claim is only
-                  checked by Type::from_request().
-      raw         required; a string, or null (the param becomes null).
-      empty       optional; a boolean.
-      no other keys.
-
-    A client that round-trips a record - GET it, change something, send it
-    back - JSON-encodes the envelope it received into the string param, and
-    the stored bytes are unchanged. Sending the envelope's raw alone would
-    store the markup as literal text.
-
-    A JSON OBJECT (not a string) in a string param is refused as 'Expected
-    string', as any compound value is.
+    A string that looks like an envelope ("{\"__TEXT\": ...}") is an ordinary
+    string; a JSON object in a string param is refused 'Expected string', as
+    any compound value is.
 
 PRINTING AND EDITING
     A live page interpolates the value and its PRINTER component renders it:
@@ -609,12 +596,13 @@ GOTCHAS
     PLUCK AND RAW SQL BYPASS THE CAST, exactly as they already do for dates
     and type refs. That boundary is not new.
 
-    NEVER FLATTEN THE ENVELOPE FOR A CONSUMER. An external API client, a
-    report, a second application: each receives {__TEXT, raw, empty} exactly
-    as the browser does. "Just give them the string" reintroduces inference
-    at the consumer and defeats the conversion. A consumer that needs plain
-    text gets a deliberate extra key from the endpoint (to_plain_text()), never a
-    rewritten column.
+    NEVER FLATTEN THE ENVELOPE FOR A PAGE. A browser payload carries
+    {__TEXT, raw, empty}; "just give the page the string" reintroduces
+    inference in the template and defeats the conversion. A page that needs
+    plain text gets a deliberate extra key from the endpoint
+    (to_plain_text()), never a rewritten column. The external API is
+    different by contract: it carries the stored string (THE EXTERNAL API),
+    and the endpoint's write door is what keeps the round trip honest.
 
     NEVER TEACH AN EDITOR TO ACCEPT A STRING. When a typed input throws on a
     string, the fix is at the call site that produced the string (a '' form
@@ -639,28 +627,23 @@ HOW IT WORKS INSIDE
                              and one boolean go with it: no plain-text
                              rendition, which would double every text
                              column's payload to serve nobody. This is the
-                             ONE serialization: every payload a model
-                             produces carries it, the external API included.
+                             ONE browser serialization: every Ajax payload a
+                             model produces carries it. An external API body
+                             is made plain on its way out
+                             (Api_Dispatcher::plain_body()): the raw string.
 
       browser -> PHP         wrap_request_envelopes() -> Rsx_Text_Request_Value
                              TYPELESS. See below.
 
-      API caller -> PHP      Api_Param_Validator -> wrap_api_param_envelope()
-                             -> Rsx_Text_Request_Value, same shape check
+      API caller -> PHP      a plain string param; the endpoint chooses
+                             assignment (plain text) or
+                             Type::from_untrusted_encoded() (encoded)
 
       PHP -> database        Rsx_Text_Cast::set() -> Type::from_untrusted_encoded()
                              (an envelope) or Type::from_plain_text() (a bare
                              string: encode_plain_text() first)
                              THE trust boundary. The column's type is applied
                              and its sanitize_encoded() runs, exactly once.
-
-    WHY AN API ENVELOPE IS A STRING, IDENTIFIED BY THREE TESTS. API params
-    are declared scalars; a compound value never satisfies one. Riding the
-    envelope inside a string keeps that rule and works for form bodies too.
-    The three tests make identification unambiguous - a plain text value
-    that merely starts with a brace is still plain text - and once a string
-    passes them the caller has claimed an encoding, so a malformed envelope
-    is refused rather than stored as its own JSON.
 
     WHY THE REQUEST SIDE IS TYPELESS. At the Ajax boundary the server holds a
     bag of keys and does not know which column each is bound for - that is

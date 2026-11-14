@@ -13,7 +13,9 @@ use App\RSpade\Core\Manifest\Manifest;
  * MODEL-MONEY-02 - an Rsx_Money is never compared, tested for truth, cast or used in
  * arithmetic with PHP's operators.
  *
- * Rsx_Money is an object. PHP compares two objects property by property (`<`, `==`) and by
+ * Rsx_Money is an object. PHP compares two objects property by property (`<`, `==`) - for
+ * Rsx_Money its one property, the canonical decimal string, which PHP compares as a number
+ * through a float, so two amounts past 15 significant digits compare equal - and by
  * identity (`===`), treats every object as true (`if`, `!`, `&&`, `?:`, `empty()`), and turns
  * one into 1 under `(int)` / `(float)` - none of which asks about the AMOUNT, and none of which
  * the class can intercept. Arithmetic, concatenation and `(string)` throw at run time; this

@@ -46,7 +46,9 @@ public static $columns = [
 - Why precision 18: `DECIMAL(18,2)`'s largest value fits the range; a wider column could store
   an amount no `Rsx_Money` can hold, and reading it would throw.
 - Accessors: `Model::money_columns()`, `Model::is_money_column('col')` (JS:
-  `Model.is_money_column('col')`), `Model::money_limit('col')`. The generated header says
+  `Model.is_money_column('col')`), `Model::money_limit('col')` (JS: `Model.money_limit('col')`,
+  an `Rsx_Money` from the page's field-length script - a limit is a schema fact, never in the
+  stub; it throws for a column that is not money or when the script did not load). The generated header says
   `@property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float`.
 
 ## What the value is - and what it refuses
@@ -70,7 +72,9 @@ $project->budget->format();             // "$1,234.50" - display
 
 In PHP arithmetic and string conversion throw (`Rsx_Money cannot be converted to a string: use
 to_decimal() for the exact value or format() for display.`), but **`==` / `<` compare the objects'
-properties, `===` compares identity, and every object is TRUE** - silently, with no error. In
+one property - the decimal string, as numbers through a float, so two amounts past 15 significant
+digits can compare equal - `===` compares identity, and every object is TRUE** - silently, with no
+error. In
 JavaScript every coercion to a primitive throws (`+m`, `m < n`, `` `${m}` ``, `m == 5`), but
 **`===` is identity and every object is truthy**, also silently. `MODEL-MONEY-02` (`rsx:check`)
 reports the PHP shapes where it can prove the operand is money; nothing lints JavaScript.
@@ -80,16 +84,20 @@ reports the PHP shapes where it can prove the operand is money; nothing lints Ja
 | Door | Takes | Extra precision |
 |---|---|---|
 | `from_decimal($x)` | a plain decimal string `"1234.5"`, an int of WHOLE units (`5` is 5.00), a float without residue | REFUSED (`scale`) |
-| `from_cents($x)` | an int count of cents, or a string of one (`"-5"`) | n/a |
+| `from_cents($x)` | an int count of cents, or a string of one (`"-5"`; `"-0"` is 0.00) | n/a |
 | `from_text($s)` | what a person typed, read through the display config: `"$1,234.56"`, `"(500.00)"`, `"-$99.99"` | REFUSED |
 | `from_submitted($x)` | a form/API field: blank or null is **null** (never zero), a string is typed text, an int whole units, a float the float door, an envelope decoded | REFUSED |
 | `Model::money_from_submitted('col', $x)` | `from_submitted()`, then refused beyond the column's own limit | REFUSED |
 | `from_aggregate($x)` | an SQL total: null (no rows) is 0.00, a decimal string or float **rounded half-up** | ROUNDED - the one door that rounds |
 | `zero()` | - | - |
 
-- **Floats**: a float is accepted only when its shortest form has at most 15 significant digits
-  (`19.99` is fine). `0.1 + 0.2` is refused: `This number carries floating-point residue; pass it
-  as a decimal string.` Prefer strings; a float is never assigned to a money column at all.
+- **Floats**: a float is accepted only when it is exactly what was written. A whole-valued float
+  within +/-(2^53 - 1) is an integer in both languages (`1000000000000001.0` is whole units, as the
+  JS Number is); any other float only when its shortest form has at most 15 significant digits
+  (`19.99` is fine). `0.1 + 0.2` and `9007199254740992.0` are refused: `This number carries
+  floating-point residue; pass it as a decimal string.` Prefer strings; a float is never assigned
+  to a money column at all. Negative zero is zero at every door (`-0.0`, `"-0.00"`,
+  `from_cents("-0")`).
 - Trailing zeros are not precision: `"1.500"` is 1.50; `"1.505"` is refused (`An amount of money
   has at most two decimal places.`).
 - `from_text()` grouping is strict: with `,` grouping, `"1,234.5"` reads but `"12,34"` and
@@ -279,21 +287,32 @@ $total = Project_Model::where('parent_project_id', $id)->sum_money('budget');   
 
 ## The external API
 
-- A read returns a money column as the envelope `{"__MONEY": "1234.56"}` (one serializer for
-  Ajax and the API).
+**The API carries an amount as a plain decimal string, in and out - the `{__MONEY}` envelope is
+browser Ajax only and never appears on `/api/vN`.**
+
+- A read returns a money column, and any `Rsx_Money` an endpoint puts in its answer (a computed
+  figure, a `sum_money()` total), as `"1234.56"` - exactly two places. Return the model or the
+  `Rsx_Money` itself; the dispatcher's response pass (`Api_Dispatcher::plain_body()`) writes the
+  string. Never hand-convert with `to_decimal()` for the API, and never hand-build an envelope.
 - A write declares `#[Api_Param('price', type: 'money')]`: it accepts a plain decimal string
-  (`"1234.50"`), the envelope as a JSON object or JSON-encoded string, a JSON int of whole units or
-  a residue-free JSON float; blank or null is null. The endpoint receives an `Rsx_Money` (or
-  null); a refusal is that field's error with the money message. A default is a literal
-  (`default: '0.00'`). Plain strings are strict decimals - `"$1,234"` is refused.
-- The param is not checked against a column's limit: pass it through
-  `Model::money_from_submitted('col', $params['price'])` before assigning, so an over-large
-  amount is a field error rather than the cast's exception.
+  (`"1234.50"`, `"1234.5"`), a JSON int of whole units or a residue-free JSON float; blank or null
+  is null. The endpoint receives an `Rsx_Money` (or null); anything else - the envelope included,
+  as a JSON object or encoded into a string - is that field's error, "This is not an amount of
+  money.". A default is a literal (`default: '0.00'`). Plain strings are strict decimals -
+  `"$1,234"` is refused. OpenAPI documents the param as a string with the decimal pattern.
+- **A param stored in a money column names it**: `#[Api_Param('budget', type: 'money', column:
+  'Project_Model.budget')]` (a literal `'Model_Name.column'`, checked at manifest build: a
+  concrete model, a declared money column, a money param). The validator then refuses an amount
+  beyond `Model::money_limit('col')` with "This amount is larger than this field can hold." on
+  that field, so the endpoint assigns what it receives. Without `column:`, an over-large amount
+  reaches the cast and throws. Worked example: the template's projects API,
+  `system/app/RSpade/resource/reference_app/app/api/v1/projects_api_controller.php`.
 
 ## Grids, exports, revisions
 
 - `DataGrid_Abstract::transform_records()` sees `toArray()` rows, so a money column there is the
-  envelope ARRAY `['__MONEY' => '1234.56']` - leave it (the browser rehydrates it) or rebuild it
+  envelope ARRAY `['__MONEY' => '1234.56']` - leave it (the browser rehydrates it; an API answer
+  carrying it is made plain on the way out) or rebuild it
   with `Rsx_Money::from_envelope($row['budget'])`; `$row['budget']->format()` is a fatal error.
 - A revision records the canonical strings (`"1234.50"` -> `"1300.00"`); a history screen that
   formats them asks `Model::is_money_column($column)` and prints

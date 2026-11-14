@@ -5,14 +5,15 @@ namespace App\RSpade\Core\Api;
 use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Database\Money\Rsx_Money;
 use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
-use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\RequestHistory\Request_History;
 use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
 
 /**
  * Api_Param_Validator - validate + coerce raw request input against baked #[Api_Param] specs.
  *
- * Standalone and framework-free (pure array in, array out) so it is directly unit-testable.
+ * Standalone (array in, array out) so it is directly unit-testable; the one outside read is a
+ * money param's column limit (the model's money_limit(), from the live schema).
  * The dispatcher assembles the raw input (route params over GET over JSON/form body) and
  * hands it here with the route's baked 'api_params' list. This class:
  *
@@ -21,20 +22,26 @@ use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
  * - applies declared defaults for absent optional params;
  * - coerces present values to the declared scalar type (string/int/float/bool), reporting
  *   a per-field error when a value cannot be coerced;
- * - hands every string param to Rsx_Text_Abstract::wrap_api_param_envelope(): a string that
- *   begins with `{`, parses as a JSON object and carries a `__TEXT` key is an ENCODED text
- *   value and becomes the same typeless Rsx_Text_Request_Value the Ajax boundary produces,
- *   under the same shape check - a malformed one is a per-field error, never plain text;
- * - reads a type:'money' param with Rsx_Money::_wrap_api_param(): a plain decimal string
- *   ("1234.50"), the {"__MONEY": "..."} envelope as a JSON object or JSON-encoded into a
- *   string, a JSON int of whole units or a JSON float; null or blank is null. The endpoint receives an Rsx_Money
- *   (or null), and an Rsx_Money_Exception is the field's error with its own message;
+ * - passes a string param to the endpoint as the string it is. The external API carries
+ *   plain values only: the browser's {__TEXT} / {__MONEY} envelopes are never read here, so a
+ *   string that happens to hold one is an ordinary string. A declared text column is written
+ *   from it through the door the endpoint chooses (assigned: plain text; through the type's
+ *   from_untrusted_encoded(): its encoded form) - rsx:man external_api;
+ * - reads a type:'money' param with Rsx_Money::_from_api_param(): a plain decimal string
+ *   ("1234.50"), a JSON int of whole units or a JSON float; null or blank is null. The
+ *   endpoint receives an Rsx_Money (or null); anything else, an envelope included, is the
+ *   field's error with the Rsx_Money_Exception's own message. A money param declared with
+ *   column: 'Model_Name.column' is also checked against that column's money_limit(): an
+ *   amount beyond it is the field's error "This amount is larger than this field can hold.",
+ *   the refusal Model::money_from_submitted() gives, so the endpoint receives an amount the
+ *   column holds;
  * - validates a type:'file' param, which is NOT coerced: it must arrive as an UploadedFile
  *   (a multipart part the dispatcher merged in) and that upload must have succeeded. The
  *   UploadedFile instance is passed through to the endpoint untouched.
  *
  * A param spec is: ['name'=>string, 'type'=>string, 'required'=>bool, 'default'=>mixed,
- * 'description'=>?string, 'example'=>mixed] (as baked by Api_Endpoint_ManifestSupport).
+ * 'description'=>?string, 'example'=>mixed, 'column'=>?string] (as baked by
+ * Api_Endpoint_ManifestSupport; 'column' only on a money param).
  */
 class Api_Param_Validator
 {
@@ -100,14 +107,15 @@ class Api_Param_Validator
                     // A money default is a literal in the attribute ('0.00'); the endpoint
                     // receives it as the Rsx_Money a submitted value would be. A default that
                     // is not an amount throws: the declaration is wrong, not the request.
+                    // A default beyond the column's limit throws the same way.
                     $params[$name] = $spec['type'] === 'money'
-                        ? Rsx_Money::_wrap_api_param($spec['default'])
+                        ? static::_money_for_column($spec, Rsx_Money::_from_api_param($spec['default']))
                         : $spec['default'];
                 }
                 continue;
             }
 
-            $coerced = static::_coerce($spec['type'], $raw[$name]);
+            $coerced = static::_coerce($spec, $raw[$name]);
             if (!$coerced['ok']) {
                 $fields[$name] = $coerced['message'] ?? ('Expected ' . $spec['type']);
                 continue;
@@ -124,13 +132,44 @@ class Api_Param_Validator
     }
 
     /**
+     * A money param's amount, refused with Rsx_Money_Exception::column_range() when the param
+     * names a column (column: 'Model_Name.column') and the amount is beyond that column's
+     * money_limit(). Null, and a param with no column, pass as they are.
+     *
+     * @param array $spec
+     * @param Rsx_Money|null $amount
+     * @return Rsx_Money|null
+     */
+    private static function _money_for_column(array $spec, ?Rsx_Money $amount): ?Rsx_Money
+    {
+        $column = $spec['column'] ?? null;
+
+        if ($amount === null || $column === null) {
+            return $amount;
+        }
+
+        [$model, $model_column] = explode('.', $column, 2);
+        $record = Manifest::php_model_record($model);
+
+        if ($record === null) {
+            shouldnt_happen("Api_Param_Validator: the money param '{$spec['name']}' names {$column}, and {$model} is not a model in the manifest's registry");
+        }
+
+        $record['fqcn']::_refuse_beyond_money_limit($model_column, $amount);
+
+        return $amount;
+    }
+
+    /**
      * Coerce a single raw value to a declared type. Scalars are coerced; a file is validated
      * and passed through. An optional 'message' overrides the caller's generic field error.
      *
      * @return array{ok: bool, value: mixed, message?: string}
      */
-    private static function _coerce(string $type, mixed $value): array
+    private static function _coerce(array $spec, mixed $value): array
     {
+        $type = $spec['type'];
+
         // A file param is validated, never coerced: the UploadedFile reaches the endpoint as
         // it arrived. Handled before the is_array() guard below so an array of files reports
         // the file-specific message rather than the generic scalar one.
@@ -155,12 +194,12 @@ class Api_Param_Validator
         }
 
         // An amount of money: never coerced through a float. Read before the compound-value
-        // guard below, because the {"__MONEY": "..."} envelope may arrive as a JSON object in
-        // a JSON body - exactly what a read of the value returned. The refusal's message is
-        // written for the caller (This is not an amount of money., at most two places).
+        // guard below so that an array - an envelope included - is refused with the money
+        // message written for the caller (This is not an amount of money.), like any value
+        // that is not an amount.
         if ($type === 'money') {
             try {
-                return ['ok' => true, 'value' => Rsx_Money::_wrap_api_param($value)];
+                return ['ok' => true, 'value' => static::_money_for_column($spec, Rsx_Money::_from_api_param($value))];
             } catch (Rsx_Money_Exception $e) {
                 return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
             }
@@ -178,15 +217,7 @@ class Api_Param_Validator
                 if (is_bool($value)) {
                     return ['ok' => false, 'value' => null];
                 }
-                // An encoded text value rides a string param as its envelope, JSON-encoded.
-                // Identified and malformed is REFUSED: the caller claimed an encoding, and
-                // storing its JSON as literal text would silently reinterpret the claim.
-                try {
-                    $hydrated = Rsx_Text_Abstract::wrap_api_param_envelope((string) $value);
-                } catch (\InvalidArgumentException $e) {
-                    return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
-                }
-                return ['ok' => true, 'value' => $hydrated];
+                return ['ok' => true, 'value' => (string) $value];
 
             case 'int':
                 if (is_int($value)) {

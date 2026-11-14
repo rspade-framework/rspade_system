@@ -24,16 +24,21 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Database\Php\Field_Length_Fixture_Model;
 use App\RSpade\Tests\Database\Php\Schema_Absent_Table_Fixture_Model;
+use App\RSpade\Tests\Money\Php\Money_Fixture_Model;
+use App\RSpade\Tests\Money\Php\Money_Fixture_Tables;
 
 /**
  * A BUNDLE'S FIELD-LENGTH SCRIPT - Field_Length_Script, the controller that serves it and
  * the tag a page loads it with.
  *
- * The lengths a page's JavaScript reads are not in the model stubs: they are served, per
- * compiled bundle, as `Rsx.__field_length_data = {...};`. What is pinned here:
+ * The lengths and money limits a page's JavaScript reads are not in the model stubs: they are
+ * served, per compiled bundle, as two assignments, `Rsx.__field_length_data = {...};` and
+ * `Rsx.__money_limit_data = {...};`. What is pinned here:
  *
  *   - the data is the PHP model's own field_length() answer for every varchar/char column
  *     and for nothing else, a class-table-inheritance base's detail columns included;
+ *   - the limits are the PHP model's own money_limit() answer, as a decimal string, for
+ *     every money column and for nothing else;
  *   - a single-underscore SYSTEM column is never published;
  *   - a model whose table does not exist gets an empty entry, not an absence;
  *   - only the name a compiled bundle's own app script carries is a script; every other
@@ -106,15 +111,25 @@ class Field_Length_Script_Test extends Rsx_Test_Abstract
         static::$root = '';
     }
 
-    /** The object a script body assigns. */
-    private static function __data(string $body): array
+    /**
+     * The two objects a script body assigns, [lengths, money limits].
+     *
+     * @return array{0: array, 1: array}
+     */
+    private static function __assignments(string $body): array
     {
         static::__assert_true(
-            (bool) preg_match('/^Rsx\.__field_length_data = (\{.*\});\n$/s', $body, $matches),
-            'the body is one assignment to Rsx.__field_length_data: ' . substr($body, 0, 80)
+            (bool) preg_match('/^Rsx\.__field_length_data = (\{[^\n]*\});\nRsx\.__money_limit_data = (\{[^\n]*\});\n$/', $body, $matches),
+            'the body is two assignments, to Rsx.__field_length_data and Rsx.__money_limit_data: ' . substr($body, 0, 80)
         );
 
-        return json_decode($matches[1], true);
+        return [json_decode($matches[1], true), json_decode($matches[2], true)];
+    }
+
+    /** The lengths a script body assigns. */
+    private static function __data(string $body): array
+    {
+        return static::__assignments($body)[0];
     }
 
     // -------------------------------------------------------------------------
@@ -186,9 +201,42 @@ class Field_Length_Script_Test extends Rsx_Test_Abstract
         static::__stage(['Schema_Absent_Table_Fixture_Model']);
 
         static::__assert_equals(
-            "Rsx.__field_length_data = {\"Schema_Absent_Table_Fixture_Model\":{}};\n",
+            "Rsx.__field_length_data = {\"Schema_Absent_Table_Fixture_Model\":{}};\n"
+            . "Rsx.__money_limit_data = {\"Schema_Absent_Table_Fixture_Model\":{}};\n",
             Field_Length_Script::body(self::BUNDLE),
             'and the script carries it as an empty OBJECT, so field_length() answers null instead of reporting a missing script'
+        );
+    }
+
+    public static function test_every_money_limit_is_the_models_own_answer()
+    {
+        Money_Fixture_Tables::create();
+
+        try {
+            $limits = Field_Length_Script::money_limits_for_models(['User_Model', 'Money_Fixture_Model']);
+
+            static::__assert_equals(['User_Model', 'Money_Fixture_Model'], array_keys($limits), 'one entry per model asked for');
+            static::__assert_equals([], $limits['User_Model'], 'a model with no money column has an empty entry');
+            static::__assert_equals(Money_Fixture_Model::money_columns(), array_keys($limits['Money_Fixture_Model']), 'every money column, and only those');
+            static::__assert_equals('99999999.99', $limits['Money_Fixture_Model']['price'], 'DECIMAL(10,2)');
+
+            foreach ($limits['Money_Fixture_Model'] as $column => $limit) {
+                static::__assert_equals(Money_Fixture_Model::money_limit($column)->to_decimal(), $limit, "{$column} is the model's answer");
+            }
+
+            static::__stage(['Money_Fixture_Model']);
+            [$lengths, $served] = static::__assignments(Field_Length_Script::body(self::BUNDLE));
+            static::__assert_equals(['Money_Fixture_Model' => $limits['Money_Fixture_Model']], $served, 'the script assigns them');
+            static::__assert_equals(['Money_Fixture_Model' => ['name' => 255]], $lengths, 'beside the lengths');
+        } finally {
+            Money_Fixture_Tables::drop();
+            Rsx_Schema::forget();
+        }
+
+        static::__assert_equals(
+            ['Money_Fixture_Model' => []],
+            Field_Length_Script::money_limits_for_models(['Money_Fixture_Model']),
+            'a model with no table has an empty entry'
         );
     }
 

@@ -291,6 +291,26 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
         }
     }
 
+    /**
+     * A 'money' param is a decimal STRING - the API carries amounts as "7708.80", never as a
+     * JSON number and never as the browser's envelope. The plain-values fixture declares one
+     * (Api_Plain_Values_Fixture_Api_Controller::update, POST: a JSON body property).
+     */
+    public static function test_a_money_param_is_a_decimal_string()
+    {
+        $doc = Api_Openapi::document();
+
+        $operation = $doc['paths']['/api/v1/test-probe/plain/record/{id}/update']['post'] ?? null;
+        static::__assert_not_null($operation, 'the plain-values fixture writer is in the document');
+
+        $amount = $operation['requestBody']['content']['application/json']['schema']['properties']['amount'] ?? null;
+        static::__assert_not_null($amount, 'amount is a body property');
+        static::__assert_equals('string', $amount['type']);
+        static::__assert_equals('^-?\d+(\.\d{1,2})?$', $amount['pattern']);
+        static::__assert_equals(['7708.80'], $amount['examples']);
+        static::__assert_equals(1, preg_match('/' . $amount['pattern'] . '/', '1234.5'), 'the pattern admits what the param accepts');
+    }
+
     // -------------------------------------------------------------------------
     // Operations
     // -------------------------------------------------------------------------

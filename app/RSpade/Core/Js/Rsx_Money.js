@@ -137,7 +137,8 @@ class Rsx_Money {
     }
 
     /**
-     * A count of cents: a BigInt, a safe-integer Number, or a string of one ('-5', '0').
+     * A count of cents: a BigInt, a safe-integer Number, or a string of one ('-5', '0'; '-0'
+     * is zero).
      *
      * @param {bigint|number|string} x
      * @returns {Rsx_Money}
@@ -150,7 +151,7 @@ class Rsx_Money {
         if (type === 'number' && Number.isSafeInteger(x)) {
             return Rsx_Money._new(BigInt(x));
         }
-        if (type === 'string' && /^(?:0|-?[1-9][0-9]*)$/.test(x)) {
+        if (type === 'string' && /^(?:-?0|-?[1-9][0-9]*)$/.test(x)) {
             return Rsx_Money._new(Rsx_Money_Core.int(x));
         }
 

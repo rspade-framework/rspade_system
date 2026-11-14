@@ -7,7 +7,7 @@ use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
 
 /**
  * An amount of money: an immutable count of cents in the signed 64-bit range, with exactly
- * two decimal places (rsx:man money).
+ * two decimal places (rsx:man money), held as its canonical decimal string ("1234.56").
  *
  * The JavaScript class of the same name implements every algorithm here step for step, so
  * both languages give the identical result - or the identical refusal - for the same call.
@@ -83,12 +83,14 @@ final class Rsx_Money implements \JsonSerializable
     /** A display installed by _use_display(), or null. */
     private static ?array $display_override = null;
 
-    private readonly int $cents;
+    /**
+     * The canonical string, the ONE thing a value holds. Every method that needs the cents
+     * reads them from it through the checked core (_cents()), as the JavaScript class does.
+     */
     private readonly string $decimal;
 
-    private function __construct(int $cents, string $decimal)
+    private function __construct(string $decimal)
     {
-        $this->cents = $cents;
         $this->decimal = $decimal;
     }
 
@@ -97,8 +99,9 @@ final class Rsx_Money implements \JsonSerializable
     // =========================================================================
 
     /**
-     * A decimal string ("1234.5", "1.500"), an int of WHOLE units (5 is 5.00), or a float
-     * whose shortest form has at most 15 significant digits.
+     * A decimal string ("1234.5", "1.500"), an int of WHOLE units (5 is 5.00), or a float:
+     * a whole-valued float within the safe-integer range is whole units, any other float is
+     * accepted when its shortest form has at most 15 significant digits.
      *
      * @param string|int|float $x
      * @return Rsx_Money
@@ -107,6 +110,9 @@ final class Rsx_Money implements \JsonSerializable
     {
         if (is_int($x)) {
             return self::_new(Rsx_Money_Core::mul($x, 100));
+        }
+        if (is_float($x) && self::_is_safe_integer_float($x)) {
+            return self::_new(Rsx_Money_Core::mul((int) $x, 100));
         }
         if (is_float($x)) {
             return self::_dec(self::_float_door($x, true, false));
@@ -119,7 +125,7 @@ final class Rsx_Money implements \JsonSerializable
     }
 
     /**
-     * A count of cents: an int, or a string of one ("-5", "0").
+     * A count of cents: an int, or a string of one ("-5", "0"; "-0" is zero).
      *
      * @param int|string $x
      * @return Rsx_Money
@@ -129,7 +135,7 @@ final class Rsx_Money implements \JsonSerializable
         if (is_int($x)) {
             return self::_new($x);
         }
-        if (is_string($x) && preg_match('/^(?:0|-?[1-9][0-9]*)$/D', $x) === 1) {
+        if (is_string($x) && preg_match('/^(?:-?0|-?[1-9][0-9]*)$/D', $x) === 1) {
             return self::_new(Rsx_Money_Core::int($x));
         }
 
@@ -382,7 +388,7 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function to_cents_string(): string
     {
-        return (string) $this->cents;
+        return (string) $this->_cents();
     }
 
     /**
@@ -500,7 +506,7 @@ final class Rsx_Money implements \JsonSerializable
         }
         $b = self::_money($other, 'equals');
 
-        return $this->cents === $b->cents;
+        return $this->_cents() === $b->_cents();
     }
 
     /**
@@ -525,7 +531,7 @@ final class Rsx_Money implements \JsonSerializable
             return false;
         }
 
-        return $a->cents === $b->cents;
+        return $a->_cents() === $b->_cents();
     }
 
     /**
@@ -538,7 +544,7 @@ final class Rsx_Money implements \JsonSerializable
     {
         $b = self::_money($other, 'compare');
 
-        return Rsx_Money_Core::compare($this->cents, $b->cents);
+        return Rsx_Money_Core::compare($this->_cents(), $b->_cents());
     }
 
     /**
@@ -547,7 +553,7 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function less_than(mixed $other): bool
     {
-        return $this->cents < self::_money($other, 'less_than')->cents;
+        return $this->_cents() < self::_money($other, 'less_than')->_cents();
     }
 
     /**
@@ -556,7 +562,7 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function less_than_or_equal(mixed $other): bool
     {
-        return $this->cents <= self::_money($other, 'less_than_or_equal')->cents;
+        return $this->_cents() <= self::_money($other, 'less_than_or_equal')->_cents();
     }
 
     /**
@@ -565,7 +571,7 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function greater_than(mixed $other): bool
     {
-        return $this->cents > self::_money($other, 'greater_than')->cents;
+        return $this->_cents() > self::_money($other, 'greater_than')->_cents();
     }
 
     /**
@@ -574,25 +580,25 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function greater_than_or_equal(mixed $other): bool
     {
-        return $this->cents >= self::_money($other, 'greater_than_or_equal')->cents;
+        return $this->_cents() >= self::_money($other, 'greater_than_or_equal')->_cents();
     }
 
     /** @return bool */
     public function is_zero(): bool
     {
-        return $this->cents === 0;
+        return $this->_cents() === 0;
     }
 
     /** @return bool */
     public function is_negative(): bool
     {
-        return $this->cents < 0;
+        return $this->_cents() < 0;
     }
 
     /** @return bool */
     public function is_positive(): bool
     {
-        return $this->cents > 0;
+        return $this->_cents() > 0;
     }
 
     /**
@@ -606,11 +612,11 @@ final class Rsx_Money implements \JsonSerializable
     {
         $lo = self::_money($low, 'is_between');
         $hi = self::_money($high, 'is_between');
-        if ($lo->cents > $hi->cents) {
+        if ($lo->_cents() > $hi->_cents()) {
             throw Rsx_Money_Exception::argument('is_between', 'low is greater than high');
         }
 
-        return $lo->cents <= $this->cents && $this->cents <= $hi->cents;
+        return $lo->_cents() <= $this->_cents() && $this->_cents() <= $hi->_cents();
     }
 
     // =========================================================================
@@ -625,7 +631,7 @@ final class Rsx_Money implements \JsonSerializable
     {
         $b = self::_money($other, 'add');
 
-        return self::_new(Rsx_Money_Core::add($this->cents, $b->cents));
+        return self::_new(Rsx_Money_Core::add($this->_cents(), $b->_cents()));
     }
 
     /**
@@ -636,19 +642,19 @@ final class Rsx_Money implements \JsonSerializable
     {
         $b = self::_money($other, 'subtract');
 
-        return self::_new(Rsx_Money_Core::sub($this->cents, $b->cents));
+        return self::_new(Rsx_Money_Core::sub($this->_cents(), $b->_cents()));
     }
 
     /** @return Rsx_Money */
     public function negate(): Rsx_Money
     {
-        return self::_new(Rsx_Money_Core::neg($this->cents));
+        return self::_new(Rsx_Money_Core::neg($this->_cents()));
     }
 
     /** @return Rsx_Money */
     public function abs(): Rsx_Money
     {
-        return self::_new(Rsx_Money_Core::abs($this->cents));
+        return self::_new(Rsx_Money_Core::abs($this->_cents()));
     }
 
     /**
@@ -663,7 +669,7 @@ final class Rsx_Money implements \JsonSerializable
         $mode = self::_mode($rounding, 'multiply');
         [$u, $s] = self::_factor($factor, 'multiply');
         $d = Rsx_Money_Core::pow10($s);
-        $n = Rsx_Money_Core::mul($this->cents, $u);
+        $n = Rsx_Money_Core::mul($this->_cents(), $u);
 
         return self::_new(self::_round($n, $d, $mode));
     }
@@ -684,7 +690,7 @@ final class Rsx_Money implements \JsonSerializable
         if ($big_d === 0) {
             throw Rsx_Money_Exception::division();
         }
-        $n = Rsx_Money_Core::mul($this->cents, $big_n);
+        $n = Rsx_Money_Core::mul($this->_cents(), $big_n);
         if ($big_d < 0) {
             $n = Rsx_Money_Core::neg($n);
             $big_d = Rsx_Money_Core::neg($big_d);
@@ -706,7 +712,7 @@ final class Rsx_Money implements \JsonSerializable
         [$u, $s] = self::_factor($rate, 'percent');
         $k = Rsx_Money_Core::add($s, 2);
         $d = Rsx_Money_Core::pow10($k);
-        $n = Rsx_Money_Core::mul($this->cents, $u);
+        $n = Rsx_Money_Core::mul($this->_cents(), $u);
 
         return self::_new(self::_round($n, $d, $mode));
     }
@@ -724,8 +730,8 @@ final class Rsx_Money implements \JsonSerializable
         if ($n === 0) {
             throw Rsx_Money_Exception::division();
         }
-        $q = Rsx_Money_Core::quo($this->cents, $n);
-        $r = Rsx_Money_Core::rem($this->cents, $n);
+        $q = Rsx_Money_Core::quo($this->_cents(), $n);
+        $r = Rsx_Money_Core::rem($this->_cents(), $n);
 
         return ['quotient' => self::_new($q), 'remainder' => self::_new($r)];
     }
@@ -745,7 +751,7 @@ final class Rsx_Money implements \JsonSerializable
             throw Rsx_Money_Exception::division();
         }
         $p = Rsx_Money_Core::pow10($s);
-        $n = Rsx_Money_Core::mul($this->cents, $p);
+        $n = Rsx_Money_Core::mul($this->_cents(), $p);
         if ($u < 0) {
             $n = Rsx_Money_Core::neg($n);
             $u = Rsx_Money_Core::neg($u);
@@ -764,11 +770,11 @@ final class Rsx_Money implements \JsonSerializable
     public function round_to(mixed $unit, mixed $rounding): Rsx_Money
     {
         $mode = self::_mode($rounding, 'round_to');
-        $uc = self::_money($unit, 'round_to')->cents;
+        $uc = self::_money($unit, 'round_to')->_cents();
         if ($uc <= 0) {
             throw Rsx_Money_Exception::argument('round_to', 'the unit must be positive');
         }
-        $q = self::_round($this->cents, $uc, $mode);
+        $q = self::_round($this->_cents(), $uc, $mode);
 
         return self::_new(Rsx_Money_Core::mul($q, $uc));
     }
@@ -784,13 +790,13 @@ final class Rsx_Money implements \JsonSerializable
     {
         $lo = self::_money($low, 'clamp');
         $hi = self::_money($high, 'clamp');
-        if ($lo->cents > $hi->cents) {
+        if ($lo->_cents() > $hi->_cents()) {
             throw Rsx_Money_Exception::argument('clamp', 'low is greater than high');
         }
-        if ($this->cents < $lo->cents) {
+        if ($this->_cents() < $lo->_cents()) {
             return $lo;
         }
-        if ($this->cents > $hi->cents) {
+        if ($this->_cents() > $hi->_cents()) {
             return $hi;
         }
 
@@ -806,7 +812,7 @@ final class Rsx_Money implements \JsonSerializable
      */
     public function allocate(mixed $ratios): array
     {
-        $a = $this->cents;
+        $a = $this->_cents();
 
         // 1
         self::_list($ratios, 'allocate');
@@ -956,7 +962,7 @@ final class Rsx_Money implements \JsonSerializable
         $t = 0;
         $result = [];
         foreach ($list as $x) {
-            $t = Rsx_Money_Core::add($t, self::_money($x, 'running_totals')->cents);
+            $t = Rsx_Money_Core::add($t, self::_money($x, 'running_totals')->_cents());
             $result[] = self::_new($t);
         }
 
@@ -978,7 +984,7 @@ final class Rsx_Money implements \JsonSerializable
     public function ratio_to(mixed $other, mixed $places, mixed $rounding): string
     {
         $mode = self::_mode($rounding, 'ratio_to');
-        $b = self::_money($other, 'ratio_to')->cents;
+        $b = self::_money($other, 'ratio_to')->_cents();
         $p = self::_intarg($places, 'ratio_to');
         if ($p < 0) {
             throw Rsx_Money_Exception::argument('ratio_to', 'places is negative');
@@ -987,7 +993,7 @@ final class Rsx_Money implements \JsonSerializable
             throw Rsx_Money_Exception::division();
         }
         $m = Rsx_Money_Core::pow10($p);
-        $n = Rsx_Money_Core::mul($this->cents, $m);
+        $n = Rsx_Money_Core::mul($this->_cents(), $m);
         $d = $b;
         if ($d < 0) {
             $n = Rsx_Money_Core::neg($n);
@@ -1010,12 +1016,12 @@ final class Rsx_Money implements \JsonSerializable
     public function percent_change_to(mixed $other, mixed $places, mixed $rounding): string
     {
         $mode = self::_mode($rounding, 'percent_change_to');
-        $b = self::_money($other, 'percent_change_to')->cents;
+        $b = self::_money($other, 'percent_change_to')->_cents();
         $p = self::_intarg($places, 'percent_change_to');
         if ($p < 0) {
             throw Rsx_Money_Exception::argument('percent_change_to', 'places is negative');
         }
-        $a = $this->cents;
+        $a = $this->_cents();
         if ($a === 0) {
             throw Rsx_Money_Exception::division();
         }
@@ -1067,18 +1073,17 @@ final class Rsx_Money implements \JsonSerializable
     }
 
     /**
-     * One external-API param declared #[Api_Param(type: 'money')]: null or blank is null; an
-     * array carrying __MONEY (the envelope as a JSON object in a JSON body) is the envelope; a
-     * string beginning with `{` that decodes to a JSON object carrying __MONEY is the
-     * envelope; any other string is a plain decimal ("1234.50"); a JSON int is whole units; a
-     * JSON float goes through the float door (residue refused). Any other value - another
-     * array, a bool, an object - is refused. Every refusal is an Rsx_Money_Exception, which
-     * the validator reports as the field's error.
+     * One external-API param declared #[Api_Param(type: 'money')]. The external API carries
+     * plain values, never the browser's {__MONEY} envelope: null or blank is null; a string
+     * is a plain decimal ("1234.50"); a JSON int is whole units; a JSON float goes through the
+     * float door (residue refused). Anything else - an envelope as a JSON object or encoded
+     * into a string, another array, a bool - is not an amount. Every refusal is an
+     * Rsx_Money_Exception, which the validator reports as the field's error.
      *
      * @param mixed $raw
      * @return Rsx_Money|null
      */
-    public static function _wrap_api_param(mixed $raw): ?Rsx_Money
+    public static function _from_api_param(mixed $raw): ?Rsx_Money
     {
         if ($raw === null) {
             return null;
@@ -1089,22 +1094,11 @@ final class Rsx_Money implements \JsonSerializable
                 return null;
             }
 
-            if (str_starts_with($raw, '{')) {
-                $decoded = json_decode($raw, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded) && array_key_exists(self::ENVELOPE_KEY, $decoded)) {
-                    return self::from_envelope($decoded);
-                }
-            }
-
             return self::from_decimal($raw);
         }
 
         if (is_int($raw) || is_float($raw)) {
             return self::from_decimal($raw);
-        }
-
-        if (is_array($raw) && array_key_exists(self::ENVELOPE_KEY, $raw)) {
-            return self::from_envelope($raw);
         }
 
         throw Rsx_Money_Exception::format();
@@ -1216,7 +1210,17 @@ final class Rsx_Money implements \JsonSerializable
      */
     private static function _new(int $c): Rsx_Money
     {
-        return new self($c, self::_layout($c, 2));
+        return new self(self::_layout($c, 2));
+    }
+
+    /**
+     * This value's cents, read from the canonical string.
+     *
+     * @return int
+     */
+    private function _cents(): int
+    {
+        return Rsx_Money_Core::int(str_replace('.', '', $this->decimal));
     }
 
     /**
@@ -1401,6 +1405,20 @@ final class Rsx_Money implements \JsonSerializable
     }
 
     /**
+     * Whether a float is exactly an integer within the safe-integer range, +/-(2^53 - 1) -
+     * JavaScript's Number.isSafeInteger(). Every such float IS the integer it prints as, so
+     * it is read as one wherever a whole-unit amount or a factor is accepted, beside an int,
+     * exactly as the JavaScript class reads the same Number. -0.0 is the integer 0.
+     *
+     * @param float $f
+     * @return bool
+     */
+    private static function _is_safe_integer_float(float $f): bool
+    {
+        return is_finite($f) && floor($f) === $f && abs($f) <= 9007199254740991.0;
+    }
+
+    /**
      * ECMAScript Number::toString() of a finite float.
      *
      * @param float $f
@@ -1537,6 +1555,9 @@ final class Rsx_Money implements \JsonSerializable
         if (is_int($x)) {
             return [$x, 0];
         }
+        if (is_float($x) && self::_is_safe_integer_float($x)) {
+            return [(int) $x, 0];
+        }
 
         // 2
         if (is_float($x)) {
@@ -1574,7 +1595,7 @@ final class Rsx_Money implements \JsonSerializable
     {
         $t = 0;
         foreach ($list as $x) {
-            $t = Rsx_Money_Core::add($t, self::_money($x, $method)->cents);
+            $t = Rsx_Money_Core::add($t, self::_money($x, $method)->_cents());
         }
 
         return $t;
@@ -1598,7 +1619,7 @@ final class Rsx_Money implements \JsonSerializable
         $best = null;
         foreach ($list as $x) {
             $m = self::_money($x, $method);
-            if ($best === null || Rsx_Money_Core::compare($m->cents, $best->cents) === $direction) {
+            if ($best === null || Rsx_Money_Core::compare($m->_cents(), $best->_cents()) === $direction) {
                 $best = $m;
             }
         }

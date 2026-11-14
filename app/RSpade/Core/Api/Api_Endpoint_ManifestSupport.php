@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Api;
 
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Manifest;
 
 /**
  * Support module for building the API routes index from #[Api_Endpoint] attributes.
@@ -35,6 +36,9 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   (_request_ref), which the dispatcher accepts undeclared.
  * - #[Api_Param] type is one of {string, int, float, bool, file, money} (default 'string');
  *   a money param reaches the endpoint as an Rsx_Money or null (Api_Param_Validator).
+ * - column: 'Model_Name.column' is accepted on a money param only, and names a concrete model
+ *   and a column it declares ['money' => true]; the validator then refuses an amount beyond
+ *   that column's money_limit().
  * - type 'file' is POST-only, may never be a :route token, and may never carry a default -
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
  *   thing as a default upload.
@@ -322,7 +326,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
             }
 
             // Normalize and validate #[Api_Param] declarations for this method.
-            $api_params = static::_parse_api_params($method_data, $pattern, $location, $methods);
+            $api_params = static::_parse_api_params($manifest_data, $method_data, $pattern, $location, $methods);
 
             // Read the docblock directly from source (the manifest does not store docblocks).
             $docblock = static::_read_method_docblock(base_path($file), $method_name);
@@ -616,9 +620,9 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
     /**
      * Parse and validate #[Api_Param] declarations for a method into normalized specs.
      *
-     * @return array List of [name, type, required, default, description, example].
+     * @return array List of [name, type, required, default, description, example, column].
      */
-    private static function _parse_api_params(array $method_data, string $pattern, string $location, array $methods): array
+    private static function _parse_api_params(array &$manifest_data, array $method_data, string $pattern, string $location, array $methods): array
     {
         $raw_instances = [];
         foreach (($method_data['attributes'] ?? []) as $attr_name => $instances) {
@@ -632,9 +636,9 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
         $seen_names = [];
 
         // Constructor argument order for positional use: (name, type, required, default,
-        // description, example). Unknown keys fail loud - a typo like 'requred' would
+        // description, example, column). Unknown keys fail loud - a typo like 'requred' would
         // otherwise silently weaken validation.
-        $positional_order = ['name', 'type', 'required', 'default', 'description', 'example'];
+        $positional_order = ['name', 'type', 'required', 'default', 'description', 'example', 'column'];
 
         foreach ($raw_instances as $raw_args) {
             $args = [];
@@ -726,6 +730,10 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 }
             }
 
+            $column = array_key_exists('column', $args)
+                ? static::_parse_money_column($manifest_data, $args['column'], $type, $name, $pattern, $location)
+                : null;
+
             if ($required && $has_default) {
                 throw new \RuntimeException(
                     "Contradictory #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
@@ -740,6 +748,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 'default' => $has_default ? $args['default'] : null,
                 'description' => $args['description'] ?? null,
                 'example' => $args['example'] ?? null,
+                'column' => $column,
             ];
         }
 
@@ -756,6 +765,54 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
         }
 
         return $params;
+    }
+
+    /**
+     * Validate a money param's column: argument - 'Model_Name.column', naming a concrete model
+     * and a column that model declares ['money' => true] - and answer it as given. The model
+     * class is loaded to ask money_columns(), a fact about its code; the column's LIMIT is a
+     * fact about the database and is read when a request is validated, never here.
+     */
+    private static function _parse_money_column(array &$manifest_data, mixed $column, string $type, string $name, string $pattern, string $location): string
+    {
+        $usage = "  column: names the money column the amount is stored in, as 'Model_Name.column' (for example 'Project_Model.budget').";
+
+        if ($type !== 'money') {
+            throw new \RuntimeException(
+                "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                "  column: is accepted on a type 'money' param only; this one is type '{$type}'.\n" . $usage
+            );
+        }
+
+        if (!is_string($column) || preg_match('/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/D', $column, $m) !== 1) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                "  column: must be a literal string 'Model_Name.column'; got " . json_encode($column) . ".\n" . $usage
+            );
+        }
+
+        [, $model, $model_column] = $m;
+
+        $models = $manifest_data['data']['php_subclass_index']['Rsx_Model_Abstract'] ?? [];
+        $record = $manifest_data['data']['php_classes'][$model] ?? null;
+
+        if (!in_array($model, $models, true) || $record === null || !empty($record['abstract'])) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                "  column: '{$column}' names {$model}, which is not a concrete model (a class extending Rsx_Model_Abstract).\n" . $usage
+            );
+        }
+
+        Manifest::_load_class_hierarchy($record['fqcn'], $manifest_data);
+
+        if (!$record['fqcn']::is_money_column($model_column)) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                "  column: '{$column}' is not a money column: {$model}'s \$columns entry for '{$model_column}' has no 'money'.\n" . $usage
+            );
+        }
+
+        return $column;
     }
 
     /**

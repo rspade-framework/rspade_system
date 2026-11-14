@@ -109,7 +109,7 @@ A polymorphic reference is ALWAYS the BIGINT pair `{relation}_type` + `{relation
 'hour_estimate' => [],                     // a DECIMAL that is NOT money - say so
 ```
 
-The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` (or null): exact, immutable, never a float, compared and computed only with its methods, printed by `<%= %>`, edited by `<Money_Input>`, travelling to JS and the API as a `{__MONEY}` envelope. Assign an `Rsx_Money`, a decimal string (`'29.99'`) or whole-unit int; a float throws. An endpoint reads input with `Model::money_from_submitted('col', $value)`; a total is `->sum_money('col')`. **Every DECIMAL, FLOAT and DOUBLE column is declared money or `[]`** (`MODEL-DECIMAL-01`, `rsx:check`). Depth: `rspade:money`.
+The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` (or null): exact, immutable, never a float, compared and computed only with its methods, printed by `<%= %>`, edited by `<Money_Input>`, travelling to JS as a `{__MONEY}` envelope and to the external API as the plain string `"1234.56"`. Assign an `Rsx_Money`, a decimal string (`'29.99'`) or whole-unit int; a float throws. An endpoint reads input with `Model::money_from_submitted('col', $value)`; a total is `->sum_money('col')`. **Every DECIMAL, FLOAT and DOUBLE column is declared money or `[]`** (`MODEL-DECIMAL-01`, `rsx:check`). Depth: `rspade:money`.
 
 ### `never_export` - a secret
 

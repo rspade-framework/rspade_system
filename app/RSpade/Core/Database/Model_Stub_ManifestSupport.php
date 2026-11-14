@@ -15,9 +15,9 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  * AN ORDINARY SUPPORT MODULE, the same list as every other.
  *
  * A STUB IS A FUNCTION OF THE MODEL'S CODE AND NOTHING ELSE. Nothing here asks the database
- * anything: a model's column lengths, the one schema-derived thing the browser needs, reach
- * the page in a script of their own (Field_Length_Script) and are answered by the single
- * Rsx_Js_Model.field_length(). So a build needs no database to generate a stub, and a
+ * anything: a model's column lengths and money limits, the schema-derived things the browser
+ * needs, reach the page in a script of their own (Field_Length_Script) and are answered by
+ * Rsx_Js_Model.field_length() and money_limit(). So a build needs no database to generate a stub, and a
  * migration leaves every stub - and every bundle compiled from one - exactly as it was.
  *
  * WHAT IT WILL NOT DO IS WRITE FOR NOTHING. Three gates, cheapest first: the newest mtime in

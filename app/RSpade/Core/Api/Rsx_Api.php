@@ -44,7 +44,9 @@ class Rsx_Api
      *     return Rsx_Api::document(Api_Openapi::document(null, $version));   // Openapi_Api_Controller
      *
      * Still a JSON object like every API body ($data must be an associative array; a list is
-     * refused). Not for ordinary answers, which carry the timing fields every client reads.
+     * refused), and like every API body it carries plain values: a money or text-type value
+     * in it is its plain string (Api_Dispatcher::plain_body()). Not for ordinary answers,
+     * which carry the timing fields every client reads.
      *
      * @param array $data An associative array
      */
@@ -53,6 +55,8 @@ class Rsx_Api
         if ($data !== [] && array_is_list($data)) {
             shouldnt_happen('Rsx_Api::document() answers a JSON object; it was given a list.');
         }
+
+        $data = Api_Dispatcher::plain_body($data);
 
         return new Response(
             json_encode($data === [] ? new \stdClass() : $data, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),

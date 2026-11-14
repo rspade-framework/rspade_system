@@ -27,6 +27,15 @@ it is. The companion channel shares `build_response()` but not this rule (its nu
 envelope's format) at the top level, added by `stamp_response()`: timed from the dispatch's
 `hrtime` start (a failure rendered before dispatch began: from the request's start); a
 writer that recorded itself answers with its recorded values, a replay with the originals.
+**Every body carries plain values** (`Api_Dispatcher::plain_body()`, run by `stamp_response()`
+on every JSON object answer and by `Rsx_Api::document()`): an `Rsx_Money` or its `{__MONEY}`
+envelope becomes the decimal string, a text value or its `{__TEXT, raw, empty}` envelope the
+stored string - wherever it sits, matched by the envelope's exact shape. The envelopes are the
+browser Ajax wire form; a model's `toArray()` still produces them (the casts' `serialize()` is
+one serializer for every channel), and this pass is the single point the API turns them into
+strings. A body naming neither key skips the walk (a substring check). The request history
+stores the body before the pass, so a replay is made plain on its way out too. Input mirrors
+it: the validator reads no envelope.
 **A retired version answers 410** `api_version_retired` with `versions` naming the versions
 that serve the path (`__retired_version_response()`, the same matcher over the
 `api_endpoints` rows of the other versions, method-aware); a path no version serves, or any
@@ -68,7 +77,7 @@ the one point every answer passes, which also adds the timing fields.
 ## What is here
 
 - `Api_Dispatcher.php` — the pipeline above, the shared serializer, the request log write,
-  `stamp_response()`.
+  `stamp_response()`, and `plain_body()` - THE plain-values rule (below).
 - `Request_Payload_Redactor.php` — THE rules for storing a request's input (credentials
   redacted, values and payload capped, uploads and unparseable bodies never stored), used by
   the request log and the writer request history alike.
@@ -82,7 +91,9 @@ the one point every answer passes, which also adds the timing fields.
   version ranges (`through:` / `#[Api_Versions(through: N)]`) and followers
   (`#[Api_Versions(every: true)]`, recorded after everything else) into ordinary rows.
 - `Api_Param_Validator.php` — pure validate-and-coerce over the baked specs: undeclared keys
-  rejected, defaults applied, `file` params passed through, text envelopes unwrapped.
+  rejected, defaults applied, `file` params passed through, a `string` param the string sent,
+  a `money` param an `Rsx_Money` read from a plain decimal (`Rsx_Money::_from_api_param()`;
+  an envelope is not an amount).
 - `Api_Scopes.php` + `Api_Scope_Validation_Exception.php` — the scope language: one bare
   path-pattern GRANT per line, `?` / `#` / trailing `*` as whole segments; the OpenAPI
   document's path is granted to every key. `validate()` is the

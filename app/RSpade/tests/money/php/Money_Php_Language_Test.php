@@ -119,22 +119,41 @@ class Money_Php_Language_Test extends Rsx_Test_Abstract
         }
     }
 
-    public static function test_a_whole_float_of_sixteen_digits_is_residue_in_php()
+    public static function test_a_whole_float_in_the_safe_range_is_an_integer()
     {
-        // A JavaScript Number of this value is a safe integer and accepted; a PHP float is
-        // read through the float door, whose shortest form has 16 significant digits.
+        // A whole-valued float within +/-(2^53 - 1) is exactly the integer it prints as, so it
+        // is read as whole units or an integer factor, as the JavaScript Number of the same
+        // value is - sixteen significant digits included (the shared vectors pin the parity).
         $float = 1000000000000001.0;
 
-        $e = static::__assert_throws(Rsx_Money_Exception::class, fn () => Rsx_Money::from_decimal($float));
-        static::__assert_equals(Rsx_Money_Exception::MESSAGE_RESIDUE, $e->getMessage());
-
-        $e = static::__assert_throws(
-            Rsx_Money_Exception::class,
-            fn () => Rsx_Money::from_decimal('1.00')->multiply($float, Rsx_Money::ROUND_UP)
+        static::__assert_equals('1000000000000001.00', Rsx_Money::from_decimal($float)->to_decimal());
+        static::__assert_equals(
+            '1000000000000001.00',
+            Rsx_Money::from_decimal('1.00')->multiply($float, Rsx_Money::ROUND_EXACT)->to_decimal()
         );
+        static::__assert_equals('9007199254740991.00', Rsx_Money::from_decimal(9007199254740991.0)->to_decimal(), '2^53 - 1');
+        static::__assert_equals('0.00', Rsx_Money::from_decimal(-0.0)->to_decimal(), 'negative zero is zero');
+
+        // 2^53 is past the safe range: the float door, whose shortest form has 16 digits.
+        $e = static::__assert_throws(Rsx_Money_Exception::class, fn () => Rsx_Money::from_decimal(9007199254740992.0));
         static::__assert_equals(Rsx_Money_Exception::MESSAGE_RESIDUE, $e->getMessage());
 
-        static::__assert_equals('1000000000000001.00', Rsx_Money::from_aggregate($float)->to_decimal());
+        // An integer-only argument still refuses every float: PHP can say int, so it must.
+        $e = static::__assert_throws(Rsx_Money_Exception::class, fn () => Rsx_Money::from_cents(5.0));
+        static::__assert_equals(Rsx_Money_Exception::REASON_ARGUMENT, $e->reason);
+    }
+
+    public static function test_the_value_holds_only_its_canonical_string()
+    {
+        $properties = (new \ReflectionClass(Rsx_Money::class))->getProperties();
+        $instance = array_values(array_filter($properties, fn ($p) => !$p->isStatic()));
+
+        static::__assert_equals(['decimal'], array_map(fn ($p) => $p->getName(), $instance), 'one instance property');
+        static::__assert_equals(
+            unserialize(serialize(Rsx_Money::from_decimal('-1234.50')))->to_decimal(),
+            '-1234.50',
+            'a serialized value restores from the string alone'
+        );
     }
 
     public static function test_core_detects_overflow_on_each_primitive_edge()

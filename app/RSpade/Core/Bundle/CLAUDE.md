@@ -90,8 +90,9 @@
   (`<Bundle>__<app hash>.js`, null when the list is empty) and `__generate_html()` emits
   `<script src="/_field_lengths/<that>?v=<state key>" defer>` AFTER the app script; the route
   (`Field_Length_Controller`, both realms, public) answers only that exact name, with
-  `Rsx.__field_length_data = {Model: {column: length}}` built from the list and the live
-  schema, cached under the state key
+  `Rsx.__field_length_data = {Model: {column: length}}` and
+  `Rsx.__money_limit_data = {Model: {money column: limit decimal}}` (two lines) built from
+  the list and the live schema, cached under the state key
 - So a compiled bundle is a function of code alone: a migration changes no bundle
 - The boot runner (`_create_javascript_runner`) starts `Rsx._rsx_core_boot()` on
   DOMContentLoaded when the bundle script came by its deferred tag, and on jQuery `ready()`

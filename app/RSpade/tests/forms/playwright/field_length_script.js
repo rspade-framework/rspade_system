@@ -1,20 +1,26 @@
 #!/usr/bin/env node
 /**
- * Model.field_length() answers from the page's field-length script.
+ * Model.field_length() and Model.money_limit() answer from the page's field-length script.
  *
- * A model's column lengths are not in its generated stub: the page loads them in a script of
- * its own - <script src="/_field_lengths/<Bundle>__<hash>.js?v=<state key>" defer>, emitted
- * after the app bundle - which assigns Rsx.__field_length_data, and the ONE
- * Rsx_Js_Model.field_length() every model inherits reads it.
+ * A model's column lengths and money limits are not in its generated stub: the page loads
+ * them in a script of its own - <script src="/_field_lengths/<Bundle>__<hash>.js?v=<state key>"
+ * defer>, emitted after the app bundle - which assigns Rsx.__field_length_data and
+ * Rsx.__money_limit_data, and the ONE Rsx_Js_Model.field_length() / money_limit() every model
+ * inherits reads them.
  *
- * Six cases:
+ * Eight cases:
  *
  *   a. the page carries exactly one such tag, after the app bundle's own;
  *   b. field_length() answers the number the served script carries for a varchar column;
  *   c. a column with no length, and a name that is no column at all, answer null;
  *   d. a class extending a model answers through it (the model name is inherited);
  *   e. with the data gone, field_length() throws naming the model and the script;
- *   f. with the data present but holding nothing for the model, it throws too.
+ *   f. with the data present but holding nothing for the model, it throws too;
+ *   g. the served limits carry an entry for the model, and money_limit() answers an Rsx_Money
+ *      from the data for a money column (a probe class declaring one, the framework's
+ *      User_Model having none);
+ *   h. money_limit() throws for a column that is not money, with the data gone, and for a
+ *      money column the data holds no limit for.
  *
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S: the page is the control panel at /_sys and the
  * model is the framework's User_Model.
@@ -55,7 +61,15 @@ function check(ok, what, detail) {
             out.status = response.status;
             out.cache_control = response.headers.get('Cache-Control');
             const body = await response.text();
-            const served = JSON.parse(body.replace(/^Rsx\.__field_length_data = /, '').replace(/;\s*$/, ''));
+            const lines = body.split('\n');
+            out.body_lines = lines.filter((line) => line !== '').length;
+            const assigned = (prefix) => {
+                const line = lines.find((l) => l.startsWith(prefix)) || '';
+                return JSON.parse(line.slice(prefix.length).replace(/;\s*$/, '') || 'null');
+            };
+            const served = assigned('Rsx.__field_length_data = ');
+            const served_limits = assigned('Rsx.__money_limit_data = ');
+            out.served_limits_user = served_limits ? served_limits.User_Model : undefined;
 
             out.served_first_name = served.User_Model ? served.User_Model.first_name : undefined;
             out.first_name = User_Model.field_length('first_name');
@@ -89,6 +103,32 @@ function check(ok, what, detail) {
 
             Rsx.__field_length_data = held;
             out.restored = User_Model.field_length('first_name');
+
+            // g. a money column's limit, from the data
+            class Rsx_Probe_Money_User_Temp extends User_Model {
+                static __MONEY_COLUMNS = ['rsx_probe_amount', 'rsx_probe_unlimited'];
+            }
+            const held_limits = Rsx.__money_limit_data;
+            out.limits_loaded = held_limits !== null && typeof held_limits === 'object';
+            Rsx.__money_limit_data = Object.assign({}, held_limits, {User_Model: {rsx_probe_amount: '99999999.99'}});
+            const limit = Rsx_Probe_Money_User_Temp.money_limit('rsx_probe_amount');
+            out.limit_is_money = limit instanceof Rsx_Money;
+            out.limit = limit.to_decimal();
+
+            // h. the refusals
+            const error_of = (fn) => {
+                try {
+                    fn();
+                    return null;
+                } catch (e) {
+                    return e.message;
+                }
+            };
+            out.not_money_error = error_of(() => User_Model.money_limit('first_name'));
+            out.no_limit_error = error_of(() => Rsx_Probe_Money_User_Temp.money_limit('rsx_probe_unlimited'));
+            Rsx.__money_limit_data = null;
+            out.limits_gone_error = error_of(() => Rsx_Probe_Money_User_Temp.money_limit('rsx_probe_amount'));
+            Rsx.__money_limit_data = held_limits;
 
             return out;
         });
@@ -128,6 +168,28 @@ function check(ok, what, detail) {
             String(result.missing_model_error)
         );
         check(result.restored === result.first_name, 'the page is left as it was found');
+        check(result.body_lines === 2, '(g) the script is two assignments', String(result.body_lines));
+        check(
+            result.limits_loaded && JSON.stringify(result.served_limits_user) === '{}',
+            '(g) the served limits carry an empty entry for a model with no money column',
+            JSON.stringify(result.served_limits_user)
+        );
+        check(result.limit_is_money && result.limit === '99999999.99', '(g) money_limit() answers the Rsx_Money the data carries', result.limit);
+        check(
+            !!result.not_money_error && result.not_money_error.includes('is not a money column'),
+            '(h) a column that is not money throws',
+            String(result.not_money_error)
+        );
+        check(
+            !!result.no_limit_error && result.no_limit_error.includes('carries no limit'),
+            '(h) a money column with no limit in the data throws',
+            String(result.no_limit_error)
+        );
+        check(
+            !!result.limits_gone_error && result.limits_gone_error.includes('field-length script did not load'),
+            '(h) with the data gone it throws, naming the script',
+            String(result.limits_gone_error)
+        );
         check(errors.length === 0, 'the page reported no error', errors.join(' | '));
     } catch (e) {
         check(false, 'the script ran to completion', e.message);

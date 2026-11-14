@@ -17,6 +17,8 @@ use App\RSpade\Core\Api\Request_Payload_Redactor;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Database\Money\Rsx_Money;
+use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Locks\Site_Lock;
@@ -51,7 +53,8 @@ use App\RSpade\Lib\Operations\Metrics\Rsx_Metrics;
  *   7. declarative #[Auth] gates (403 forbidden);
  *   8. controller invocation (no auth of its own - the controller trusts this dispatcher);
  *   9. bare-JSON response building (models serialize via toArray()); the body must be a JSON
- *      OBJECT - see __api_response().
+ *      OBJECT - see __api_response() - carrying plain values only: stamp_response() turns
+ *      every money and text-type value into its string (plain_body()).
  *
  * EVERY request is recorded in _api_request_log (success and every failure path). A
  * CODED failure from the endpoint - abort(404), a thrown AjaxUnauthorizedException - is
@@ -155,7 +158,9 @@ class Api_Dispatcher
     /**
      * The fields every API response object carries beside its own, added at the one point
      * every answer passes - success, refusal, replay alike, and the channel's 500
-     * (Api_Exception_Handler stamps through here too):
+     * (Api_Exception_Handler stamps through here too). The same point makes every special
+     * field value plain (plain_body(): a money value its decimal string, a text-type value its
+     * stored string), so no answer carries the browser's {__MONEY} / {__TEXT} envelope:
      *
      *   _duration_ms    whole milliseconds from the start of this dispatch (a failure
      *                   rendered before dispatch began: from the start of the request)
@@ -186,6 +191,13 @@ class Api_Dispatcher
             return $response;
         }
 
+        // A body that names neither envelope key holds no special value: the walk is skipped,
+        // so a large list without one costs a substring search and nothing more.
+        $content = (string) $response->getContent();
+        if (str_contains($content, '"' . Rsx_Money::ENVELOPE_KEY . '"') || str_contains($content, '"' . Rsx_Text_Abstract::ENVELOPE_KEY . '"')) {
+            $data = self::plain_body($data);
+        }
+
         if (!property_exists($data, '_duration_ms')) {
             $recorded = self::$_history?->recorded_timing();
 
@@ -213,6 +225,76 @@ class Api_Dispatcher
         }
 
         return $response->setData($data);
+    }
+
+    /**
+     * THE API CARRIES PLAIN VALUES. Every special field value in an external API body becomes
+     * the plain string a consumer reads - the one rule, applied to every JSON object answer by
+     * stamp_response() and to a document by Rsx_Api::document():
+     *
+     *   an Rsx_Money, or its {"__MONEY": "1234.50"} envelope        -> "1234.50"
+     *   a text type (Rsx_Text_Abstract), or its {"__TEXT", "raw",    -> the stored string
+     *     "empty"} envelope                                             (raw)
+     *
+     * The envelopes are the browser Ajax wire form - the browser rehydrates them into objects -
+     * and a model serialized with toArray() carries them, so they are matched here wherever
+     * they sit: a returned model, a nested list of records, an array an endpoint built, a
+     * value placed directly in the response. A match is EXACT - {"__MONEY"} with a string and
+     * no other key; {"__TEXT"} a non-empty string, "raw" a string and "empty" a boolean, and
+     * no other key - so an ordinary object that merely has a "raw" key is left alone. The body
+     * itself is walked, never replaced: its top level stays the object it is.
+     *
+     * @param array|\stdClass $body A JSON object body: decoded (stdClass) or about to be encoded (array)
+     * @return array|\stdClass The same body, every special value a plain string
+     */
+    public static function plain_body(array|\stdClass $body): array|\stdClass
+    {
+        foreach ($body as $key => $value) {
+            if ($body instanceof \stdClass) {
+                $body->$key = self::__plain_value($value);
+            } else {
+                $body[$key] = self::__plain_value($value);
+            }
+        }
+
+        return $body;
+    }
+
+    /**
+     * One value of a body, made plain (plain_body()).
+     *
+     * @param mixed $value
+     * @return mixed
+     */
+    private static function __plain_value(mixed $value): mixed
+    {
+        if ($value instanceof Rsx_Money) {
+            return $value->to_decimal();
+        }
+
+        if ($value instanceof Rsx_Text_Abstract) {
+            return $value->to_storage();
+        }
+
+        if (!is_array($value) && !($value instanceof \stdClass)) {
+            return $value;
+        }
+
+        $fields = is_array($value) ? $value : get_object_vars($value);
+        $count = count($fields);
+
+        if ($count === 1 && isset($fields[Rsx_Money::ENVELOPE_KEY]) && is_string($fields[Rsx_Money::ENVELOPE_KEY])) {
+            return $fields[Rsx_Money::ENVELOPE_KEY];
+        }
+
+        if ($count === 3
+            && isset($fields[Rsx_Text_Abstract::ENVELOPE_KEY], $fields['raw'], $fields['empty'])
+            && is_string($fields[Rsx_Text_Abstract::ENVELOPE_KEY]) && $fields[Rsx_Text_Abstract::ENVELOPE_KEY] !== ''
+            && is_string($fields['raw']) && is_bool($fields['empty'])) {
+            return $fields['raw'];
+        }
+
+        return self::plain_body($value);
     }
 
     /**

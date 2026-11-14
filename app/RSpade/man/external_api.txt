@@ -152,7 +152,7 @@ DECLARING ENDPOINTS
         methods   A non-empty subset of ['GET', 'POST']. No other verb exists
                   on the external API.
 
-    #[Api_Param(name, type, required, default, description, example)]  (repeatable)
+    #[Api_Param(name, type, required, default, description, example, column)]  (repeatable)
         name         The parameter name; matches a :token or a query/body key.
                      Names must be unique within an endpoint.
         type         'string' | 'int' | 'float' | 'bool' | 'file' | 'money'.
@@ -166,6 +166,10 @@ DECLARING ENDPOINTS
                      throws at scan time.
         description  Human text for the docs page.
         example      Sample value for the docs page and generated code samples.
+        column       A 'money' param only: the money column the amount is stored
+                     in, as a literal 'Model_Name.column'. The amount is then
+                     refused beyond that column's limit (DECLARED MONEY
+                     COLUMNS, below).
 
     Docblock conventions (parsed at scan time):
         - The FIRST paragraph of the method docblock is the endpoint description.
@@ -193,6 +197,9 @@ DECLARING ENDPOINTS
         - type 'file' on an endpoint that declares GET
         - type 'file' on a :route token
         - type 'file' carrying a default
+        - column: on a param that is not 'money', not a literal
+          'Model_Name.column', naming a class that is not a concrete model, or
+          a column that model does not declare ['money' => true]
         - #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint] on the same method
         - a duplicate route pattern, including an address a version range
           expands to (VERSIONING)
@@ -243,57 +250,62 @@ PARAMETERS AND VALIDATION
                PHP's integer range ("Integer out of range" otherwise)
         float  is_numeric()
         bool   truthy: 1 true yes on       falsy: 0 false no off
-        string passthrough, except an ENCODED TEXT VALUE (below)
+        string passthrough: the string exactly as sent (DECLARED TEXT
+               COLUMNS, below)
         money  an Rsx_Money or null (DECLARED MONEY COLUMNS, below)
 
     DECLARED TEXT COLUMNS. A model column declared 'text_type' in $columns
-    (Rich_Text and the like) is written through an ordinary 'string' param,
-    in one of two forms:
+    (Rich_Text and the like) is written from an ordinary 'string' param, and
+    the ENDPOINT chooses the door - the API carries no text envelope, so a
+    string is all a client ever sends:
 
-        plain text    any ordinary string. Assigned to the column it is a
-                      bare string, which a declared column treats as PLAIN
-                      TEXT: the type escapes it into its encoding (for
-                      Rich_Text, nl2brhtml(...) in a <p>) and
-                      then filters it. "a < b" stores as the text "a < b".
+        $record->notes = $params['notes'];
+            PLAIN TEXT. The column escapes the string into its encoding and
+            filters it: "a < b" stores as the text "a < b". Right when the
+            API documents the field as text.
 
-        encoded       the value's envelope, JSON-ENCODED INTO THE STRING:
-                          "{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi <b>x</b></p>\"}"
-                      The param reaches the controller as the same typeless
-                      request value the browser's editor produces, and the
-                      column's filter (HTMLPurifier for Rich_Text) runs on
-                      assignment, exactly as for an Ajax submission.
+        $record->description = Rich_Text::from_untrusted_encoded($params['description']);
+            ENCODED. The string IS the type's encoded form (for Rich_Text,
+            HTML); the type's filter (HTMLPurifier) runs exactly as for the
+            staff editor. Right when the API reads the field as that form,
+            because a client that reads the field and sends it back unchanged
+            then stores the same value.
 
-      A string is the encoded form when, and only when, it (1) begins with
-      `{`, (2) parses as a JSON object, and (3) has a key named __TEXT. Any
-      other string - "{hello}", a JSON object without __TEXT - is plain
-      text. An identified envelope must then pass the Ajax shape check or the
-      request fails 422 with the reason under that field; it is never
-      stored as its own JSON:
-          __TEXT a non-empty string (never resolved - the column decides the
-          type), raw a string or null, empty an optional boolean, no other key.
+      Say which door in the param's description. A read answers the stored
+      string (PLAIN VALUES, below), so a field written through the ENCODED
+      door round-trips; one written as plain text and read back as its
+      encoding would not. A JSON object in a string param is refused
+      'Expected string', as any compound value is. Full treatment:
+      rsx:man text_types, THE EXTERNAL API.
 
-      Reads return the envelope as a JSON OBJECT (rsx:man text_types,
-      contract rule 7). To write back what was read, JSON-encode that object
-      into the string param; sending its raw alone stores the markup as
-      literal text. The endpoint does nothing special - it assigns the param
-      to the column. Full treatment: rsx:man text_types, THE EXTERNAL API.
-
-    DECLARED MONEY COLUMNS. A money column (rsx:man money) reads as the
-    envelope {"__MONEY": "1234.56"} and is written through a 'money' param:
+    DECLARED MONEY COLUMNS. A money column (rsx:man money) reads as its
+    decimal string ("1234.56") and is written through a 'money' param:
 
         #[Api_Param('price', type: 'money', required: false, default: '0.00')]
 
-      Accepted: a plain decimal string ("1234.50"; no symbol, grouping or
-      whitespace), the envelope as a JSON object or JSON-encoded into a
-      string, a JSON int of whole units, or a JSON float whose shortest form
-      has at most 15 significant digits. null or blank is null. The endpoint
-      receives an Rsx_Money (or null); a refusal is a 422 whose field message
-      is the money message ("This is not an amount of money.", "An amount of
-      money has at most two decimal places.", "This number carries
+      Accepted: a plain decimal string ("1234.50", "1234.5"; no symbol,
+      grouping or whitespace), a JSON int of whole units, or a JSON float
+      whose shortest form has at most 15 significant digits. null or blank is
+      null. Anything else is not an amount - the browser's {"__MONEY": ...}
+      envelope included, as a JSON object or encoded into a string. The
+      endpoint receives an Rsx_Money (or null); a refusal is a 422 whose field
+      message is the money message ("This is not an amount of money.", "An
+      amount of money has at most two decimal places.", "This number carries
       floating-point residue; pass it as a decimal string."). A default is a
-      literal and reaches the endpoint as an Rsx_Money. The param does not
-      know the column: Model::money_from_submitted('col', $params['price'])
-      checks the amount against the column's limit before assigning.
+      literal and reaches the endpoint as an Rsx_Money.
+
+      A param stored in a money column names it with column:, and the amount
+      is then checked against that column's Model::money_limit('col'):
+
+        #[Api_Param('budget', type: 'money', column: 'Project_Model.budget')]
+
+      An amount beyond it is a 422 whose field message is "This amount is
+      larger than this field can hold." - the refusal
+      Model::money_from_submitted() gives - so the endpoint receives an amount
+      the column holds and assigns it as it is. Without column:, the type's
+      range is the only bound and an over-large amount throws when assigned.
+      Worked example, a stored budget beside computed totals:
+        system/app/RSpade/resource/reference_app/app/api/v1/projects_api_controller.php
 
     INPUT PRECEDENCE (highest wins): route params > GET query > body.
     The body is parsed as JSON when Content-Type is application/json,
@@ -406,7 +418,8 @@ SERIALIZATION
         - never_export columns (password hashes, tokens, ...) are stripped,
           inherited declarations included
         - enum columns gain BEM-style magic properties: status_id__label, etc.
-        - a money column is the envelope {"__MONEY": "1234.56"}
+        - a money column is its decimal string, a text-type column its stored
+          string (PLAIN VALUES, below)
         - a __MODEL key identifies the model class
       Never alias enum fields to shorter names; the double-underscore forms are
       the contract (see rsx:man model_fetch, rsx:man enums). Because the model
@@ -425,6 +438,51 @@ SERIALIZATION
     gets them from the serializer; a HAND-BUILT payload writes each timestamp
     with ...Rsx_Time::encode_for_output('uploaded_at', $value), the same
     encoder, so no response is ever half-localized (rsx:man time, EXTERNAL API).
+
+    PLAIN VALUES. The external API carries plain values only. A special field
+    type is a STRING in every request and every response; the {__MONEY} and
+    {__TEXT, raw, empty} envelopes are a browser Ajax device - the browser
+    rehydrates them into Rsx_Money and text objects - and never appear on
+    /api/vN, in or out.
+
+        money column              "7708.80"        exactly two places
+        computed money figure     "7708.80"        the same shape
+          (an Rsx_Money in an array, a sum)
+        text-type column          "<p>Hi</p>"      its stored string: HTML for
+          (Rich_Text, Raw_Text)                    Rich_Text, the text for a
+                                                   raw type
+        DATETIME / TIMESTAMP      "2026-10-29T10:13:03.000Z" plus the
+                                  __localized / __localized_tz companions
+        DATE                      "2026-09-04"
+        enum                      the id, plus <col>__label and the other
+                                  enum properties
+        null                      null
+
+    A write takes the same plain forms: a 'money' param a decimal string, a
+    text field a 'string' param (DECLARED TEXT COLUMNS and DECLARED MONEY
+    COLUMNS, above). An envelope sent to a 'money' param is a 422; one sent
+    in a 'string' param is an ordinary string.
+
+        GET /api/v1/tasks/12
+        {"id": 12, "title": "Draft the statement of work",
+         "description": "<p>Include the payment schedule.</p>", ...}
+
+        POST /api/v1/tasks/12/update
+        {"description": "<p>Include the payment schedule.</p>"}
+            -> the stored value is unchanged
+
+    ONE RULE, ONE PLACE. The endpoint does nothing special: return the model
+    or put the Rsx_Money / text value straight into the array.
+    Api_Dispatcher::plain_body(), run on every JSON object answer by
+    stamp_response() and on a document by Rsx_Api::document(), turns each
+    Rsx_Money into to_decimal(), each text value into its stored string,
+    and each envelope a toArray() produced into the same string - wherever it
+    sits: a returned model, a list, a nested list, a hand-built array, a
+    201, a replayed answer. An envelope is matched by its exact shape
+    ({"__MONEY"} with a string and nothing else; {"__TEXT", "raw", "empty"}
+    and nothing else), so an object of your own that merely has a "raw" key
+    is untouched. The one body it cannot reach is JSON an endpoint encodes
+    into a plain Response by hand - never do that; return the array.
 
 AUTHENTICATION
     Authorization: Bearer rsx_... is the ONLY accepted credential (the scheme
@@ -1802,7 +1860,10 @@ DOCS AND TESTER PAGE
                             part is type:string, format:binary. One 'file' param
                             is what makes an endpoint multipart; the PART NAME is
                             the param's own name, never assumed to be 'file'.
-        superseded          deprecated:true when a HIGHER version of the same
+        a 'money' param     type:string with the decimal pattern
+                            ^-?\d+(\.\d{1,2})?$ and examples ["7708.80"] - an
+                            amount is a string on the API, never a JSON number.
+        superseded         deprecated:true when a HIGHER version of the same
                             verb + path_key is served by a DIFFERENT handler.
                             A version range is one handler at every version, so
                             its own later rows never supersede its earlier ones.
@@ -2174,8 +2235,8 @@ SEE ALSO
     rsx:man email            the SECURITY category a key notice is sent in
     rsx:man acls             Permission:: checks, role_id, the reserved override
     rsx:man model_fetch      redacting toArray(), enum magic properties
-    rsx:man text_types       declared text columns: plain vs encoded writes
-    rsx:man money            the money param type and the read envelope
+    rsx:man text_types       declared text columns: the endpoint's write door
+    rsx:man money            the money param type; amounts as decimal strings
     rsx:man enums            enum __label / __MODEL export
     rsx:man dispatch         the dispatcher chain the API branch lives in
     rsx:man tasks            #[Task]/#[Exclusive]/#[Schedule] (the log cleanup)

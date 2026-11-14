@@ -15,8 +15,8 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * Rsx_Model_Abstract::__schema_derived_casts(). A column with no declaration never
  * reaches this class and stays an ordinary string.
  *
- * Reads hydrate through from_storage() (trusted, unfiltered). A request value (the Ajax or
- * API envelope, already encoded) routes through from_untrusted_encoded(), so the common
+ * Reads hydrate through from_storage() (trusted, unfiltered). A request value (the Ajax
+ * envelope, already encoded) routes through from_untrusted_encoded(), so the common
  * `$record->body = $params['body']` is filtered by the type without the endpoint knowing
  * text types exist - which is the point. A BARE STRING is plain text and routes through
  * from_plain_text(): the type encodes it (encode_plain_text()), then sanitizes it. A value
@@ -125,7 +125,8 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
      * How the value appears in toArray()/toJson() - the wire envelope the JavaScript
      * side rehydrates. Declared explicitly through SerializesCastableAttributes so the
      * shape is stated here, rather than depending on how Eloquent happens to treat an
-     * object it finds in the attribute bag.
+     * object it finds in the attribute bag. An external API body carries the stored string
+     * instead: the API's response pass makes it plain (Api_Dispatcher::plain_body()).
      *
      * @param Model $model
      * @param string $key

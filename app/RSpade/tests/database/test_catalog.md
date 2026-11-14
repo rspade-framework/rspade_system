@@ -235,11 +235,12 @@ compiled bundle is staged in a scratch build root (one app script and its model 
 |----|---------|-------|----------|--------|--------------|
 | db-fs-01 | every length is the model's own answer, and exactly the publishable varchar columns are present | `Login_User_Model`, `User_Model` | equal to `field_length()`; no bigint/datetime entry | implemented | 2026-10-12 |
 | db-fs-02 | a system column is never published | a fixture table with `name VARCHAR(40)`, `_flag VARCHAR(20)`, `body TEXT` | `{name: 40}` only | implemented | 2026-10-12 |
-| db-fs-03 | a model with no table gets an empty entry | a fixture model nothing creates a table for | `[]`; the body carries `{}` for it | implemented | 2026-10-12 |
+| db-fs-03 | a model with no table gets an empty entry | a fixture model nothing creates a table for | `[]`; the body carries `{}` for it in both assignments | implemented | 2026-11-14 |
+| db-fs-13 | every money limit is the model's own `money_limit()` as a decimal string, for exactly the money columns; the body's second assignment carries them; no money column, or no table, is an empty entry | `User_Model`, `Money_Fixture_Model` (`money_fixtures`) | `{}`; `price` `99999999.99` ...; `Rsx.__money_limit_data = {...}` | implemented | 2026-11-14 |
 | db-fs-04 | a CTI base model publishes its detail columns | the first merged varchar detail column in the registry | present with its length | implemented (skips where the application declares no CTI model) | 2026-10-12 |
 | db-fs-05 | a name that is not a model fails loud | `Rsx_Test_Abstract` | throws | implemented | 2026-10-12 |
 | db-fs-06 | only the bundle's own app-script name resolves | the staged name; another hash; an unknown bundle; malformed names; the app script deleted | the bundle; null for every other | implemented | 2026-10-12 |
-| db-fs-07 | the script is served with the bundle's models | the staged bundle, `?v=` the state key | 200, `text/javascript`, the assignment of exactly those models' lengths; the cached read is the same bytes | implemented | 2026-10-12 |
+| db-fs-07 | the script is served with the bundle's models | the staged bundle, `?v=` the state key | 200, `text/javascript`, two assignments (lengths, then money limits), the lengths exactly those models'; the cached read is the same bytes | implemented | 2026-11-14 |
 | db-fs-08 | immutable for the current state key only | `?v=` current; another; none | `public, max-age=31536000, immutable`; `no-store`; `no-store` | implemented | 2026-10-12 |
 | db-fs-09 | any other name is a 404 carrying no data | wrong hash, unknown bundle, `x.js`, empty | 404 | implemented | 2026-10-12 |
 | db-fs-10 | the compiler names a script only for a bundle with models | a list with one model; an empty list; no app script | the name; null; null | implemented | 2026-10-12 |

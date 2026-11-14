@@ -243,7 +243,8 @@ multiply($factor, $rounding), ...) and printed by plain interpolation
 (<%= project.budget %>). Assignment takes an Rsx_Money, a decimal string, an
 int of whole units or the {__MONEY} envelope and refuses a float, typed text
 and an amount beyond the column's limit (money_limit('col')). It travels to
-JavaScript and the external API as {"__MONEY": "1234.56"}, is edited by
+JavaScript as {"__MONEY": "1234.56"} and to the external API as the plain
+string "1234.56" (rsx:man external_api, PLAIN VALUES), is edited by
 <Money_Input>, totalled by sum_money('col') and read from a submission by
 Model::money_from_submitted('col', $value). No $casts entry may name it. Every
 DECIMAL, FLOAT and DOUBLE column is declared money or not money

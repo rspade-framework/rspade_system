@@ -475,6 +475,55 @@ class Rsx_Js_Model {
     }
 
     /**
+     * The largest amount a money column can hold, as an Rsx_Money: the PHP model's own
+     * money_limit() answer (its DECIMAL maximum at whole cents, never beyond Rsx_Money's
+     * range). The column holds every amount from this negated up to this. Synchronous, from
+     * the page's field-length script, which assigns Rsx.__money_limit_data beside the lengths
+     * because a limit is a fact about the database, not the model's code:
+     *
+     *     if (amount.greater_than(Project_Model.money_limit('budget'))) { ... }
+     *
+     * THROWS when the column is not a money column of this model (as the PHP method does),
+     * when the script's data is not there or holds nothing for this model, and when it holds
+     * no limit for the column (the model's table does not exist in the database).
+     *
+     * @param {string} column - A money column of this model
+     * @returns {Rsx_Money}
+     */
+    static money_limit(column) {
+        const CurrentClass = this;
+        const model_name = CurrentClass.getModelName();
+
+        if (!CurrentClass.is_money_column(column)) {
+            throw new Error(`${model_name}.money_limit('${column}'): ${column} is not a money column: its $columns entry has no 'money'.`);
+        }
+
+        const data = Rsx.__money_limit_data;
+
+        if (data === null || !Object.hasOwn(data, model_name)) {
+            throw new Error(
+                `${model_name}.money_limit('${column}'): ` +
+                (data === null
+                    ? `the page's field-length script did not load, so no money limits are available. `
+                    : `the page's field-length script carries no money limits for ${model_name}. `) +
+                `Check that the page's <script src="/_field_lengths/..."> tag (emitted after the app bundle) ` +
+                `is present and answered 200, and that ${model_name} is in this page's bundle.`
+            );
+        }
+
+        const limits = data[model_name];
+
+        if (!Object.hasOwn(limits, column)) {
+            throw new Error(
+                `${model_name}.money_limit('${column}'): the page's field-length script carries no limit for it - ` +
+                `the model's table does not exist in the connected database. Run \`php artisan migrate\`.`
+            );
+        }
+
+        return Rsx_Money.from_storage(limits[column]);
+    }
+
+    /**
      * Watch this model's record for changes (for NON-component code).
      *
      * Sugar over Rsx_Realtime.watch('Model_Changed_Topic', {model, id}, cb). Inside a

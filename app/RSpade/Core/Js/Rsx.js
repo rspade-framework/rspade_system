@@ -97,6 +97,14 @@ class Rsx {
     static __field_length_data = null;
 
     /**
+     * Money column limits for the models in this page's bundle - {Model_Name: {column:
+     * canonical decimal string}} - or null until the page's field-length script has run.
+     * Assigned by the same script as __field_length_data, and read by
+     * Rsx_Js_Model.money_limit(), which is the only reader.
+     */
+    static __money_limit_data = null;
+
+    /**
      * Framework-reserved hash key naming the element to scroll to.
      *
      * Reserved the same way DataGrid reserves `dg_*`: an application must not

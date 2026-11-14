@@ -139,7 +139,7 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | forms-autofill-06 | no `$autofill_id`, no change | `<Password_Input>` | the scoped `field:<cid>` id | implemented |
 | forms-autofill-07 | nothing complained | the whole run | no jqhtml autofill warning, no page error | implemented |
 
-## field_length_script.js (playwright) - `Model.field_length()` reads the page's script
+## field_length_script.js (playwright) - `Model.field_length()` and `Model.money_limit()` read the page's script
 
 `/_sys`, the framework's `User_Model`.
 
@@ -150,6 +150,8 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | forms-fl-03 | no length answers null | `'id'`; a name that is no column | null; null | implemented |
 | forms-fl-04 | a class extending a model answers through it | `class X extends User_Model` | the model's answer | implemented |
 | forms-fl-05 | missing data throws | `Rsx.__field_length_data = null`; `= {}` | a throw naming the model and the script, both times | implemented |
+| forms-fl-07 | the script is two assignments; `money_limit()` answers an `Rsx_Money` from `Rsx.__money_limit_data` | the served body; a probe class declaring a money column, the data carrying its limit | two lines, `User_Model: {}`; `99999999.99` | implemented |
+| forms-fl-08 | `money_limit()` throws for a column that is not money, a money column with no limit, and with the data gone | `User_Model.money_limit('first_name')`; the probe; `Rsx.__money_limit_data = null` | each throws, naming the cause | implemented |
 
 ## field_length_script_delayed.js (playwright) - the page boots only after its field-length script
 

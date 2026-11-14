@@ -1,0 +1,96 @@
+EXTERNAL API BODIES CARRY PLAIN VALUES: A MONEY OR TEXT-TYPE FIELD IS A STRING, IN AND OUT
+Date: 2026-11-14
+
+IF YOU DO NOTHING: an integration that reads a text-type field as an object
+    (`task.description.raw`) gets `undefined`, because the field is now the string itself; an
+    integration that sends an envelope (`{"__TEXT": ...}` or `{"__MONEY": ...}`) gets a 422 on
+    that field or has the envelope's JSON stored as text; and an endpoint of yours that
+    returns an amount as a number (`7708.8`) keeps doing so, beside framework money fields
+    that are strings (`"7708.80"`).
+
+SUMMARY
+    Category 2: the wire shape of special field types on the external API.
+
+    THE RULE. The external API (`#[Api_Endpoint]`, `/api/vN/...`) carries simple values and
+    JSON objects only. A special field type - money, a declared text type - is a STRING there.
+    The `{__MONEY}` and `{__TEXT, raw, empty}` envelopes are a browser Ajax device: they let
+    the browser rebuild a typed object, and they never appear in an API request or response.
+    Browser Ajax and model fetch are unchanged.
+
+        field                         API response                      browser Ajax
+        money column                  "7708.80"                         {"__MONEY": "7708.80"}  -> Rsx_Money
+        a computed money figure       "7708.80"                         {"__MONEY": "7708.80"}  -> Rsx_Money
+        text-type column              "<p>stored text</p>"              {"__TEXT": ..., "raw": ..., "empty": ...}
+        no value                      null                              null
+
+    An amount is always two decimal places, as a string, whether it is a stored column or a
+    figure computed for the response. It is never a JSON number.
+
+    The conversion is done by the framework for every API response, wherever the value sits
+    in the body (a serialized model, a value returned directly, a nested list). An endpoint
+    returns models and `Rsx_Money` values as they are.
+
+    Contract: php artisan rsx:man external_api (PLAIN VALUES), rsx:man money, rsx:man text_types.
+    Worked examples: system/app/RSpade/resource/reference_app/app/api/v1/tasks_api_controller.php
+    (a text type) and projects_api_controller.php (money).
+
+ACTION REQUIRED - WHAT YOUR API RETURNS
+    1. Text-type fields changed shape for every consumer of your API:
+
+           BEFORE   "description": {"__TEXT": "Rich_Text", "raw": "<p>x</p>", "empty": false}
+           AFTER    "description": "<p>x</p>"
+
+       Tell your integrators: read the field itself where they read `.raw`; test emptiness on
+       the string where they read `.empty`.
+
+    2. Amounts. A column you DECLARE money (`'amount' => ['money' => true]`, see
+       money_column_kind_11_14.txt) is returned as `"7708.80"`. Where your endpoints return
+       amounts today:
+
+           a DECIMAL column, undeclared        "7708.80"   (the driver's string - unchanged when declared)
+           a figure computed in PHP as float   7708.8      (a JSON number, one decimal lost)
+
+       make every amount the same string shape by computing it as `Rsx_Money` and returning
+       the value:
+
+           BEFORE   'total' => round($a + $b, 2),                      // 7708.8
+           AFTER    'total' => $a_money->add($b_money),                // "7708.80"
+                    'total' => $query->sum_money('amount'),            // "7708.80"
+
+       A figure that changes from a number to a string is a breaking change for YOUR
+       integrators: announce it with your API version, or introduce it in a new `/api/vN`.
+
+    3. An endpoint that hand-encodes JSON into its own Response is not converted. Return an
+       array (or `Rsx_Api` helper) so the framework encodes it.
+
+ACTION REQUIRED - WHAT YOUR API ACCEPTS
+    1. A `money` parameter (`#[Api_Param('amount', type: 'money')]`) takes a decimal string
+       ("1234.50"), an integer of whole units, or a float with no floating-point residue, and
+       arrives as an `Rsx_Money`. An envelope is refused:
+
+           {"amount": {"__MONEY": "1.00"}}   ->  422, fields.amount "This is not an amount of money."
+           {"amount": "1.00"}                ->  accepted
+
+    2. A text-type field is written from a plain `string` parameter. The framework no longer
+       unwraps an envelope sent inside it, and `Rsx_Text_Abstract::wrap_api_param_envelope()`
+       is gone. The ENDPOINT chooses how the string is read:
+
+           $task->description = $params['description'];
+               // plain text: markup the client sends is escaped and shown as typed
+
+           $task->description = Rich_Text::from_untrusted_encoded($params['description']);
+               // the type's encoded form (sanitized): a client can send back what it read
+
+       An endpoint whose clients read a text field and send it back needs the second form;
+       with the first, a value read and re-sent is stored as escaped tags. Find the endpoints:
+           grep -rn "Api_Param" rsx/ | grep -i "type: 'string'"
+       and decide each text-type column's door.
+
+    3. Code that inspected an envelope from an API parameter (an `Rsx_Text_Request_Value` in an
+       API endpoint) receives a string now.
+
+VERIFICATION
+    Mint a key and read a record over HTTP:
+        php artisan rsx:api:key:temp --user=<id>
+        curl -H "Authorization: Bearer rsx_..." https://<host>/api/v1/<resource>/<id>
+    The body contains no "__MONEY" and no "__TEXT"; each amount is a quoted two-place string.

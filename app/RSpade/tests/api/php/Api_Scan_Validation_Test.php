@@ -247,7 +247,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         static::__assert_scan_throws(
             static::__manifest([
                 'Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]],
-                'Api_Param' => [['p', 'int', false, 1, 'desc', 42, 'overflow']],
+                'Api_Param' => [['p', 'money', false, null, 'desc', '1.00', 'Money_Fixture_Model.amount', 'overflow']],
             ]),
             'Too many positional arguments'
         );

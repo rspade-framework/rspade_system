@@ -67,6 +67,9 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
 #[Instantiatable]
 abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
 {
+    /** The key naming the type in the browser Ajax wire envelope {__TEXT, raw, empty}. */
+    public const ENVELOPE_KEY = '__TEXT';
+
     /**
      * The value exactly as it is stored in the column.
      *
@@ -343,8 +346,8 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Turn every {__TEXT, raw} envelope in a decoded request body into a typeless
      * Rsx_Text_Request_Value, recursively, leaving everything else untouched.
      *
-     * Called once at the Ajax boundary (the external API's string params go through
-     * wrap_api_param_envelope() instead, held to the same shape check). NOTHING IS RESOLVED
+     * Called once at the Ajax boundary - the envelope is the browser Ajax wire form; the
+     * external API carries plain strings and never reads one. NOTHING IS RESOLVED
      * HERE: the boundary holds a bag of keys and cannot know which column each is bound
      * for, so it does not guess a type
      * from the client's claim - the claim is carried as an opaque string and discarded when
@@ -361,7 +364,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
             return $value;
         }
 
-        if (array_key_exists('__TEXT', $value)) {
+        if (array_key_exists(self::ENVELOPE_KEY, $value)) {
             return static::__wrap_envelope($value);
         }
 
@@ -373,43 +376,8 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     /**
-     * One string-valued request field, checked for an ENCODED text value.
-     *
-     * The external API's params are scalars, so an encoded value arrives as the envelope
-     * JSON-encoded into a string. A string is an envelope when, and only when, it begins
-     * with `{`, parses as a JSON object, and that object has a `__TEXT` key. Anything else
-     * - "{hello}", a JSON object with no `__TEXT` - is an ordinary string, which a declared
-     * column reads as plain text.
-     *
-     * A string that IS identified as an envelope faces exactly the scrutiny an Ajax
-     * envelope faces (__wrap_envelope(), shared), and a malformed one is refused rather
-     * than quietly demoted to plain text: the caller said "this is encoded", and storing
-     * its JSON as literal text would be a silent reinterpretation.
-     *
-     * @param string $value
-     * @return string|Rsx_Text_Request_Value|null the string untouched, the wrapper, or null
-     *                                            for an envelope whose raw form is null
-     * @throws \InvalidArgumentException on an identified but malformed envelope
-     */
-    public static function wrap_api_param_envelope(string $value): string|Rsx_Text_Request_Value|null
-    {
-        if (!str_starts_with($value, '{')) {
-            return $value;
-        }
-
-        $decoded = json_decode($value, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded) || !array_key_exists('__TEXT', $decoded)) {
-            return $value;
-        }
-
-        return static::__wrap_envelope($decoded);
-    }
-
-    /**
-     * One envelope from the wire, wrapped. Shape is checked strictly; the type name is not
-     * resolved. The ONE check both transports run - an Ajax envelope and an API envelope
-     * string are held to the same rules.
+     * One envelope from the Ajax wire, wrapped. Shape is checked strictly; the type name is
+     * not resolved.
      *
      * The shape is exactly what jsonSerialize() emits: `__TEXT` a non-empty string, `raw` a
      * string or null, `empty` optional and boolean, and nothing else. A key named `__TEXT`
@@ -543,7 +511,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     final public function jsonSerialize(): array
     {
         return [
-            '__TEXT' => class_basename(static::class),
+            self::ENVELOPE_KEY => class_basename(static::class),
             'raw' => $this->raw,
             'empty' => $this->is_empty(),
         ];

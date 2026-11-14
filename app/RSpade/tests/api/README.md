@@ -47,6 +47,10 @@ redaction, and its scan-time declaration rules all matter for correctness and se
   404, 401, 500, a recorded writer and its replay with identical values), 410
   `api_version_retired` for a path only another version serves. (php - through the front
   controller)
+- Plain values (`Api_Dispatcher::plain_body()`): every money and text-type value in an API body
+  is its plain string wherever it sits, exact-shape matching leaves look-alikes alone, a
+  replay is plain, a `money` param refuses an envelope, and browser Ajax keeps the envelopes.
+  (php - through the front controller, `Api_Plain_Values_Test`)
 - Param validation + coercion: undeclared-key rejection, required/default handling, the
   int/float/bool/string coercion matrix, compound-value rejection. (php - no DB)
 - Catalog: version parse, path-key stripping, version grouping/resolution, LLM catalog
