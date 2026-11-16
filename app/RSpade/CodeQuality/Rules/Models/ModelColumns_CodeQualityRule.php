@@ -20,8 +20,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *      array (`'column' => []` is legal: an explicitly plain column).
  *   2. Every key of an entry is one of ALLOWED_KEYS.
  *   3. A flag (FLAG_KEYS) is the literal `true` - a kind is removed by replacing the
- *      entry, never by `false`.
- *   4. At most one of EXCLUSIVE_KEYS per column.
+ *      entry, never by `false`. An answer (ANSWER_KEYS: `money`) is the literal `true` or
+ *      the literal `false`; `false` declares no kind.
+ *   4. At most one of EXCLUSIVE_KEYS per column, an answer counting only when `true`.
  *   5. Value shapes: `enum` is a non-empty map of integer value => array, whose `constant`
  *      and `label`, when present, are non-empty strings; `text_type` is a non-empty string
  *      (that it names a real Rsx_Text_Abstract with a JS twin is TEXT-TYPE-01's check).
@@ -59,7 +60,13 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
     public const ALLOWED_KEYS = ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'derived', 'from'];
 
     /** Keys whose only legal value is the literal true. */
-    public const FLAG_KEYS = ['type_ref', 'money', 'never_export', 'revision_exclude'];
+    public const FLAG_KEYS = ['type_ref', 'never_export', 'revision_exclude'];
+
+    /**
+     * Keys that answer a question either way: the literal true (the column is that kind) or
+     * the literal false (it is not, said explicitly).
+     */
+    public const ANSWER_KEYS = ['money'];
 
     /** Keys of which a column carries at most one: each is a different kind of value. */
     public const EXCLUSIVE_KEYS = ['enum', 'text_type', 'type_ref', 'money'];
@@ -499,7 +506,17 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
             }
         }
 
-        $kinds = array_values(array_intersect(self::EXCLUSIVE_KEYS, array_keys($entry)));
+        foreach (self::ANSWER_KEYS as $key) {
+            if (array_key_exists($key, $entry) && !is_bool($entry[$key])) {
+                $this->report($abs_file, $contents, $line,
+                    "{$where}['{$key}'] is " . var_export($entry[$key], true) . ": it is the literal true or the literal false.");
+            }
+        }
+
+        $kinds = array_values(array_filter(
+            array_intersect(self::EXCLUSIVE_KEYS, array_keys($entry)),
+            fn (string $key): bool => !in_array($key, self::ANSWER_KEYS, true) || $entry[$key] === true
+        ));
 
         if (count($kinds) > 1) {
             $this->report($abs_file, $contents, $line,

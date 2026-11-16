@@ -33,15 +33,15 @@ public static $columns = [
 | `enum` | integer-keyed map of value => properties | a BIGINT whose integers have constants, labels and custom properties |
 | `text_type` | a `Rsx_Text_Abstract` subclass | a TEXT column read as a value object, filtered on every write |
 | `type_ref` | `true` | the `_type` half of a polymorphic pair: stores a `_type_refs` id, reads as a class name |
-| `money` | `true` | a DECIMAL(p,2) amount read as an `Rsx_Money`, never a float |
+| `money` | `true` / `false` | `true`: a DECIMAL(p,2) amount read as an `Rsx_Money`, never a float; `false`: not money, said explicitly |
 | `never_export` | `true` | a secret: never in any payload, redacted in revisions |
 | `revision_exclude` | `true` | not recorded in revision history |
 | `derived` + `from` | method name + list of this record's columns | STORED, computed by the model on save, never assigned |
 
 **The grammar** (checked at manifest build by `MODEL-COLUMNS-01`, a FATAL - a malformed entry would otherwise fail silently):
 
-- Only those eight keys; anything else is an error. A flag is the literal `true` or absent - never `false`.
-- At most ONE of `enum` / `text_type` / `type_ref` / `money` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already). A `derived` column may also be an enum, text type, type ref or money - its value is assigned through `setAttribute()`, so the kind still applies.
+- Only those eight keys; anything else is an error. A flag (`type_ref`, `never_export`, `revision_exclude`) is the literal `true` or absent - never `false`; `money` is an answer, literal `true` or `false` (`false` = not money, no kind).
+- At most ONE of `enum` / `text_type` / `type_ref` / `money => true` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already). A `derived` column may also be an enum, text type, type ref or money - its value is assigned through `setAttribute()`, so the kind still applies.
 - A money or text-type column carries no `$casts` entry - the declaration is its cast.
 - `derived` and `from` come together; see [Derived columns](#derived-columns).
 - `'column' => []` declares an explicitly plain column.
@@ -107,9 +107,10 @@ A polymorphic reference is ALWAYS the BIGINT pair `{relation}_type` + `{relation
 ```php
 'budget'        => ['money' => true],      // DECIMAL(15,2) NULL
 'hour_estimate' => [],                     // a DECIMAL that is NOT money - say so
+'mileage_rate'  => ['money' => false, 'revision_exclude' => true],   // other keys: answer with 'money'
 ```
 
-The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` (or null): exact, immutable, never a float, compared and computed only with its methods, printed by `<%= %>`, edited by `<Money_Input>`, travelling to JS as a `{__MONEY}` envelope and to the external API as the plain string `"1234.56"`. Assign an `Rsx_Money`, a decimal string (`'29.99'`) or whole-unit int; a float throws. An endpoint reads input with `Model::money_from_submitted('col', $value)`; a total is `->sum_money('col')`. **Every DECIMAL, FLOAT and DOUBLE column is declared money or `[]`** (`MODEL-DECIMAL-01`, `rsx:check`). Depth: `rspade:money`.
+The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` (or null): exact, immutable, never a float, compared and computed only with its methods, printed by `<%= %>`, edited by `<Money_Input>`, travelling to JS as a `{__MONEY}` envelope and to the external API as the plain string `"1234.56"`. Assign an `Rsx_Money`, a decimal string (`'29.99'`) or whole-unit int; a float throws. An endpoint reads input with `Model::money_from_submitted('col', $value)`; a total is `->sum_money('col')`. **Every DECIMAL, FLOAT and DOUBLE column says whether it is money** - `'money' => true` / `'money' => false` in its entry, or an entry that is exactly `[]`; an entry with other keys and no `money` key is a finding (`MODEL-DECIMAL-01`, `rsx:check`). Depth: `rspade:money`.
 
 ### `never_export` - a secret
 
@@ -188,7 +189,7 @@ Ask, in order, for EVERY column you add:
 
 1. **Is it a fixed set of states or types?** -> BIGINT + `enum`. Never a VARCHAR of words, never a boolean that will grow a third state.
 2. **Is it text with an encoding** - HTML from an editor, a notation with embedded references? -> TEXT + `text_type`. Plain text stays undeclared.
-3. **Is it an amount of money?** -> `DECIMAL(15,2)` (p <= 18) + `money`. Any other DECIMAL, FLOAT or DOUBLE is declared `[]` (not money) - `MODEL-DECIMAL-01` requires one or the other.
+3. **Is it an amount of money?** -> `DECIMAL(15,2)` (p <= 18) + `money`. Any other DECIMAL, FLOAT or DOUBLE is declared not money - `[]`, or `'money' => false` beside other keys - and `MODEL-DECIMAL-01` requires the answer.
 4. **Does it point at a record of one of SEVERAL models?** -> a BIGINT `{relation}_type` + `{relation}_id` pair, `type_ref` on the `_type` column, plus `$fact_groups` when one form field edits the pair.
 5. **Would its disclosure be a security event** (hash, token, secret, key/value bag)? -> `never_export`.
 6. **Is it computed from other data and never typed by a person?** -> `derived` + `from`, with a derive method. If a person may ALSO set it when no rule applies, that is two columns (source + derived).

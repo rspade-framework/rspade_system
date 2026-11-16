@@ -613,6 +613,7 @@ abstract class Rsx_Model_Abstract extends Model
      *     'description'   => ['text_type' => Rich_Text::class],
      *     'fileable_type' => ['type_ref' => true],
      *     'budget'        => ['money' => true],
+     *     'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
      *     'api_secret'    => ['never_export' => true],
      *     'view_count'    => ['revision_exclude' => true],
      *     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
@@ -631,10 +632,14 @@ abstract class Rsx_Model_Abstract extends Model
      *   type_ref         - literal true, on the {relation}_type column of a polymorphic pair: the
      *                      column stores a _type_refs integer id and reads as a class name, and
      *                      stock morph relations work over it (rsx:man polymorphic).
-     *   money            - literal true, on a DECIMAL(p,2) column (p at most 18): the column
-     *                      reads as an Rsx_Money value object, accepts an Rsx_Money, a decimal
-     *                      string or whole-unit int on assignment, refuses a float, and travels
-     *                      as a {__MONEY: "1234.56"} envelope (rsx:man money).
+     *   money            - literal true or literal false, the answer to "is this column an
+     *                      amount of money?". true, on a DECIMAL(p,2) column (p at most 18): the
+     *                      column reads as an Rsx_Money value object, accepts an Rsx_Money, a
+     *                      decimal string or whole-unit int on assignment, refuses a float, and
+     *                      travels as a {__MONEY: "1234.56"} envelope (rsx:man money). false: the
+     *                      column is not money and reads as it would undeclared. Every DECIMAL,
+     *                      FLOAT and DOUBLE column carries the answer, or is declared exactly []
+     *                      (MODEL-DECIMAL-01).
      *   never_export     - literal true: toArray() - the one serializer behind fetch(),
      *                      relationships, the page's user object and the external API - removes
      *                      the column after Laravel built the array, so makeVisible() and
@@ -667,10 +672,12 @@ abstract class Rsx_Model_Abstract extends Model
      * they were; a derived column never appears in revision history. An explicit
      * ->raw_bulk()->update() of a `from` column writes no derived value: the caller rederives.
      *
-     * At most one of enum / text_type / type_ref / money per column; never_export and revision_exclude
-     * combine with anything except that revision_exclude never sits beside derived (a derived
-     * column is never recorded already). A flag is `true` or absent - a kind is removed by
-     * replacing the entry, and `'column' => []` declares an explicitly plain column.
+     * At most one of enum / text_type / type_ref / money => true per column (money => false
+     * declares no kind and sits beside any of them); never_export and revision_exclude combine
+     * with anything except that revision_exclude never sits beside derived (a derived column is
+     * never recorded already). A flag (type_ref, never_export, revision_exclude) is `true` or
+     * absent - a kind is removed by replacing the entry, and `'column' => []` declares an
+     * explicitly plain column.
      *
      * INHERITANCE: the effective declaration overlays every class from this base down to the
      * model, base first; a class's entry for a column REPLACES its parent's entry for that
@@ -2003,7 +2010,7 @@ EXAMPLE;
         }
 
         if (!static::is_money_column($column)) {
-            throw new LogicException(static::class . "::{$column} is not a money column: its \$columns entry has no 'money'.");
+            throw new LogicException(static::class . "::{$column} is not a money column: its \$columns entry is not ['money' => true].");
         }
 
         $class_name = Manifest::_normalize_class_name(get_called_class());

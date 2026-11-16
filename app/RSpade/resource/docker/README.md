@@ -156,12 +156,14 @@ for one file. A service added to the image that keeps such a file gets an entry 
 **A failing service is visible, though supervisor shows it RUNNING.** Supervisor's process is
 the runner, so a service that exits again and again still reads RUNNING there. The runner
 records each service in `/run/rspade-services/<label>.state` (status `running` / `starting` /
-`failing` / `stopped`, the streak's consecutive exits, last exit status and start; the
-format is in `retry-run.sh`'s header) and marks it `failing` after five consecutive exits,
+`failing` / `stopped`, the streak's consecutive exits, last exit status, how many times in a
+row it repeated, and start; the format is in `retry-run.sh`'s header) and marks it `failing` after five consecutive exits,
 until a run lasts a minute. It logs one `[ERROR] [<label>] failing: N consecutive exits (last
 status S) since T` line at 5 exits and at each doubling (10, 20, 40, ...), beside the
 per-attempt line. `--exec` programs (mysql, dockerd) write no state; supervisor's own covers
-them.
+them. A failing streak of exit 126 or 127 (the command cannot run, or is not there) is one of
+the pieces of evidence on which `rsx:maintenance:disable` stops waiting for an rsx-lockd that
+cannot start (`rsx:man maintenance_mode`).
 
 **Health check.** `rspade-healthcheck` (`healthcheck.sh`) is the image's Docker `HEALTHCHECK`
 (Docker's default interval, timeout and retries). It exits 1, printing one `[ERROR]` line per
@@ -438,6 +440,74 @@ on-demand task worker - and a box that cannot hold them runs out of memory under
 
 Everything else is ordinary `.env` configuration — see `.env.README` in the
 project root.
+
+## The image contract
+
+The image and the checkout it runs are versioned apart: the image carries services and tools
+(rsx-lockd, Proxority, rspade-taskd, the retry runner, the dev mail catcher), and `system/` is
+the checkout a project pins. A checkout can depend on something only a newer image provides,
+so the two agree on one number:
+
+- `image_contract.conf` (here) states the **image contract** this checkout needs, plus the
+  `breaking_changes` document of the release that last raised it. Its header says when to
+  raise it.
+- Every `dev` and `prod` image records the contract it provides at `/opt/rspade/image.conf`: a
+  copy of that same file, written in the stage's last layer, plus `built_from=<revision>`.
+  `build.sh` passes the revision of `system/` (`+modified` when this directory has uncommitted
+  changes); a plain `docker build` records `built_from=unknown`. `docconvert` records nothing.
+  An image with no record counts as contract 1 when it carries
+  `/opt/rspade/rsx-lockd/lockd-run.sh`, 0 otherwise.
+
+**Older image, newer checkout** - inside the RSpade container, four places say so with the
+same sentence naming the remedy (rebuild from this `system/` with `build.sh <target>`, recreate
+the container, see the breaking change):
+
+| Where | What happens |
+|---|---|
+| the entrypoint, at every start | `[rspade] WARNING: <sentence>` and "Services this image cannot run will not start."; the start continues |
+| `rsx:maintenance:enable` / `:disable` | `[WARNING] <sentence>` first, then the transition as usual (`rsx:man maintenance_mode`, AN IMAGE OLDER THAN THE CHECKOUT) - until disable's wait for rsx-lockd finds the daemon cannot start: it repeats the sentence and exits 1, php-fpm not started, the flag up |
+| `rsx:framework:pull` | `[WARNING] <sentence>` from the pulled checkout, before the window is lowered |
+| `rsx:health` | the "Container Image" row FAILs, in every mode |
+
+A newer image under an older checkout is fine, and nothing is compared outside the container.
+The readers are `system/bin/lib/rsx_image_contract.sh` (bash, needing nothing from the image)
+and `Rsx_Image_Contract` (PHP). The deploy order that includes the rebuild is
+`rsx:man prod`, IN THE RSPADE CONTAINER.
+
+## Waiting for a start
+
+The health check is healthy during maintenance by design, so `docker compose up --wait`
+returns before the start has finished. The entrypoint keeps a startup record instead, and
+`rspade-wait-started` blocks on it:
+
+```bash
+docker compose up --detach && docker compose exec <service> rspade-wait-started
+```
+
+| Exit | Meaning |
+|---|---|
+| 0 | the start finished (the moment the entrypoint prints `RSpade is up`) |
+| 1 | the start failed; the entrypoint's error on stderr |
+| 2 | "This container was not started by the RSpade entrypoint; there is no startup to wait for." |
+
+It has no deadline (the pipeline owns its own) and prints `[rspade] still starting: <step>`
+each time the step changes. **A failed start stops the container** - the entrypoint is its
+first process - so a waiter run through `docker compose exec` ends with it and exits non-zero
+without reading the error: the `[rspade] ERROR:` line is in `docker compose logs <service>`.
+An image older than the record has no `rspade-wait-started` (`docker compose exec` reports
+the executable not found).
+
+The record is `/run/rspade-startup` (`startup-state.sh`, installed as `rspade-startup`, has
+the format): `status=starting|started|failed`, the current `step`, `began_at` /
+`finished_at`, `error=` on a failure, `warning=` with the image-contract sentence when the
+start printed one, and PID 1's start time, so a record left from an earlier start of the same
+container is never read as this one.
+
+**`rsx:build` and `rsx:clean` refuse while the container is still starting** - the start is
+still working in `build/` and `tmp/` (ownership, migrations) - with `[ERROR] The container is
+still starting (step: <step>, since <time>).` and `rspade-wait-started` as the remedy. The
+start's own processes (the entrypoint's children, everything supervisor runs) are never
+refused, and without a record nothing is.
 
 ## First boot
 

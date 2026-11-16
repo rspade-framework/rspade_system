@@ -29,6 +29,8 @@ DESCRIPTION
     behind them). Both are IDEMPOTENT.
 
 WHAT ENABLE DOES (in order - the order is load-bearing)
+    0. In the RSpade container, WARN when the image is older than this checkout needs (AN
+       IMAGE OLDER THAN THE CHECKOUT, below), then carry on.
     1. Write the flag, with the reason as its content. FIRST, before anything stops: a process
        booting into the window must already SEE maintenance mode, or it would select the live
        backends (cluster locks over rsx-lockd, the Redis cache) and hard-fatal on the refused
@@ -69,7 +71,9 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
     controls nothing.
 
 WHAT DISABLE DOES
-    0. REFUSE if a schema-cache build left live backups on disk, or a migrate
+    0. In the RSpade container, WARN when the image is older than this checkout needs (AN
+       IMAGE OLDER THAN THE CHECKOUT, below), then carry on.
+    0a. REFUSE if a schema-cache build left live backups on disk, or a migrate
        --dump-rollback run is unsettled (unless --force in either case). See both guards
        below.
     1. supervisorctl start, in the reverse order: redis FIRST (everything else expects it),
@@ -87,6 +91,30 @@ WHAT DISABLE DOES
        it is waiting for. That is deliberate - a visible "still waiting for rsx-lockd" is
        better than a silent deadline that admits traffic to a daemon which never came up.
        Ctrl-C is always available; the flag stays raised, so nothing is half-open.
+
+       A DAEMON THAT CANNOT START ENDS THE WAIT. Before the first ping and on every attempt
+       the wait asks for evidence that rsx-lockd cannot start at all, and only evidence -
+       never elapsed time:
+         - supervisor reports the program FATAL;
+         - the script its live process runs does not exist (the pid is supervisor's own
+           answer, `supervisorctl pid`, matched to the process's command line at that
+           moment - a retry runner for rsx-lockd, or a direct child of supervisord);
+         - its retry runner recorded the same exit 126 or 127 at least five times in a row
+           (the last_exit_status_repeats key of /run/rspade-services/rsx-lockd.state, in
+           images that write it).
+       An exit status of 1 is never evidence: it is what the daemon says while the
+       application it needs is still arriving (no APP_KEY yet on a first boot), the slow
+       start the no-deadline wait exists for. On evidence, disable prints
+
+           [ERROR] rsx-lockd cannot start: <the cause>
+           [ERROR] Stopped waiting. redis and rsx-lockd were started; php-fpm, realtime
+                   and the proxy were NOT. The maintenance flag stays up.
+
+       followed by the image sentence (AN IMAGE OLDER THAN THE CHECKOUT) when the image is
+       older than the checkout, otherwise where to read the daemon's own error and the
+       pointer for a box that runs its own supervisor configuration - and exits 1 with steps
+       2-4 not run. An incomplete LOCK_SERVER_HOST / LOCK_SERVER_PORT ends it the same way,
+       before the first attempt.
     2. Remove the flag, so nothing serves before its services are back.
     3. rsx:tasks:enable - turn the task system back on, after the flag is gone so the
        command runs as an ordinary process. The next rsx:task:process tick picks up what
@@ -195,7 +223,39 @@ DISABLE ALWAYS STARTS THE SERVICES
         <resolve the conflicted files>
         php artisan rsx:git commit
 
+    THE ONE EXCEPTION: A LOCK SERVER THAT PROVABLY CANNOT START. Disable starts the
+    services whatever state the tree is in, except that it does not start php-fpm (nor
+    realtime and the proxy after it) over a lock server that provably cannot start (step 1a):
+    php-fpm without rsx-lockd answers every request with a 500 - a box that looks broken in
+    the application while the cause sits in supervisor. Disable stops there, says why, and
+    leaves the flag up, so the web answers 503 naming the window. Run disable again once
+    the cause is fixed. A lock server that is merely slow is waited for, however long.
+
     --no-services starts nothing but still clears the flag.
+
+AN IMAGE OLDER THAN THE CHECKOUT
+    Inside the RSpade container (/.rspade_container), enable and disable each open with one
+    line when the container's image provides an older image contract than this checkout
+    needs (rsx:man prod, IN THE RSPADE CONTAINER):
+
+        [WARNING] This container's image (built from <rev>, image contract <N>) is older than
+        this checkout needs (image contract <M>): rebuild the image from this system/ (bash
+        system/app/RSpade/resource/docker/build.sh <target>) and recreate the container; see
+        breaking change <name> (php artisan rsx:framework:breaking_changes:show <name>).
+
+    and then do exactly what they otherwise do: the warning refuses nothing and --force plays
+    no part in it. What it explains is the step that follows - a service this image cannot
+    run does not start, and when that service is rsx-lockd the wait in step 1a sees the
+    evidence, stops, and repeats the sentence: disable exits 1 with php-fpm not started and
+    the flag up (THE ONE EXCEPTION, above). The cure is the remedy the line names.
+
+    The checkout's requirement is system/app/RSpade/resource/docker/image_contract.conf; the
+    image's record is /opt/rspade/image.conf. An image with no record counts as contract 1
+    when it carries /opt/rspade/rsx-lockd/lockd-run.sh and contract 0 otherwise. A record or
+    requirement whose contract= is not a whole number prints "[ERROR] <file> is unreadable:
+    contract=<value>" in place of the warning, and the transition still proceeds. The check
+    reads only files from the checkout and the image record, so it works under any image.
+    rsx:health reports the same comparison as its "Container Image" row.
 
 THE CLI GATE (allow-most-deny-some)
     The gate exists to stop AUTOMATED processes - the cron tick, task workers, web traffic -
@@ -348,6 +408,16 @@ TROUBLESHOOTING
         Working as intended: php-fpm is being held back until the lock daemon serves. If it
         never does, the daemon is the fault to fix - `/var/log/supervisor/rsx-lockd-error.log`
         first. Ctrl-C is safe; the maintenance flag stays raised, so nothing is half-open.
+        A daemon that cannot start at all ends the wait by itself (next entry).
+
+    "[ERROR] rsx-lockd cannot start: ..." and disable exits 1
+        The wait found evidence the daemon cannot start (WHAT DISABLE DOES, step 1a). redis
+        and rsx-lockd are started, php-fpm is not, the flag is up. When the next line is the
+        image sentence, rebuild the image and recreate the container as it says (AN IMAGE
+        OLDER THAN THE CHECKOUT). Otherwise read the daemon's own error
+        (supervisorctl tail rsx-lockd stderr); a box with its own supervisor configuration
+        points the program at the path the checkout ships (php artisan
+        rsx:framework:breaking_changes). Then: php artisan rsx:maintenance:disable
 
 SEE ALSO
     rsx:man rsx_git

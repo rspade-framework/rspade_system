@@ -304,6 +304,11 @@ COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
 COPY healthcheck.sh    /usr/local/bin/rspade-healthcheck
+# The startup record the entrypoint writes, and the command that waits on it:
+# `docker compose exec <service> rspade-wait-started` returns once the start has finished
+# (startup-state.sh's header has the contract).
+COPY startup-state.sh  /usr/local/bin/rspade-startup
+COPY wait-started.sh   /usr/local/bin/rspade-wait-started
 COPY sizing.sh         /usr/local/bin/rspade-sizing
 COPY trusted-proxies.sh /usr/local/bin/rspade-trusted-proxies
 COPY security-update.sh /usr/local/bin/rspade-security-update
@@ -336,6 +341,8 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-realtime-run \
               /usr/local/bin/rspade-retry-run \
               /usr/local/bin/rspade-healthcheck \
+              /usr/local/bin/rspade-startup \
+              /usr/local/bin/rspade-wait-started \
               /usr/local/bin/rspade-sizing \
               /usr/local/bin/rspade-trusted-proxies \
               /usr/local/bin/rspade-security-update \
@@ -595,6 +602,19 @@ RUN chown -R root:root /opt/rspade/mail-catcher \
     && find /opt/rspade/mail-catcher -type d -exec chmod 755 {} + \
     && find /opt/rspade/mail-catcher -type f -exec chmod 644 {} +
 
+# THE IMAGE RECORD - the LAST layer of this stage, so a new revision rebuilds this layer
+# and nothing else (an ARG in base would invalidate every layer after it on every build).
+# image_contract.conf is the contract this image provides, copied verbatim; build.sh passes
+# the framework revision it was built from (a plain `docker build` records "unknown").
+# Read by system/bin/lib/rsx_image_contract.sh and Rsx_Image_Contract against the
+# checkout's own copy: an image older than its checkout is named with the remedy.
+ARG RSPADE_BUILT_FROM=unknown
+COPY image_contract.conf /opt/rspade/image.conf
+RUN sed -i -e '$a\' /opt/rspade/image.conf \
+    && printf 'built_from=%s\n' "$RSPADE_BUILT_FROM" >> /opt/rspade/image.conf \
+    && chown root:root /opt/rspade/image.conf \
+    && chmod 644 /opt/rspade/image.conf
+
 # -----------------------------------------------------------------------------
 # prod - application runtime only; the database lives elsewhere
 # -----------------------------------------------------------------------------
@@ -626,6 +646,19 @@ RUN for sapi in fpm cli; do \
 
 # mysql-client is present (from base) on purpose: migrations, db:query and
 # operational access all need to reach the database server you provide.
+
+# THE IMAGE RECORD - the LAST layer of this stage, so a new revision rebuilds this layer
+# and nothing else (an ARG in base would invalidate every layer after it on every build).
+# image_contract.conf is the contract this image provides, copied verbatim; build.sh passes
+# the framework revision it was built from (a plain `docker build` records "unknown").
+# Read by system/bin/lib/rsx_image_contract.sh and Rsx_Image_Contract against the
+# checkout's own copy: an image older than its checkout is named with the remedy.
+ARG RSPADE_BUILT_FROM=unknown
+COPY image_contract.conf /opt/rspade/image.conf
+RUN sed -i -e '$a\' /opt/rspade/image.conf \
+    && printf 'built_from=%s\n' "$RSPADE_BUILT_FROM" >> /opt/rspade/image.conf \
+    && chown root:root /opt/rspade/image.conf \
+    && chmod 644 /opt/rspade/image.conf
 
 # -----------------------------------------------------------------------------
 # docconvert - the document sandbox image: soffice, pdftotext, fonts, nothing else

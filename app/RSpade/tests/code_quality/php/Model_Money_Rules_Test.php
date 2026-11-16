@@ -20,9 +20,10 @@ use App\RSpade\Tests\Money\Php\Money_Wide_Fixture_Model;
 /**
  * The money column kind's declaration rules.
  *
- * MODEL-COLUMNS-01 (manifest-time, fatal) knows the `money` key: a literal-true flag, one kind
- * per column (never beside enum, text_type or type_ref), legal beside derived, never_export and
- * revision_exclude; and no explicit cast - the $casts default or a casts() answer - may name a
+ * MODEL-COLUMNS-01 (manifest-time, fatal) knows the `money` key: an answer, the literal true or
+ * the literal false; true is one kind per column (never beside enum, text_type or type_ref) and
+ * legal beside derived, never_export and revision_exclude, false declares no kind and sits
+ * beside anything, and every money view reads it as not money; and no explicit cast - the $casts default or a casts() answer - may name a
  * money column of a concrete model, inherited or declared. Each fixture model is written to a
  * temporary file and loaded outside the manifest, then handed to the rule's evaluate_class()
  * seam (the Model_Columns_Rule_Test shape).
@@ -90,11 +91,29 @@ class Model_Money_Rules_Test extends Rsx_Test_Abstract
     // MODEL-COLUMNS-01
     // =====================================================================
 
-    public static function test_money_is_a_known_flag_and_an_exclusive_kind()
+    public static function test_money_is_a_known_answer_and_an_exclusive_kind()
     {
         static::__assert_true(in_array('money', ModelColumns_CodeQualityRule::ALLOWED_KEYS, true));
-        static::__assert_true(in_array('money', ModelColumns_CodeQualityRule::FLAG_KEYS, true));
+        static::__assert_true(in_array('money', ModelColumns_CodeQualityRule::ANSWER_KEYS, true));
+        static::__assert_false(in_array('money', ModelColumns_CodeQualityRule::FLAG_KEYS, true), 'money takes false too');
         static::__assert_true(in_array('money', ModelColumns_CodeQualityRule::EXCLUSIVE_KEYS, true));
+    }
+
+    public static function test_money_false_is_legal_beside_anything_and_is_not_money()
+    {
+        $violations = static::__columns_violations('Money_Rule_Fixture_False_Model', static::__model('Money_Rule_Fixture_False_Model',
+            "    public static \$columns = [\n"
+            . "        'budget' => ['money' => true],\n"
+            . "        'rate' => ['money' => false],\n"
+            . "        'hours' => ['money' => false, 'revision_exclude' => true, 'never_export' => true],\n"
+            . "        'status_id' => ['money' => false, 'enum' => [1 => ['label' => 'A']]],\n"
+            . "    ];"));
+
+        static::__assert_count(0, $violations, 'money false alone, with flags and beside a kind: ' . static::__messages($violations));
+        static::__assert_equals(['budget'], \Money_Rule_Fixture_False_Model::money_columns());
+        static::__assert_false(\Money_Rule_Fixture_False_Model::is_money_column('rate'));
+        static::__assert_false(\Money_Rule_Fixture_False_Model::is_money_column('hours'));
+        static::__assert_equals(['hours'], \Money_Rule_Fixture_False_Model::never_exported_columns());
     }
 
     public static function test_a_money_declaration_and_its_legal_combinations_pass()
@@ -111,13 +130,13 @@ class Model_Money_Rules_Test extends Rsx_Test_Abstract
         static::__assert_count(0, $violations, 'money alone, with never_export, revision_exclude and derived: ' . static::__messages($violations));
     }
 
-    public static function test_a_money_flag_that_is_not_true_is_fatal()
+    public static function test_a_money_answer_that_is_not_a_boolean_is_fatal()
     {
         $violations = static::__columns_violations('Money_Rule_Fixture_One_Model', static::__model('Money_Rule_Fixture_One_Model',
             "    public static \$columns = ['budget' => ['money' => 1]];"));
 
         static::__assert_count(1, $violations, 'one finding: ' . static::__messages($violations));
-        static::__assert_contains("['money'] is 1: a flag is the literal true", $violations[0]->message);
+        static::__assert_contains("['money'] is 1: it is the literal true or the literal false", $violations[0]->message);
     }
 
     public static function test_money_beside_another_kind_is_fatal()

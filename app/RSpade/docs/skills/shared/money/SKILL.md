@@ -33,16 +33,21 @@ DB::statement("ALTER TABLE projects ADD COLUMN budget DECIMAL(15,2) NULL");
 public static $columns = [
     'budget'        => ['money' => true],
     'hour_estimate' => [],              // a DECIMAL that is NOT money: say so
+    'mileage_rate'  => ['money' => false, 'revision_exclude' => true],   // other keys: answer with 'money'
 ];
 ```
 
-- `money` is a flag (literal `true`), exclusive with `enum` / `text_type` / `type_ref`; it
-  combines with `derived`, `never_export` and `revision_exclude` (`MODEL-COLUMNS-01`, build FATAL).
+- `money` is an answer: literal `true` or literal `false`. `true` is exclusive with `enum` /
+  `text_type` / `type_ref` and combines with `derived`, `never_export` and `revision_exclude`;
+  `false` declares no kind and sits beside anything (`MODEL-COLUMNS-01`, build FATAL).
 - **No `$casts` entry** for a money column - the declaration IS its cast; a cast beside it is
   `MODEL-COLUMNS-01`.
-- **Every DECIMAL, FLOAT and DOUBLE column of a model's table is declared** money or not money
-  (`[]`) - `MODEL-DECIMAL-01` (`rsx:check`). A FLOAT/DOUBLE holding money is converted to
-  `DECIMAL(p,2)` by a migration first.
+- **Every DECIMAL, FLOAT and DOUBLE column of a model's table says whether it is money** -
+  `MODEL-DECIMAL-01` (`rsx:check`): its entry carries `'money' => true` / `'money' => false`, or
+  is exactly `[]`. **An entry with other keys and no `money` key is a finding** -
+  `['revision_exclude' => true]` on a DECIMAL says nothing about money; write
+  `['money' => false, 'revision_exclude' => true]` (or `true`). A FLOAT/DOUBLE holding money is
+  converted to `DECIMAL(p,2)` by a migration first.
 - Why precision 18: `DECIMAL(18,2)`'s largest value fits the range; a wider column could store
   an amount no `Rsx_Money` can hold, and reading it would throw.
 - Accessors: `Model::money_columns()`, `Model::is_money_column('col')` (JS:
@@ -88,7 +93,7 @@ reports the PHP shapes where it can prove the operand is money; nothing lints Ja
 | `from_text($s)` | what a person typed, read through the display config: `"$1,234.56"`, `"(500.00)"`, `"-$99.99"` | REFUSED |
 | `from_submitted($x)` | a form/API field: blank or null is **null** (never zero), a string is typed text, an int whole units, a float the float door, an envelope decoded | REFUSED |
 | `Model::money_from_submitted('col', $x)` | `from_submitted()`, then refused beyond the column's own limit | REFUSED |
-| `from_aggregate($x)` | an SQL total: null (no rows) is 0.00, a decimal string or float **rounded half-up** | ROUNDED - the one door that rounds |
+| `from_aggregate($x)` | an SQL total: null (no rows) is 0.00, a decimal string or float **rounded half-up**; an `Rsx_Money` returned unchanged | ROUNDED - the one door that rounds |
 | `zero()` | - | - |
 
 - **Floats**: a float is accepted only when it is exactly what was written. A whole-valued float
@@ -185,6 +190,28 @@ $interest = $balance->multiply_fraction(5, 36500, Rsx_Money::ROUND_HALF_EVEN);  
 
 `multiply_fraction()` takes integers and rounds once. Computing `5 / 365` first, as a decimal,
 rounds twice and drifts.
+
+### Pricing with a rate: quantity x the exact rate, rounded once
+
+A per-unit rate with more than two places (`0.725` a mile) is not money - its column is
+`['money' => false]`, read as a decimal string - and it is only ever a FACTOR:
+
+```php
+$line = Rsx_Money::from_decimal($quantity)->multiply($rate, Rsx_Money::ROUND_HALF_UP);
+// 100 x '0.725' = 72.50;  3 x '0.725' = 2.175 -> 2.18
+$line = $unit_price->multiply($quantity, Rsx_Money::ROUND_HALF_UP);   // the per-unit price is money
+// 42.50 x '2.125' hours = 90.3125 -> 90.31 (a factor may have any number of places)
+```
+
+**Never turn the rate into money first**: `Rsx_Money::from_decimal('1.00')->multiply('0.725', ...)`
+rounds the rate to 0.73 before it is used, so 100 units price at 73.00 instead of 72.50.
+
+`from_decimal($quantity)` refuses a quantity with more than two places. A quantity like `2.125`
+times a rate that is not money has no one-call form (no method takes two decimal factors, and a
+second `multiply()` rounds twice); the exact one-rounding form is integer units -
+`Rsx_Money::from_cents(Q)->multiply_fraction(R, 10^(q + r - 2), $mode)` for Q units of 10^-q
+and R units of 10^-r: 2.125 x 0.7250 is `from_cents(2125)->multiply_fraction(7250, 100000, ...)`,
+1.540625 -> 1.54. `rsx:man money`, PRICING WITH A RATE.
 
 ## In an endpoint
 
@@ -340,9 +367,9 @@ key (`rsx.money.display.<key> must be ...`).
 | Rule | When | Finds |
 |---|---|---|
 | `MODEL-MONEY-01` | `rsx:check`, high | a column declared money that is not `DECIMAL(p,2)` with p <= 18 |
-| `MODEL-DECIMAL-01` | `rsx:check`, high | a DECIMAL / FLOAT / DOUBLE column the model has not declared money or not money |
+| `MODEL-DECIMAL-01` | `rsx:check`, high | a DECIMAL / FLOAT / DOUBLE column with no entry, or an entry with other keys and no `money` answer |
 | `MODEL-MONEY-02` | `rsx:check`, high | a money value compared, tested for truth, cast, in arithmetic or interpolated (PHP) |
-| `MODEL-COLUMNS-01` | manifest build, FATAL | a malformed `money` entry, `money` beside another kind, a `$casts` entry on a money column |
+| `MODEL-COLUMNS-01` | manifest build, FATAL | a `money` value that is not `true` or `false`, `money => true` beside another kind, a `$casts` entry on a money column |
 
 `MODEL-MONEY-02` reports only what it can prove is money (a declared column through an evident
 model, a typed variable, a value from an `Rsx_Money` method) and leaves `=== null`, `isset()`,

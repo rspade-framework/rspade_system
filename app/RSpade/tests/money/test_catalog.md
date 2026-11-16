@@ -6,8 +6,8 @@ Last updated: 2026-11-14.
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | money-vec-01 | The vector file is schema 1, ids unique, its default display is the framework's, every group has a runner method | php | `resource/money_vectors.json` | all hold | implemented | 2026-11-13 |
-| money-vec-02 | Every PHP-applicable vector, one method per group (25 groups), each failing id listed with expected vs actual | php | 2172 cases | all pass | implemented | 2026-11-14 |
-| money-vec-03 | Every vector in the browser, `only: js` included, decoded and encoded in one page.evaluate() | playwright | 2175 cases | all pass, no page errors | implemented | 2026-11-14 |
+| money-vec-02 | Every PHP-applicable vector, one method per group (25 groups), each failing id listed with expected vs actual | php | 2173 cases | all pass | implemented | 2026-11-14 |
+| money-vec-03 | Every vector in the browser, `only: js` included, decoded and encoded in one page.evaluate() | playwright | 2176 cases | all pass, no page errors | implemented | 2026-11-14 |
 | money-php-01 | `(string) $m`, `'x' . $m`, `"{$m}"`, `strlen($m)` throw `\LogicException` | php | a value | the to_decimal()/format() message | implemented | 2026-11-13 |
 | money-php-02 | Arithmetic operators on the object throw `TypeError` | php | `$a + $b`, `$a * 2` | Unsupported operand types | implemented | 2026-11-13 |
 | money-php-03 | A missing mode is PHP's `ArgumentCountError` (PHP side of `multiply_272`) | php | `multiply('2')` | ArgumentCountError | implemented | 2026-11-13 |

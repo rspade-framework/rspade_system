@@ -28,6 +28,11 @@ logic the entrypoint delegates to standalone scripts, driven directly:
   own copy of Proxority (`proxority/`, installed at `/opt/rspade/proxority`): every `.php`
   location includes the policy, both variants pass `nginx -t` on a scratch tree, and the
   Dockerfile, supervisor program and entrypoint wire them (`Nginx_Php_Url_Policy_Test`).
+- `startup-state.sh` / `wait-started.sh` (`rspade-startup`, `rspade-wait-started`) - the
+  record the entrypoint keeps of its start and the waiter on it, driven with `--state-file`
+  and a scratch `--proc-root` standing in for PID 1; plus the pre-boot refusal of `rsx:build`
+  and `rsx:clean` while the start runs (`bootstrap/rsx_container_starting.php`), as a pure
+  function over a scratch /proc tree (`Startup_State_Test`).
 
 ## Not covered
 

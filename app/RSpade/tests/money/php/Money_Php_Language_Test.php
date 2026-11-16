@@ -37,6 +37,13 @@ class Money_Php_Language_Test extends Rsx_Test_Abstract
         static::__assert_throws(\LogicException::class, fn () => strlen($m), self::PRIMITIVE_MESSAGE);
     }
 
+    public static function test_from_aggregate_returns_an_rsx_money_as_the_same_instance()
+    {
+        $m = Rsx_Money::from_decimal('12.34');
+
+        static::__assert_true(Rsx_Money::from_aggregate($m) === $m, 'from_aggregate() returns the Rsx_Money it was given');
+    }
+
     public static function test_arithmetic_operators_throw_type_error()
     {
         $a = Rsx_Money::from_decimal('1.00');

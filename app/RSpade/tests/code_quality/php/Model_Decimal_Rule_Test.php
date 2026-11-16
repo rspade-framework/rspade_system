@@ -18,9 +18,9 @@ use App\RSpade\Tests\Money\Php\Money_Fixture_Tables;
 use App\RSpade\Tests\Money\Php\Money_Wide_Fixture_Model;
 
 /**
- * MODEL-DECIMAL-01 (rsx:check): every DECIMAL, FLOAT and DOUBLE column of a model's table has
- * an entry in the model's $columns - ['money' => true], or any other entry for a column that
- * is not money.
+ * MODEL-DECIMAL-01 (rsx:check): every DECIMAL, FLOAT and DOUBLE column of a model's table says
+ * in the model's $columns whether it is money - an entry carrying 'money' (true or false), or
+ * an entry that is exactly []. An entry with other keys and no 'money' key is a finding.
  *
  * Driven over the money_fixtures table (DECIMAL columns of several shapes, score FLOAT, ratio
  * DOUBLE) through the rule's evaluate_class() seam. Each fixture model declaring a different
@@ -100,22 +100,80 @@ class Model_Decimal_Rule_Test extends Rsx_Test_Abstract
         return implode("\n", array_map(fn ($v) => $v->message, $violations));
     }
 
-    // MODEL-DECIMAL-DECLARED: every kind of entry counts as a declaration.
-    public static function test_money_plain_and_flagged_entries_all_count_as_declared()
+    /** @return array<string, string> column => message, for the entries that leave the money question unanswered */
+    private static function __unanswered_by_column(array $violations): array
+    {
+        $out = [];
+        foreach ($violations as $violation) {
+            static::__assert_true((bool) preg_match("/columns\\['([a-z_]+)'\\] declares /", $violation->message, $m), $violation->message);
+            $out[$m[1]] = $violation->message;
+        }
+        ksort($out);
+
+        return $out;
+    }
+
+    // MODEL-DECIMAL-DECLARED: 'money' => true, 'money' => false (alone or beside other keys)
+    // and an entry that is exactly [] each answer the question.
+    public static function test_a_money_answer_or_an_empty_entry_counts_as_declared()
     {
         $violations = static::__fixture_violations('Decimal_Rule_Fixture_Declared_Model', "[\n"
             . "        'amount' => ['money' => true],\n"
             . "        'price' => ['money' => true],\n"
             . "        'hidden' => ['money' => true, 'never_export' => true],\n"
             . "        'doubled' => [],\n"
-            . "        'wide' => ['revision_exclude' => true],\n"
-            . "        'rate' => [],\n"
+            . "        'wide' => ['money' => false, 'revision_exclude' => true],\n"
+            . "        'rate' => ['money' => false],\n"
             . "        'score' => [],\n"
-            . "        'ratio' => ['revision_exclude' => true],\n"
+            . "        'ratio' => ['money' => false, 'never_export' => true],\n"
             . "        'hours' => [],\n"
             . "    ]");
 
         static::__assert_count(0, $violations, 'every DECIMAL, FLOAT and DOUBLE column declared: ' . static::__messages($violations));
+    }
+
+    // MODEL-DECIMAL-UNANSWERED: an entry with other keys and no 'money' key is a finding naming
+    // the missing answer, with both spellings; columns of other types are never judged.
+    public static function test_an_entry_without_a_money_answer_is_reported()
+    {
+        $violations = static::__fixture_violations('Decimal_Rule_Fixture_Unanswered_Model', "[\n"
+            . "        'amount' => ['money' => true],\n"
+            . "        'price' => ['money' => false],\n"
+            . "        'hidden' => ['never_export' => true],\n"
+            . "        'doubled' => [],\n"
+            . "        'wide' => ['revision_exclude' => true],\n"
+            . "        'rate' => [],\n"
+            . "        'score' => [],\n"
+            . "        'ratio' => ['revision_exclude' => true, 'never_export' => true],\n"
+            . "        'hours' => [],\n"
+            . "        'name' => ['revision_exclude' => true],\n"
+            . "    ]");
+        $messages = static::__unanswered_by_column($violations);
+
+        static::__assert_equals(['hidden', 'ratio', 'wide'], array_keys($messages));
+        static::__assert_equals(
+            "Decimal_Rule_Fixture_Unanswered_Model::\$columns['wide'] declares 'revision_exclude' but not whether 'wide', a DECIMAL(19,2) column of table 'money_fixtures', is money.\n"
+            . "A DECIMAL, FLOAT or DOUBLE column whose entry carries other keys says which it is with a 'money' key:\n"
+            . "\n"
+            . "    'wide' => ['money' => true, ...],    // an amount of money: reads as Rsx_Money, never a float\n"
+            . "    'wide' => ['money' => false, ...],   // not money (a rate, hours, a quantity, a percentage)\n"
+            . "\n"
+            . "where ... is the keys the entry carries now.\n"
+            . 'See: php artisan rsx:man money',
+            $messages['wide']
+        );
+        static::__assert_equals(
+            "Decimal_Rule_Fixture_Unanswered_Model::\$columns['ratio'] declares 'revision_exclude', 'never_export' but not whether 'ratio', a DOUBLE column of table 'money_fixtures', is money.\n"
+            . "A DECIMAL, FLOAT or DOUBLE column whose entry carries other keys says which it is with a 'money' key:\n"
+            . "\n"
+            . "    'ratio' => ['money' => true, ...],    // an amount of money - after a migration converts it to DECIMAL(p,2)\n"
+            . "    'ratio' => ['money' => false, ...],   // not money (a rate, hours, a quantity, a percentage)\n"
+            . "\n"
+            . "where ... is the keys the entry carries now.\n"
+            . 'See: php artisan rsx:man money',
+            $messages['ratio']
+        );
+        static::__assert_contains("'money' => false", $violations[0]->suggestion);
     }
 
     // MODEL-DECIMAL-UNDECLARED: exactly the undeclared DECIMAL / FLOAT / DOUBLE columns, and no

@@ -206,6 +206,9 @@ FRAMEWORK INVENTORY
         Companion                   all           one row per declared
                                                   companion application
         Companion Daemon            all
+        Container Image             all           INFO outside the RSpade
+                                                  container; FAIL in every mode
+                                                  when the image is older
         Console Debug               debug, prod   names which sealed variant
                                                   this is
         Document Render Backlog     all
@@ -435,6 +438,23 @@ FRAMEWORK INVENTORY
                                  controller refuses --memory, the seam drops the cap
                                  (once per process) and converts without it, and the
                                  row repeats the daemon's refusal.
+        Container Image          whether the RSpade container's image provides the
+                                 image contract this checkout needs: the image's
+                                 record (/opt/rspade/image.conf) against the
+                                 checkout's system/app/RSpade/resource/docker/
+                                 image_contract.conf. OK naming the image's
+                                 contract, the revision it was built from and what
+                                 the checkout needs. FAIL in every mode when the
+                                 image is older - a service the checkout expects the
+                                 image to provide cannot start - with the sentence
+                                 naming the rebuild, the recreate and the breaking
+                                 change, and the build.sh command as remediation.
+                                 FAIL naming the file when a record or requirement
+                                 is malformed. An image with no record counts as
+                                 contract 1 when it carries /opt/rspade/rsx-lockd/
+                                 lockd-run.sh, 0 otherwise. A newer image is OK.
+                                 INFO outside the container. rsx:man prod, IN THE
+                                 RSPADE CONTAINER.
         Lock Server              rsx-lockd listening (INFO under maintenance)
         Mail delivery            which of the four modes rsx.mail.delivery is
                                  CONFIGURED to (aiosmtpd | live | suppressed |

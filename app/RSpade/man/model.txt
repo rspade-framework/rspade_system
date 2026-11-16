@@ -36,14 +36,17 @@ Keys of an entry (anything else is an error):
     enum              integer-keyed map of value => properties (ENUM COLUMNS)
     text_type         class name of an Rsx_Text_Abstract subclass (TEXT TYPE COLUMNS)
     type_ref          true - the _type column of a polymorphic pair (TYPE REF COLUMNS)
-    money             true - a DECIMAL(p,2) amount read as Rsx_Money (MONEY COLUMNS)
+    money             true - a DECIMAL(p,2) amount read as Rsx_Money; false - not
+                      money, said explicitly (MONEY COLUMNS)
     never_export      true - never sent in any payload (NEVER EXPORT COLUMNS)
     revision_exclude  true - not recorded in revision history (REVISION EXCLUDED COLUMNS)
     derived, from     derive method + this record's source columns (DERIVED COLUMNS)
 
 Rules of the grammar:
-- A flag is the literal true or absent; false is an error.
-- At most one of enum, text_type, type_ref, money per column. never_export
+- A flag (type_ref, never_export, revision_exclude) is the literal true or
+  absent; false is an error. money is an answer: the literal true or the
+  literal false, and false declares no kind.
+- At most one of enum, text_type, type_ref, money => true per column. never_export
   combines with anything; revision_exclude with anything except derived (a
   derived column is never recorded already). A derived column may also be an
   enum, text type, type ref or money: its computed value is assigned through
@@ -96,7 +99,9 @@ declare nothing, and a secret listed there would be sent to every browser.
        MODEL-MONEY-01 (rsx:check): a money column that is not DECIMAL(p,2)
        with p at most 18.
        MODEL-DECIMAL-01 (rsx:check): a DECIMAL, FLOAT or DOUBLE column of the
-       model's table with no $columns entry (money, or [] for not money).
+       model's table whose $columns entry does not say whether it is money -
+       none, or one with other keys and no 'money' key. The answer is
+       'money' => true or 'money' => false, or an entry that is exactly [].
 
    Reading the declaration
        Model::$columns answers ONE class's declaration and misses everything
@@ -235,6 +240,7 @@ money:
     public static $columns = [
         'budget'        => ['money' => true],
         'hour_estimate' => [],                  // a DECIMAL that is not money
+        'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
     ];
 
 It reads as an Rsx_Money (or null): an exact, immutable amount that is never a
@@ -247,8 +253,10 @@ JavaScript as {"__MONEY": "1234.56"} and to the external API as the plain
 string "1234.56" (rsx:man external_api, PLAIN VALUES), is edited by
 <Money_Input>, totalled by sum_money('col') and read from a submission by
 Model::money_from_submitted('col', $value). No $casts entry may name it. Every
-DECIMAL, FLOAT and DOUBLE column is declared money or not money
-(MODEL-DECIMAL-01). The contract is rsx:man money; the how-to is skill
+DECIMAL, FLOAT and DOUBLE column says whether it is money: 'money' => true or
+'money' => false in its entry, or an entry that is exactly []
+(MODEL-DECIMAL-01). 'money' => false declares no kind and sits beside any
+other key. The contract is rsx:man money; the how-to is skill
 rspade:money.
 
 TYPE REF COLUMNS

@@ -14,16 +14,26 @@
 #
 set -u
 
+# THE STARTUP RECORD (startup-state.sh, /usr/local/bin/rspade-startup): what this start is
+# doing, and whether it finished or failed, for `rspade-wait-started`. Begun before anything
+# else; a record that cannot be written is reported and never stops the start.
+startup_record() {
+    [ -f /usr/local/bin/rspade-startup ] || return 0
+    bash /usr/local/bin/rspade-startup "$@" || true
+}
+startup_record begin
+
 APP_DIR=/var/www/html
 TARGET="${RSPADE_CONTAINER_TARGET:-dev}"
 
 say()  { echo "[rspade] $*"; }
 warn() { echo "[rspade] WARNING: $*" >&2; }
-die()  { echo "[rspade] ERROR: $*" >&2; exit 1; }
+die()  { echo "[rspade] ERROR: $*" >&2; startup_record failed "$*"; exit 1; }
 
 # -----------------------------------------------------------------------------
 # 0. Is a framework checkout present?
 # -----------------------------------------------------------------------------
+startup_record step "checking for a framework checkout"
 # THIS IS A QUESTION, NOT A GATE. The container is a working stack in its own
 # right - nginx, php-fpm, MySQL, Redis, supervisor - and it must come up and serve
 # whatever is in the docroot even when there is no RSpade checkout at all. An
@@ -93,11 +103,29 @@ if [ -f /etc/nginx/rspade/php-urls-checkout.conf ] && [ -f /etc/nginx/rspade/php
     fi
 fi
 
+# -----------------------------------------------------------------------------
+# 0b. Is this image older than the checkout it runs?
+# -----------------------------------------------------------------------------
+# The checkout states the image contract it needs (resource/docker/image_contract.conf)
+# and this image carries the one it provides (/opt/rspade/image.conf). When the image is
+# older, a service the checkout expects the image to provide cannot start, so say so here,
+# loudly and with the remedy, and carry on: the container starts and serves what it can.
+# The library comes from the CHECKOUT; a checkout that predates it has nothing to compare.
+if [ "$HAS_FRAMEWORK" = "1" ] && [ -f "$APP_DIR/system/bin/lib/rsx_image_contract.sh" ]; then
+    . "$APP_DIR/system/bin/lib/rsx_image_contract.sh"
+    if IMAGE_CONTRACT_SENTENCE="$(rsx_image_contract_problem "$APP_DIR/system/app/RSpade/resource/docker/image_contract.conf")"; then
+        warn "${IMAGE_CONTRACT_SENTENCE}
+  Services this image cannot run will not start."
+        startup_record warning "${IMAGE_CONTRACT_SENTENCE}"
+    fi
+fi
+
 cd "$APP_DIR" || die "Cannot enter $APP_DIR"
 
 # -----------------------------------------------------------------------------
 # 1. .env - prepared by the framework's own env heal
 # -----------------------------------------------------------------------------
+startup_record step "preparing .env"
 # Creating .env from .env.dist, adding keys that appeared in .env.dist since the
 # last boot, checking the credentials nothing can connect without, and minting an
 # APP_KEY when there is none are ONE operation with ONE implementation, and this
@@ -188,6 +216,7 @@ env_set() {
 # -----------------------------------------------------------------------------
 # 3. APP_URL - the container cannot discover its own published port
 # -----------------------------------------------------------------------------
+startup_record step "setting APP_URL"
 # Docker does not tell a container which host port maps to it, so APP_URL cannot be
 # inferred here. THE BROWSER KNOWS, and the first-run welcome screen asks it: whatever
 # host and port you actually browse is the one recorded. That is why a blank APP_URL on
@@ -219,6 +248,7 @@ esac
 # -----------------------------------------------------------------------------
 # 4. First-user credentials (PRODUCTION ONLY)
 # -----------------------------------------------------------------------------
+startup_record step "checking the first-user credentials"
 # DEVELOPMENT CREATES NO USER HERE, and that is the whole point: the first-run
 # setup screen asks for the account in the browser, on first visit. Leaving
 # RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD blank is what lets it - the
@@ -251,6 +281,7 @@ fi
 # -----------------------------------------------------------------------------
 # 4b. Environment updates
 # -----------------------------------------------------------------------------
+startup_record step "applying environment updates"
 # system/bin/environment_updates/*.sh make the surrounding environment correct:
 # they move the volatile trees into their current layout, wire the Claude Code
 # status line and skills, repair tracked symlinks, and so on.
@@ -281,6 +312,7 @@ fi
 # -----------------------------------------------------------------------------
 # 5. Writable storage
 # -----------------------------------------------------------------------------
+startup_record step "preparing writable storage"
 # storage/ holds user data and process state; tmp/ holds derived caches. build/ is
 # NOT created here: it holds build outputs, and a missing one must fail loud naming
 # the build command rather than quietly appearing empty.
@@ -405,6 +437,7 @@ fi
 # -----------------------------------------------------------------------------
 # 6. MySQL data directory (development target only)
 # -----------------------------------------------------------------------------
+startup_record step "preparing the MySQL data directory"
 # The identity mysqld runs as (see the PUID step above: it is YOUR uid when PUID
 # is set, so the database files in your project belong to you). Everything mysqld
 # opens outside the data directory has to follow it - the runtime socket dir, the
@@ -503,6 +536,7 @@ fi
 # -----------------------------------------------------------------------------
 # 6b. Size PHP, Redis and MySQL to this machine
 # -----------------------------------------------------------------------------
+startup_record step "sizing PHP, Redis and MySQL"
 # BEFORE supervisor, because every service it starts reads its configuration once: the
 # php-fpm pool size (production; the development target keeps its small on-demand pool,
 # a developer's box is not sized for traffic), the memory_limit php-fpm and the CLI share,
@@ -520,6 +554,7 @@ rspade-sizing apply "$TARGET" || die "could not size the container (see the line
 # -----------------------------------------------------------------------------
 # 6b2. The proxies in front of the container
 # -----------------------------------------------------------------------------
+startup_record step "checking the trusted proxies"
 # AFTER sizing, which rewrites the production pool files, and BEFORE supervisor starts
 # nginx and php-fpm, which read their configuration once. .env TRUSTED_PROXIES, else the
 # container's RSPADE_TRUSTED_PROXIES (set in the compose file), becomes nginx's realip
@@ -540,6 +575,7 @@ fi
 # -----------------------------------------------------------------------------
 # 6c. Security updates, BEFORE anything serves
 # -----------------------------------------------------------------------------
+startup_record step "installing security updates"
 # A PHP security release can grant a remote shell on any unpatched PHP, and an image is
 # rebuilt far less often than one is published. So the container installs the security
 # updates it may take - the Ubuntu security pocket and PHP patch releases - here, before
@@ -558,6 +594,7 @@ fi
 # -----------------------------------------------------------------------------
 # 7. Start supervisor in the background
 # -----------------------------------------------------------------------------
+startup_record step "starting supervisor"
 say "Starting services..."
 supervisord -c /etc/supervisor/supervisord.conf &
 SUPERVISOR_PID=$!
@@ -568,6 +605,7 @@ trap 'kill -TERM "$SUPERVISOR_PID" 2>/dev/null; wait "$SUPERVISOR_PID"' TERM INT
 # -----------------------------------------------------------------------------
 # 8. Wait for Redis
 # -----------------------------------------------------------------------------
+startup_record step "waiting for Redis"
 # Every artisan command boots the framework, and the framework reaches for its
 # cache while booting - so nothing that runs artisan may happen before this.
 say "Waiting for Redis..."
@@ -578,6 +616,7 @@ done
 # -----------------------------------------------------------------------------
 # 9. Wait for the database to answer
 # -----------------------------------------------------------------------------
+startup_record step "waiting for the database"
 # Deliberately unbounded. A database that is slow to come up is normal - it is
 # replaying a log or warming a large buffer pool - and a deadline here would
 # convert "wait longer" into a failed start. The container is stoppable
@@ -599,6 +638,7 @@ say "Database is accepting connections."
 # -----------------------------------------------------------------------------
 # 9b. Provision the databases (development target, first boot only)
 # -----------------------------------------------------------------------------
+startup_record step "provisioning the databases"
 if [ "$TARGET" = "dev" ]; then
     # The datadir being present says nothing about whether OUR databases exist -
     # a fresh volume carries the server's own system schema and nothing else. So
@@ -632,12 +672,14 @@ fi
 if [ "$HAS_FRAMEWORK" != "1" ]; then
     :
 elif [ "$TARGET" = "dev" ]; then
+    startup_record step "running migrations"
     say "Running migrations..."
     if ! php system/artisan migrate --force; then
         warn "Migrations did not complete. The application may not work until this is resolved."
         warn "Run them yourself to see the full error:  php system/artisan migrate"
     fi
 else
+    startup_record step "checking for pending migrations"
     if php system/artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
         say "NOTE: there are pending migrations. Production does not migrate automatically:"
         say "      php system/artisan migrate"
@@ -651,6 +693,7 @@ fi
 # container startup, before the application serves traffic. Invoked through bash
 # rather than executed directly - the exec bit does not survive every checkout.
 if [ -f "$APP_DIR/rsx/resource/docker/configure.sh" ]; then
+    startup_record step "running the application's configure.sh"
     say "Running the application's configure.sh..."
     bash "$APP_DIR/rsx/resource/docker/configure.sh" \
         || warn "configure.sh exited non-zero"
@@ -659,6 +702,9 @@ fi
 # -----------------------------------------------------------------------------
 # 12. Ready
 # -----------------------------------------------------------------------------
+# The start is over: rspade-wait-started returns from here, before a passed command runs.
+startup_record started
+
 echo ""
 if [ "$HAS_FRAMEWORK" = "1" ]; then
     say "RSpade is up. ${APP_URL_NOW:-(APP_URL unset)}"

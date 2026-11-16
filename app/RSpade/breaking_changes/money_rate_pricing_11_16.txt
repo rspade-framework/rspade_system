@@ -1,0 +1,45 @@
+A PER-UNIT RATE IS ONLY EVER A MULTIPLY FACTOR: PRICE AS QUANTITY TIMES THE EXACT RATE, ROUNDED ONCE
+Date: 2026-11-16
+
+IF YOU DO NOTHING: code that turns a rate with more than two decimal places into money before
+    using it (`Rsx_Money::from_decimal('1.00')->multiply($rate, ...)`, then times a quantity)
+    keeps pricing from the ROUNDED rate - a rate of 0.725 becomes 0.73, and 100 units are
+    charged 73.00 instead of 72.50. Nothing throws and no lint reports it.
+
+SUMMARY
+    Category 2: how application code prices with a per-unit rate.
+
+    A rate with more than two places (0.725 a mile) is not money. Its column is declared
+    `['money' => false]`, it is read as a decimal string, and it is used only as the FACTOR
+    of a multiply. A line is the QUANTITY times the exact rate, rounded once.
+
+    Contract: php artisan rsx:man money, PRICING WITH A RATE.
+
+ACTION REQUIRED
+    1. Find every place a rate becomes money:
+           grep -rn "from_decimal('1.00')->multiply\|from_decimal(\"1.00\")->multiply\|from_decimal('1')->multiply" rsx/
+       and every helper that returns a per-unit price as an `Rsx_Money` computed from a rate
+       string with more than two places.
+    2. Convert each to one of:
+
+           BEFORE   $unit = Rsx_Money::from_decimal('1.00')->multiply($rate, Rsx_Money::ROUND_HALF_UP);
+                    $line = $unit->multiply($quantity, Rsx_Money::ROUND_HALF_UP);      // 100 x 0.73 = 73.00
+
+           AFTER    $line = Rsx_Money::from_decimal($quantity)->multiply($rate, Rsx_Money::ROUND_HALF_UP);
+                    // 100 x '0.725' = 72.50;  3 x '0.725' = 2.175 -> 2.18
+
+       The quantity passed to `from_decimal()` has at most two decimal places. For a quantity
+       with more (2.125 hours) at a rate that is not money, use integer units and one
+       rounding:
+
+           Rsx_Money::from_cents($Q)->multiply_fraction($R, 10 ** ($q + $r - 2), Rsx_Money::ROUND_HALF_UP)
+           // quantity = Q units of 10^-q, rate = R units of 10^-r:
+           // 2.125 x 0.7250 = from_cents(2125)->multiply_fraction(7250, 100000, ...) = 1.54
+
+       When the per-unit price IS money (two places), `$unit_price->multiply($quantity, $mode)`
+       is exact as written and needs no change.
+    3. Amounts already stored from the old form are a business decision: recompute them from
+       quantity and rate, or leave them as issued.
+
+VERIFICATION
+    Price 100 units at a rate of 0.725: the line is 72.50.

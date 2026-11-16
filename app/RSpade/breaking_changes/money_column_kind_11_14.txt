@@ -20,7 +20,8 @@ SUMMARY
       rounding is always named (`Rsx_Money::ROUND_HALF_UP`, `ROUND_HALF_EVEN`, `ROUND_UP`,
       `ROUND_DOWN`, `ROUND_EXACT`).
     - MODEL-DECIMAL-01 (rsx:check): every DECIMAL, FLOAT and DOUBLE column of a model's table
-      has a `$columns` entry - money, or explicitly not money.
+      says in `$columns` whether it is money - `'money' => true` or `'money' => false`, or an
+      entry that is exactly `[]`.
     - MODEL-MONEY-02 (rsx:check): a money value used as a condition, compared with an
       operator, cast, or used in arithmetic or string interpolation is reported, with the
       method to call instead.
@@ -39,6 +40,10 @@ ACTION REQUIRED - DECLARE EVERY DECIMAL, FLOAT AND DOUBLE COLUMN
     2. For each, add one line to that model's `$columns`:
            'budget'        => ['money' => true],   // an amount of money
            'hour_estimate' => [],                  // not money: hours, a quantity, a percentage
+       A column that already has an entry with other keys answers beside them:
+           'total'         => ['money' => true, 'revision_exclude' => true],
+           'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
+       An entry with other keys and no `money` key is still a MODEL-DECIMAL-01 finding.
        A FLOAT or DOUBLE column cannot hold money exactly: declare it not money, or convert
        it to DECIMAL(n,2) in a migration first and then declare it money.
     3. A column declared money that is not DECIMAL with two places, or is wider than 18
@@ -92,10 +97,17 @@ ACTION REQUIRED - AN APPLICATION'S OWN MONEY TYPE
     1. Declarations: `'amount' => ['text_type' => Your_Amount_Type::class]` becomes
        `'amount' => ['money' => true]`.
     2. A type with more than two decimal places (a per-unit rate) has no money equivalent:
-       declare the column not money (`[]`), keep it a decimal string, and pass it as the
-       FACTOR of a multiply, which names its rounding:
-           $line_total = Rsx_Money::from_decimal('1.00')->multiply($rate_string, Rsx_Money::ROUND_HALF_UP);
-           $mileage    = $per_mile->multiply($miles, Rsx_Money::ROUND_HALF_UP);
+       declare the column not money (`['money' => false]`), keep it a decimal string, and
+       use it only as the FACTOR of a multiply. Price a line as the QUANTITY times the exact
+       rate, rounded once:
+           $line_total = Rsx_Money::from_decimal($quantity)->multiply($rate_string, Rsx_Money::ROUND_HALF_UP);
+           // 100 x '0.725' = 72.50;  3 x '0.725' = 2.175 -> 2.18
+       or, when the per-unit price is itself money, the unit amount times the quantity:
+           $mileage = $per_mile->multiply($miles, Rsx_Money::ROUND_HALF_UP);
+       Never turn the rate into money first (`Rsx_Money::from_decimal('1.00')->multiply($rate,
+       ...)`): that rounds the rate to 0.73 before it is used, so 100 units price at 73.00
+       instead of 72.50. The exact forms and their limits are in rsx:man money, PRICING WITH
+       A RATE.
     3. Method mapping, by what each did:
 
            the stored / canonical string           to_decimal()
@@ -104,7 +116,7 @@ ACTION REQUIRED - AN APPLICATION'S OWN MONEY TYPE
            parse what a person typed               Rsx_Money::from_text()
            a form or API field                     Model::money_from_submitted('col', $value)
            an SQL SUM or other total               Rsx_Money::from_aggregate()  /  sum_money('col')
-           quantity x rate with a rounding mode    multiply($factor, $mode)
+           quantity x rate with a rounding mode    from_decimal($quantity)->multiply($rate, $mode)
            split with no cent lost                 allocate($ratios)
            is-empty tests                          === null   (zero is a value: is_zero())
 

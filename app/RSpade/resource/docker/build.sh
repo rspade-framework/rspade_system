@@ -92,9 +92,20 @@ docker info >/dev/null 2>&1 \
 # simply gets :latest and nothing else.
 # -----------------------------------------------------------------------------
 RELEASE_TAG=""
+BUILT_FROM="unknown"
 SYSTEM_DIR="$SCRIPT_DIR/../../../.."
 if [ -e "$SYSTEM_DIR/.git" ]; then
     RELEASE_TAG="$(git -C "$SYSTEM_DIR" rev-parse HEAD 2>/dev/null | cut -c1-12)"
+
+    # The revision the application images record as built_from (/opt/rspade/image.conf,
+    # beside the image contract; image_contract.conf says who reads it). A build context
+    # with uncommitted changes is not that revision, and the record says so.
+    if [ -n "$RELEASE_TAG" ]; then
+        BUILT_FROM="$RELEASE_TAG"
+        if [ -n "$(git -C "$SYSTEM_DIR" status --porcelain -- app/RSpade/resource/docker 2>/dev/null)" ]; then
+            BUILT_FROM="${BUILT_FROM}+modified"
+        fi
+    fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -130,6 +141,11 @@ for target in $TARGETS; do
 
     if [ -n "$RELEASE_TAG" ]; then
         build_args="$build_args -t ${registry_name}:${RELEASE_TAG}"
+    fi
+
+    # The application images record what they were built from; docconvert records nothing.
+    if [ "$target" != "docconvert" ]; then
+        build_args="$build_args --build-arg RSPADE_BUILT_FROM=${BUILT_FROM}"
     fi
 
     # Unquoted on purpose - these are separate argv tokens, not one string.

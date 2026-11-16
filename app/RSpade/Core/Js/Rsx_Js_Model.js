@@ -495,7 +495,7 @@ class Rsx_Js_Model {
         const model_name = CurrentClass.getModelName();
 
         if (!CurrentClass.is_money_column(column)) {
-            throw new Error(`${model_name}.money_limit('${column}'): ${column} is not a money column: its $columns entry has no 'money'.`);
+            throw new Error(`${model_name}.money_limit('${column}'): ${column} is not a money column: its $columns entry is not ['money' => true].`);
         }
 
         const data = Rsx.__money_limit_data;

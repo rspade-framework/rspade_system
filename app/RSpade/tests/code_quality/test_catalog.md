@@ -698,9 +698,10 @@ loaded from temp files and handed to `evaluate_class()`; MODEL-MONEY-01 is drive
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| MM-01 | `money` is an allowed key, a flag and an exclusive kind | php | the rule's constants | in all three | implemented | 2026-11-13 |
+| MM-01 | `money` is an allowed key, an answer (not a flag) and an exclusive kind | php | the rule's constants | ALLOWED, ANSWER, EXCLUSIVE; not FLAG | implemented | 2026-11-16 |
+| MM-01b | `'money' => false` passes alone, beside the flags and beside enum, and every money view reads it as not money | php | fixture | 0 violations; money_columns() is only the true column | implemented | 2026-11-16 |
 | MM-02 | money alone and beside never_export, revision_exclude and derived passes | php | a fixture with all four | 0 violations | implemented | 2026-11-13 |
-| MM-03 | `'money' => 1` is fatal | php | fixture | 1 violation, "a flag is the literal true" | implemented | 2026-11-13 |
+| MM-03 | `'money' => 1` is fatal | php | fixture | 1 violation, "it is the literal true or the literal false" | implemented | 2026-11-16 |
 | MM-04 | money beside enum or text_type is fatal | php | fixtures | "declares enum and money" / "declares text_type and money" | implemented | 2026-11-13 |
 | MM-05 | a `$casts` entry shadowing a money column is fatal, with the exact message | php | `$casts = ['budget' => 'decimal:2']` | 1 violation | implemented | 2026-11-13 |
 | MM-06 | a `casts()` method shadows the same way | php | `casts()` returning `['budget' => 'float']` | the violation | implemented | 2026-11-13 |
@@ -713,15 +714,17 @@ loaded from temp files and handed to `evaluate_class()`; MODEL-MONEY-01 is drive
 
 ## Money: MODEL-DECIMAL-01 (`Model_Decimal_Rule_Test`)
 
-MODEL-DECIMAL-01 (rsx:check) requires an entry in `$columns` for every DECIMAL, FLOAT and
-DOUBLE column of a model's own table. Driven through `evaluate_class($fqcn, $file, $table,
+MODEL-DECIMAL-01 (rsx:check) requires every DECIMAL, FLOAT and DOUBLE column of a model's own
+table to say in `$columns` whether it is money: an entry carrying `money` (true or false), or
+an entry that is exactly `[]`. Driven through `evaluate_class($fqcn, $file, $table,
 $table_columns)` over the money_fixtures table (tests/money, `Money_Fixture_Tables`) with
 fixture models loaded from temp files, and through `check()` on the indexed
 `Money_Wide_Fixture_Model`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| MD-01 | `['money' => true]`, `[]`, `['revision_exclude' => true]` and `never_export` beside money all count as declared | php | every DECIMAL/FLOAT/DOUBLE column declared | 0 violations | implemented | 2026-11-13 |
+| MD-01 | `['money' => true]`, `['money' => false]`, `[]`, and either answer beside `revision_exclude` / `never_export` all count as declared | php | every DECIMAL/FLOAT/DOUBLE column declared | 0 violations | implemented | 2026-11-16 |
+| MD-01b | an entry with other keys and no `money` key is reported with the verbatim text naming the missing answer and both spellings (DECIMAL and DOUBLE wording); a VARCHAR column's entry is never judged | php | hidden never_export, wide revision_exclude, ratio two keys, name revision_exclude | hidden, ratio, wide; suggestion names `'money' => false` | implemented | 2026-11-16 |
 | MD-02 | exactly the undeclared DECIMAL, FLOAT and DOUBLE columns are reported; VARCHAR, BIGINT and TIMESTAMP never | php | amount and price declared | doubled, hidden, hours, rate, ratio, score, wide | implemented | 2026-11-13 |
 | MD-03 | the DECIMAL finding text, verbatim: both example declarations and the man-page pointer; precision and scale as the table has them | php | hours DECIMAL(8,2); wide, rate | the owner's text | implemented | 2026-11-13 |
 | MD-04 | the FLOAT and DOUBLE finding text, verbatim | php | score FLOAT, ratio DOUBLE | the floating-point text | implemented | 2026-11-13 |

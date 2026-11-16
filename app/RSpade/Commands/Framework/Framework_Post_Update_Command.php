@@ -24,6 +24,7 @@ class Framework_Post_Update_Command extends Command
         $this->call('rsx:framework:post_update_env_check');
         $this->call('rsx:framework:post_update_breaking_changes_check');
         $this->call('rsx:framework:post_update_dependency_check');
+        $this->call('rsx:framework:post_update_image_check');
 
         return 0;
     }

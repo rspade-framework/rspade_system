@@ -65,6 +65,20 @@
 # with unresolved merge conflicts is REPORTED and started anyway (see do_disable) -
 # a site with broken code boots and says so, which is strictly more useful than a dark
 # box whose only symptom is a 502 that reads as a broken application.
+#
+# THE ONE EXCEPTION IS A LOCK SERVER THAT PROVABLY CANNOT START. disable waits for
+# rsx-lockd to answer before it starts php-fpm, with no deadline. When the evidence says
+# the daemon cannot start at all (supervisor FATAL, the script it runs missing, a recorded
+# streak of exit 126/127 - bin/lib/rsx_service_wait.sh), disable stops there and exits 1:
+# redis and rsx-lockd started, php-fpm, realtime and the proxy NOT, the flag still up.
+# php-fpm without the lock server answers every request with a 500, which is a broken box
+# that hides its cause; the flag and the printed cause are the honest state. A slow lock
+# server is never this case - it is waited for however long it takes.
+#
+# AN IMAGE OLDER THAN THIS CHECKOUT IS REPORTED THE SAME WAY. Inside the RSpade
+# container, enable and disable each open with one [WARNING] naming the remedy when the
+# image provides an older image contract than this checkout needs (bin/lib/
+# rsx_image_contract.sh), then proceed exactly as they otherwise would.
 # =============================================================================
 
 set -u
@@ -90,6 +104,14 @@ PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
 # The volatile-tree roots, resolved exactly as PHP resolves them.
 RSX_PATHS_PROJECT_ROOT_DIR="$PROJECT_ROOT"
 . "$SYSTEM_DIR/bin/lib/rsx_paths.sh"
+
+# The image contract: this script runs under whatever image the container was built from,
+# which may be older than this checkout. The library needs nothing but the checkout.
+. "$SYSTEM_DIR/bin/lib/rsx_image_contract.sh"
+IMAGE_CONTRACT_CONF="$SYSTEM_DIR/app/RSpade/resource/docker/image_contract.conf"
+
+# The wait for rsx-lockd, and the evidence that it cannot start. Same constraint as above.
+. "$SYSTEM_DIR/bin/lib/rsx_service_wait.sh"
 
 # Mirrors App\RSpade\Core\Paths\Rsx_Project_Paths::maintenance_flag_file().
 FLAG="$(rsx_state_root)/.maintenance.mode.framework.update"
@@ -144,8 +166,7 @@ done
 # -----------------------------------------------------------------------------
 # unit_for <prefix-regex> : first supervisor program whose name matches, else empty
 unit_for() {
-    command -v supervisorctl >/dev/null 2>&1 || return 0
-    supervisorctl status 2>/dev/null | awk '{print $1}' | grep -E "$1" | head -n1
+    rsx_supervisor_program "$1"
 }
 
 stop_unit() {
@@ -186,56 +207,32 @@ start_unit() {
 # external party, which is a decision for the owner, not this script - and a visible
 # "still waiting for rsx-lockd" beats a silent deadline that admits traffic to a
 # daemon that never came up. Ctrl-C is always available and the flag stays raised.
+#
+# SLOW IS NOT BROKEN, BUT "CANNOT START" ENDS THE WAIT. Before the first ping and on
+# every attempt the wait asks for EVIDENCE that the daemon cannot start - supervisor
+# reports it FATAL, the script its live process runs does not exist, or its runner
+# recorded a streak of exit 126/127 - and on that evidence it stops, names the cause,
+# and returns 1: do_disable() then exits with the flag up and php-fpm not started.
+# Elapsed time is never evidence, and neither is exit 1.
+#
+# The ping, the wait and the evidence live in bin/lib/rsx_service_wait.sh
+# (lockd_answers_ping, wait_for_lockd, rsx_service_cannot_start), sourced above.
 # -----------------------------------------------------------------------------
-# One ping. 0 = the daemon answered ok.
-lockd_answers_ping() {
-    local host="$1" port="$2" reply=''
 
-    # bash /dev/tcp: no nc, no php, nothing to install. The redirection failure is
-    # reported by the SHELL, not the command, so the whole exec has to be grouped to
-    # silence it - otherwise a refused connection prints two lines per attempt and the
-    # wait becomes a wall of noise instead of one status line every 5s.
-    { exec {lockd_fd}<>"/dev/tcp/${host}/${port}"; } 2>/dev/null || return 1
-    { printf '{"id":1,"op":"ping"}\n' >&"$lockd_fd"; } 2>/dev/null \
-        || { exec {lockd_fd}>&-; return 1; }
-    IFS= read -r -u "$lockd_fd" reply 2>/dev/null || true
-    exec {lockd_fd}>&-
-
-    case "$reply" in
-        *'"status":"ok"'*) return 0 ;;
-    esac
-
-    return 1
-}
-
-wait_for_lockd() {
-    local unit host port waited=0
-    unit="$(unit_for '^rsx-lockd')"
-    # No rsx-lockd on this box (a single-node install may not run one) - nothing to wait for.
-    [ -n "$unit" ] || return 0
-
-    host="$(rsx_env_value LOCK_SERVER_HOST 127.0.0.1)"
-    port="$(rsx_env_value LOCK_SERVER_PORT 6210)"
-
-    # A wait with no deadline is the documented contract; a wait against an address that
-    # cannot exist is a hang. Refuse the malformed case before the first attempt.
-    if [ -z "$host" ] || [ -z "$port" ]; then
-        echo "[ERROR] rsx-lockd address is incomplete (host='${host}' port='${port}'); set LOCK_SERVER_HOST and LOCK_SERVER_PORT in .env" >&2
-        return 1
+# -----------------------------------------------------------------------------
+# An image older than this checkout: one [WARNING] with the remedy, then carry on.
+#
+# Services this image cannot run (a program the checkout moved into a newer image)
+# will not start, and when rsx-lockd is one of them the wait in do_disable() stops on
+# that evidence and repeats this sentence - this line names the cause up front. A
+# malformed record or requirement file is an [ERROR] naming the file (printed by the
+# library) and is not a refusal either.
+# -----------------------------------------------------------------------------
+warn_if_image_is_older() {
+    local sentence
+    if sentence="$(rsx_image_contract_problem "$IMAGE_CONTRACT_CONF")"; then
+        warn "$sentence"
     fi
-
-    while ! lockd_answers_ping "$host" "$port"; do
-        sleep 1
-        waited=$((waited + 1))
-        if [ $((waited % 5)) -eq 0 ]; then
-            say "  Waiting for rsx-lockd to answer on ${host}:${port} (${waited}s)..."
-            say "    Holding php-fpm back: a request that takes a cluster lock against a"
-            say "    daemon that is not serving waits with no deadline and no error."
-        fi
-    done
-
-    [ "$waited" -gt 0 ] && say "  rsx-lockd is serving (${waited}s)."
-
     return 0
 }
 
@@ -243,6 +240,8 @@ wait_for_lockd() {
 # enable
 # -----------------------------------------------------------------------------
 do_enable() {
+    warn_if_image_is_older
+
     mkdir -p "$(dirname "$FLAG")" 2>/dev/null || true
 
     # TWO LINES. Line 1 = the operator reason (quoted by the 503 and every CLI refusal).
@@ -423,6 +422,8 @@ repo_is_conflicted() {
 # disable
 # -----------------------------------------------------------------------------
 do_disable() {
+    warn_if_image_is_older
+
     if [ "$FORCE" != true ] && db_cache_in_progress; then
         err "Refusing to leave maintenance mode: a schema-cache build is in progress or was interrupted."
         say ""
@@ -484,7 +485,9 @@ do_disable() {
         start_unit '^redis'
         start_unit '^rsx-lockd'
         # Prove it is SERVING before admitting anything that takes a lock (see above).
-        wait_for_lockd
+        # A lock daemon that provably cannot start ends the disable HERE, flag up and
+        # php-fpm not started: php-fpm without it answers every request with a 500.
+        wait_for_lockd "$IMAGE_CONTRACT_CONF" || exit 1
         start_unit '^php-fpm'
         start_unit '^realtime'
         start_unit '^fpc'

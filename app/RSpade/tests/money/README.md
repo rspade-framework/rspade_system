@@ -11,7 +11,7 @@ integer checked by `Rsx_Money_Core`, and a step whose true result leaves the ran
 display configuration, `rsx.money.display`, which the browser receives as
 `window.rsxapp.money_display`.
 
-The parity contract is the shared vector file `resource/money_vectors.json` (2175 cases).
+The parity contract is the shared vector file `resource/money_vectors.json` (2176 cases).
 Both runners load the same file; `resource/` is never scanned by the manifest. Each case
 names a call, its arguments in a small tagged encoding (`{"money": "1.23"}`, `{"int": "..."}`
 -> a PHP int / a JS BigInt, `{"float": ...}`, `{"rounding": "ROUND_*"}`,

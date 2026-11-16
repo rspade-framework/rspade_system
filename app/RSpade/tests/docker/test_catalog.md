@@ -90,6 +90,7 @@ With a checkout mounted, the live request path through the image's Proxority (th
 | DOCKER-SVC-05 | maintenance mode (the flag under `RSX_STORAGE_PATH`) and a missing checkout are healthy with one note, whatever else is wrong | php | flag in a scratch storage root; `--project-root` with no system/ | exit 0, `[INFO]` line | implemented | 2026-11-10 |
 | DOCKER-SVC-06 | the image installs the health check in the base stage and declares it as the HEALTHCHECK | php | the Dockerfile | the COPY and HEALTHCHECK lines before `FROM base AS dev` | implemented | 2026-11-10 |
 | DOCKER-SVC-07 | the built image reports `healthy` under `docker inspect` with a checkout, and `unhealthy` with a service failing | manual | the image started; a service broken by hand | `.State.Health.Status` | NOT verified: needs an image rebuild | 2026-11-10 |
+| DOCKER-SVC-08 | `last_exit_status_repeats` counts the consecutive exits in the streak with the last exit's status, restarting at a change of status (the cannot-start evidence `maintenance-mode.sh` reads) | php | two exits with 3, then a missing script (127) every time | last status 127; repeats = consecutive failures - 2 | implemented | 2026-11-16 |
 
 ## Supervised_Service_Health_Test (php) - the rsx:health "Supervised Services" row
 
@@ -98,3 +99,29 @@ With a checkout mounted, the live request path through the image's Proxority (th
 | DOCKER-SVC-10 | OK counting the services up; a failing file whose runner is gone ignored; FAIL naming a failing service with its count, last status and since; a stopped service is no failure | php | real runners on a scratch state directory; a ghost file | the row's status and detail | implemented | 2026-11-10 |
 | DOCKER-SVC-11 | no state directory is INFO | php | an absent directory | INFO | implemented | 2026-11-10 |
 
+
+## Image_Contract_Test (php) - the image contract: an image older than its checkout is named
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-IMG-01 | an image recording an older contract is named with the remedy, identically by the PHP class and the bash library, and the "Container Image" row FAILs with it | php | scratch requirement (2), record (1, built_from), marker (target=prod) | the sentence; bash rc 0 and the same text; FAIL, remediation names `build.sh prod` | implemented | 2026-11-16 |
+| DOCKER-IMG-02 | `built_from=unknown` reads "built from an unrecorded revision" in both readers | php | record `contract=1`, `built_from=unknown` | the parenthesis; equal sentences | implemented | 2026-11-16 |
+| DOCKER-IMG-03 | an equal or newer image is fine; the row is OK naming both numbers and the revision | php | records 2 and 3 against 2 | null; bash rc 1, no output; OK detail | implemented | 2026-11-16 |
+| DOCKER-IMG-04 | no record counts as contract 1 with `/opt/rspade/rsx-lockd/lockd-run.sh`, 0 without | php | no record, lockd script present / absent, requirements 1 and 2 | 1 (fine at 1, older at 2), 0 (older at 1); equal sentences | implemented | 2026-11-16 |
+| DOCKER-IMG-05 | a record whose `contract=` is missing or not a whole number fails loud naming the file, never "fine" | php | no contract line, `two`, `-1` | PHP throws, row FAIL `<file> is unreadable: contract=<v>`; bash rc 2 with the same `[ERROR]` on stderr | implemented | 2026-11-16 |
+| DOCKER-IMG-06 | outside the RSpade container nothing is compared | php | no marker, record 0 | null; bash rc 1; row INFO | implemented | 2026-11-16 |
+| DOCKER-IMG-07 | the shipped requirement is well formed, ends in a newline, and its `breaking_change=` names an existing document | php | `resource/docker/image_contract.conf` | contract integer; `breaking_changes/<name>.txt` exists | implemented | 2026-11-16 |
+| DOCKER-IMG-08 | the dev and prod stages record the contract in their last instruction; base and docconvert record nothing | php | the Dockerfile, split by stage | as stated | implemented | 2026-11-16 |
+| DOCKER-IMG-09 | a built image carries the record with the build.sh revision | manual | `bash build.sh dev`; `docker run --rm --entrypoint cat rspade/rspade-server-dev /opt/rspade/image.conf` | the conf followed by `built_from=` (`unknown` in the monorepo, which has no system/.git; the revision and `+modified` logic checked against a scratch git checkout) | verified by hand 2026-11-16 (dev) | 2026-11-16 |
+
+## Startup_State_Test (php) - the container-started signal and the build/clean refusal while starting
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-START-01 | begin / step / warning / started write the record: status, step, one-line warning, began_at / finished_at, and PID 1's start time read after the last `)` of its stat | php | `startup-state.sh --state-file --proc-root` on a scratch /proc whose comm holds `) ` | starting -> started; pid1_start = field 22; warning on one line | implemented | 2026-11-16 |
+| DOCKER-START-02 | the waiter blocks while starting, prints one line per step change, and exits 0 when `started` is written | php | waiter in the background; `started` written once it announced the step | still waiting before; rc 0 after; one "still starting" line | implemented | 2026-11-16 |
+| DOCKER-START-03 | a failed start: the waiter exits 1 with the error | php | `failed <msg>` | rc 1, message on stderr | implemented | 2026-11-16 |
+| DOCKER-START-04 | no record and PID 1 not the RSpade entrypoint: exit 2 with the documented sentence; a record from an earlier start (pid1_start differs) is ignored; the same record under a matching PID 1 is current | php | scratch /proc with `/sbin/init` | rc 2, 2, 0 | implemented | 2026-11-16 |
+| DOCKER-START-05 | `rsx_container_starting()` refuses only for status=starting + matching pid1_start + a process outside PID 1's descendants (docker exec: ppid 0; unreadable chain); never for PID 1, its child or grandchild, a finished or stale record, no record, or no marker | php | scratch /proc tree, scratch record and marker | refusal array for pids 60 and 70; null for the rest | implemented | 2026-11-16 |
+| DOCKER-START-06 | the pre-boot hook covers rsx:build and rsx:clean; the image installs rspade-startup and rspade-wait-started in base; the entrypoint begins the record before its first step, records `started` before "RSpade is up" and before a passed command, and die() records `failed` | php | rsx_preboot.php, Dockerfile, entrypoint.sh | as stated | implemented | 2026-11-16 |
+| DOCKER-START-07 | a built image carries both commands: `rspade-wait-started` against a scratch record exits 0 on started, 1 on failed, 2 in a container whose PID 1 is not the entrypoint | manual | `bash build.sh dev`; `docker run --rm --entrypoint bash <image> -c ...` | as stated | implemented (manual, 2026-11-16) | 2026-11-16 |

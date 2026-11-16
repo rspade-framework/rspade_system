@@ -13,7 +13,7 @@ Every amount of money - price, total, budget, fee, tax, balance, subtotal, disco
 
 Read `php artisan rsx:man money` first.
 
-Already enforced - do not re-check: every DECIMAL, FLOAT and DOUBLE column of a model's own table is declared money or not money (MODEL-DECIMAL-01); a money column is DECIMAL(p,2), p <= 18 (MODEL-MONEY-01); no `$casts` entry shadows one (MODEL-COLUMNS-01); in PHP, a money value the linter can PROVE is money - a declared column through an evident model, a typed or assigned variable, an `Rsx_Money` call - is never compared, tested for truth, cast, used in arithmetic or interpolated (MODEL-MONEY-02); at run time a float assigned to a money column, a string conversion and PHP arithmetic on the object all throw. This audit covers what none of those see.
+Already enforced - do not re-check: every DECIMAL, FLOAT and DOUBLE column of a model's own table says whether it is money - `'money' => true|false`, or exactly `[]` (MODEL-DECIMAL-01); a money column is DECIMAL(p,2), p <= 18 (MODEL-MONEY-01); no `$casts` entry shadows one (MODEL-COLUMNS-01); in PHP, a money value the linter can PROVE is money - a declared column through an evident model, a typed or assigned variable, an `Rsx_Money` call - is never compared, tested for truth, cast, used in arithmetic or interpolated (MODEL-MONEY-02); at run time a float assigned to a money column, a string conversion and PHP arithmetic on the object all throw. This audit covers what none of those see.
 
 ## Find every instance
 
@@ -24,7 +24,7 @@ Already enforced - do not re-check: every DECIMAL, FLOAT and DOUBLE column of a 
     grep -rnE "(parseFloat|Number|toFixed|rsx_numeric)\(|[-+*/<>] *[a-z_.]*(price|total|amount|budget|fee|tax|balance|cost|salary|discount)" rsx --include='*.js' --include='*.jqhtml'
     grep -rnE "(price|total|amount|budget|fee|tax|balance|cost|salary|discount)[a-z_]* *(===|!==|==|\|\||&&|\?)" rsx --include='*.js' --include='*.jqhtml'
 
-For each column hit, open its model: a money figure must be declared `['money' => true]`. For each `=> []` entry, confirm the DECIMAL really is not money. For each code hit, follow the value to where it was read and where it is used. Noise: framework `_`-prefixed tables and counters (`total_sent`, `progress_total`); the test tree; numeric fields that are not money (hours, quantities, percentages); `!== null` checks on a money value (correct).
+For each column hit, open its model: a money figure must be declared `['money' => true]`. For each `=> []` or `'money' => false` entry, confirm the column really is not money. For each code hit, follow the value to where it was read and where it is used. Noise: framework `_`-prefixed tables and counters (`total_sent`, `progress_total`); the test tree; numeric fields that are not money (hours, quantities, percentages); `!== null` checks on a money value (correct).
 
 ## What does not conform
 

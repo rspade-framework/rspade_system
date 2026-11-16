@@ -286,6 +286,9 @@ THE RECOMMENDED DEPLOYMENT
         php artisan rsx:prod:verify
         php artisan rsx:maintenance:disable
 
+    In the RSpade container the same steps run in the order IN THE RSPADE
+    CONTAINER (below), which adds the image rebuild a checkout can need.
+
     A box that takes code with `php artisan rsx:git pull` does the rebuild
     itself: on a sealed box the proxy ends any pull that changed the checkout
     with `rsx:build --force`, inside its own maintenance window (rsx:man
@@ -314,6 +317,58 @@ THE RECOMMENDED DEPLOYMENT
 
         php artisan rsx:build --force
         php artisan migrate
+
+  IN THE RSPADE CONTAINER
+    The container image and system/ are versioned apart: the image carries
+    services and tools (rsx-lockd, Proxority, the task scheduler, the retry
+    runner), and a checkout can need more of them than an older image has.
+    The checkout states what it needs as an IMAGE CONTRACT number in
+    system/app/RSpade/resource/docker/image_contract.conf; every image built
+    from it records the number it provides in /opt/rspade/image.conf. When a
+    release raises the number it ships a breaking_changes document, and the
+    image has to be rebuilt from that checkout before its services can run.
+
+    The deploy, in order:
+
+        1. php artisan rsx:maintenance:enable --reason="deploying <version>"
+        2. sync the checkout (and system/)
+        3. when the checkout needs a newer image - rsx:framework:pull prints
+           "[WARNING] This container's image ... is older than this checkout
+           needs", and rsx:health FAILs its "Container Image" row - build the
+           image from that system/ and recreate the container:
+               bash system/app/RSpade/resource/docker/build.sh <dev|prod>
+               docker compose up --detach --force-recreate
+               docker compose exec <service> rspade-wait-started
+           rspade-wait-started blocks, with no deadline, until the
+           container has finished starting: exit 0 when it has. A start
+           that FAILS stops the container, so the exec returns non-zero and
+           the "[rspade] ERROR:" line is in docker compose logs <service>.
+           Until the start finishes, rsx:build and rsx:clean refuse ("The
+           container is still starting").
+        4. php artisan migrate --dump-rollback
+        5. php artisan rsx:mode:set prod     # build + seal
+        6. php artisan rsx:maintenance:disable
+        7. php artisan rsx:health
+
+    Migrate stays before the build, for the reason above: the build about to
+    be served never runs against a schema older than the one it was written
+    for.
+
+    A RECREATED CONTAINER COMES UP STILL IN MAINTENANCE. The flag lives under
+    storage/, which persists, so the new container's supervisor starts every
+    service while the web answers 503 until step 6 lowers it.
+
+    Skipping step 3 is not refused. rsx:maintenance:enable and :disable each
+    open with the same [WARNING] and then do their whole job; the services
+    this image cannot run (a program the checkout expects the image to
+    provide) do not start until the container runs an image built from this
+    checkout - and disable waits for rsx-lockd to answer before starting
+    php-fpm, so a lock daemon the image cannot run stops it there: it exits
+    1 naming the cause, with php-fpm not started and the flag still up
+    (rsx:man maintenance_mode, THE ONE EXCEPTION). The entrypoint prints the
+    same sentence at every start. A newer image under an
+    older checkout is fine. Outside the RSpade container none of this applies.
+    resource/docker/README.md, The image contract.
 
   BUILD AND MIGRATE
     A build holds CODE FACTS ONLY - which models exist and which table each

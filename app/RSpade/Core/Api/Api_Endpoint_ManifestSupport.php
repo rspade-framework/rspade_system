@@ -808,7 +808,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
         if (!$record['fqcn']::is_money_column($model_column)) {
             throw new \RuntimeException(
                 "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
-                "  column: '{$column}' is not a money column: {$model}'s \$columns entry for '{$model_column}' has no 'money'.\n" . $usage
+                "  column: '{$column}' is not a money column: {$model}'s \$columns entry for '{$model_column}' is not ['money' => true].\n" . $usage
             );
         }
 

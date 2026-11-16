@@ -52,6 +52,7 @@ otherwise have exited 0, written its file, gated nothing, and told an operator t
 - `app/RSpade/Core/Locks/RsxLocks.php` (flock backend)
 - `app/RSpade/Core/Cache/RsxCache.php`, `app/RSpade/Core/Realtime/Realtime.php` (tolerance)
 - `system/bin/maintenance-mode.sh`, `system/bin/framework-pull-upstream.sh.dist` (delegation)
+- `system/bin/lib/rsx_service_wait.sh` (the lockd wait and its cannot-start evidence)
 - `app/RSpade/Commands/Restricted/Down_Command.php`, `Up_Command.php` (the refusals)
 - `app/RSpade/Core/JsParsers/Rsx_Node_Service.php` (`quiesce_all()`, the PHP twin of the
   enable-time bash quiesce; the service lifecycle itself is the `js_transform` concern)

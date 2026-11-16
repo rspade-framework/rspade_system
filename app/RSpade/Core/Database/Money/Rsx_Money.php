@@ -280,13 +280,19 @@ final class Rsx_Money implements \JsonSerializable
     /**
      * An SQL total: null (SUM over no rows) is 0.00, an int is whole units, and a decimal
      * string or a float - floating-point residue included - is rounded half-up to two places
-     * by integer arithmetic. The one door that rounds; never for a figure a person entered.
+     * by integer arithmetic. An Rsx_Money is already exact and is returned unchanged. The one
+     * door that rounds; never for a figure a person entered.
      *
-     * @param string|int|float|null $x
+     * @param Rsx_Money|string|int|float|null $x
      * @return Rsx_Money
      */
     public static function from_aggregate(mixed $x): Rsx_Money
     {
+        // 0
+        if ($x instanceof Rsx_Money) {
+            return $x;
+        }
+
         // 1
         if ($x === null) {
             return self::_new(0);
@@ -303,7 +309,7 @@ final class Rsx_Money implements \JsonSerializable
         } elseif (is_string($x)) {
             $s = $x;
         } else {
-            throw Rsx_Money_Exception::argument('from_aggregate', 'expected null, a decimal string, an int or a float, got ' . get_debug_type($x));
+            throw Rsx_Money_Exception::argument('from_aggregate', 'expected null, an Rsx_Money, a decimal string, an int or a float, got ' . get_debug_type($x));
         }
 
         // 4

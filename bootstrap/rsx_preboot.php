@@ -106,6 +106,28 @@ function rsx_preboot(array $options = []): void
 
     /*
     |--------------------------------------------------------------------------
+    | Container Still Starting (pre-boot, rsx:build and rsx:clean only)
+    |--------------------------------------------------------------------------
+    |
+    | In the RSpade container, rsx:build and rsx:clean refuse while the entrypoint is
+    | still starting the container: the start works in build/ and tmp/ (ownership,
+    | migrations), and a build run beside it from `docker exec` races that work. The
+    | start's own processes - descendants of PID 1 - are never refused, and with no
+    | startup record nothing is. bootstrap/rsx_container_starting.php has the rules.
+    |
+    | Placed before the env heal, which may rewrite .env while the entrypoint is
+    | writing it, and before anything boots.
+    |
+    */
+
+    if (!$script_mode && isset($_SERVER['argv'][1])
+        && in_array($_SERVER['argv'][1], ['rsx:build', 'rsx:clean'], true)) {
+        require_once __DIR__ . '/rsx_container_starting.php';
+        rsx_container_starting_refuse($_SERVER['argv'][1]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Boot-free intercepted commands
     |--------------------------------------------------------------------------
     |

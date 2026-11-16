@@ -20,6 +20,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   - a run that lasts MAX_DELAY ends the streak the moment it has, not at its next exit:
  *     status `running`, consecutive_failures 0;
  *   - a stop signal writes `stopped`;
+ *   - last_exit_status_repeats counts the consecutive exits in the streak with the last exit's
+ *     status (the evidence maintenance-mode.sh reads for a service that cannot start);
  *   - the health check: unhealthy naming a failing label while its runner lives, healthy once
  *     the runner is gone or stopped; a supervisor program FATAL is unhealthy, STOPPED is not;
  *     a lock daemon that does not answer is unhealthy; maintenance mode and a missing checkout
@@ -191,6 +193,25 @@ class Retry_Run_Service_State_Test extends Rsx_Test_Abstract
         static::__assert_equals('0', $state['consecutive_failures']);
         static::__assert_equals('', $state['streak_since']);
         static::__assert_true(file_exists('/proc/' . $state['pid']), 'the service is the live run');
+
+        static::__stop($runner, $label);
+    }
+
+    public static function test_repeats_count_the_same_exit_status_within_a_streak()
+    {
+        // Two exits with 3, then 127 every time (a command that is not there): the repeat
+        // count restarts at the change of status and counts the 127s from there.
+        $label = 'state-test-repeats';
+        $counter = static::$dir . '/repeats.count';
+        $runner = static::__runner(
+            $label,
+            'n=$(cat ' . escapeshellarg($counter) . ' 2>/dev/null || echo 0); echo $((n + 1)) > ' . escapeshellarg($counter)
+                . '; [ "$n" -lt 2 ] && exit 3; exec bash ' . escapeshellarg(static::$dir . '/not_there.sh')
+        );
+
+        $state = static::__await_state($label, fn ($s) => (int) $s['consecutive_failures'] >= 8, 'eight consecutive exits');
+        static::__assert_equals('127', $state['last_exit_status'], 'a missing script exits 127');
+        static::__assert_equals((int) $state['consecutive_failures'] - 2, (int) $state['last_exit_status_repeats'], 'the 127s are counted from the change of status: ' . json_encode($state));
 
         static::__stop($runner, $label);
     }

@@ -218,7 +218,7 @@ The migration carries the STORAGE type only. What the column means is the model'
 | polymorphic reference | `BIGINT` `_type` + `_id` pair | `'owner_type' => ['type_ref' => true]` | `rspade:polymorphic` |
 | rich text / custom notation | `TEXT` | `'body' => ['text_type' => Rich_Text::class]` | `rspade:text-types` |
 | an amount of money | `DECIMAL(15,2)` (p <= 18, scale 2) | `'price' => ['money' => true]` | `rspade:money` |
-| any other DECIMAL / FLOAT / DOUBLE | the value's type | `'hours' => []` - declared NOT money (`MODEL-DECIMAL-01`) | `rspade:models` |
+| any other DECIMAL / FLOAT / DOUBLE | the value's type | `'hours' => []`, or `'money' => false` beside other keys - declared NOT money (`MODEL-DECIMAL-01`) | `rspade:models` |
 | secret (hash, token) | any | `'api_token' => ['never_export' => true]` | `rspade:models` |
 | computed and stored | the value's type | `'total' => ['derived' => 'derive_total', 'from' => [...]]` | `rspade:models` |
 | type-specific 1:1 fields | a detail table | `$detail_tables` (not `$columns`) | `rspade:detail-tables` |

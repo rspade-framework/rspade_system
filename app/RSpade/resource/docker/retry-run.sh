@@ -34,6 +34,8 @@
 #         status=running|starting|failing|stopped
 #         consecutive_failures=<exits in the current streak>
 #         last_exit_status=<status of the last exit; empty before the first>
+#         last_exit_status_repeats=<consecutive exits in the current streak with that same
+#                                   status; empty before the first exit>
 #         streak_since=<UTC time of the streak's first exit; empty with no streak>
 #         started_at=<UTC time the current run was launched>
 #         updated_at=<UTC time of this write>
@@ -44,7 +46,10 @@
 #     starting = restarting within a streak shorter than FAILING_AFTER exits;
 #     failing  = FAILING_AFTER (5) or more consecutive exits, until a run lasts MAX_DELAY;
 #     stopped  = a stop signal ended the runner.
-#     Every exit counts, a clean one too: a service exists to keep running. A file whose
+#     Every exit counts, a clean one too: a service exists to keep running. A streak of 126
+#     or 127 (the command cannot be run, or is not there) is the evidence maintenance-mode.sh
+#     reads to stop waiting for a service that cannot start (bin/lib/rsx_service_wait.sh);
+#     readers ignore keys they do not know. A file whose
 #     runner_pid is not a live runner for that label is left over from an earlier runner (a
 #     container restart, a SIGKILL) and means nothing. Readers: rspade-healthcheck
 #     (healthcheck.sh) and the rsx:health row "Supervised Services".
@@ -201,6 +206,7 @@ STATE_FILE="${STATE_DIR}/${LABEL}.state"
 
 failures=0
 last_exit_status=''
+last_exit_status_repeats=''
 streak_since=''
 started_at=''
 state_unwritable=0
@@ -217,8 +223,8 @@ write_state() {
     if ! (
         umask 022
         mkdir -p -m 755 "$STATE_DIR" 2>/dev/null || exit 1
-        printf 'label=%s\nstatus=%s\nconsecutive_failures=%s\nlast_exit_status=%s\nstreak_since=%s\nstarted_at=%s\nupdated_at=%s\npid=%s\nrunner_pid=%s\n' \
-            "$LABEL" "$1" "$failures" "$last_exit_status" "$streak_since" "$started_at" "$(now_utc)" "${2:-}" "$$" \
+        printf 'label=%s\nstatus=%s\nconsecutive_failures=%s\nlast_exit_status=%s\nlast_exit_status_repeats=%s\nstreak_since=%s\nstarted_at=%s\nupdated_at=%s\npid=%s\nrunner_pid=%s\n' \
+            "$LABEL" "$1" "$failures" "$last_exit_status" "$last_exit_status_repeats" "$streak_since" "$started_at" "$(now_utc)" "${2:-}" "$$" \
             > "$tmp" 2>/dev/null || exit 1
         mv -f -- "$tmp" "$STATE_FILE" 2>/dev/null || exit 1
     ); then
@@ -352,6 +358,12 @@ while true; do
         delay="$MIN_DELAY"
     fi
 
+    # The same status as the exit before it, within this streak, extends the repeat count.
+    if [ "$failures" -gt 0 ] && [ "$status" = "$last_exit_status" ]; then
+        last_exit_status_repeats=$((last_exit_status_repeats + 1))
+    else
+        last_exit_status_repeats=1
+    fi
     failures=$((failures + 1))
     last_exit_status="$status"
     [ -n "$streak_since" ] || streak_since="$(now_utc)"

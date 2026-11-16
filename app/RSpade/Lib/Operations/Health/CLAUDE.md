@@ -47,6 +47,12 @@ check a command also needs (`Playwright_Stack`) lives here.
   files (`/run/rspade-services/<label>.state`, format in `resource/docker/retry-run.sh`), FAIL
   naming each service `failing` (five or more consecutive exits) whose runner is still live.
   The container's Docker health check (`resource/docker/healthcheck.sh`) reads the same files.
+- `Rsx_Image_Contract.php` — "Container Image": the image contract the container's image
+  records (`/opt/rspade/image.conf`) against the one this checkout needs
+  (`resource/docker/image_contract.conf`, whose header is the contract). FAIL in every mode
+  when the image is older, with the rebuild-and-recreate sentence; `rsx:framework:pull` prints
+  the same sentence (`rsx:framework:post_update_image_check`). Bash twin:
+  `bin/lib/rsx_image_contract.sh`; the two sentences are compared by a test.
 - `Playwright_Health_Checks.php` + `Playwright_Stack.php` — the node -> playwright -> chromium
   probe `rsx:debug`'s preflight reads too, so both print the same install command. Probe only.
 - `Class_Override_Drift_Health_Checks.php` — the operator view of `CLASS-OVERRIDE-DRIFT-01`.

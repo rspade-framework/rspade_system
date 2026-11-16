@@ -302,13 +302,18 @@ class Rsx_Money {
     /**
      * An SQL total: null (SUM over no rows) is 0.00, a BigInt is whole units, and a decimal
      * string or a Number - floating-point residue included - is rounded half-up to two
-     * places by integer arithmetic. The one door that rounds; never for a figure a person
-     * entered.
+     * places by integer arithmetic. An Rsx_Money is already exact and is returned unchanged.
+     * The one door that rounds; never for a figure a person entered.
      *
-     * @param {string|bigint|number|null} x
+     * @param {Rsx_Money|string|bigint|number|null} x
      * @returns {Rsx_Money}
      */
     static from_aggregate(x) {
+        // 0
+        if (x instanceof Rsx_Money) {
+            return x;
+        }
+
         // 1
         if (x === null || x === undefined) {
             return Rsx_Money._new(0n);
@@ -328,7 +333,7 @@ class Rsx_Money {
         } else if (type === 'string') {
             s = x;
         } else {
-            throw Rsx_Money_Exception.argument('from_aggregate', 'expected null, a decimal string, a BigInt or a Number, got ' + Rsx_Money._describe(x));
+            throw Rsx_Money_Exception.argument('from_aggregate', 'expected null, an Rsx_Money, a decimal string, a BigInt or a Number, got ' + Rsx_Money._describe(x));
         }
 
         // 4

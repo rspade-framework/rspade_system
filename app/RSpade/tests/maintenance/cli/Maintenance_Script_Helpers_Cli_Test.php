@@ -9,8 +9,8 @@ namespace App\RSpade\Tests\Maintenance\Cli;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Every helper maintenance-mode.sh calls is a function it, or the path library it sources,
- * defines.
+ * Every helper maintenance-mode.sh calls is a function it, or a library it sources (the path
+ * library, the image-contract library and the service-wait library), defines.
  *
  * The script runs pre-boot from the framework updater's exit trap, and a helper it names
  * but nobody defines is not a fatal there: bash prints "command not found" to a stderr the
@@ -24,15 +24,23 @@ class Maintenance_Script_Helpers_Cli_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     private const SCRIPT = 'bin/maintenance-mode.sh';
-    private const LIB = 'bin/lib/rsx_paths.sh';
+    private const LIBS = ['bin/lib/rsx_paths.sh', 'bin/lib/rsx_image_contract.sh', 'bin/lib/rsx_service_wait.sh'];
 
     public static function test_every_helper_the_script_calls_is_defined()
     {
         $script = (string) file_get_contents(base_path(self::SCRIPT));
-        $lib = (string) file_get_contents(base_path(self::LIB));
+
+        $sources = [$script];
+        foreach (self::LIBS as $lib) {
+            static::__assert_true(
+                str_contains($script, '. "$SYSTEM_DIR/' . $lib . '"'),
+                "the script sources {$lib}"
+            );
+            $sources[] = (string) file_get_contents(base_path($lib));
+        }
 
         $defined = [];
-        foreach ([$script, $lib] as $source) {
+        foreach ($sources as $source) {
             preg_match_all('/^([a-z_][a-z0-9_]*)\(\)\s*\{/m', $source, $matches);
             foreach ($matches[1] as $name) {
                 $defined[$name] = true;
@@ -67,7 +75,7 @@ class Maintenance_Script_Helpers_Cli_Test extends Rsx_Test_Abstract
         static::__assert_equals(
             [],
             array_values($undefined),
-            'every helper the script calls is defined by the script or the path library'
+            'every helper the script calls is defined by the script or a library it sources'
         );
     }
 
@@ -76,10 +84,10 @@ class Maintenance_Script_Helpers_Cli_Test extends Rsx_Test_Abstract
      */
     public static function test_the_lockd_wait_refuses_an_incomplete_address()
     {
-        $script = (string) file_get_contents(base_path(self::SCRIPT));
+        $lib = (string) file_get_contents(base_path('bin/lib/rsx_service_wait.sh'));
 
         static::__assert_true(
-            str_contains($script, 'rsx-lockd address is incomplete'),
+            str_contains($lib, 'rsx-lockd address is incomplete'),
             'wait_for_lockd refuses an empty host or port before its first attempt'
         );
     }

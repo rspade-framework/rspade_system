@@ -15,6 +15,7 @@ SYNOPSIS
     public static $columns = [
         'budget'        => ['money' => true],
         'hour_estimate' => [],                 // a DECIMAL that is not money
+        'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
     ];
 
     $project->budget                           Rsx_Money, or null
@@ -65,16 +66,27 @@ DECLARING A COLUMN
         - The column is DECIMAL(p,2) with p at most 18 (MODEL-MONEY-01).
           DECIMAL(18,2)'s largest value is inside the range Rsx_Money holds; a
           wider column could store an amount no Rsx_Money can represent.
-        - money is a flag: the literal true. It excludes enum, text_type and
-          type_ref on the same column and combines with derived, never_export
-          and revision_exclude (MODEL-COLUMNS-01, manifest build).
+        - money is an answer: the literal true or the literal false. true
+          excludes enum, text_type and type_ref on the same column and
+          combines with derived, never_export and revision_exclude. false
+          says the column is not money: it declares no kind, sits beside any
+          other key, and the column reads as it would undeclared
+          (MODEL-COLUMNS-01, manifest build).
         - No $casts entry names a money column: the declaration is its cast
           (Rsx_Money_Cast), and a cast beside it would shadow it
           (MODEL-COLUMNS-01).
-        - Every DECIMAL, FLOAT and DOUBLE column of a model's table is
-          declared, money or not money ('col' => []) - MODEL-DECIMAL-01. A
-          FLOAT or DOUBLE column holding money is converted to DECIMAL(p,2) by
-          a migration and declared money.
+        - Every DECIMAL, FLOAT and DOUBLE column of a model's table says
+          whether it is money - MODEL-DECIMAL-01. Its entry carries 'money'
+          => true or 'money' => false, or is exactly [] (an explicitly plain
+          column, not money). An entry with other keys and no 'money' key
+          (['revision_exclude' => true], a derived or never_export entry)
+          leaves the question unanswered and is a finding:
+
+              'total' => ['money' => true, 'revision_exclude' => true],
+              'rate'  => ['money' => false, 'revision_exclude' => true],
+
+          A FLOAT or DOUBLE column holding money is converted to DECIMAL(p,2)
+          by a migration and declared money.
 
     Reading the declaration:
 
@@ -89,9 +101,10 @@ DECLARING A COLUMN
     never more than the type's own maximum. The column holds every amount
     from the limit negated up to the limit. It throws a LogicException for a
     column not declared money ("X::col is not a money column: its $columns
-    entry has no 'money'.") or not a DECIMAL ("X::col is declared money but
-    is not a DECIMAL column (MODEL-MONEY-01)."), and a RuntimeException when
-    the table does not exist in the connected database.
+    entry is not ['money' => true].") or not a DECIMAL ("X::col is declared
+    money but is not a DECIMAL column (MODEL-MONEY-01)."), and a
+    RuntimeException when the table does not exist in the connected
+    database.
 
     Model.money_limit('col') in JavaScript answers the same limit as an
     Rsx_Money, synchronously. A limit is a fact about the database, so it is
@@ -99,7 +112,7 @@ DECLARING A COLUMN
     the column lengths (rsx:man bundle_api, THE FIELD-LENGTH SCRIPT), each
     value the PHP model's own money_limit() answer. It throws for a column
     that is not money ("X.money_limit('col'): col is not a money column: its
-    $columns entry has no 'money'."), when the script did not load or holds
+    $columns entry is not ['money' => true]."), when the script did not load or holds
     nothing for the model, and when it holds no limit for the column (the
     table does not exist).
 
@@ -212,7 +225,10 @@ WAYS IN
         An SQL total: null (SUM over no rows) is 0.00; an int is whole units;
         a decimal string or a float - floating-point residue included - is
         ROUNDED half-up to two places by integer arithmetic ("10.005" is
-        10.01). The one door that rounds; never for a figure a person entered.
+        10.01). An Rsx_Money is already exact and is returned unchanged, so a
+        total over sources that hold either a value object or a raw figure
+        needs no branch. The one door that rounds; never for a figure a
+        person entered.
 
     Rsx_Money::from_storage($s)
         The canonical string a DECIMAL(p,2) column returns. Anything else is
@@ -264,7 +280,8 @@ ARITHMETIC
     negate(), abs()
     multiply($factor, $rounding)
         This amount times a decimal factor, rounded once. A factor is an int,
-        a decimal string ("1.5") or a residue-free float.
+        a decimal string ("1.5", "2.125", "0.7250" - any number of places) or
+        a residue-free float.
     multiply_fraction($numerator, $denominator, $rounding)
         This amount times numerator / denominator, integers, one calculation
         and one rounding: 17 of 30 days is multiply_fraction(17, 30, ...).
@@ -297,6 +314,40 @@ ARITHMETIC
     throws range even when the final answer would fit. So the largest amount
     times '0.5' throws (the amount times 5 is computed first), and sum() of a
     list near the range can depend on the order of its elements.
+
+PRICING WITH A RATE
+    A per-unit rate with more than two places (0.725 a mile, 0.0450 a unit)
+    is not money: its column is declared ['money' => false] and read as a
+    decimal string. It is only ever a FACTOR. A line is priced as the
+    QUANTITY times the exact rate, rounded once:
+
+        Rsx_Money::from_decimal($quantity)->multiply($rate, Rsx_Money::ROUND_HALF_UP)
+            100 x "0.725" is 72.50; 3 x "0.725" is 2.175, rounded to 2.18
+
+    and, when the per-unit price is itself money, as the unit amount times
+    the quantity:
+
+        $unit_price->multiply($quantity, Rsx_Money::ROUND_HALF_UP)
+            42.50 x "2.125" hours is 90.3125, rounded to 90.31
+
+    A rate is never turned into money first:
+    Rsx_Money::from_decimal('1.00')->multiply('0.725', ...) rounds the rate
+    to 0.73 before it is used, so 100 units price at 73.00 instead of 72.50.
+
+    The first form takes a quantity of at most two places, because
+    from_decimal() refuses more (scale). A quantity with more places times a
+    rate that is not money has no one-call form - no method takes two
+    decimal factors, and a second multiply() rounds a second time. The one
+    exact, one-rounding form is integer units: write the quantity as Q
+    units of 10^-q and the rate as R units of 10^-r (q + r at least 2), and
+
+        Rsx_Money::from_cents(Q)->multiply_fraction(R, 10^(q + r - 2), $rounding)
+
+    2.125 hours at 0.7250 is from_cents(2125)->multiply_fraction(7250,
+    100000, ...): 1.540625, rounded to 1.54. Q x R is checked against the
+    range like every step. Rounding the quantity to two places first is a
+    second rounding, and an application that does so chooses it.
+
 
 ROUNDING
     Every method that can leave a fraction of a cent takes the mode as a
@@ -496,7 +547,9 @@ RULES
         A column declared money is not DECIMAL(p,2) with p at most 18.
     MODEL-DECIMAL-01 (rsx:check, high)
         A DECIMAL, FLOAT or DOUBLE column of the model's own table has no
-        $columns entry. Declare ['money' => true] or [] (not money).
+        $columns entry, or an entry with other keys and no 'money' key.
+        Declare ['money' => true] or ['money' => false] beside the other keys,
+        or [] (not money) for an entry with nothing else to say.
     MODEL-MONEY-02 (rsx:check, high)
         A money value is an operand of a comparison (==, !=, <, <=, >, >=,
         <=>, === / !== against anything but null), a logical operator or a
@@ -508,8 +561,9 @@ RULES
         one, an Rsx_Money call answering one. A null check, ??, ?->, isset()
         and passing or returning the value are never reported.
     MODEL-COLUMNS-01 (manifest build, FATAL)
-        A money flag that is not true, money beside enum / text_type /
-        type_ref, or a $casts entry on a money column.
+        A money value that is not the literal true or false, money => true
+        beside enum / text_type / type_ref, or a $casts entry on a money
+        column.
 
     Each rsx:check rule is suppressed for a file by @<RULE>-EXCEPTION. What
     no rule sees is the conformance audit money_never_in_a_float

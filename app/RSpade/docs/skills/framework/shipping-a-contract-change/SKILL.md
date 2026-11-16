@@ -93,6 +93,8 @@ Three tests, in order. Any single "no" ends it:
 2. **The black box.** Is the changed thing something an application is SUPPOSED TO KNOW ABOUT at all? How bundles compile, how the manifest is built, how a request dispatches, which node processes exist - all internal. If it is internal, no document, however dramatic the change. And do not write for the reader who hijacked an internal: they have already diverged, our updates do not apply cleanly to them anyway, and the document would not help.
 3. **The library API test (the jQuery standard).** Does the CALL SHAPE of a function or class DESIGNED FOR APPLICATION USE actually change? jQuery publishes no migration note for rewriting its internal selector engine; it publishes one when `$.fn.foo(a, b)` becomes `$.fn.foo({a, b})`. Same bar here.
 
+**A change to what the container image must provide** (the checkout now needs a program, path, tool or package only a newer image has) raises `contract=` in `resource/docker/image_contract.conf`, sets its `breaking_change=` to the release's document, and ships that `breaking_changes` document: rebuilding the image and recreating the container is an action the downstream must take (`rsx:man prod`, IN THE RSPADE CONTAINER).
+
 **A document reporting work the framework already did is noise, and noise trains developers to ignore the whole directory** - so the cost of a needless document is paid by the next one, the one that actually matters.
 
 **The fourth trigger - a LIKELY-OVERRIDDEN core class.** The three tests ask whether the framework changed something an application CALLS. This one asks whether it changed something an application is holding a FROZEN COPY of, and it stands BESIDE the three: it can require a document they alone would not.
