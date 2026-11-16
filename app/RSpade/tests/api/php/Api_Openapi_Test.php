@@ -311,6 +311,27 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
         static::__assert_equals(1, preg_match('/' . $amount['pattern'] . '/', '1234.5'), 'the pattern admits what the param accepts');
     }
 
+    /**
+     * A 'string' param named *_html is sanitized HTML by the naming rule, and says so with
+     * contentMediaType text/html; a string param without the suffix carries no media type
+     * (Api_Plain_Values_Fixture_Api_Controller::echo_values, GET: query params).
+     */
+    public static function test_an_html_named_string_param_carries_the_html_media_type()
+    {
+        $doc = Api_Openapi::document();
+
+        $operation = $doc['paths']['/api/v1/test-probe/plain/echo']['get'] ?? null;
+        static::__assert_not_null($operation, 'the plain-values echo fixture is in the document');
+
+        $by_name = [];
+        foreach ($operation['parameters'] as $parameter) {
+            $by_name[$parameter['name']] = $parameter['schema'];
+        }
+
+        static::__assert_equals(['type' => 'string', 'contentMediaType' => 'text/html'], $by_name['summary_html'] ?? null);
+        static::__assert_equals(['type' => 'string'], $by_name['summary'] ?? null);
+    }
+
     // -------------------------------------------------------------------------
     // Operations
     // -------------------------------------------------------------------------

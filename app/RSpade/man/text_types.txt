@@ -8,17 +8,18 @@ SYNOPSIS
     php artisan rsx:man text_types
 
     public static $columns = [
-        'description' => ['text_type' => Rich_Text::class],
-        'notes'       => ['text_type' => Raw_Text::class],
+        'description_html' => ['text_type' => Rich_Text::class],
+        'notes'            => ['text_type' => Raw_Text::class],
     ];
 
-    $project->description                      a Rich_Text, not a string
-    $project->description = $params['description'];    filtered, typed, stored
-    $project->description = "a < b\nline two";          PLAIN TEXT: escaped, then
-                                                         filtered
-    $project->description = Rich_Text::from_untrusted_encoded($html);
-                                                       encoded content, filtered
-    <%= this.data.project.description %>       prints through its own component
+    $project->description_html                 a Rich_Text, not a string
+    $project->description_html = $params['description_html'];
+                                               filtered, typed, stored
+    $project->description_html = "a < b\nline two";
+                                               PLAIN TEXT: escaped, then filtered
+    $project->description_html = Rich_Text::from_untrusted_encoded($html);
+                                               encoded content, filtered
+    <%= this.data.project.description_html %>  prints through its own component
 
     Rich_Text::from_request($params['body'])   the value, typed, for code that
                                                must read it before storing it
@@ -117,21 +118,54 @@ DECLARING A COLUMN
     DECLARATIONS):
 
         public static $columns = [
-            'description' => ['text_type' => Rich_Text::class],
+            'description_html' => ['text_type' => Rich_Text::class],
         ];
 
     A text type is one kind per column: never beside 'enum', 'type_ref' or
     'money' on the same entry (MODEL-COLUMNS-01). Model::text_type_columns() answers
     every declared column.
 
+    THE NAME SAYS THE STORED FORM. A column whose stored value is HTML is
+    named <thing>_html (description_html, body_html, signature_html); a
+    column holding anything else is not, and an _html column never holds
+    plain text. The suffix follows what is STORED, not the editor: a
+    WYSIWYG saving sanitized HTML writes an _html column, a textarea whose
+    text is stored as typed does not, even when printed with line breaks.
+    HTML is the ONLY suffixed form - it is the one whose misprinting is an
+    injection - so plain text, plain text carrying tokens, Markdown and
+    every other encoding take no suffix (no _md, no _txt).
+
+    The name travels unchanged: the fetch() payload key, the Ajax key, the
+    /api/vN field, the #[Api_Param] that writes it and the form $name all
+    carry it, so a reader of any layer - a raw query and an API body
+    included - knows the string is markup: print it as HTML only through
+    the type's printer or a sanitizer, write it through
+    Type::from_untrusted_encoded(). A computed HTML rendition of a non-HTML
+    column exposed beside it (an appended property, a payload key) is named
+    <thing>_html too, and never takes a column's own name - so notes
+    (plain) and notes_html (rendered) sit side by side without either
+    lying.
+
+    A type declares its stored form: public const STORES_HTML = true on an
+    HTML type, false (the default on Rsx_Text_Abstract) otherwise;
+    Type::stores_html() reads it. MODEL-TEXT-HTML-01 (rsx:check, high)
+    holds every model's own table to it in both directions: a column whose
+    type stores HTML and is not named *_html, and a *_html column that is
+    undeclared (a markup string nothing filters) or declares a non-HTML type
+    (a name that lies). A framework-private (_-prefixed) table is not
+    judged. The fix is a rename - a forward migration (ALTER TABLE ...
+    RENAME COLUMN) plus every reference - or the declaration;
+    @MODEL-TEXT-HTML-01-EXCEPTION in the model file holds an old name while
+    its rename is pending.
+
     From then on:
 
-        $project->description             a Rich_Text on read
-        $project->description = $x        converted and filtered by Rich_Text
-                                          (ASSIGNING A VALUE), then stored
-        $project->description->is_empty() the blessed emptiness test
-        $project->description->to_plain_text()  readable text, IF the type offers it
-        $project->description->to_html()  a document rendition, IF it offers it
+        $project->description_html                  a Rich_Text on read
+        $project->description_html = $x             converted and filtered by Rich_Text
+                                                    (ASSIGNING A VALUE), then stored
+        $project->description_html->is_empty()      the blessed emptiness test
+        $project->description_html->to_plain_text() readable text, IF the type offers it
+        $project->description_html->to_html()       a document rendition, IF it offers it
 
     A DECLARATION THE CAST CANNOT HONOUR FAILS THE BUILD (TEXT-TYPE-01):
     an entry naming no Rsx_Text_Abstract class, a type with no JavaScript
@@ -189,6 +223,13 @@ WRITING A TYPE
             // the encoding, written here and nowhere else.
         }
 
+    A type whose stored form is HTML also declares
+
+            public const STORES_HTML = true;
+
+    and goes on *_html columns (DECLARING A COLUMN). Every other type keeps
+    the inherited false.
+
     JavaScript. Registration only - nothing is implemented:
 
         class My_Text extends Rsx_Text_Abstract {
@@ -244,7 +285,8 @@ TWO TYPES, WORKED
 
     RICH_TEXT (shipped, resource/reference_app/lib/text_types/rich_text/)
 
-        The encoding is HTML from a WYSIWYG.
+        The encoding is HTML from a WYSIWYG. STORES_HTML = true, so its
+        columns are named *_html (description_html).
 
         sanitize_encoded()   sanitize_rich_text_html() - HTMLPurifier with the
                              application's allow-list. What the column holds
@@ -273,6 +315,8 @@ TWO TYPES, WORKED
 
         The encoding is plain text with {{Model_Class:id}} markers. A comment
         might read: "Handed off to {{User_Model:33}} - see {{Client_Model:7}}."
+        Not HTML: STORES_HTML stays false and the column is body, never
+        body_html.
 
         sanitize_encoded()   Refuse a malformed tag so the column never holds
                              one: strip any {{...}} whose class is not a model
@@ -331,9 +375,9 @@ IN AN ENDPOINT
             $project = Project_Model::find($params['id']);
 
             $project->name        = $params['name'];
-            $project->description = $params['description'];   // just assign
+            $project->description_html = $params['description_html'];   // just assign
 
-            if ($project->description->is_empty()) {
+            if ($project->description_html->is_empty()) {
                 return response_form_error('Description is required.');
             }
 
@@ -349,7 +393,7 @@ IN AN ENDPOINT
     The value the endpoint received BEFORE assignment is typeless, and can be
     asked exactly one thing:
 
-        $params['description']->is_empty()
+        $params['description_html']->is_empty()
 
     Everything else throws. Assignment resolves it.
 
@@ -458,7 +502,7 @@ ASSIGNING A VALUE
     ENCODED CONTENT FROM YOUR OWN CODE IS SAID OUT LOUD. HTML built on the
     server, or converted from another system's markup, is assigned as
 
-        $record->description = Rich_Text::from_untrusted_encoded($html);
+        $record->description_html = Rich_Text::from_untrusted_encoded($html);
 
     which runs sanitize_encoded() (and only sanitize_encoded()) exactly as a
     submitted envelope does. Rich_Text::from_plain_text($plain) is the same conversion
@@ -495,7 +539,13 @@ THE EXTERNAL API
     puts straight into its answer does the same. The endpoint returns the
     model; the dispatcher's response pass writes the string.
 
-        {"description": "<p>Include the payment schedule.</p>"}
+        {"description_html": "<p>Include the payment schedule.</p>"}
+
+    THE FIELD'S NAME SAYS WHAT THE STRING IS: a *_html field is sanitized
+    HTML (written through the encoded door, printed only as HTML through a
+    sanitizer); any other text-type field is not HTML. The OpenAPI document
+    marks a string #[Api_Param] named *_html with contentMediaType
+    'text/html' (rsx:man external_api, THE OPENAPI DOCUMENT).
 
     Writes: an #[Api_Param] of type 'string', and the ENDPOINT says which
     door the string goes through - the client cannot, since a string carries
@@ -510,10 +560,10 @@ THE EXTERNAL API
       the type's sanitize_encoded() runs, exactly as for the browser's
       editor:
 
-          $task->description = Rich_Text::from_untrusted_encoded($params['description']);
+          $task->description_html = Rich_Text::from_untrusted_encoded($params['description_html']);
 
     Choose ENCODED for a column the API reads as its encoding (every
-    Rich_Text column): a client that reads the field and sends it back
+    Rich_Text column - every *_html field): a client that reads the field and sends it back
     unchanged then stores the same value, because the stored form is already
     sanitized. A field read as HTML but written as plain text would store
     the markup as visible tags on the first round trip. On a Raw_Text column
@@ -527,11 +577,11 @@ THE EXTERNAL API
 PRINTING AND EDITING
     A live page interpolates the value and its PRINTER component renders it:
 
-        <%= this.data.project.description %>
+        <%= this.data.project.description_html %>
 
     A form need not name the widget - the column's type says which one:
 
-        <{Project_Model.editor_component_for('description')} $name="description" />
+        <{Project_Model.editor_component_for('description_html')} $name="description_html" />
 
     Every generated JS model carries the two lookups: text_type_or_null(col)
     answers the column's type class or null, and editor_component_for(col)
@@ -565,6 +615,21 @@ CHANGING A COLUMN'S TYPE
 
     Declaring without re-encoding leaves every row claiming an encoding it
     does not have.
+
+    A change between a non-HTML form and HTML (either way) is also a RENAME:
+    the same migration renames the column (notes -> notes_html, ALTER TABLE
+    ... RENAME COLUMN), and every layer that names it moves with it -
+    $columns, form $name, templates, #[Api_Param], API examples, tests
+    (MODEL-TEXT-HTML-01). For an API it is a wire change to announce.
+
+    Embed references (rsx:man file_upload, FILES EMBEDDED IN TEXT) are
+    recorded per column name, so after a rename a record's references still
+    carry the old name. The framework drops them itself: the next time
+    File_Embed_References::sync() runs for that record (the record's next
+    save that changes a text column whose type records embeds), every
+    reference of the record whose column is no longer a declared text-type
+    column of the model is removed. Nothing in application code touches the
+    reference table.
 
 GOTCHAS
     MARKUP IN A BARE STRING IS STORED AS VISIBLE TAGS, SILENTLY. See

@@ -55,7 +55,9 @@ use App\RSpade\Core\Rsx;
  * operation declaring one emits a multipart/form-data requestBody with that property typed
  * string/format:binary, instead of the application/json object body every other POST gets -
  * and 'money', an amount, which the API carries as a decimal STRING ("7708.80"): a string with
- * the decimal pattern, never a JSON number. Responses carry the documented example; there is no
+ * the decimal pattern, never a JSON number. A 'string' param named *_html carries
+ * contentMediaType text/html: by the naming rule (MODEL-TEXT-HTML-01) such a field is sanitized
+ * HTML. Responses carry the documented example; there is no
  * response SCHEMA because the framework never had one to project - an example alone is
  * valid OpenAPI and degrades honestly.
  */
@@ -401,6 +403,13 @@ class Api_Openapi
         if (($param['type'] ?? null) === 'money') {
             $schema['pattern'] = static::MONEY_PATTERN;
             $schema['examples'] = ['7708.80'];
+        }
+
+        // A string field named *_html is sanitized HTML: the naming rule MODEL-TEXT-HTML-01
+        // holds columns to, carried unchanged into the param that writes one. JSON Schema
+        // 2020-12 (OpenAPI 3.1's dialect) spells a string's media type contentMediaType.
+        if (($param['type'] ?? null) === 'string' && str_ends_with((string) ($param['name'] ?? ''), '_html')) {
+            $schema['contentMediaType'] = 'text/html';
         }
 
         if (array_key_exists('default', $param) && $param['default'] !== null) {

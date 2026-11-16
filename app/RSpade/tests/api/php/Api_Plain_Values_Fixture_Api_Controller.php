@@ -120,4 +120,15 @@ class Api_Plain_Values_Fixture_Api_Controller extends Rsx_Api_Controller_Abstrac
 
         return $record;
     }
+
+    /**
+     * Echo two strings, one named as HTML: the OpenAPI document marks only the *_html one.
+     */
+    #[Api_Endpoint('/api/v1/test-probe/plain/echo', methods: ['GET'])]
+    #[Api_Param('summary', type: 'string')]
+    #[Api_Param('summary_html', type: 'string')]
+    public static function echo_values(Request $request, array $params = [])
+    {
+        return ['summary' => $params['summary'] ?? null, 'summary_html' => $params['summary_html'] ?? null];
+    }
 }

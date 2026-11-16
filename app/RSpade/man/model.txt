@@ -23,7 +23,7 @@ property, one entry per column:
             1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
             2 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'selectable' => false],
         ]],
-        'description'   => ['text_type' => Rich_Text::class],
+        'description_html' => ['text_type' => Rich_Text::class],
         'fileable_type' => ['type_ref' => true],
         'budget'        => ['money' => true],
         'api_secret'    => ['never_export' => true],
@@ -34,7 +34,8 @@ property, one entry per column:
 Keys of an entry (anything else is an error):
 
     enum              integer-keyed map of value => properties (ENUM COLUMNS)
-    text_type         class name of an Rsx_Text_Abstract subclass (TEXT TYPE COLUMNS)
+    text_type         class name of an Rsx_Text_Abstract subclass (TEXT TYPE COLUMNS);
+                      a type with STORES_HTML true goes on a *_html column only
     type_ref          true - the _type column of a polymorphic pair (TYPE REF COLUMNS)
     money             true - a DECIMAL(p,2) amount read as Rsx_Money; false - not
                       money, said explicitly (MONEY COLUMNS)
@@ -102,6 +103,9 @@ declare nothing, and a secret listed there would be sent to every browser.
        model's table whose $columns entry does not say whether it is money -
        none, or one with other keys and no 'money' key. The answer is
        'money' => true or 'money' => false, or an entry that is exactly [].
+       MODEL-TEXT-HTML-01 (rsx:check): a column of the model's table whose
+       text type stores HTML (STORES_HTML) is not named *_html, or a *_html
+       column declares no text type or one that does not store HTML.
 
    Reading the declaration
        Model::$columns answers ONE class's declaration and misses everything
@@ -143,7 +147,7 @@ declare nothing, and a secret listed there would be sent to every browser.
        type a read returns and the column's kind:
 
        * @property int $status enum: STATUS_PENDING, STATUS_DONE (also $status__label and the other $status__* properties)
-       * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description text type: a value object, filtered on write
+       * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description_html text type: a value object, filtered on write
        * @property string $taskable_type type ref: a model class name, stored as a type-ref id
        * @property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float
        * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
@@ -205,13 +209,13 @@ disagree the result is markup shown as literal text or user input rendered
 unescaped, silently.
 
     public static $columns = [
-        'description' => ['text_type' => Rich_Text::class],
+        'description_html' => ['text_type' => Rich_Text::class],
     ];
 
 A declared column is read as a VALUE OBJECT: filtered by the type's sanitizer
 on every write, printed on a page by plain interpolation (the type's own
 component renders it), edited by whatever widget the type names
-(<{Project_Model.editor_component_for('description')} $name="description" />),
+(<{Project_Model.editor_component_for('description_html')} $name="description_html" />),
 reduced by to_plain_text() for a CSV cell or an index, and asked is_empty() -
 never === ''.
 Used as a string anywhere it THROWS, in PHP and in JavaScript. An undeclared
@@ -219,11 +223,20 @@ TEXT column is an ordinary string; declaration is opt-in.
 
 Setting up a rich-text field: the migration column is plain TEXT (LONGTEXT
 after normalization); declare it as above; the form uses the editor tag; the
-view interpolates it; an endpoint assigns $params['description'] to the column
+view interpolates it; an endpoint assigns $params['description_html'] to the column
 and validates with is_empty() on the read-back. The shipped Rich_Text type
 (rsx/lib/text_types/rich_text/) is the Quill-backed reference. Converting an
 EXISTING plain-text column is two acts: a raw-SQL migration that re-encodes the
 rows into the type's storage form, then the declaration.
+
+The column's NAME says its stored form: a type whose stored form is HTML
+declares public const STORES_HTML = true and goes on a column named
+<thing>_html; a column named *_html declares such a type; every other type
+(Raw_Text, a token notation) keeps the default false and its column takes no
+suffix. MODEL-TEXT-HTML-01 (rsx:check, high) checks both directions on every
+model's own table, framework-private _ tables excepted. Converting a column
+between a non-HTML form and HTML is therefore also a rename, in the same
+migration.
 
 Designing a new type: two required methods, sanitize_encoded() (the sanitizer)
 and encode_plain_text() (plain text -> the encoding), plus whatever dedicated
@@ -1114,6 +1127,14 @@ Columns:
 - Foreign keys must suffix with '_id' (user_id, site_id)
 - Booleans must prefix with 'is_' (is_active, is_published)
 - Timestamps must suffix with '_at' (created_at, updated_at, deleted_at)
+- A column whose stored value is HTML must suffix with '_html'
+  (description_html, body_html); a column holding plain text, a token
+  notation, Markdown or any other form takes no suffix, and an '_html'
+  column never holds plain text. The suffix follows the stored form, not the
+  editor, and travels unchanged into every payload, API field and form
+  $name; a computed HTML rendition exposed beside a non-HTML column (an
+  appended property) is '<thing>_html' too (TEXT TYPE COLUMNS,
+  MODEL-TEXT-HTML-01)
 - Use BIGINT for all integers, TINYINT(1) for booleans only
 - All text columns use UTF-8 (utf8mb4_unicode_ci collation)
 

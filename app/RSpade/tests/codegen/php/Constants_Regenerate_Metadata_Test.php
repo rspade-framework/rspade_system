@@ -99,6 +99,7 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
             stage_id BIGINT NULL,
             flag_id BIGINT NULL,
             body TEXT NULL,
+            body_html TEXT NULL,
             note TEXT NULL,
             owner_type BIGINT NULL,
             owner_id BIGINT NULL,
@@ -125,6 +126,8 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
             ' * @property int $flag_id enum: FLAG_ON, FLAG_OFF (also $flag_id__label and the other $flag_id__* properties)',
             // Text type: typed as the value-object class, fully qualified.
             " * @property {$text_type} \$body text type: a value object, filtered on write",
+            // Text type storing HTML: names the stored form.
+            " * @property \\App\\RSpade\\Tests\\Codegen\\Php\\Codegen_Fixture_Html_Text \$body_html text type (HTML): a value object, sanitized on write",
             // Combined kinds on one line.
             " * @property {$text_type} \$note text type: a value object, filtered on write; never exported to the browser",
             // Type ref: reads as a class name.

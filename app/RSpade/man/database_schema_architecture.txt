@@ -377,12 +377,12 @@ contacts
 projects
   Purpose: Demo project tracking
   Business domain: Client projects/engagements
-  Schema: client_id (FK), name, description, status, priority, due_date
+  Schema: client_id (FK), name, description_html, status, priority, due_date
 
 tasks (NOTE: Confusing name - different from _tasks!)
   Purpose: Demo user TODO/task list
   Business domain: User task management
-  Schema: title, description, taskable_type/id (polymorphic), status, priority,
+  Schema: title, description_html, taskable_type/id (polymorphic), status, priority,
           assigned_to_user_id (FK), due_date, site_id (FK)
   WARNING: Name collision with _tasks (background jobs). Consider renaming to
            user_tasks or todo_items in future versions.
@@ -390,7 +390,7 @@ tasks (NOTE: Confusing name - different from _tasks!)
 demo_products
   Purpose: Demo product catalog
   Business domain: Product/service offerings
-  Schema: name, description, price, sku, category, active status
+  Schema: name, description_html, price, sku, category, active status
 
 countries
   Purpose: Geographic reference data

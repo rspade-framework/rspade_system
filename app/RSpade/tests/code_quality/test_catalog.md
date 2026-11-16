@@ -732,6 +732,24 @@ fixture models loaded from temp files, and through `check()` on the indexed
 | MD-06 | a model whose table is absent is skipped | php | money_fixtures dropped | 0 violations | implemented | 2026-11-13 |
 | MD-07 | the framework classifies its own DECIMAL column `_tasks.progress_percent` as not money | php | Task_Run_Model | declared, not money | implemented | 2026-11-13 |
 
+## Text types: MODEL-TEXT-HTML-01 (`Model_Text_Html_Rule_Test`)
+
+MODEL-TEXT-HTML-01 (rsx:check) holds a model's own columns to the HTML naming rule in both
+directions: a column whose text type has `STORES_HTML` true is named `*_html`, and a `*_html`
+column declares such a type. Driven through `evaluate_class($fqcn, $file, $table,
+$table_columns)` over a fixed column map, with fixture models loaded from temp files; the HTML
+type is `Text_Html_Rule_Fixture_Html_Text`, the plain one `Text_Fixture_Plain_Text`
+(tests/text_types).
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MTH-01 | an HTML type on `*_html` columns and a plain type on `notes` pass; a detail table's merged `*_html` column is not judged | php | description_html, notes_html HTML; notes plain | 0 violations | implemented | 2026-11-16 |
+| MTH-02 | an HTML type on `description` is reported naming `description_html` | php | description HTML | description | implemented | 2026-11-16 |
+| MTH-03 | a plain type on `notes_html` is reported | php | notes_html plain | notes_html | implemented | 2026-11-16 |
+| MTH-04 | an undeclared `notes_html` is reported; an undeclared unsuffixed column is not | php | notes_html undeclared | notes_html | implemented | 2026-11-16 |
+| MTH-05 | a framework-private `_` table is not judged | php | `_text_html_fixtures`, description HTML | 0 violations | implemented | 2026-11-16 |
+| MTH-06 | `stores_html()` reads `STORES_HTML`: false by default, true on an HTML type | php | the two fixture types | false / true | implemented | 2026-11-16 |
+
 ## Money: MODEL-MONEY-02 (`Model_Money_Usage_Rule_Test`)
 
 MODEL-MONEY-02 (rsx:check) reports an Rsx_Money used with PHP's comparison, truth, cast,

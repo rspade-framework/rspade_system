@@ -516,6 +516,7 @@ class Constants_Regenerate_Command extends Command
      *
      *   enum: STATUS_OPEN, STATUS_DONE (also $status__label and the other $status__* properties)
      *   text type: a value object, filtered on write          (typed as the text-type class)
+     *   text type (HTML): a value object, sanitized on write  (a type with STORES_HTML true)
      *   type ref: a model class name, stored as a type-ref id (typed string)
      *   money: a value object, two decimal places, never a float  (typed as Rsx_Money)
      *   derived: computed by derive_x() from a, b; never assigned  (tagged @property-read)
@@ -566,7 +567,9 @@ class Constants_Regenerate_Command extends Command
                 . " (also \${$column}__label and the other \${$column}__* properties)";
         } elseif (isset($text_types[$column])) {
             $php_type = '\\' . ltrim($text_types[$column], '\\');
-            $notes[] = 'text type: a value object, filtered on write';
+            $notes[] = $text_types[$column]::stores_html()
+                ? 'text type (HTML): a value object, sanitized on write'
+                : 'text type: a value object, filtered on write';
         } elseif (in_array($column, $class::type_ref_columns(), true)) {
             $php_type = 'string';
             $notes[] = 'type ref: a model class name, stored as a type-ref id';

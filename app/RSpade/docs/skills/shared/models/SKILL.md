@@ -1,6 +1,6 @@
 ---
 name: models
-description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), derived_columns()), derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
+description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), derived_columns()), derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-TEXT-HTML-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
 ---
 
 # Writing a model
@@ -19,7 +19,7 @@ public static $columns = [
         1 => ['constant' => 'STATUS_ACTIVE',   'label' => 'Active'],
         2 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived', 'selectable' => false],
     ]],
-    'description'   => ['text_type' => Rich_Text::class],
+    'description_html' => ['text_type' => Rich_Text::class],
     'fileable_type' => ['type_ref' => true],
     'budget'        => ['money' => true],
     'api_secret'    => ['never_export' => true],
@@ -89,10 +89,10 @@ The column is **BIGINT** (never VARCHAR, never MySQL `ENUM`). Each value's `cons
 ### `text_type` - what kind of string a TEXT column holds
 
 ```php
-'description' => ['text_type' => Rich_Text::class],
+'description_html' => ['text_type' => Rich_Text::class],
 ```
 
-The column (TEXT) reads as a value object of that type: filtered by its sanitizer on every write, printed by plain interpolation, edited by the widget the type names, travelling to JS as a `{__TEXT, raw, empty}` envelope. **A bare string assigned to it is PLAIN TEXT** (escaped); markup is assigned as the type (`Rich_Text::from_untrusted_encoded($html)`). Emptiness is `is_empty()`, never `=== ''`. Used as a string it throws. `TEXT-TYPE-01` (build FATAL) checks the class, its JS twin, and that no `$casts` entry shadows it. Depth: `rspade:text-types`.
+The column (TEXT) reads as a value object of that type: filtered by its sanitizer on every write, printed by plain interpolation, edited by the widget the type names, travelling to JS as a `{__TEXT, raw, empty}` envelope. **A bare string assigned to it is PLAIN TEXT** (escaped); markup is assigned as the type (`Rich_Text::from_untrusted_encoded($html)`). Emptiness is `is_empty()`, never `=== ''`. Used as a string it throws. `TEXT-TYPE-01` (build FATAL) checks the class, its JS twin, and that no `$casts` entry shadows it. **A column whose type stores HTML (`STORES_HTML`) is named `<thing>_html`, and a `*_html` column declares such a type** (`MODEL-TEXT-HTML-01`, `rsx:check`); every other stored form takes no suffix. Depth: `rspade:text-types`.
 
 ### `type_ref` - the type half of a polymorphic pair
 
@@ -172,7 +172,7 @@ The full treatment - every refusal message, the dependents pattern in code, the 
 
 ```
  * @property int $priority enum: PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH, PRIORITY_URGENT (also $priority__label and the other $priority__* properties)
- * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description text type: a value object, filtered on write
+ * @property \Rsx\Lib\TextTypes\RichText\Rich_Text $description_html text type: a value object, filtered on write
  * @property string $taskable_type type ref: a model class name, stored as a type-ref id
  * @property \App\RSpade\Core\Database\Money\Rsx_Money $budget money: a value object, two decimal places, never a float
  * @property-read int $project_id derived: computed by derive_project_id() from taskable_type, taskable_id, direct_project_id; never assigned
@@ -188,7 +188,7 @@ The full treatment - every refusal message, the dependents pattern in code, the 
 Ask, in order, for EVERY column you add:
 
 1. **Is it a fixed set of states or types?** -> BIGINT + `enum`. Never a VARCHAR of words, never a boolean that will grow a third state.
-2. **Is it text with an encoding** - HTML from an editor, a notation with embedded references? -> TEXT + `text_type`. Plain text stays undeclared.
+2. **Is it text with an encoding** - HTML from an editor, a notation with embedded references? -> TEXT + `text_type`. Plain text stays undeclared. **Stored HTML is named `<thing>_html`** (`MODEL-TEXT-HTML-01`); no other form is suffixed.
 3. **Is it an amount of money?** -> `DECIMAL(15,2)` (p <= 18) + `money`. Any other DECIMAL, FLOAT or DOUBLE is declared not money - `[]`, or `'money' => false` beside other keys - and `MODEL-DECIMAL-01` requires the answer.
 4. **Does it point at a record of one of SEVERAL models?** -> a BIGINT `{relation}_type` + `{relation}_id` pair, `type_ref` on the `_type` column, plus `$fact_groups` when one form field edits the pair.
 5. **Would its disclosure be a security event** (hash, token, secret, key/value bag)? -> `never_export`.

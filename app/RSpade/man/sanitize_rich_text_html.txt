@@ -87,17 +87,17 @@ USAGE PATTERN
     A declared Rich_Text column sanitizes on every write by itself - an
     endpoint assigns the submitted value and never calls a sanitizer:
 
-        $project->description = $params['description'];
+        $project->description_html = $params['description_html'];
 
     Server code holding markup it built or imported names the encoding, and
     the type's sanitizer runs:
 
-        $project->description = Rich_Text::from_untrusted_encoded($html);
+        $project->description_html = Rich_Text::from_untrusted_encoded($html);
 
     NEVER assign this function's result to a declared column: the string is
     read as plain text, escaped, and stored as visible tags.
 
-        $project->description = sanitize_rich_text_html($html);   // WRONG
+        $project->description_html = sanitize_rich_text_html($html);   // WRONG
 
     Undeclared HTML (a column with no text_type declaration, a third-party
     payload shown once) is sanitized directly before it is emitted:

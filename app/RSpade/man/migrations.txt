@@ -72,6 +72,10 @@ MIGRATION RULES
          Example: If users.id is BIGINT, then orders.user_id must be BIGINT
        - TINYINT(1) - Preserved for boolean values, won't be converted
        - Column names ending in _id are assumed to be foreign keys
+       - A column whose stored value is HTML is named <thing>_html
+         (description_html, body_html); no other stored form - plain text,
+         a token notation, Markdown - takes a suffix (rsx:man text_types,
+         DECLARING A COLUMN; MODEL-TEXT-HTML-01)
 
        Recommended for Simplicity:
        - Just use INT for integers (becomes BIGINT automatically)
@@ -81,7 +85,9 @@ MIGRATION RULES
          (TEXT here; rsx:man text_types), a type ref, a secret or a derived
          column (rsx:man model, COLUMN DECLARATIONS). Converting an existing plain-text
          column to a type is two acts: a raw-SQL migration that re-encodes the
-         rows into the type's storage form, then the declaration on the model
+         rows into the type's storage form, then the declaration on the model;
+         converting to an HTML type also renames the column to <thing>_html
+         in that migration (ALTER TABLE ... RENAME COLUMN notes TO notes_html)
        - Just use FLOAT for decimals (becomes DOUBLE automatically)
        - Don't add created_at/updated_at (added automatically)
        - Don't add created_by_id/_type or updated_by_id/_type (added automatically)
@@ -1078,6 +1084,10 @@ MIGRATION EXAMPLES
        {
            DB::statement("ALTER TABLE users ADD COLUMN age BIGINT NULL AFTER email");
            DB::statement("ALTER TABLE users ADD INDEX idx_age (age)");
+
+           // Stored HTML is named *_html; the model declares its text type:
+           //     'description_html' => ['text_type' => Rich_Text::class]
+           DB::statement("ALTER TABLE products ADD COLUMN description_html TEXT NULL");
        }
 
    Modifying Columns

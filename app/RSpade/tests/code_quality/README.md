@@ -96,6 +96,11 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   name must be a real manifest class (that is what the lineage lookup resolves) while
   the fixture supplies the members. One row also pins the RETIREMENT: an unguarded
   `fetch()` raises nothing here, because gate presence is a manifest-build fatal.
+- **HTML column names (implemented):** `Model_Text_Html_Rule_Test` drives
+  MODEL-TEXT-HTML-01 through `evaluate_class()` over a fixed column map with temp-loaded
+  fixture models: an HTML type (`STORES_HTML` true, `Text_Html_Rule_Fixture_Html_Text`) on
+  an unsuffixed column, a plain type or no type on a `*_html` column, and the passing
+  shapes; a framework-private `_` table is not judged.
 - **Bundle includes of the framework application tree (implemented):**
   `Bundle_Include_Path_Rule_Test` drives CONV-BUNDLE-02's critical half - an `rsx/`
   bundle may not name anything under `app/RSpade/Sys` (the system control panel), by

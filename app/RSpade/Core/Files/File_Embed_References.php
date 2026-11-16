@@ -20,6 +20,12 @@ use App\RSpade\Core\Files\File_Embed_Reference_Model;
  * Removing a token removes its reference and NOTHING ELSE. The file keeps its owner and its
  * bytes, because a revision of the old text can be restored and its embed must still work.
  *
+ * A reference names its column, so a RENAMED column (description -> description_html) leaves
+ * the record's references under the old name, where no later sync for the column would ever
+ * reach them. Every sync therefore also drops the record's references whose column is no longer
+ * a declared text-type column of the model: the record heals on its next embed sync, and no
+ * application code touches the reference table.
+ *
  * See: php artisan rsx:man file_upload (FILES EMBEDDED IN TEXT)
  */
 class File_Embed_References
@@ -39,6 +45,18 @@ class File_Embed_References
     {
         $wanted = array_values(array_unique(array_map('intval', $file_attachment_ids)));
         $owner_type = class_basename($owner);
+
+        // References under a column the model no longer declares (a renamed column): nothing
+        // syncs that name again, so they are dropped here. $column itself is always kept.
+        $live_columns = array_values(array_unique(array_merge(array_keys($owner::text_type_columns()), [$column])));
+        // @DB-UNBOUNDED-01-EXCEPTION - narrowed to one owner record's references under retired column names
+        $retired = File_Embed_Reference_Model::where('owner_type', $owner_type)
+            ->where('owner_id', (int) $owner->getKey())
+            ->whereNotIn('column_name', $live_columns)
+            ->get();
+        foreach ($retired as $row) {
+            $row->delete();
+        }
 
         // One record's one column: bounded by the tokens a single text holds.
         // @DB-UNBOUNDED-01-EXCEPTION - narrowed to one owner record and column

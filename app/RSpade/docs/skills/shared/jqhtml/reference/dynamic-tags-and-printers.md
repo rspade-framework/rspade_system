@@ -48,7 +48,7 @@ shipped case being "this column's declared text type says which component edits 
 
 ```
 <Form_Field $label="Description">
-    <{Project_Model.editor_component_for('description')} $name="description" />
+    <{Project_Model.editor_component_for('description_html')} $name="description_html" />
 </Form_Field>
 ```
 
@@ -92,7 +92,7 @@ the value carries its own encoding and the template interpolates it without choo
 escape, a sanitizer or a component.
 
 ```javascript
-<%= this.data.project.description %>    // a Rich_Text object, not a string
+<%= this.data.project.description_html %>    // a Rich_Text object, not a string
 ```
 
 ### When NOT to use it

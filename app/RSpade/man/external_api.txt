@@ -257,14 +257,17 @@ PARAMETERS AND VALIDATION
     DECLARED TEXT COLUMNS. A model column declared 'text_type' in $columns
     (Rich_Text and the like) is written from an ordinary 'string' param, and
     the ENDPOINT chooses the door - the API carries no text envelope, so a
-    string is all a client ever sends:
+    string is all a client ever sends. THE FIELD'S NAME SAYS WHAT THE STRING
+    IS: a *_html field is sanitized HTML - written through the ENCODED door
+    below, printed only as HTML through a sanitizer - and any other
+    text-type field is not HTML (rsx:man text_types, DECLARING A COLUMN):
 
         $record->notes = $params['notes'];
             PLAIN TEXT. The column escapes the string into its encoding and
             filters it: "a < b" stores as the text "a < b". Right when the
             API documents the field as text.
 
-        $record->description = Rich_Text::from_untrusted_encoded($params['description']);
+        $record->description_html = Rich_Text::from_untrusted_encoded($params['description_html']);
             ENCODED. The string IS the type's encoded form (for Rich_Text,
             HTML); the type's filter (HTMLPurifier) runs exactly as for the
             staff editor. Right when the API reads the field as that form,
@@ -450,7 +453,10 @@ SERIALIZATION
           (an Rsx_Money in an array, a sum)
         text-type column          "<p>Hi</p>"      its stored string: HTML for
           (Rich_Text, Raw_Text)                    Rich_Text, the text for a
-                                                   raw type
+                                                   raw type. The NAME says
+                                                   which: a *_html field is
+                                                   sanitized HTML, any other
+                                                   is not HTML
         DATETIME / TIMESTAMP      "2026-10-29T10:13:03.000Z" plus the
                                   __localized / __localized_tz companions
         DATE                      "2026-09-04"
@@ -465,10 +471,10 @@ SERIALIZATION
 
         GET /api/v1/tasks/12
         {"id": 12, "title": "Draft the statement of work",
-         "description": "<p>Include the payment schedule.</p>", ...}
+         "description_html": "<p>Include the payment schedule.</p>", ...}
 
         POST /api/v1/tasks/12/update
-        {"description": "<p>Include the payment schedule.</p>"}
+        {"description_html": "<p>Include the payment schedule.</p>"}
             -> the stored value is unchanged
 
     ONE RULE, ONE PLACE. The endpoint does nothing special: return the model
@@ -1863,6 +1869,12 @@ DOCS AND TESTER PAGE
         a 'money' param     type:string with the decimal pattern
                             ^-?\d+(\.\d{1,2})?$ and examples ["7708.80"] - an
                             amount is a string on the API, never a JSON number.
+        a *_html param      a 'string' param whose name ends _html carries
+                            contentMediaType: text/html (JSON Schema 2020-12,
+                            the dialect OpenAPI 3.1 uses): the field is
+                            sanitized HTML, by the naming rule
+                            MODEL-TEXT-HTML-01 holds columns to. Responses
+                            carry no schema, so only params are marked.
         superseded         deprecated:true when a HIGHER version of the same
                             verb + path_key is served by a DIFFERENT handler.
                             A version range is one handler at every version, so

@@ -440,6 +440,10 @@ FILES EMBEDDED IN TEXT
         3. Re-save: references are re-synced. A file whose token was removed
            keeps its owner and its bytes - a restored revision of the old text
            must still show it. Only the reference goes.
+           A sync also drops the record's references whose column is no
+           longer a declared text-type column of the model - the references a
+           renamed column (description -> description_html) left under its old
+           name.
         4. The same token in a second record (prose copied): a reference is
            added; ownership never moves.
         5. Display and download follow the OWNING record's visibility, like any

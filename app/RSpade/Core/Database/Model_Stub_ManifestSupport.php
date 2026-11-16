@@ -643,7 +643,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         $content .= "    /**\n";
         $content .= "     * The input component that edits a money or text-type column, for a dynamic tag:\n";
-        $content .= "     *     <{Project_Model.editor_component_for('description')} \$name=\"description\" />\n";
+        $content .= "     *     <{Project_Model.editor_component_for('description_html')} \$name=\"description_html\" />\n";
         $content .= "     * @param {string} column - Column name\n";
         $content .= "     * @returns {string} Component name\n";
         $content .= "     */\n";

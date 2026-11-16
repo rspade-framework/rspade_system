@@ -1,6 +1,6 @@
 ---
 name: text-types
-description: "Declaring what a TEXT column holds with a 'text_type' entry in public static $columns and writing a type on Rsx_Text_Abstract - a bare string is plain text, Type::from_untrusted_encoded(), the {__TEXT, raw} envelope, is_empty(), after_model_saved(). Use when a column holds rich text, wiring an editor, migrating a plain column, or on 'cannot be used as a string', 'edits Rich_Text values, but was given string', literal <p> tags in stored text, or TEXT-TYPE-01."
+description: "Declaring what a TEXT column holds with a 'text_type' entry in public static $columns and writing a type on Rsx_Text_Abstract - a bare string is plain text, Type::from_untrusted_encoded(), the {__TEXT, raw} envelope, is_empty(), after_model_saved(). Use when a column holds rich text, wiring an editor, migrating a plain column, or on 'cannot be used as a string', 'edits Rich_Text values, but was given string', literal <p> tags in stored text, naming a *_html column, STORES_HTML, or TEXT-TYPE-01 / MODEL-TEXT-HTML-01."
 ---
 
 # Declared TEXT column types
@@ -26,10 +26,20 @@ a sink must escape, render or interpret differently from the characters it holds
 
 ```php
 public static $columns = [
-    'description' => ['text_type' => Rich_Text::class],
-    'notes'       => ['text_type' => Raw_Text::class],
+    'description_html' => ['text_type' => Rich_Text::class],
+    'notes'            => ['text_type' => Raw_Text::class],
 ];
 ```
+
+**The column's name says what its stored string is.** A column whose type stores HTML
+(`STORES_HTML = true`, the template's `Rich_Text`) is named `<thing>_html`; any other stored
+form - plain text (`Raw_Text`), plain text with tokens (`Entity_Tag_Text` below), Markdown - takes
+no suffix, and an `_html` column never holds plain text. HTML is the only suffixed form: it is
+the one whose misprinting is an injection. The suffix follows the STORED form, not the editor,
+and the name travels unchanged into the fetch payload, the Ajax key, the API field, the
+`#[Api_Param]` and the form `$name`; a computed HTML rendition exposed beside a non-HTML column
+(an appended property) is `<thing>_html` too, never a column's own name. `MODEL-TEXT-HTML-01`
+(`rsx:check`) holds both directions.
 
 A text type is one kind of `$columns` entry - never beside `enum`, `type_ref` or `money` on the same column; the grammar, inheritance and accessors (`text_type_columns()`) are skill `rspade:models`.
 
@@ -70,6 +80,8 @@ takes, and it shows where the conventions are *not* needed.
 ```php
 class Rich_Text extends Rsx_Text_Abstract
 {
+    public const STORES_HTML = true;   // the stored form is HTML: its columns are *_html
+
     public static function sanitize_encoded(string $raw): string { return sanitize_rich_text_html($raw); }
 
     // REQUIRED. A bare string is plain text: escape it, keep its line breaks.
@@ -101,6 +113,8 @@ class Rich_Text extends Rsx_Text_Abstract {
 ### `Entity_Tag_Text` — theoretical
 
 A comment might read: *"Handed off to {{User_Model:33}} — see {{Client_Model:7}}."*
+Its stored form is plain text with tokens, so it keeps `STORES_HTML` false and its column is
+`body`, never `body_html`.
 
 ```php
 class Entity_Tag_Text extends Rsx_Text_Abstract
@@ -254,15 +268,17 @@ envelope plain - return the model, convert nothing by hand). A write is an ordin
 | The API documents the field as | Endpoint writes | Effect |
 |---|---|---|
 | text | `$record->notes = $params['notes'];` | plain text: escaped into the encoding, filtered |
-| the type's encoding (HTML for `Rich_Text`) | `$record->description = Rich_Text::from_untrusted_encoded($params['description']);` | encoded: `sanitize_encoded()` runs, as for the editor |
+| the type's encoding (HTML for `Rich_Text`, a `*_html` field) | `$record->description_html = Rich_Text::from_untrusted_encoded($params['description_html']);` | encoded: `sanitize_encoded()` runs, as for the editor |
 
-**A column the API READS as its encoding is WRITTEN through the encoded door** - every `Rich_Text`
+**The field's name says which door**: a `*_html` field is sanitized HTML, read and written as
+HTML (the encoded door; printed only as HTML through a sanitizer), and any other text-type field
+is not HTML. **A column the API READS as its encoding is WRITTEN through the encoded door** - every `Rich_Text`
 column. Then a client that reads the field and sends it back unchanged stores the same value (the
 stored form is already sanitized); written as plain text instead, the first round trip stores the
 markup as visible tags. On a `Raw_Text` column the two doors are the same. Say the door in the
 param's description (`'Description, HTML (sanitized on save)'`). A string that looks like an
 envelope is an ordinary string; a JSON object in a string param is refused `Expected string`.
-Worked example: the template's `Tasks_Api_Controller` (`description`).
+Worked example: the template's `Tasks_Api_Controller` (`description_html`).
 
 ## What happens on an Ajax POST
 
@@ -290,9 +306,9 @@ exactly once. A client claiming the wrong type is ignored, not errored.
 **The pattern: assign, then validate.** Nothing is written until `save()`.
 
 ```php
-$project->description = $params['description'];
+$project->description_html = $params['description_html'];
 
-if ($project->description->is_empty()) {          // read back: typed by the COLUMN
+if ($project->description_html->is_empty()) {          // read back: typed by the COLUMN
     return response_form_error('Description is required.');
 }
 
@@ -388,7 +404,17 @@ what keeps a round trip honest. See the sections above.
 
 **Changing a column's type is two acts, in order**: a raw-SQL migration that re-encodes the
 rows into the storage form `Type::from_plain_text()` produces (a migration never calls an
-application class - MIGRATION-MODEL-01), then the declaration change.
+application class - MIGRATION-MODEL-01), then the declaration change. A change between a
+non-HTML form and HTML also RENAMES the column (`notes` -> `notes_html`) in that migration,
+through every layer that names it. Embed references recorded under the old name are dropped by
+the framework the next time the record's embeds are synced (its next save that changes a
+`Rich_Text` column) - no application code touches the reference table.
+
+**MODEL-TEXT-HTML-01 (`rsx:check`)**: a column whose type has `STORES_HTML` true is not named
+`*_html`, or a `*_html` column is undeclared or declares a non-HTML type. Rename with a forward
+migration (`ALTER TABLE ... RENAME COLUMN`) plus every reference; `@MODEL-TEXT-HTML-01-EXCEPTION`
+in the model file only while that rename is pending. A type you write declares
+`public const STORES_HTML = true;` when its stored form is HTML.
 
 **A third-party editor may not round-trip HTML it didn't author.** Load a stored value and
 save it back; the result must be byte-identical.

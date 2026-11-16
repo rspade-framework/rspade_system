@@ -17,8 +17,8 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * value carry it:
  *
  *     public static $columns = [
- *         'description' => ['text_type' => Rich_Text::class],
- *         'notes'       => ['text_type' => Raw_Text::class],
+ *         'description_html' => ['text_type' => Rich_Text::class],
+ *         'notes'            => ['text_type' => Raw_Text::class],
  *     ];
  *
  * A value is IMMUTABLE and carries its own storage form. The constructor is private, and
@@ -62,6 +62,16 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * is_empty() is the one question every type answers, because assign-then-validate in
  * every endpoint depends on it. Its default is the raw form; a wrapping encoding overrides.
  *
+ ── The stored form, and the column's name ───────────────────────────────────────────
+ *
+ * STORES_HTML says whether the stored string is HTML. A type whose stored form is HTML
+ * (a rich-text type) declares it true; every other stored form - plain text, plain text
+ * carrying reference tokens, Markdown, anything else - keeps the default false. The
+ * declaration is what lets code holding only the class name ask, and MODEL-TEXT-HTML-01
+ * holds the column's name to it: a column whose type stores HTML is named `<thing>_html`,
+ * and a column named `<thing>_html` declares a type that stores HTML. HTML is the one
+ * stored form with a suffix, because it is the one whose misprinting is an injection.
+ *
  * @see rsx/lib/text_types/ for the shipped implementations.
  */
 #[Instantiatable]
@@ -69,6 +79,12 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
 {
     /** The key naming the type in the browser Ajax wire envelope {__TEXT, raw, empty}. */
     public const ENVELOPE_KEY = '__TEXT';
+
+    /**
+     * Whether this type's stored form is HTML. Overridden true by an HTML type; a column
+     * declaring such a type is named `<thing>_html` (MODEL-TEXT-HTML-01).
+     */
+    public const STORES_HTML = false;
 
     /**
      * The value exactly as it is stored in the column.
@@ -87,6 +103,16 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     final protected function __construct(string $raw)
     {
         $this->raw = $raw;
+    }
+
+    /**
+     * Whether this type's stored form is HTML - the STORES_HTML declaration, read.
+     *
+     * @return bool
+     */
+    final public static function stores_html(): bool
+    {
+        return static::STORES_HTML;
     }
 
     // =========================================================================

@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Codegen\Php;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Tests\Codegen\Php\Codegen_Fixture_Html_Text;
 use App\RSpade\Tests\Codegen\Php\Codegen_Fixture_Text;
 
 /**
@@ -19,6 +20,7 @@ use App\RSpade\Tests\Codegen\Php\Codegen_Fixture_Text;
  *   stage_id   - an enum with more constants than a line names
  *   flag_id    - an enum short enough to name in full
  *   body       - a text type
+ *   body_html  - a text type that stores HTML
  *   note       - a text type that is also never exported
  *   owner_type - a type ref (owner_id is its plain partner)
  *   secret     - never exported
@@ -47,6 +49,7 @@ class Column_Kinds_Fixture_Model extends Rsx_Model_Abstract
             2 => ['constant' => 'FLAG_OFF', 'label' => 'Off'],
         ]],
         'body' => ['text_type' => Codegen_Fixture_Text::class],
+        'body_html' => ['text_type' => Codegen_Fixture_Html_Text::class],
         'note' => ['text_type' => Codegen_Fixture_Text::class, 'never_export' => true],
         'owner_type' => ['type_ref' => true],
         'secret' => ['never_export' => true],

@@ -7,7 +7,7 @@ namespace App\RSpade\Core\Database\TextTypes;
  * resolved only when it reaches a column or a type that names itself.
  *
  * At the Ajax boundary the server holds a bag of keys and has no idea which column each
- * one is bound for. That is only known at assignment - `$project->description = $x` - so
+ * one is bound for. That is only known at assignment - `$project->description_html = $x` - so
  * the boundary cannot know the RIGHT type and must not guess it from the client's claim.
  * Instead it produces this: a wrapper that carries the raw string and the client's
  * claimed type name as an OPAQUE string, and can be asked exactly two things.

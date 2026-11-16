@@ -610,7 +610,7 @@ abstract class Rsx_Model_Abstract extends Model
      *         1 => ['constant' => 'STATUS_ACTIVE', 'label' => 'Active'],
      *         2 => ['constant' => 'STATUS_INACTIVE', 'label' => 'Inactive', 'selectable' => false],
      *     ]],
-     *     'description'   => ['text_type' => Rich_Text::class],
+     *     'description_html' => ['text_type' => Rich_Text::class],
      *     'fileable_type' => ['type_ref' => true],
      *     'budget'        => ['money' => true],
      *     'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
@@ -628,7 +628,9 @@ abstract class Rsx_Model_Abstract extends Model
      *                      is a BIGINT; Model::{column}__enum() and the JS stub mirror it.
      *   text_type        - class-string of an Rsx_Text_Abstract subclass that owns the column's
      *                      encoding (rsx:man text_types): read as a value object, filtered on
-     *                      every write, sent to the browser as a {__TEXT, raw} envelope.
+     *                      every write, sent to the browser as a {__TEXT, raw} envelope. A type
+     *                      that stores HTML (STORES_HTML) goes on a column named `<thing>_html`,
+     *                      and only there (MODEL-TEXT-HTML-01).
      *   type_ref         - literal true, on the {relation}_type column of a polymorphic pair: the
      *                      column stores a _type_refs integer id and reads as a class name, and
      *                      stock morph relations work over it (rsx:man polymorphic).

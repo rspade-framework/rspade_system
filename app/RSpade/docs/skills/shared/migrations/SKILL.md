@@ -216,7 +216,7 @@ The migration carries the STORAGE type only. What the column means is the model'
 |---|---|---|---|
 | enum (status, type, role) | `BIGINT` | `'status_id' => ['enum' => [...]]` | `rspade:model-enums` |
 | polymorphic reference | `BIGINT` `_type` + `_id` pair | `'owner_type' => ['type_ref' => true]` | `rspade:polymorphic` |
-| rich text / custom notation | `TEXT` | `'body' => ['text_type' => Rich_Text::class]` | `rspade:text-types` |
+| rich text (stored HTML: the column is `<thing>_html`) / custom notation (no suffix) | `TEXT` | `'body_html' => ['text_type' => Rich_Text::class]` | `rspade:text-types` |
 | an amount of money | `DECIMAL(15,2)` (p <= 18, scale 2) | `'price' => ['money' => true]` | `rspade:money` |
 | any other DECIMAL / FLOAT / DOUBLE | the value's type | `'hours' => []`, or `'money' => false` beside other keys - declared NOT money (`MODEL-DECIMAL-01`) | `rspade:models` |
 | secret (hash, token) | any | `'api_token' => ['never_export' => true]` | `rspade:models` |
@@ -228,7 +228,9 @@ A text type exists so the encoding of a TEXT column (sanitized HTML from a WYSIW
 value instead of remembering. **Converting an existing plain-text column is two acts**: a
 raw-SQL migration that re-encodes the rows into the type's storage form (this rule forbids
 calling the type class here; reproduce what its `from_plain_text()` produces), then the
-`text_type` declaration.
+`text_type` declaration. **Converting to an HTML type is also a RENAME to `<thing>_html`**
+(`ALTER TABLE ... RENAME COLUMN notes TO notes_html` in the same migration), and every
+reference moves with it (`MODEL-TEXT-HTML-01`).
 
 ---
 
