@@ -580,6 +580,16 @@ class Form_Edit
                 // never a change anybody made (Revision::meaningful_changes()). A fact group
                 // whose every column is equal is therefore no change at all.
                 foreach (Revision::meaningful_changes(get_class($model), $revision->diff()) as $column => $values) {
+                    // A unit's unchanged half (the type of a polymorphic pair whose id moved)
+                    // is recorded so a reader can name the reference; it is not itself a
+                    // change the question lists.
+                    $descriptor = Column_Equivalence::descriptor_or_null(get_class($model), (string) $column);
+                    if ($descriptor !== null
+                        && ($values[1] ?? null) !== Revision::REDACTED
+                        && Column_Equivalence::same($descriptor, $values[0] ?? null, $values[1] ?? null)) {
+                        continue;
+                    }
+
                     // A column of a fact group changes the whole group: every field stored in
                     // any of its columns.
                     $group = $groups[$column] ?? null;

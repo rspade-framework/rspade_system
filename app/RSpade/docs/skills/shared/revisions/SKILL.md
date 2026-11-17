@@ -128,7 +128,9 @@ Revision::for_transaction($id);                            // one unit's revisio
 All of them return `Rsx_Result_Set` - the set is unbounded, so a screen pages it.
 
 **Each side of a pair is the column's STORAGE FORM** - `"1.00"` for 1 on a DECIMAL(8,2), `1`
-for `true` on a boolean - what the column holds, not the shape it was assigned in.
+for `true` on a boolean - what the column holds, not the shape it was assigned in. **A save
+that moves either half of a declared `type_ref` pair records both halves** (the unchanged
+half the same on both sides), so every revision names the record it pointed at.
 
 **A history reader shows `Revision::meaningful_changes($model_class, $diff)`, never the raw
 `diff()`.** It drops, from an already stored diff, a column the model no longer records
@@ -147,7 +149,11 @@ editor a question.
 **"Which columns does THIS save record" is the model's answer - ask it, never re-derive the
 set:** `$record->recorded_dirty()` before `save()` (the dirty columns its revision would
 record), `$record->recorded_changes()` after it (exactly the columns of the revision it
-wrote; `[]` when it wrote only `updated_at`-class, `revision_exclude` or derived columns).
+wrote; `[]` when it wrote only `updated_at`-class, `revision_exclude` or derived columns, or
+threw). It answers for the save the CALLER made: a save of the same instance entered while
+that one is still running - a model event's, or a `rederive()` a `save()` override makes after
+`parent::save()` - ADDS to the list, only the outermost save starts it over, and a caller's own
+`rederive()` answers `[]`.
 Both are the revision writer's own definition, so they cannot drift from what a revision
 holds, and both answer on a model without `$revisions` too. An edit endpoint asks
 `$edit->written_fields()` inside `Form_Edit::run()`'s callback after its saves - the same

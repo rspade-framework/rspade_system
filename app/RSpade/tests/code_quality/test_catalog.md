@@ -37,6 +37,17 @@ PATH-OWNER-01 (PathOwner_CodeQualityRule), via `Path_Owner_Rule_Test`.
 | PO-NOT-FATAL | the rule reports rather than failing the build, at high severity | php | the rule object | id, severity, not manifest-fatal | implemented | 2026-09-15 |
 | PO-REMEDIATION | the remediation names the owner methods agents are told to trust | php | one violation | the method table is present | implemented | 2026-09-15 |
 
+COMMON-ASSIGN-01 (Assignment_Comparison_CodeQualityRule), via `Assignment_Comparison_Rule_Test`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| AC-ARROW-NOT-ASSIGNMENT | `=>` in a condition is never an assignment, and a call inside the condition does not cut it short | php | `if (array_filter(['field' => $pair]) === [])`, `in_array($k, ['a' => 1])`, `elseif (foo(['a' => $b]) === [])`, `for (...; count(['a' => 1]) > $i; ...)`, a PHP arrow fn; JS `items.some(x => x.id === id)`, `(x) => x.on`, `else if (items.find(x => x.id))` | 0 violations each | implemented | 2026-11-17 |
+| AC-STRINGS-COMMENTS | an `=` or `)` inside a string literal, a `//` or `/* */` comment, is not judged | php | four fixtures | 0 violations each | implemented | 2026-11-17 |
+| AC-STILL-FLAGGED | a real assignment is flagged and the message names its target | php | `if ($x = f())`, `if (($x = f()))`, `elseif ($x = f())`, `if (trim($a) && $x = f())` (after the first `)`), `if ($row['id'] = f())`, `for (...; $i = 3; ...)`; JS `if (x = f())` | 1 violation each, `(assigns $x)` etc. | implemented | 2026-11-17 |
+| AC-LINE-AND-QUOTE | the finding reports its line and quotes the line as written | php | one fixture | line 7, the trimmed line | implemented | 2026-11-17 |
+| AC-COMPARED-ASSIGNMENT | an assignment that is compared, and `while`, are not flagged | php | `if (($x = f()) !== null)`, `while ($row = f())` | 0 violations | implemented | 2026-11-17 |
+| AC-MULTILINE | a condition whose parentheses do not close on its line is not judged | php | a three-line condition | 0 violations | implemented | 2026-11-17 |
+
 JS-EVAL-01 (EvalUsage_CodeQualityRule), via `Eval_Usage_Rule_Test`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |

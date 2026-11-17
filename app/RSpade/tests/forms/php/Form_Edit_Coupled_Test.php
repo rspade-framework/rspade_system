@@ -265,6 +265,7 @@ class Form_Edit_Coupled_Test extends Rsx_Test_Abstract
         [$record, $other] = static::__pair();
         $loaded = Form_Edit::version_of($record, $other);
 
+        DB::flushQueryLog();
         DB::enableQueryLog();
         static::__submit($record, $other, $loaded, ['name' => 'Mine']);
         $queries = array_column(DB::getQueryLog(), 'query');

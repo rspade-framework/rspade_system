@@ -504,11 +504,11 @@ class Column_Equivalence_Model_Test extends Rsx_Test_Abstract
         $record->last_seen_at = '2026-12-01 09:00:00';
         $record->owner_id = 2;
 
-        static::__assert_equals(['name', 'owner_id', 'token'], static::__sorted($record->recorded_dirty()), "hours 1 over '1.00' and the excluded column are not recorded");
+        static::__assert_equals(['name', 'owner_id', 'owner_type', 'token'], static::__sorted($record->recorded_dirty()), "hours 1 over '1.00' and the excluded column are not recorded; owner_id brings its type half");
 
         $record->save();
         $recorded = static::__sorted($record->recorded_changes());
-        static::__assert_equals(['name', 'owner_id', 'token'], $recorded);
+        static::__assert_equals(['name', 'owner_id', 'owner_type', 'token'], $recorded);
         static::__assert_equals($recorded, static::__sorted(array_keys(static::__newest_revision($record)->diff())), 'the revision the save wrote holds exactly these columns');
 
         $created = new Column_Equivalence_Fixture_Model();
@@ -523,6 +523,26 @@ class Column_Equivalence_Model_Test extends Rsx_Test_Abstract
             "after a create: the create revision's columns"
         );
         static::__assert_false(in_array('hours_label', $created->recorded_changes(), true), 'the derived column is never one of them');
+    }
+
+    public static function test_a_change_to_one_half_of_a_polymorphic_pair_records_both_halves()
+    {
+        static::__acting_as_user(1);
+        $record = static::__stored();
+        $type_id = (int) $record->getRawOriginal('owner_type');
+        $id_before = $record->getRawOriginal('owner_id');
+
+        $record->owner_id = 99;
+        $record->save();
+
+        $diff = static::__newest_revision($record)->diff();
+        static::__assert_equals(['owner_id', 'owner_type'], static::__sorted(array_keys($diff)), 'the unchanged type half is recorded with the id');
+        static::__assert_equals([$type_id, $type_id], array_map('intval', $diff['owner_type']), 'the type half reads the same on both sides');
+        static::__assert_equals([(int) $id_before, 99], array_map('intval', $diff['owner_id']));
+
+        $record->name = 'only the name';
+        $record->save();
+        static::__assert_equals(['name'], array_keys(static::__newest_revision($record)->diff()), 'a save that leaves the pair alone records neither half');
     }
 
     /** @param array<int, string> $list */

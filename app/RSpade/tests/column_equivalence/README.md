@@ -68,6 +68,10 @@ derived or `revision_exclude` columns leaves the audit stamp alone.
   descriptors, the reader helper and the recorded-column accessors
   (`Column_Equivalence_Model_Test`, on the runtime table `column_equivalence_fixtures`, whose
   model also declares a text type on a DECIMAL column, a derived column and a fact group;
-  `Column_Equivalence_Fixture_Text.js` is the fixture text type's JS twin)
+  `Column_Equivalence_Fixture_Text.js` is the fixture text type's JS twin); a
+  caller's save that writes the instance twice - a `save()` override rederiving after
+  `parent::save()` - and what `recorded_changes()` / `written_fields()` answer across it
+  (`Recorded_Changes_Nested_Save_Test`, on the runtime table `recorded_changes_fixtures`
+  behind `Recorded_Changes_Fixture_Model`)
 - playwright: the same vectors in the browser (`playwright/column_equivalence_vectors.js`,
   run with `node`)

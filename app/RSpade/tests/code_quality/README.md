@@ -77,6 +77,12 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   an undefined token. Any default that is not itself a `var()` read is flagged; a
   chain is not; vendored, minified and framework-core stylesheets are out of
   scope, `Sys/` is in (`Scss_Phantom_Token_Rule_Test`).
+- `system/app/RSpade/CodeQuality/Rules/Common/Assignment_Comparison_CodeQualityRule.php`
+  (COMMON-ASSIGN-01) - an assignment in an if, PHP elseif or for-loop condition. The
+  condition is captured to its MATCHING parenthesis from a line with comments and
+  string contents blanked, and `=>` (an array key, an arrow function, PHP and JS) is
+  never an assignment; a finding names the assignment's target
+  (`Assignment_Comparison_Rule_Test`).
 
 ## Testable surface
 

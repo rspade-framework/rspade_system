@@ -2232,12 +2232,43 @@ EXAMPLE;
     private bool $__unstamped_write = false;
 
     /**
-     * The columns the last save() of this instance changed that a revision records
-     * (recorded_changes()). Emptied at the start of every save().
+     * The columns the caller's last save() of this instance changed that a revision records
+     * (recorded_changes()), across every write that save made to the instance. Emptied when an
+     * outermost save() begins (__save_in_progress()) and when a save throws.
      *
      * @var array<int, string>
      */
     private array $__recorded_changes = [];
+
+    /**
+     * Is another save() of THIS instance still running beneath the one that asks - a save
+     * entered from a model event fired inside a write, or from a save() override's body after
+     * its parent::save() (a rederive() there included)?
+     *
+     * Read off the call stack, because the outermost frame of a save may be an override the
+     * base class never sees enter or leave: the frames of the asking save's own parent::save()
+     * chain (every adjacent save frame on this instance) are skipped, and any save frame on
+     * this instance further out means the asking save is nested. Two parent::save() calls made
+     * one after the other in the same override body are therefore two outermost saves.
+     */
+    private function __save_in_progress(): bool
+    {
+        $frames = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT | DEBUG_BACKTRACE_IGNORE_ARGS);
+        $count = count($frames);
+        $i = 1;
+
+        while ($i < $count && $frames[$i]['function'] === 'save' && ($frames[$i]['object'] ?? null) === $this) {
+            $i++;
+        }
+
+        for (; $i < $count; $i++) {
+            if ($frames[$i]['function'] === 'save' && ($frames[$i]['object'] ?? null) === $this) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /**
      * Override save to derive the derived columns, stamp authorship, and fire the write's
@@ -2248,93 +2279,108 @@ EXAMPLE;
         // A migration's up() never writes through a model (Migration_Guard): before anything else.
         Migration_Guard::_refuse_model_write(static::class, 'save()');
 
-        $this->__recorded_changes = [];
-
-        // CTI: the discriminator is immutable once set (it selects the detail table; changing
-        // it would orphan the existing detail). Reject before the write.
-        $this->__assert_detail_discriminator_immutable();
-
-        // Snapshot existence BEFORE the write: an INSERT is a not-yet-existing record that
-        // exists after a successful save. wasRecentlyCreated is unreliable here — it stays
-        // true for the instance's lifetime, so reusing one instance for a later update would
-        // misclassify the update as a create.
-        $was_existing = $this->exists;
-
-        // DERIVED COLUMNS: refuse a hand assignment, then compute every derived column whose
-        // sources changed (all of them on an insert or a rederive()). One memoized read for a
-        // model that declares none.
-        $derived = static::derived_columns();
-        if ($derived !== []) {
-            static::_assert_columns_exist();
-            $this->__assert_no_explicit_derived_assignment($derived, $was_existing);
-            $this->__apply_derivations($derived, $was_existing, $this->__rederive_all);
+        // recorded_changes() answers for the save the CALLER made: only the outermost save of
+        // this instance starts the list over, and a save entered while another is still running
+        // (from a model event, or from an override after its parent::save() - a rederive()
+        // there) adds to it. A save that throws leaves it empty, whichever level threw.
+        if (!$this->__save_in_progress()) {
+            $this->__recorded_changes = [];
         }
 
-        // A save whose only changes are derived or revision_exclude columns records nobody as
-        // the updater and leaves updated_at alone: nobody edited the record - the framework
-        // kept it consistent, or bookkeeping (a last-seen stamp, a counter) moved. updated_at
-        // is Form_Edit's version, so moving it here would ask another editor about a change
-        // nobody made.
-        $unstamped = $was_existing && $this->__dirty_only_unrecorded();
-
-        // Stamp authorship BEFORE the write so the columns ride the same INSERT/UPDATE.
-        if (!$unstamped) {
-            $this->__apply_audit_stamp($was_existing);
-        }
-
-        // A save of an existing record with nothing dirty - nothing assigned, or every value
-        // assigned the same value under the column's kind (Column_Equivalence) - writes nothing,
-        // so it has no effects to fire: no revision, no text-type hook, no realtime frame, no
-        // after_update().
-        $clean = $was_existing && !$this->isDirty();
-
-        // Snapshot the BEFORE values while they still exist. parent::save() ends with
-        // syncOriginal(), so once the write returns the "original" IS the new row and the
-        // before half of every pair is gone. Taken for every save: what the save changed that
-        // a revision records (recorded_changes()) is decided from it whether or not this model
-        // records revisions.
-        $before = $this->getRawOriginal();
-        $records_revision = static::$revisions && !Revision::is_suppressed();
-
-        // Same reason, for the declared text types that react to their own writes: the
-        // before value of each changed text column, keyed by column (see
-        // Rsx_Text_Abstract::after_model_saved()). Empty for a model with none.
-        $text_hook_before = $this->__text_hook_before_snapshot($was_existing);
-
-        // Guard the DB write: any RestrictedEloquentBuilder::update() reached from inside
-        // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
-        // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
-        // recurse). Decremented in finally so an exception cannot leave the guard stuck on.
-        // An unstamped write also turns Eloquent's timestamps off for its duration and asks
-        // the builder to hold updated_at in the statement (MySQL's ON UPDATE would bump it).
-        $uses_timestamps = $this->timestamps;
-        if ($unstamped) {
-            $this->timestamps = false;
-            $this->__unstamped_write = true;
-        }
-
-        self::$_single_model_write_depth++;
+        $completed = false;
         try {
-            $result = parent::save($options);
-        } finally {
-            self::$_single_model_write_depth--;
+            // CTI: the discriminator is immutable once set (it selects the detail table; changing
+            // it would orphan the existing detail). Reject before the write.
+            $this->__assert_detail_discriminator_immutable();
 
+            // Snapshot existence BEFORE the write: an INSERT is a not-yet-existing record that
+            // exists after a successful save. wasRecentlyCreated is unreliable here — it stays
+            // true for the instance's lifetime, so reusing one instance for a later update would
+            // misclassify the update as a create.
+            $was_existing = $this->exists;
+
+            // DERIVED COLUMNS: refuse a hand assignment, then compute every derived column whose
+            // sources changed (all of them on an insert or a rederive()). One memoized read for a
+            // model that declares none.
+            $derived = static::derived_columns();
+            if ($derived !== []) {
+                static::_assert_columns_exist();
+                $this->__assert_no_explicit_derived_assignment($derived, $was_existing);
+                $this->__apply_derivations($derived, $was_existing, $this->__rederive_all);
+            }
+
+            // A save whose only changes are derived or revision_exclude columns records nobody as
+            // the updater and leaves updated_at alone: nobody edited the record - the framework
+            // kept it consistent, or bookkeeping (a last-seen stamp, a counter) moved. updated_at
+            // is Form_Edit's version, so moving it here would ask another editor about a change
+            // nobody made.
+            $unstamped = $was_existing && $this->__dirty_only_unrecorded();
+
+            // Stamp authorship BEFORE the write so the columns ride the same INSERT/UPDATE.
+            if (!$unstamped) {
+                $this->__apply_audit_stamp($was_existing);
+            }
+
+            // A save of an existing record with nothing dirty - nothing assigned, or every value
+            // assigned the same value under the column's kind (Column_Equivalence) - writes nothing,
+            // so it has no effects to fire: no revision, no text-type hook, no realtime frame, no
+            // after_update().
+            $clean = $was_existing && !$this->isDirty();
+
+            // Snapshot the BEFORE values while they still exist. parent::save() ends with
+            // syncOriginal(), so once the write returns the "original" IS the new row and the
+            // before half of every pair is gone. Taken for every save: what the save changed that
+            // a revision records (recorded_changes()) is decided from it whether or not this model
+            // records revisions.
+            $before = $this->getRawOriginal();
+            $records_revision = static::$revisions && !Revision::is_suppressed();
+
+            // Same reason, for the declared text types that react to their own writes: the
+            // before value of each changed text column, keyed by column (see
+            // Rsx_Text_Abstract::after_model_saved()). Empty for a model with none.
+            $text_hook_before = $this->__text_hook_before_snapshot($was_existing);
+
+            // Guard the DB write: any RestrictedEloquentBuilder::update() reached from inside
+            // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
+            // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
+            // recurse). Decremented in finally so an exception cannot leave the guard stuck on.
+            // An unstamped write also turns Eloquent's timestamps off for its duration and asks
+            // the builder to hold updated_at in the statement (MySQL's ON UPDATE would bump it).
+            $uses_timestamps = $this->timestamps;
             if ($unstamped) {
-                $this->timestamps = $uses_timestamps;
-                $this->__unstamped_write = false;
+                $this->timestamps = false;
+                $this->__unstamped_write = true;
+            }
+
+            self::$_single_model_write_depth++;
+            try {
+                $result = parent::save($options);
+            } finally {
+                self::$_single_model_write_depth--;
+
+                if ($unstamped) {
+                    $this->timestamps = $uses_timestamps;
+                    $this->__unstamped_write = false;
+                }
+            }
+
+            if ($result) {
+                if (!$clean) {
+                    $pairs = $this->__recorded_pairs($was_existing ? $before : null, $was_existing ? $this->getChanges() : $this->getAttributes());
+                    $this->__recorded_changes = array_values(array_unique(array_merge($this->__recorded_changes, array_keys($pairs))));
+                    $this->_dispatch_write_effects_on_save($was_existing, $records_revision ? $before : null, $pairs, $text_hook_before);
+                }
+                $this->__derived_written = [];
+            }
+
+            $completed = true;
+
+            return $result;
+        } finally {
+            if (!$completed) {
+                $this->__recorded_changes = [];
             }
         }
-
-        if ($result) {
-            if (!$clean) {
-                $pairs = $this->__recorded_pairs($was_existing ? $before : null, $was_existing ? $this->getChanges() : $this->getAttributes());
-                $this->__recorded_changes = array_keys($pairs);
-                $this->_dispatch_write_effects_on_save($was_existing, $records_revision ? $before : null, $pairs, $text_hook_before);
-            }
-            $this->__derived_written = [];
-        }
-
-        return $result;
     }
 
     /**
@@ -2346,6 +2392,9 @@ EXAMPLE;
      * The save is the model's own save(), so site-scope checks and a model's save() override
      * run; it is a derived-only save (no updated_at, no updated_by, no revision; realtime and
      * after_update() still fire). A record whose values are already right is never saved.
+     * Called on its own it leaves recorded_changes() empty; called inside a save of the same
+     * instance (from a save() override, after parent::save()) it adds nothing to that save's
+     * recorded_changes() and takes nothing from it.
      *
      * Throws on an unsaved record, and with a LogicException on a record with unsaved
      * changes - those would ride the same save unasked. False for a model with no derived
@@ -3495,6 +3544,33 @@ EXAMPLE;
             $pairs[$column] = [$prior, $value];
         }
 
+        // A polymorphic reference is ONE value held in two columns (rsx:man polymorphic): when
+        // either half of a declared type_ref pair is recorded, the other half is recorded with
+        // it, so the revision names the record it pointed at before and after even when only
+        // the id moved (or only the type).
+        if ($before !== null && $pairs !== []) {
+            foreach (static::type_ref_columns() as $type_column) {
+                if (!str_ends_with($type_column, '_type')) {
+                    continue;
+                }
+
+                $unit = [$type_column, substr($type_column, 0, -strlen('_type')) . '_id'];
+                $recorded = array_values(array_filter($unit, fn ($c) => isset($pairs[$c])));
+
+                if (count($recorded) !== 1) {
+                    continue;
+                }
+
+                $partner = $recorded[0] === $unit[0] ? $unit[1] : $unit[0];
+
+                if (!static::_revision_records_column($partner) || !array_key_exists($partner, $this->getAttributes())) {
+                    continue;
+                }
+
+                $pairs[$partner] = [$before[$partner] ?? null, $this->getAttributes()[$partner]];
+            }
+        }
+
         return $pairs;
     }
 
@@ -3519,12 +3595,20 @@ EXAMPLE;
     }
 
     /**
-     * AFTER a save: the columns the last save() of this instance changed that its revision
-     * records (recorded_dirty()'s set, as written) - exactly the columns of the revision that
-     * save wrote, a never_export column included (its pair is recorded redacted). Empty before
-     * any save of this instance, after a save that wrote nothing a person would call a change
-     * (only updated_at-class, revision_exclude or derived columns), and after a save that
-     * threw. For a create, every recorded column of the new row.
+     * AFTER a save: the columns the caller's last save() of this instance changed that a
+     * revision records (recorded_dirty()'s set, as written) - exactly the columns of the
+     * revisions that save wrote, a never_export column included (its pair is recorded
+     * redacted). For a create, every recorded column of the new row.
+     *
+     * One save as the caller made it: a save of the same instance entered while that save is
+     * still running - from a model event fired inside the write, or from a save() override
+     * after its parent::save(), a rederive() there included - ADDS its recorded columns to the
+     * list; only the outermost save starts it over. Two parent::save() calls one after the other
+     * in the same override body are two saves, the second answering alone.
+     *
+     * Empty before any save of this instance, after a save that wrote nothing a person would
+     * call a change (only updated_at-class, revision_exclude or derived columns - a rederive()
+     * a caller makes on its own included), and after a save that threw, at any level.
      *
      * Ask this, never re-derive the set from getChanges().
      *

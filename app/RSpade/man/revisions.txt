@@ -249,7 +249,10 @@ WHAT EACH OPERATION RECORDS
     writer's own definition, so the answer cannot drift from what a revision
     holds: not updated_at or the updated_by pair, not revision_exclude or
     derived, not a `_` system column, not a column assigned the same value by
-    its kind.
+    its kind. A polymorphic reference is one value in two columns: when either
+    half of a declared type_ref pair moves, both halves are recorded (the
+    unchanged half the same on both sides), so a revision always names the
+    record it pointed at (rsx:man polymorphic).
 
         $record->recorded_dirty()     before save(): the dirty columns its
                                       revision would record ([] = nothing a
@@ -257,6 +260,15 @@ WHAT EACH OPERATION RECORDS
         $record->recorded_changes()   after save(): the columns that save's
                                       revision holds ([] when it wrote only
                                       bookkeeping, excluded or derived columns)
+
+    recorded_changes() answers for the save the CALLER made. A save of the
+    same instance entered while that save is still running - from a model
+    event fired inside the write, or from a save() override after its
+    parent::save(), a rederive() there included (rsx:man derived_columns) -
+    ADDS its recorded columns to the list; only the outermost save starts it
+    over, and a save that throws at any level leaves it []. A rederive() a
+    caller makes on its own records nothing: []. Two parent::save() calls one
+    after the other in the same override body are two saves.
 
     Both answer on a model without $revisions too (what a revision WOULD
     record), and never by array_diff() over getDirty() / getChanges(). An
@@ -573,10 +585,12 @@ API REFERENCE
         EACH OPERATION RECORDS, WHAT A SAVE RECORDS.
 
     recorded_changes(): array
-        After a save: the columns the last save() of this instance changed
-        that its revision records (a create: every recorded column); [] before
-        any save, after one that wrote nothing a person would call a change,
-        and after one that threw.
+        After a save: the columns the caller's last save() of this instance
+        changed that a revision records (a create: every recorded column),
+        nested saves of the instance included; [] before any save, after one
+        that wrote nothing a person would call a change (a caller's own
+        rederive()), and after one that threw. See WHAT EACH OPERATION
+        RECORDS, WHAT A SAVE RECORDS.
 
     revisions(): Rsx_Result_Set
         Every revision recorded for THIS record, newest first. #[Replaceable]:
@@ -825,9 +839,10 @@ TROUBLESHOOTING
     A history shows a reference without its type
         The reader judged the halves of a polymorphic pair separately. Read
         the diff through Revision::meaningful_changes(), which keeps the pair
-        whole. An update that moved only the `_id` half records only that
-        half; the type it held then is the before side of the next revision
-        that moved the type, or the record's current type when none did.
+        whole. Revisions recorded before a save wrote both halves may hold only
+        the `_id` half; the type it held then is the before side of the next
+        revision that moved the type, or the record's current type when none
+        did. Every save records both halves when either moves.
 
     A field's values read "__RSX_REDACTED__"
         Correct: the column is in the model's never-export list, so its change

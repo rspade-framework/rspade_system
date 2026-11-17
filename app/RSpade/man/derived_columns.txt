@@ -172,6 +172,16 @@ A DERIVED-ONLY SAVE
     Derived columns never appear in revision history in any save:
     revision_excluded_columns() includes every derived column.
 
+    Inside a save of the same instance - a save() override that calls
+    $this->rederive() after parent::save(), because its derived value reads
+    the row as stored - the derived-only save adds nothing to the caller's
+    recorded_changes() and takes nothing from it: after one $record->save()
+    the list still names the columns the caller's edit changed, and so does
+    Form_Edit's written_fields(). Any save of the same instance entered while
+    another is still running adds to that list the same way; only the
+    outermost save starts it over. A rederive() a caller makes on its own
+    answers [] (rsx:man revisions, WHAT A SAVE RECORDS).
+
 CROSS-RECORD DEPENDENCIES
     There is NO cross-record trigger. When record B's derived value reads
     record A, the model whose change moves it - A's - rederives B itself, so
