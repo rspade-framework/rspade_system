@@ -1139,6 +1139,11 @@ return [
         // (process_file() throws Unparseable_Upload_Exception for the endpoint to handle).
         'reject_unparseable_images' => false,
 
+        // ffprobe (apt ffmpeg; in the RSpade image) reads a video's width, height and duration
+        // (Media_Metadata). null = PATH, then /usr/bin, /usr/local/bin. Missing, a video keeps
+        // no size or duration and the rsx:health "ffprobe" row fails.
+        'ffprobe_binary_path' => null,
+
         // Developer-callable upload extension allowlist consulted by
         // File_Attachment_Model::is_allowed_extension() (PROVIDE ONLY - the framework does not
         // auto-enforce it at /_upload). Empty array = allow all extensions. Case-insensitive;
@@ -1193,6 +1198,17 @@ return [
         | deleted attachment stays restorable and its blob stays pinned; force_destroy()
         | still erases at once. A negative value is a config error, thrown by the daily task.
         */
+        /*
+        | A photo's GPS position is withheld from every client that is handed its ORIGINAL bytes
+        | (/_download, /_inline, the members of /_download_zip, File_Storage_Model::
+        | download_response() / inline_response()). The stored file is never changed: its bytes,
+        | hash and deduplication stay as uploaded, and server code reads the position with
+        | $attachment->get_gps_position(). Only an image whose EXIF carries a GPS block is
+        | altered - that block is removed as the file streams out, losslessly (Exif_Gps); every
+        | other file is served byte for byte. false serves originals exactly as stored.
+        */
+        'strip_gps_when_served' => true,
+
         'deleted_retention_days'   => 30,   // recoverable window before permanent destruction; 0 = forever
         'disposal_lookback_days'   => 60,   // blob-release pass window for the daily task
         'disk_orphan_min_age_days' => 14,   // age guard for the monthly disk/unassigned sweep
@@ -1585,9 +1601,24 @@ return [
         //
         // Nor can it be derived from file_type_id: text/* classifies as DOCUMENT alongside
         // Word and Excel (2026-09-08), and those three disagree about inline display.
+        //
+        // Images are listed one format at a time because browsers disagree by format: HEIC and
+        // HEIF (Safari only), TIFF and Photoshop files are not displayed, and are shown in a
+        // preview as a WebP drawn from them (File_Attachment_Model::get_display_url()).
         'browser_inline' => [
             'application/pdf',
-            'image/*',
+            'image/jpeg',
+            'image/pjpeg',
+            'image/png',
+            'image/apng',
+            'image/gif',
+            'image/webp',
+            'image/avif',
+            'image/bmp',
+            'image/x-ms-bmp',
+            'image/svg+xml',
+            'image/x-icon',
+            'image/vnd.microsoft.icon',
             'text/*',
             'video/*',
             'audio/*',
@@ -1668,6 +1699,19 @@ return [
 
         // Only touch if mtime is older than this many seconds (prevents excessive filesystem writes)
         'touch_interval' => env('THUMBNAILS_TOUCH_INTERVAL', 600),  // 10 minutes
+
+        // Face-centred cover thumbnails (?face=1 on a dynamic cover thumbnail of an image):
+        // the detector Face_Detection runs, as argv [python, script, model, image]. The RSpade
+        // container image installs all three under /opt/rspade/face_detection/ (OpenCV in its
+        // own venv, the YuNet model checked by sha256). Where they are missing or broken a
+        // face request serves the plain centre-cropped thumbnail and the rsx:health
+        // "Face Detection" row says why. An application on another layout overrides these
+        // paths in rsx/resource/config/rsx.php.
+        'face_detection' => [
+            'python' => '/opt/rspade/face_detection/venv/bin/python',
+            'script' => '/opt/rspade/face_detection/detect_face.py',
+            'model' => '/opt/rspade/face_detection/face_detection_yunet_2023mar.onnx',
+        ],
     ],
 
     /*

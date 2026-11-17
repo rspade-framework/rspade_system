@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading revision history - $revisions = true, the revision_exclude and revision_include column keys in $columns, MODEL-REVISION-NOISE-01 for bookkeeping columns, Revision::meaningful_changes() for history readers, storage-form diffs, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01, MODEL-REVISION-NOISE-01, a history full of changes nobody made ('1.00' -> 1, a last-viewed stamp) or a diff reading '__RSX_REDACTED__'."
+description: "Recording and reading revision history - $revisions = true, the revision_exclude and revision_include column keys in $columns, MODEL-REVISION-NOISE-01 for bookkeeping columns, Revision::meaningful_changes() for history readers (polymorphic pair and fact group kept whole, the $removed count, a retired model's diff as stored), recorded_dirty() / recorded_changes() for 'which recorded columns did this save change', storage-form diffs, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01, MODEL-REVISION-NOISE-01, a history full of changes nobody made ('1.00' -> 1, a last-viewed stamp) or a diff reading '__RSX_REDACTED__'."
 ---
 
 # Revision history
@@ -112,7 +112,7 @@ app is the worked example of a model that opts in and deliberately declares no p
 foreach ($client->revisions() as $revision) {              // this record only
     $revision->operation_id__label;                        // Created/Updated/Deleted/Restored
     $revision->diff();                                     // ['name' => ['Acme', 'Acme Ltd']]
-    Revision::meaningful_changes($revision->record_type, $revision->diff()); // what a history SHOWS
+    Revision::meaningful_changes($revision->record_type, $revision->diff(), $removed); // what a history SHOWS
     Revision_Model::is_redacted($after);                   // a never_export column: show "changed", never the marker
     $revision->transaction->actor;                         // who
     $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test/Companion
@@ -133,9 +133,26 @@ for `true` on a boolean - what the column holds, not the shape it was assigned i
 **A history reader shows `Revision::meaningful_changes($model_class, $diff)`, never the raw
 `diff()`.** It drops, from an already stored diff, a column the model no longer records
 (excluded or derived since) and a pair equal by the column's kind (`['1.00', 1]` written
-before the rule existed); it keeps a redacted pair and a column the table no longer has. An
-update left empty is skipped. `Form_Edit`'s conflict check reads through it too, so stored
-noise never asks an editor a question.
+before the rule existed); it keeps a redacted pair and a column the table no longer has, and
+returns the whole diff AS STORED for a model the application no longer ships (revisions
+outlive models - no throw). **One fact is one unit**: a declared `type_ref` column and its
+`_id` partner, and each `$fact_groups` entry, are kept whole when any pair of it changed
+(`['parent_type' => [5, 5], 'parent_id' => [1, 2]]` keeps both, so a reader never renders a
+reference without its type) and dropped only when none did. The optional by-reference
+`$removed` counts the stored pairs left out - an empty result with 0 removed is "nothing was
+recorded", with some removed "everything recorded was noise". An update left empty is
+skipped. `Form_Edit`'s conflict check reads through it too, so stored noise never asks an
+editor a question.
+
+**"Which columns does THIS save record" is the model's answer - ask it, never re-derive the
+set:** `$record->recorded_dirty()` before `save()` (the dirty columns its revision would
+record), `$record->recorded_changes()` after it (exactly the columns of the revision it
+wrote; `[]` when it wrote only `updated_at`-class, `revision_exclude` or derived columns).
+Both are the revision writer's own definition, so they cannot drift from what a revision
+holds, and both answer on a model without `$revisions` too. An edit endpoint asks
+`$edit->written_fields()` inside `Form_Edit::run()`'s callback after its saves - the same
+answer by form field (skill `rspade:form-engine`). A rule like "a save that changed nothing
+writes no activity sentence" is `if ($record->recorded_changes() === []) return;`.
 
 ## The activity-row recipe (the app writes the sentence)
 
@@ -176,8 +193,9 @@ The four decisions worth copying:
    field names; the browser turns an enum id into a label with the generated stub's
    `Model.field__enum_labels()`, an `_at` / `_date` column through `Rsx_Time` / `Rsx_Date`
    (JQHTML-DATETIME-01), and a null into `<Empty_Value>`.
-4. **Every diff goes through `Revision::meaningful_changes()`**; an update left empty is
-   skipped, a transaction left with nothing is left off the page, and the next page's
+4. **Every diff goes through `Revision::meaningful_changes()`** (with `$removed`, shipped
+   as the revision's `hidden_count`); an update left empty is skipped, the header counts the
+   revisions shown (never the stored `revision_count`), a transaction left with nothing is left off the page, and the next page's
    cursor is the last transaction READ, not the last one shown.
 
 ```jqhtml

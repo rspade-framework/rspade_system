@@ -290,50 +290,125 @@ class Revision
      *     (Model::same_value(): ['1.00', 1] on a DECIMAL, an instant in two forms, '' over
      *     NULL on a nullable text column) - written before the rule existed.
      *
+     * ONE FACT, ONE UNIT. The columns of a declared type_ref column and its `_id` partner (a
+     * polymorphic reference: rsx:man polymorphic), and the columns of each declared
+     * $fact_groups entry, are judged together: when any recorded pair of the unit is a change,
+     * every recorded pair of the unit that the diff holds is kept, so a reader never renders a
+     * reference without its type or half of a fact; the unit is dropped only when none of its
+     * pairs is a change.
+     *
      * A redacted pair (a never_export column) is always kept: it says the secret changed. A
      * pair for a column the table no longer has is kept as stored - nothing remains to judge
-     * it by. Every history reader passes its diffs through here, so stored noise is hidden
-     * the same way on every screen; an update revision left empty is one a reader skips.
+     * it by - and so is a whole diff whose model the application no longer ships (revisions
+     * outlive their models): an unknown $model_class returns $diff unchanged. Every history
+     * reader passes its diffs through here, so stored noise is hidden the same way on every
+     * screen; an update revision left empty is one a reader skips.
+     *
+     * $removed counts the stored pairs left out, so a reader can keep its figures honest and
+     * tell "nothing was recorded" (an empty diff, 0 removed) from "everything recorded was
+     * noise" (an empty result, some removed).
      *
      * @param string $model_class The revision's model (its record_type), simple name or FQCN
      * @param array<string, array{0: mixed, 1: mixed}> $diff A stored `{field: [before, after]}`
+     * @param int|null $removed Set to the number of pairs of $diff the result leaves out
      * @return array<string, array{0: mixed, 1: mixed}>
      */
-    public static function meaningful_changes(string $model_class, array $diff): array
+    public static function meaningful_changes(string $model_class, array $diff, ?int &$removed = null): array
     {
-        $fqcn = str_contains($model_class, '\\')
-            ? ltrim($model_class, '\\')
-            : (Manifest::php_model_record($model_class)['fqcn'] ?? null);
+        $removed = 0;
 
-        if ($fqcn === null || !is_subclass_of($fqcn, Rsx_Model_Abstract::class)) {
-            throw new RuntimeException("Revision::meaningful_changes(): {$model_class} is not a model in the manifest's registry.");
+        // A model the manifest no longer knows (a retired class) leaves nothing to judge its
+        // diff by, so the diff is returned as stored.
+        $fqcn = Manifest::php_model_record(Manifest::_normalize_class_name($model_class))['fqcn'] ?? null;
+
+        if ($fqcn === null) {
+            return $diff;
         }
 
-        $unrecorded = $fqcn::_revision_unrecorded_lookup();
-        $descriptors = Column_Equivalence::descriptors($fqcn) ?? [];
-        $kept = [];
+        $descriptors = Column_Equivalence::descriptors($fqcn);
+        $verdicts = [];
 
         foreach ($diff as $column => $pair) {
             $column = (string) $column;
 
-            if (isset($unrecorded[$column]) || (str_starts_with($column, '_') && !str_starts_with($column, '__'))) {
+            // A '__' key is no column of any table (a system column has ONE underscore), so
+            // the writer's column test does not speak for it; it is kept as stored below.
+            if (!str_starts_with($column, '__') && !$fqcn::_revision_records_column($column)) {
+                $verdicts[$column] = null;
                 continue;
             }
 
             if (!is_array($pair) || count($pair) !== 2 || !isset($descriptors[$column])
                 || Revision_Model::is_redacted($pair[0]) || Revision_Model::is_redacted($pair[1])) {
-                $kept[$column] = $pair;
+                $verdicts[$column] = true;
                 continue;
             }
 
             [$before, $after] = array_values($pair);
+            $verdicts[$column] = !Column_Equivalence::same($descriptors[$column], $before, $after);
+        }
 
-            if (!Column_Equivalence::same($descriptors[$column], $before, $after)) {
+        // A unit with one changed pair keeps every recorded pair it has in the diff.
+        if ($descriptors !== null) {
+            foreach (static::__fact_units($fqcn) as $unit) {
+                $present = array_values(array_filter($unit, fn ($column) => ($verdicts[$column] ?? null) !== null));
+
+                if (in_array(true, array_map(fn ($column) => $verdicts[$column], $present), true)) {
+                    foreach ($present as $column) {
+                        $verdicts[$column] = true;
+                    }
+                }
+            }
+        }
+
+        $kept = [];
+
+        foreach ($diff as $column => $pair) {
+            if ($verdicts[(string) $column] === true) {
                 $kept[$column] = $pair;
+            } else {
+                $removed++;
             }
         }
 
         return $kept;
+    }
+
+    /**
+     * The column sets of a model that each hold ONE fact, for meaningful_changes(): every
+     * declared type_ref column with its `_id` partner, and every declared fact group. Units
+     * that share a column are merged into one.
+     *
+     * @param class-string<Rsx_Model_Abstract> $fqcn
+     * @return array<int, array<int, string>>
+     */
+    private static function __fact_units(string $fqcn): array
+    {
+        $units = [];
+
+        foreach ($fqcn::type_ref_columns() as $type_column) {
+            if (str_ends_with($type_column, '_type')) {
+                $units[] = [$type_column, substr($type_column, 0, -strlen('_type')) . '_id'];
+            }
+        }
+
+        foreach ($fqcn::fact_groups() as $group) {
+            $units[] = $group['columns'];
+        }
+
+        $merged = [];
+
+        foreach ($units as $unit) {
+            foreach ($merged as $i => $existing) {
+                if (array_intersect($existing, $unit) !== []) {
+                    $unit = array_values(array_unique(array_merge($existing, $unit)));
+                    unset($merged[$i]);
+                }
+            }
+            $merged[] = $unit;
+        }
+
+        return array_values($merged);
     }
 
     /**

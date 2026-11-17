@@ -7,7 +7,8 @@ is a pointer, not a second copy.
 - **File URLs, the content version (`content_version()`, `?v=`) and the cache policy every attachment-addressed route applies through `File_Attachment_Controller::apply_content_version_cache_policy()`**: `rsx:man file_upload`, FILE ACCESS
 - **Deletion, retention, blob release, disposal hooks, the per-blob `file_blob:<hash>` lock (`File_Blob_Locks`)**: `rsx:man file_disposal`
 - **Declared blob references (`#[Blob_Reference]` read by `File_Blob_References`, the `Blob_Referencing` write-side trait, the "Blob References" health row) and the central blob API (`File_Storage_Model::store_blob()` / `store_bytes()` / `read_bytes()` / `read_stream()` / `download_response()` / `inline_response()`)**: `rsx:man file_disposal`
-- **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`
+- **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry, face-centred covers (`Face_Detection`, `?face=1`, the "Face Detection" health row), upright metadata-free output**: `rsx:man thumbnails`
+- **Displayed width / height / duration (`Media_Metadata`, ffprobe for video, `ensure_media_metadata()` filling them on demand), GPS withheld from served originals (`Exif_Gps`, `File_Storage_Model::original_bytes_response()`, `get_gps_position()`, `rsx.files.strip_gps_when_served`), HEIC/HEIF and `get_display_url()`**: `rsx:man file_upload`, MEDIA METADATA and GPS POSITIONS
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
 - **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions, the `preview_loaded` event every preview widget emits (state vocabulary, viewer contract)**: `rsx:man document_search`
 - **Headless soffice, invoked only by the render worker, and the document sandbox that can contain it (`Document_Sandbox`)**: `rsx:man libreoffice`

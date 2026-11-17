@@ -328,6 +328,10 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      */
     private static function __file_payload(File_Attachment_Model $attachment): array
     {
+        // width / height / duration are read through ensure_media_metadata(), like every
+        // payload that carries them.
+        $attachment->ensure_media_metadata();
+
         return [
             'key' => $attachment->key,
             'id' => (int) $attachment->id,

@@ -36,7 +36,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *   kind            money | text_type | type_ref | integer | decimal | float | boolean |
  *                   date | datetime | time | json | string | exact
  *   nullable        bool - the column accepts NULL
- *   scale           int - a decimal's digits after the point (decimal only)
+ *   scale           int - a DECIMAL column's digits after the point (decimal, and a
+ *                   text_type column whose schema type is DECIMAL)
  *   fsp             int - fractional-second digits (datetime and time only)
  *   blank_distinct  bool - declared ['blank_distinct' => true]: '' is a value, never NULL
  *   text_type       the declared Rsx_Text_Abstract class (text_type only; PHP: the class,
@@ -53,7 +54,10 @@ use App\RSpade\Core\Manifest\Manifest;
  *   money      Rsx_Money::same() - an Rsx_Money, the envelope, a decimal string or an int
  *   text_type  the TYPE is asked: each side through its own sanitize_encoded(), compared as
  *              stored (a string side is the stored/encoded form, an instance its to_storage(),
- *              a submitted Rsx_Text_Request_Value read through from_request())
+ *              a submitted Rsx_Text_Request_Value read through from_request()). A number side
+ *              is read as its text first: on a DECIMAL column laid out at the column's scale
+ *              by the decimal kind's digit-string arithmetic (60 and 60.0 are '60.0000' on a
+ *              DECIMAL(12,4)), elsewhere its plain decimal text - never a float's printing
  *   type_ref   both sides resolved to the registry id (a class name and its id are the same)
  *   integer    equal as integers ("23", 23, 23.0; true / false are 1 / 0)
  *   decimal    equal as exact decimals at the column's scale, rounded as MySQL stores them
@@ -61,7 +65,11 @@ use App\RSpade\Core\Manifest\Manifest;
  *              a float epsilon
  *   float      equal as exact decimals (FLOAT / DOUBLE have no declared scale)
  *   boolean    {true, 1, '1'} against {false, 0, '0'}
- *   date       the same calendar date (YYYY-MM-DD)
+ *   date       the same calendar date (YYYY-MM-DD); a date followed by a MIDNIGHT time
+ *              ('2026-01-02 00:00:00', 'T' or space, H:i or H:i:s, fractional zeros) is that
+ *              date - what a driver or an importer writes for one. A non-midnight time, or
+ *              any zone suffix (a zoned value names an instant, never a calendar date), is
+ *              unreadable
  *   datetime   the same instant at the column's fractional precision: ISO, zoned, '.000' and
  *              second-only forms of one instant are equal; a zoneless value is UTC (what the
  *              column stores); a fraction beyond the precision rounds as MySQL rounds it
@@ -405,7 +413,7 @@ class Column_Equivalence
 
         $canon = match ($d['kind']) {
             self::KIND_MONEY => static::__money($value),
-            self::KIND_TEXT_TYPE => static::__text($d['text_type'], $value),
+            self::KIND_TEXT_TYPE => static::__text($d['text_type'], $value, $d['scale']),
             self::KIND_TYPE_REF => static::__type_ref($value),
             self::KIND_INTEGER => static::__integer($value),
             self::KIND_DECIMAL => static::__decimal_at_scale($value, $d['scale']),
@@ -444,13 +452,25 @@ class Column_Equivalence
     }
 
     /**
-     * A text-type side's canonical storage: the type's own sanitizer over its encoded form.
+     * A text-type side's canonical storage: the type's own sanitizer over its encoded form. A
+     * number side (an int or a float - a stored diff written before the column carried its
+     * type, a JSON-decoded payload) is read as its text first: at the column's scale when the
+     * schema type is DECIMAL (what the column stores for it), its plain decimal text otherwise.
      *
      * @param class-string<Rsx_Text_Abstract> $type
+     * @param int|null $scale The DECIMAL column's scale, null for a column of any other type
      * @return string|false
      */
-    private static function __text(string $type, mixed $value): string|false
+    private static function __text(string $type, mixed $value, ?int $scale): string|false
     {
+        if (is_int($value) || is_float($value)) {
+            $value = $scale === null ? static::__plain_decimal($value) : static::__decimal_at_scale($value, $scale);
+
+            if ($value === false) {
+                return false;
+            }
+        }
+
         if ($value instanceof Rsx_Text_Abstract) {
             if (!$value instanceof $type) {
                 throw new LogicException(
@@ -541,15 +561,16 @@ class Column_Equivalence
         };
     }
 
+    /** 'Y-m-d'; a midnight tail ('T' or space, H:i or H:i:s, fractional zeros) is dropped. */
     private static function __date(mixed $value): string|false
     {
-        if (!is_string($value) || preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m) !== 1) {
+        if (!is_string($value) || preg_match('/^((\d{4})-(\d{2})-(\d{2}))(?:[Tt ]00:00(?::00(?:\.0+)?)?)?$/', $value, $m) !== 1) {
             return false;
         }
 
-        [$y, $mo, $d] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+        [$y, $mo, $d] = [(int) $m[2], (int) $m[3], (int) $m[4]];
 
-        return static::__valid_date($y, $mo, $d) ? $value : false;
+        return static::__valid_date($y, $mo, $d) ? $m[1] : false;
     }
 
     /** 'Y-m-d H:i:s' (UTC) plus '.' and $fsp digits when $fsp > 0. */
@@ -924,7 +945,9 @@ class Column_Equivalence
         return [
             'kind' => $kind,
             'nullable' => (bool) $shape['nullable'],
-            'scale' => $kind === self::KIND_DECIMAL ? (int) $shape['scale'] : null,
+            'scale' => $kind === self::KIND_DECIMAL || ($kind === self::KIND_TEXT_TYPE && $shape['type'] === 'decimal')
+                ? (int) $shape['scale']
+                : null,
             'fsp' => in_array($kind, [self::KIND_DATETIME, self::KIND_TIME], true) ? (int) ($shape['fsp'] ?? 0) : null,
             'blank_distinct' => in_array($column, $fqcn::blank_distinct_columns(), true),
             'text_type' => $text_type,

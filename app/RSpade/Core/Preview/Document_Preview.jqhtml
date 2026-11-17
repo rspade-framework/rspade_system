@@ -30,7 +30,9 @@ States, in the order the template tests them:
                          later; a realtime frame brings a later success here.
                          The operator reason (render_error) is deliberately NOT exported here.
   urls.rendition       - a PDF (its own blob) or a document with a RENDERED PDF rendition -> Pdf_Viewer.
-  otherwise            - Image_Viewer / Icon_Viewer / an app-registered viewer.
+  otherwise            - Image_Viewer / Icon_Viewer / an app-registered viewer. Image_Viewer shows
+                         urls.display: the image itself when a browser can display its format,
+                         else a large WebP drawn from it (HEIC, HEIF, TIFF, PSD).
 
 Args:
   $attachment_id  (required) - the File_Attachment_Model id to preview. Throws if absent.
@@ -142,7 +144,7 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                      rather than handing the viewer a null URL. --%>
                 <Icon_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else if (_v === 'Image_Viewer') { %>
-                <Image_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.inline />
+                <Image_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.display />
             <% } else if (_v === 'Text_Viewer') { %>
                 <%-- Takes $attachment_id, not a url: it reads the file through the text
                      pipeline (decoded and length-capped) rather than fetching raw bytes of

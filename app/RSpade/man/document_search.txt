@@ -524,7 +524,9 @@ DOCUMENT_PREVIEW COMPONENT
                        longer than the generic Office patterns, which would
                        otherwise take a workbook to a PDF of LibreOffice's print
                        view.
-        Image_Viewer   image/*  (natural-dimension preview).
+        Image_Viewer   image/*  (natural-dimension preview of urls.display: the
+                       image itself when a browser displays its format, else a
+                       large upright WebP drawn from it - HEIC, HEIF, TIFF, PSD).
         Markdown_Viewer
                        text/markdown - the file rendered as the DOCUMENT its author
                        wrote (GitHub-flavoured: headings, tables, task lists, fenced
@@ -813,7 +815,9 @@ SERVER SURFACES
     POST get_preview_info  (#[Ajax_Endpoint])
         Server-side viewer resolution consumed by <Document_Preview>: returns
         {viewer, mime, file_name, extension, preview_unavailable, render_status_id,
-        render_retrying, urls:{rendition, inline, icon}}. render_status_id is the
+        render_retrying, should_show_text_preview,
+        urls:{rendition, inline, display, icon}}. urls.display is
+        File_Attachment_Model::get_display_url(), null for a non-image. render_status_id is the
         blob's File_Storage_Model::RENDER_STATUS_*, or null when there is no resident
         blob at all; urls.rendition is present ONLY when the endpoint would actually
         serve one.
@@ -828,9 +832,9 @@ SERVER SURFACES
         so a retry that fails again does not start the next. The view grants no
         attempt and runs nothing in the request (rsx:man documents, THE WORK
         QUEUE).
-        urls.rendition and urls.inline are the model builders' URLs and carry the
-        attachment's content version, so the payload DIFFERS after a relink or a
-        re-render - which is what makes <Document_Preview>'s refresh() repaint, for a
+        urls.rendition, urls.inline and urls.display are the model builders' URLs
+        and carry the attachment's content version, so the payload DIFFERS after a
+        relink or a re-render - which is what makes <Document_Preview>'s refresh() repaint, for a
         PDF and an image as much as for a converted document.
         Gated by file.thumbnail.authorize only (metadata, not full content). No config
         is exported to the client - resolution is server-side.
@@ -891,6 +895,9 @@ CONFIGURATION
                                        list and 'viewers' are expected to disagree. Nor
                                        can it be derived from file_type_id - text/*,
                                        Word and Excel are all DOCUMENT and disagree.
+                                       Images are listed format by format: HEIC, HEIF,
+                                       TIFF and PSD are absent, and get_display_url()
+                                       shows them as a WebP drawn from them.
         text_preview_suppressed array  Mimes whose EXTRACTED TEXT is not worth showing
                                        beside their preview (fnmatch globs), read by
                                        File_Attachment_Model::should_show_text_preview().
@@ -1040,4 +1047,4 @@ SEE ALSO
     rsx:man enums            Search_Index_Model status_id lifecycle
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
 
-RSX Framework              Last updated 2026-10-20           DOCUMENT_SEARCH(1)
+RSX Framework              Last updated 2026-11-17           DOCUMENT_SEARCH(1)

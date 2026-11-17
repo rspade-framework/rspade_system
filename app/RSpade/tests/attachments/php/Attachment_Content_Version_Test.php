@@ -330,7 +330,8 @@ class Attachment_Content_Version_Test extends Rsx_Test_Abstract
         static::__assert_equals($pdf->get_url(), $info['urls']['inline'], 'the inline URL is versioned');
 
         $info = File_Preview_Controller::get_preview_info($request, ['attachment_id' => $image->id]);
-        static::__assert_equals($image->get_url(), $info['urls']['inline'], 'what Image_Viewer loads is versioned');
+        static::__assert_equals($image->get_url(), $info['urls']['inline'], 'the inline URL is versioned');
+        static::__assert_equals($image->get_url(), $info['urls']['display'], 'what Image_Viewer loads (a browser-displayable image: itself) is versioned');
 
         // A rendered workbook's rendition URL is the same builder's.
         $storage = File_Storage_Model::find($sheet->file_storage_id);
@@ -468,7 +469,7 @@ class Attachment_Content_Version_Test extends Rsx_Test_Abstract
         $storage = File_Storage_Model::find(static::__fresh($attachment)->file_storage_id);
         static::$created_files[] = File_Attachment_Controller::_get_cache_path(
             'dynamic',
-            File_Attachment_Controller::_get_cache_filename_dynamic('fit', 40, 40, $storage->hash, 'png')
+            File_Attachment_Controller::_get_cache_filename_dynamic('fit', 40, null, $storage->hash, 'png')
         );
         static::$created_files[] = File_Attachment_Controller::_get_cache_path(
             'preset',

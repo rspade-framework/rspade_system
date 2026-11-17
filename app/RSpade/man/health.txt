@@ -218,6 +218,12 @@ FRAMEWORK INVENTORY
         Env Encryption              all           branches on the mode itself
         Env Symlink                 all
         FPC                         all
+        Face Detection              all           never FAIL: without it a
+                                                  face crop is the centre crop
+        ffprobe                     all           every mode stores uploaded
+                                                  videos
+        HEIC Decoding               all           every mode stores phone
+                                                  photos
         Hostname                    debug, prod   a .dev. hostname gates every
                                                   outbound email and SMS
         IP Geolocation              all           never FAIL: a missing database
@@ -392,6 +398,29 @@ FRAMEWORK INVENTORY
                                  resource/docker/imagemagick/policy.xml (raster
                                  coders plus PDF only); another host installs it by
                                  hand. INFO when the imagick extension is absent.
+        HEIC Decoding            ImageMagick decodes a 16x16 HEIC held in the check.
+                                 Its HEIC coder (libheif) needs the HEVC decoder
+                                 plugin libheif-plugin-libde265, which the
+                                 imagemagick package does not pull in; the RSpade
+                                 image carries it. FAIL without it: a HEIC/HEIF
+                                 upload keeps no size, thumbnail or preview.
+        ffprobe                  ffprobe (apt ffmpeg) found - on PATH, /usr/bin,
+                                 /usr/local/bin, or rsx.attachments.
+                                 ffprobe_binary_path - and answering -version. OK
+                                 naming its version. FAIL otherwise: an uploaded
+                                 video keeps no width, height or duration (they
+                                 stay NULL, are read on demand once it is
+                                 installed, and each miss is logged).
+        Face Detection           the face detector behind face-centred cover
+                                 thumbnails (rsx:man thumbnails, FACE-AWARE CROPS)
+                                 run on a synthetic face-free image, expecting a
+                                 well-formed "none" - proof that its Python, OpenCV
+                                 and model all load. OK naming the OpenCV version.
+                                 WARN, never FAIL, when it is missing or broken:
+                                 those thumbnails fall back to the centre crop and
+                                 nothing breaks. Remediation: rebuild the RSpade
+                                 image and recreate the container, or point
+                                 rsx.thumbnails.face_detection at a working install.
         Document Sandbox         whether soffice and pdftotext run on the host or
                                  inside a throwaway container
                                  (rsx.libreoffice.sandbox). 'none' is a WARN in

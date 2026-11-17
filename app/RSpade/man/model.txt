@@ -194,7 +194,11 @@ Rsx_Settings::set(). Application code asks the same rule:
 Two values are the same when, read through the column's kind:
 
     money             the same amount in cents (Rsx_Money, envelope, decimal string)
-    text type         the same canonical storage, each side through the type
+    text type         the same canonical storage, each side through the type;
+                      a number side (60, 0.725) is read as its text first - on a
+                      DECIMAL column at the column's scale, by digit arithmetic
+                      ('60.0000' = 60 = 60.0 on a DECIMAL(12,4)), never a float's
+                      printing
     type_ref          the same registry id (a class name and its id are equal)
     integer, enum,    equal as integers ("23", 23, 23.0)
     foreign key
@@ -202,7 +206,9 @@ Two values are the same when, read through the column's kind:
     money)            1.5, "1.5" - by digit arithmetic, never a float epsilon
     FLOAT / DOUBLE    equal as exact decimals
     TINYINT(1)        {true, 1, '1'} against {false, 0, '0'}
-    DATE              the same calendar date
+    DATE              the same calendar date; the date with a MIDNIGHT time
+                      ('2026-01-02 00:00:00', 'T' or space, fractional zeros) is
+                      that date - a non-midnight time or a zone suffix is not
     DATETIME /        the same instant at the column's fractional precision
     TIMESTAMP         (ISO, zoned, '.000' and second-only forms of one instant)
     TIME              the same H:i:s
@@ -222,6 +228,9 @@ What follows from it:
   and no after_update(), text-type hook or realtime frame fires.
 - A save whose only changes are derived and revision_exclude columns writes
   them but leaves updated_at and the updated_by pair where they were.
+- "Which of the changes would a revision record" is recorded_dirty() before a
+  save and recorded_changes() after it (rsx:man revisions, WHAT A SAVE
+  RECORDS) - ask these, never re-derive the set from getDirty().
 - Model::same_value() throws for a name that is not a column of the table;
   the JavaScript one throws for a system or never_export column (the browser
   never holds its value) and for an undefined side.

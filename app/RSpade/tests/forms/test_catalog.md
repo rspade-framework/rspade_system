@@ -183,6 +183,7 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | FE-01 | a model without revisions is refused by name | run() on a plain model | throws naming it | implemented |
 | FE-02 | a new record writes every field | `_changed` empty, no id | fields written, `updated_at` in the result | implemented |
 | FE-03 | only changed fields are written | one field changed | the others untouched | implemented |
+| FE-WRITTEN-FIELDS | `written_fields()` names what the edit's saves changed, by form field (a `fields:` map honoured), and is empty when the saves wrote the stored values | a mixed submission, then an unchanged one | `['name', 'telephone']`, then `[]` | implemented |
 | FE-04 | saves of different fields both stand | another save of another field | no question, both values stored | implemented |
 | FE-05 | a save of the same field asks and writes nothing | overlap on an enum | `field_conflict` naming that field, enum labels, nothing written | implemented |
 | FE-06 | Yes writes mine, No keeps theirs and writes the rest | each answer | stored values | implemented |

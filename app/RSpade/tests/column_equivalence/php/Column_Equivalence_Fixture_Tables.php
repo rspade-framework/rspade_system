@@ -17,7 +17,8 @@ use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
  * writer judge: a nullable VARCHAR (name), a blank_distinct VARCHAR (code), a plain
  * DECIMAL(8,2) (hours), a money DECIMAL(15,2) (budget), a TINYINT(1) (is_flag), a DATETIME(3)
  * (happened_at), a JSON document (doc), a revision_exclude DATETIME (last_seen_at), a
- * never_export VARCHAR (token) and a type-ref pair (owner_type / owner_id). Rsx_Schema is
+ * never_export VARCHAR (token), a type-ref pair (owner_type / owner_id), a DECIMAL(12,4)
+ * carrying a text type (rate), a DATE (due_on) and a derived VARCHAR (hours_label). Rsx_Schema is
  * forgotten after the DDL both ways, so the descriptors read the table as it is.
  */
 class Column_Equivalence_Fixture_Tables
@@ -45,6 +46,9 @@ class Column_Equivalence_Fixture_Tables
             token VARCHAR(64) NULL,
             owner_type BIGINT NULL,
             owner_id BIGINT NULL,
+            rate DECIMAL(12,4) NULL,
+            due_on DATE NULL,
+            hours_label VARCHAR(32) NULL,
             created_at TIMESTAMP(3) NULL DEFAULT CURRENT_TIMESTAMP(3),
             updated_at TIMESTAMP(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
             created_by_id BIGINT NULL DEFAULT NULL,

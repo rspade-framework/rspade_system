@@ -74,6 +74,7 @@ class Column_Equivalence_Vectors_Test extends Rsx_Test_Abstract
     public static function test_group_string_not_null() { static::__run_group('string_not_null'); }
     public static function test_group_exact() { static::__run_group('exact'); }
     public static function test_group_text_type() { static::__run_group('text_type'); }
+    public static function test_group_text_type_decimal() { static::__run_group('text_type_decimal'); }
     public static function test_group_type_ref() { static::__run_group('type_ref'); }
     public static function test_group_never_loosened() { static::__run_group('never_loosened'); }
     public static function test_group_never_loosened_decimal() { static::__run_group('never_loosened_decimal'); }

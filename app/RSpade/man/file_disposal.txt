@@ -108,6 +108,16 @@ THE CENTRAL BLOB API (File_Storage_Model)
                                                     headers every file response gets);
                                                     authorizing the caller is the
                                                     caller's job
+        $storage->original_bytes_response($disposition, $file_name, $headers)
+                                                    the unhardened response both of
+                                                    the above build, with no cache
+                                                    policy; the caller adds both
+
+    The three responses hand a client the ORIGINAL bytes with an image's GPS
+    position withheld (rsx.files.strip_gps_when_served, rsx:man file_upload, GPS
+    POSITIONS). read_bytes() and read_stream() return the stored bytes exactly,
+    GPS included - serve a client through the responses above, not by echoing
+    them.
 
     Each throws when the bytes are not on disk. A reference recorded OUTSIDE the
     store_blob()/store_bytes() callback has no race protection - record it inside.

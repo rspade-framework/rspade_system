@@ -24,9 +24,11 @@
 # image serves every project.
 #
 # ARCHITECTURE: authored to build on amd64 and arm64 alike. Everything installs
-# through apt or a distribution setup script; nothing downloads an
-# architecture-pinned binary, and the base image is pinned by TAG (a
-# single-arch digest would defeat this).
+# through apt, a distribution setup script, or a package manager that picks the
+# build's architecture itself (Playwright, pip wheels); the one direct download is
+# architecture-independent model data. Nothing downloads an architecture-pinned
+# binary, and the base image is pinned by TAG (a single-arch digest would defeat
+# this).
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -57,6 +59,14 @@ RUN apt-get update && apt-get install -y \
         ca-certificates curl wget gnupg2 unzip \
     # image handling: thumbnails, uploads, optimisation
         imagemagick ghostscript optipng \
+    # HEIC/HEIF photos (a phone's default format): libheif decodes them for ImageMagick
+    # only with an HEVC decoder plugin, which imagemagick does not pull in - without it
+    # a HEIC upload reads as "Unsupported codec" and has no size, thumbnail or face
+        libheif-plugin-libde265 \
+    # video metadata: ffprobe (in ffmpeg) reads an uploaded video's width, height,
+    # duration and rotation. ImageMagick has no video coder; without it a video keeps
+    # no size or duration and rsx:health's ffprobe row fails
+        ffmpeg \
     # document preview and text extraction - RUNTIME features, both targets
         libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
     # Playwright's headless browser dependencies - the shared libraries Chromium
@@ -85,6 +95,9 @@ RUN apt-get update && apt-get install -y \
     # a large database is exactly the wait an operator should not have to sit through
     # blind. python3 (not python3-minimal) - the script needs re and shutil.
         python3 \
+    # the face detector's private virtualenv (/opt/rspade/face_detection/venv, below):
+    # `python3 -m venv` needs ensurepip, which Ubuntu ships in this package
+        python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # PHP from the ondrej PPA, which is where a current PHP for Ubuntu lives.
@@ -206,6 +219,40 @@ RUN npx --yes playwright@${PLAYWRIGHT_VERSION} install chromium \
     && ln -sfn /opt/ms-playwright /var/www/.cache/ms-playwright \
     && rm -rf /root/.npm
 
+# FACE DETECTION for face-aware cropped thumbnails: OpenCV's YuNet face detector, run by
+# face_detection/detect_face.py (COPY'd with the other /opt/rspade components below) and
+# called by the thumbnailer the first time a face crop of an image is asked for. BOTH
+# targets: thumbnails are a runtime feature.
+#
+# A PRIVATE VIRTUALENV, not the system python3: pip is never pointed at the distribution's
+# own site-packages, and nothing else in the image sees these packages. The caller runs
+# /opt/rspade/face_detection/venv/bin/python by path.
+#
+# PINNED. opencv-python-headless (Apache-2.0; "headless" = no GUI libraries) and numpy, its
+# one dependency, are exact versions published as manylinux wheels for x86_64 and aarch64
+# alike, so pip resolves the right binary for the architecture being built and compiles
+# nothing. Changing either is a deliberate edit here.
+#
+# THE MODEL IS DOWNLOADED, NOT COMMITTED, and checked against its sha256 - a mismatch
+# (a changed or truncated file upstream) fails the build rather than shipping a detector
+# that answers differently. YuNet (MIT) comes from the OpenCV model zoo.
+#
+# These layers sit here, ahead of the configuration and service files below, because they
+# are slow and change almost never: an ordinary framework change does not rebuild them.
+ARG OPENCV_HEADLESS_VERSION=4.14.0.94
+ARG NUMPY_VERSION=2.5.4
+ARG YUNET_URL=https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+ARG YUNET_SHA256=8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
+RUN python3 -m venv /opt/rspade/face_detection/venv \
+    && /opt/rspade/face_detection/venv/bin/pip install --no-cache-dir \
+        "opencv-python-headless==${OPENCV_HEADLESS_VERSION}" "numpy==${NUMPY_VERSION}" \
+    && /opt/rspade/face_detection/venv/bin/python -c 'import cv2; cv2.FaceDetectorYN' \
+    && curl -fsSL "$YUNET_URL" -o /opt/rspade/face_detection/face_detection_yunet_2023mar.onnx \
+    && echo "${YUNET_SHA256}  /opt/rspade/face_detection/face_detection_yunet_2023mar.onnx" | sha256sum -c - \
+    && chown -R root:root /opt/rspade/face_detection \
+    && chmod 755 /opt/rspade/face_detection \
+    && chmod 644 /opt/rspade/face_detection/face_detection_yunet_2023mar.onnx
+
 # Service configuration. Copied in one layer; the per-target OPcache policy and
 # supervisor programs are layered on top by the targets below.
 COPY nginx/nginx.conf              /etc/nginx/nginx.conf
@@ -299,6 +346,14 @@ COPY rsx-lockd/ /opt/rspade/rsx-lockd/
 RUN chown -R root:root /opt/rspade/rsx-lockd \
     && find /opt/rspade/rsx-lockd -type d -exec chmod 755 {} + \
     && find /opt/rspade/rsx-lockd -type f -exec chmod 644 {} +
+
+# The face detector script (face_detection/detect_face.py; its header holds the contract),
+# beside the virtualenv and model installed above. Run as
+# `/opt/rspade/face_detection/venv/bin/python /opt/rspade/face_detection/detect_face.py
+# <model> <image>`, so it needs no exec bit. Root-owned, world-readable.
+COPY face_detection/detect_face.py /opt/rspade/face_detection/detect_face.py
+RUN chown root:root /opt/rspade/face_detection/detect_face.py \
+    && chmod 644 /opt/rspade/face_detection/detect_face.py
 
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run

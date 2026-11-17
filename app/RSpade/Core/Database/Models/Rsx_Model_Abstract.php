@@ -2232,6 +2232,14 @@ EXAMPLE;
     private bool $__unstamped_write = false;
 
     /**
+     * The columns the last save() of this instance changed that a revision records
+     * (recorded_changes()). Emptied at the start of every save().
+     *
+     * @var array<int, string>
+     */
+    private array $__recorded_changes = [];
+
+    /**
      * Override save to derive the derived columns, stamp authorship, and fire the write's
      * effects (revision, text-type hooks, realtime, lifecycle) on a committed write.
      */
@@ -2239,6 +2247,8 @@ EXAMPLE;
     {
         // A migration's up() never writes through a model (Migration_Guard): before anything else.
         Migration_Guard::_refuse_model_write(static::class, 'save()');
+
+        $this->__recorded_changes = [];
 
         // CTI: the discriminator is immutable once set (it selects the detail table; changing
         // it would orphan the existing detail). Reject before the write.
@@ -2280,9 +2290,11 @@ EXAMPLE;
 
         // Snapshot the BEFORE values while they still exist. parent::save() ends with
         // syncOriginal(), so once the write returns the "original" IS the new row and the
-        // before half of every pair is gone. Null when this model records no revisions,
-        // which is one static read on the hot path.
-        $revision_original = $this->_revision_original_snapshot();
+        // before half of every pair is gone. Taken for every save: what the save changed that
+        // a revision records (recorded_changes()) is decided from it whether or not this model
+        // records revisions.
+        $before = $this->getRawOriginal();
+        $records_revision = static::$revisions && !Revision::is_suppressed();
 
         // Same reason, for the declared text types that react to their own writes: the
         // before value of each changed text column, keyed by column (see
@@ -2315,7 +2327,9 @@ EXAMPLE;
 
         if ($result) {
             if (!$clean) {
-                $this->_dispatch_write_effects_on_save($was_existing, $revision_original, $text_hook_before);
+                $pairs = $this->__recorded_pairs($was_existing ? $before : null, $was_existing ? $this->getChanges() : $this->getAttributes());
+                $this->__recorded_changes = array_keys($pairs);
+                $this->_dispatch_write_effects_on_save($was_existing, $records_revision ? $before : null, $pairs, $text_hook_before);
             }
             $this->__derived_written = [];
         }
@@ -3240,11 +3254,13 @@ EXAMPLE;
      * the app after_create/after_update hooks. Both are individually gated and no-op for a
      * model that opts into neither.
      */
-    private function _dispatch_write_effects_on_save(bool $was_existing, ?array $revision_original = null, array $text_hook_before = []): void
+    private function _dispatch_write_effects_on_save(bool $was_existing, ?array $revision_before, array $recorded_pairs, array $text_hook_before = []): void
     {
         // Revision first: it describes THIS write, and an after_* hook that writes another
         // revisioned model must land after it in the transaction's sequence.
-        $this->_record_revision_on_save($was_existing, $revision_original);
+        if ($revision_before !== null) {
+            $this->_record_revision_on_save($was_existing, $revision_before, $recorded_pairs);
+        }
         $this->__dispatch_text_type_hooks($text_hook_before);
         $this->_realtime_emit_on_write();
         $this->_lifecycle_dispatch_on_save($was_existing);
@@ -3376,21 +3392,6 @@ EXAMPLE;
     }
 
     /**
-     * The raw attribute values as they stood BEFORE this write, or null when this model
-     * records nothing (the fast path: one static read and a suppression check).
-     *
-     * @return array<string, mixed>|null
-     */
-    private function _revision_original_snapshot(): ?array
-    {
-        if (!static::$revisions || Revision::is_suppressed()) {
-            return null;
-        }
-
-        return $this->getRawOriginal();
-    }
-
-    /**
      * Record the revision for a committed save().
      *
      * CREATE records every non-null column as [null, value] - a created record's history
@@ -3399,85 +3400,48 @@ EXAMPLE;
      * wrote nothing and records nothing. A restore is an UPDATE whose deleted_at went back
      * to null, and is recorded as its own operation so a history can name it.
      *
-     * A pair whose two sides are the same value under the column's kind (Column_Equivalence)
-     * is never recorded - on a create, a value the same as NULL ('' on a nullable column);
-     * on an update, a column the dirty check should already have left clean - and an update
-     * left with no pair records no revision (a create is always recorded). Each recorded
-     * side is the column's STORAGE FORM ("1.00" for 1 on a DECIMAL(8,2), 1 for true on a
-     * boolean): what the column holds, not the shape the value was assigned in.
+     * Which columns are recorded is __recorded_pairs()'s answer, the one definition
+     * recorded_dirty() and recorded_changes() also read: a pair whose two sides are the same
+     * value under the column's kind (Column_Equivalence) is never recorded - on a create, a
+     * value the same as NULL ('' on a nullable column); on an update, a column the dirty
+     * check should already have left clean - and an update left with no pair records no
+     * revision (a create is always recorded). Each recorded side is the column's STORAGE FORM
+     * ("1.00" for 1 on a DECIMAL(8,2), 1 for true on a boolean): what the column holds, not
+     * the shape the value was assigned in.
      *
      * A never-exported column is recorded REDACTED - both sides Revision::REDACTED - decided
      * before _revision_value() sees the value, so neither the old nor the new value of a
      * secret ever reaches the document in any form.
      *
-     * @param array<string, mixed>|null $original The pre-write raw attributes, or null when
-     *                                            recording was off before the write.
+     * @param array<string, mixed> $before The pre-write raw attributes
+     * @param array<string, array{0: mixed, 1: mixed}> $pairs __recorded_pairs() of this write
      */
-    private function _record_revision_on_save(bool $was_existing, ?array $original): void
+    private function _record_revision_on_save(bool $was_existing, array $before, array $pairs): void
     {
-        if ($original === null || Revision::is_suppressed()) {
+        if (Revision::is_suppressed()) {
             return;
         }
 
-        $excluded = $this->_revision_excluded_columns();
         $redacted = array_fill_keys(static::never_exported_columns(), true);
-
-        if (!$was_existing) {
-            $diff = [];
-
-            foreach ($this->getAttributes() as $column => $value) {
-                if ($value === null || isset($excluded[$column]) || $this->_is_system_column($column)) {
-                    continue;
-                }
-
-                $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
-
-                if ($descriptor !== null && Column_Equivalence::same($descriptor, null, $value)) {
-                    continue;
-                }
-
-                if (isset($redacted[$column])) {
-                    $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
-                    continue;
-                }
-
-                $diff[$column] = [null, $this->_revision_value($descriptor, $value)];
-            }
-
-            Revision::_record($this, Revision_Model::OPERATION_CREATE, $diff, $this->_revision_root());
-
-            return;
-        }
-
-        $changes = $this->getChanges();
-
-        if (empty($changes)) {
-            return;
-        }
-
         $diff = [];
 
-        foreach ($changes as $column => $value) {
-            if (isset($excluded[$column]) || $this->_is_system_column($column)) {
-                continue;
-            }
-
-            $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
-            $before = $original[$column] ?? null;
-
-            if ($descriptor !== null && Column_Equivalence::same($descriptor, $before, $value)) {
-                continue;
-            }
-
+        foreach ($pairs as $column => [$prior, $value]) {
             if (isset($redacted[$column])) {
                 $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
                 continue;
             }
 
+            $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
             $diff[$column] = [
-                $this->_revision_value($descriptor, $before),
+                $this->_revision_value($descriptor, $prior),
                 $this->_revision_value($descriptor, $value),
             ];
+        }
+
+        if (!$was_existing) {
+            Revision::_record($this, Revision_Model::OPERATION_CREATE, $diff, $this->_revision_root());
+
+            return;
         }
 
         // Everything that changed was excluded or the same value - the record moved, but
@@ -3486,11 +3450,89 @@ EXAMPLE;
             return;
         }
 
-        $operation = $this->_revision_is_undelete($original, $changes)
+        $operation = $this->_revision_is_undelete($before, $this->getChanges())
             ? Revision_Model::OPERATION_UNDELETE
             : Revision_Model::OPERATION_UPDATE;
 
         Revision::_record($this, $operation, $diff, $this->_revision_root());
+    }
+
+    /**
+     * The pairs a revision records out of a set of values: column => [before, after], raw.
+     * THE definition of "a recorded change", shared by the revision writer, recorded_dirty()
+     * and recorded_changes(): a column the revisions record (_revision_records_column()) whose
+     * two sides are not the same value under the column's kind (Column_Equivalence). An
+     * attribute that is not a column of the table is judged by identity.
+     *
+     * @param array<string, mixed>|null $before The record's raw original; null for a create,
+     *                                          whose every value is a pair against NULL
+     * @param array<string, mixed> $values The written (or about-to-be-written) values
+     * @return array<string, array{0: mixed, 1: mixed}>
+     */
+    private function __recorded_pairs(?array $before, array $values): array
+    {
+        $pairs = [];
+
+        foreach ($values as $column => $value) {
+            $column = (string) $column;
+
+            if (!static::_revision_records_column($column)) {
+                continue;
+            }
+
+            $prior = $before === null ? null : ($before[$column] ?? null);
+
+            if ($prior === null && $value === null) {
+                continue;
+            }
+
+            $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
+
+            if ($descriptor !== null && Column_Equivalence::same($descriptor, $prior, $value)) {
+                continue;
+            }
+
+            $pairs[$column] = [$prior, $value];
+        }
+
+        return $pairs;
+    }
+
+    /**
+     * BEFORE a save: the dirty columns its revision would record - not updated_at or the
+     * updated_by pair, not a revision_exclude or derived column, not a '_'-prefixed system
+     * column, not a column assigned the same value under its kind. The revision writer's own
+     * definition (__recorded_pairs()), so the answer cannot drift from what a revision holds.
+     * For a new record, every non-null value assigned so far (the save adds its audit stamp
+     * and derived columns after this is asked). Answers for a model that does not declare
+     * $revisions too: what a revision WOULD record.
+     *
+     *     if ($task->recorded_dirty() === []) { ... nothing a person would call a change ... }
+     *
+     * Ask this, never re-derive the set from getDirty().
+     *
+     * @return array<int, string> Column names
+     */
+    public function recorded_dirty(): array
+    {
+        return array_keys($this->__recorded_pairs($this->exists ? $this->getRawOriginal() : null, $this->getDirty()));
+    }
+
+    /**
+     * AFTER a save: the columns the last save() of this instance changed that its revision
+     * records (recorded_dirty()'s set, as written) - exactly the columns of the revision that
+     * save wrote, a never_export column included (its pair is recorded redacted). Empty before
+     * any save of this instance, after a save that wrote nothing a person would call a change
+     * (only updated_at-class, revision_exclude or derived columns), and after a save that
+     * threw. For a create, every recorded column of the new row.
+     *
+     * Ask this, never re-derive the set from getChanges().
+     *
+     * @return array<int, string> Column names
+     */
+    public function recorded_changes(): array
+    {
+        return $this->__recorded_changes;
     }
 
     /**
@@ -3532,25 +3574,27 @@ EXAMPLE;
     }
 
     /**
-     * The columns this model never records, as a lookup.
-     *
-     * updated_at and the updated_by pair are excluded ALWAYS: they change on every single
-     * write, so recording them would put two entries nobody reads in front of the one that
-     * matters. created_at and the created_by pair are NOT excluded - they appear exactly
-     * once, on the create, where they are the record's provenance.
-     *
-     * @return array<string, bool>
+     * Whether this model's revisions record a column: not an automatic exclusion, not
+     * revision_exclude or derived (_revision_unrecorded_lookup()), and not a '_'-prefixed
+     * system column - bookkeeping, not data anybody changed, stripped for the same reason
+     * toArray() strips it. Framework-internal ('_' prefix): the one column-level test the
+     * revision writer, recorded_dirty() / recorded_changes() and
+     * Revision::meaningful_changes() share.
      */
-    private function _revision_excluded_columns(): array
+    public static function _revision_records_column(string $column): bool
     {
-        return static::_revision_unrecorded_lookup();
+        return !str_starts_with($column, '_') && !isset(static::_revision_unrecorded_lookup()[$column]);
     }
 
     /**
      * Every column this model's revisions never record, as a lookup: the automatic exclusions
      * (updated_at, the updated_by pair) plus revision_excluded_columns(). System columns
-     * ('_'-prefixed) are excluded by name, separately. Framework-internal ('_' prefix): the
-     * revision writer and Revision::meaningful_changes() read it.
+     * ('_'-prefixed) are excluded by name, separately (_revision_records_column()).
+     *
+     * updated_at and the updated_by pair are excluded ALWAYS: they change on every single
+     * write, so recording them would put two entries nobody reads in front of the one that
+     * matters. created_at and the created_by pair are NOT excluded - they appear exactly
+     * once, on the create, where they are the record's provenance.
      *
      * @return array<string, bool>
      */
@@ -3567,16 +3611,6 @@ EXAMPLE;
         }
 
         return $excluded;
-    }
-
-    /**
-     * Whether a column is a framework SYSTEM column - a single leading underscore. Excluded
-     * from every diff for the same reason toArray() strips it: it is bookkeeping, not data
-     * anybody changed.
-     */
-    private function _is_system_column(string $column): bool
-    {
-        return str_starts_with($column, '_');
     }
 
     /**

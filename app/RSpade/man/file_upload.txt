@@ -107,7 +107,8 @@ MODELS
             file_type_id       Coarse enum bucket (see FILE TYPE DETECTION)
             file_type_label    Human-facing format name, derived and indexed
                                (see FILE TYPE DETECTION, Human-facing label)
-            width / height     Pixel dimensions (images/video), else null
+            width / height     DISPLAYED pixel dimensions (images/video),
+                               else null; NULL until read (MEDIA METADATA)
             duration           Media duration in seconds, else null
             is_animated        True for animated GIF/WebP, etc.
             frame_count        Frame count for multi-frame formats
@@ -671,8 +672,13 @@ FILE ACCESS
         $file->get_download_url()  // "/_download/{key}?v=..." - force download
         $file->get_preview_url()   // "/_preview/pdf/{key}?v=..." - the rendition
                                    //   (/_preview/sheet/ for a workbook)
-        $file->get_thumbnail_url($type, $width, $height)
+        $file->get_thumbnail_url($type, $width, $height, face: false)
         $file->get_thumbnail_url_preset($name)
+        $file->get_display_url()   // an image at full size in an <img>:
+                                   //   get_url() when a browser displays the
+                                   //   format, else a large upright WebP fit
+                                   //   thumbnail (HEIC, TIFF, PSD); null for a
+                                   //   non-image
 
         File_Attachment_Model.inline_url(record)             // JS twins, over a
         File_Attachment_Model.download_url(record)           // fetch() record
@@ -938,7 +944,11 @@ FILE TYPE DETECTION
         whether a BROWSER can display these bytes in a tab of its own - it
         reads config('rsx.preview.browser_inline') and CANNOT be computed from
         file_type_id, since text/*, Word and Excel are all DOCUMENT and
-        disagree about inline display.
+        disagree about inline display. Images are listed one format at a
+        time: HEIC, HEIF, TIFF and Photoshop files are NOT on the list (no
+        browser but Safari displays them), so can_open_inline is false for
+        them and a preview shows them through get_display_url() (MEDIA
+        METADATA).
 
     Pipeline mime (extension-first for documents)
         file_type_id and thumbnail/extraction routing are decided on the
@@ -954,6 +964,87 @@ FILE TYPE DETECTION
         $attachment->mime_type - the raw sniff, deliberately NOT the pipeline
         mime. Serving HTML-bytes-in-a-.pdf as its sniffed type (not as a
         document) is a stored-XSS defense.
+
+MEDIA METADATA
+
+    width / height are the DISPLAYED size: a phone stores a portrait photo
+    sideways with an EXIF orientation tag (5-8 swap the two), and a phone video
+    landscape with a rotation (90 / 270 swap them). A layout reserving space, an
+    API client and an aspect-ratio box all mean the picture as it is seen.
+    duration is whole seconds: an animation's from its frame delays, a video's
+    from ffprobe.
+
+        images   read by ImageMagick (Media_Metadata::read_image())
+        videos   read by ffprobe (apt ffmpeg, in the RSpade image;
+                 rsx.attachments.ffprobe_binary_path, null = PATH, /usr/bin,
+                 /usr/local/bin). ImageMagick has no video coder.
+
+    FILLED ON DEMAND. The three columns are a cache of facts fixed by the bytes,
+    and NULL means "not read yet". $attachment->ensure_media_metadata() reads
+    and stores them when they are missing and returns the attachment; fetch(),
+    the /_upload response and the Files API call it before they serve them.
+    SERVER CODE THAT READS ->width / ->height / ->duration CALLS IT FIRST:
+
+        $attachment->ensure_media_metadata();
+        if ($attachment->width !== null) {        // still null when unreadable
+            $ratio = $attachment->width / $attachment->height;
+        }
+
+    It writes the three columns only, as one raw update under
+    Site_Lock::write_exception() (so a reader may call it), holding updated_at
+    and firing no revision or realtime frame. needs_media_metadata() says
+    whether a read is owed. A read that fails (no ffprobe, unreadable bytes, a
+    missing stored file) stores nothing, logs a warning, and is not retried in
+    the same process; the next request tries again. An SVG, a degraded
+    attachment and a non-media file have none.
+
+    Without ffprobe a video keeps no size or duration (rsx:health "ffprobe"
+    FAILs). A video that ffprobe cannot read at upload degrades like an
+    unparseable image (below).
+
+    HEIC AND HEIF. A phone photo in HEIC/HEIF is an IMAGE end to end: its
+    size, upright thumbnail, face detection and preview. ImageMagick decodes it
+    through libheif's HEVC plugin (libheif-plugin-libde265, in the RSpade image;
+    rsx:health "HEIC Decoding"). A browser cannot display it, so it is not on
+    rsx.preview.browser_inline: get_display_url() - what <Document_Preview>'s
+    image viewer shows - is a large upright WebP drawn from it, and the original
+    still downloads as itself. TIFF and PSD are shown the same way.
+
+    RESIZING IN THE BROWSER. A widget that scales or crops a photo on a canvas
+    before uploading it reads the file with
+
+        createImageBitmap(file, {imageOrientation: 'from-image'})
+
+    so the pixels it draws are upright. A canvas re-encode drops the EXIF tag
+    that said which way was up; a bitmap read without the option uploads a
+    sideways portrait.
+
+GPS POSITIONS
+
+    A photo's GPS position is withheld from every client handed its ORIGINAL
+    bytes - /_download, /_inline, the members of /_download_zip, and
+    File_Storage_Model::download_response() / inline_response() (all built by
+    original_bytes_response()). The STORED FILE IS NEVER CHANGED: its bytes,
+    hash and deduplication stay as uploaded. The GPS block is removed as the
+    file streams out (Exif_Gps), same length, nothing re-encoded; orientation,
+    camera fields, ICC profile and pixels are untouched. JPEG, PNG, WebP,
+    HEIC/HEIF/AVIF and TIFF are handled. An image with no GPS, and every other
+    file, is served byte for byte (with range support); a served GPS image is
+    streamed whole.
+
+    Server code reads the position from the stored original:
+
+        $attachment->get_gps_position()
+        // ['latitude' => 47.6062, 'longitude' => -122.3321]  (south/west
+        // negative), or null when it records none; throws on malformed EXIF
+
+    Switch: rsx.files.strip_gps_when_served (default true; false serves
+    originals exactly as stored).
+
+    Not withheld: a position written into XMP or a camera maker note, and the
+    EXIF of a secondary image appended after a JPEG's primary one. An image
+    whose EXIF is malformed is served as stored, with a logged warning.
+    Thumbnails carry no metadata at all (THUMBNAILS).
 
 UNPARSEABLE IMAGE DEGRADE
 
@@ -1333,6 +1424,9 @@ DOWNLOAD AND INLINE VIEWING
 
     Both run the cascading authorization hooks (see SECURITY HOOKS).
 
+    An image's GPS position is withheld from what these routes serve (GPS
+    POSITIONS); every other file is served byte for byte as stored.
+
 FILE NAMES
 
     A file name comes from whoever uploaded the file - the browser's original
@@ -1490,6 +1584,12 @@ THUMBNAILS
         type    'cover' (fill + center-crop) or 'fit' (letterbox, transparent)
         width   10 .. config('rsx.thumbnails.max_dynamic_size') (default 800)
         height  optional, same range
+        face    query ?face=1: a cover of an image is cut around the face in
+                it (a profile photo or avatar only; rsx:man thumbnails,
+                FACE-AWARE CROPS). Ignored by fit and by non-images.
+
+        Every thumbnail is drawn upright (EXIF orientation applied) and
+        carries no metadata - no EXIF, GPS, XMP or IPTC.
 
         Requested dimensions are the CSS DISPLAY size: the pipeline renders at
         2x for retina (a 300x200 request produces a 600x400 image), never
@@ -1507,6 +1607,7 @@ THUMBNAILS
         new one.
 
             $file->get_thumbnail_url('cover', 96, 96)    // -> /_thumbnail/... ?v=41-0
+            $file->get_thumbnail_url('cover', 96, 96, face: true)   // ...&face=1
             $file->get_thumbnail_url('fit', 240, 180)
 
     Preset thumbnails (recommended for fixed sizes)
@@ -2150,6 +2251,6 @@ SEE ALSO
 
 VERSION
     RSpade Framework 1.0
-    Last updated 2026-08-27
+    Last updated 2026-11-17
 
 FILE_UPLOAD(1)                   RSpade Manual                   FILE_UPLOAD(1)

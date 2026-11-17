@@ -3,8 +3,10 @@
 namespace App\RSpade\Core\Files;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
+use App\RSpade\Core\Files\Exif_Gps;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\Rsx_File_Name;
@@ -36,6 +38,8 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * @property string $created_at
  * @property int $created_by_id
  * @property string $created_by_type type ref: a model class name, stored as a type-ref id
+ * @property string $face_x decimal
+ * @property string $face_y decimal
  * @property string $hash
  * @property int $id
  * @property bool $is_indexed
@@ -97,6 +101,11 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
             3 => ['constant' => 'RENDER_STATUS_RENDERED', 'label' => 'Rendered', 'badge' => 'bg-success', 'order' => 3],
             4 => ['constant' => 'RENDER_STATUS_FAILED', 'label' => 'Failed', 'badge' => 'bg-danger', 'order' => 4],
         ]],
+        // The face centre for face-centred cover thumbnails (Face_Detection): fractions of the
+        // upright image, -1/-1 = checked and no face, NULL/NULL = not checked. Proportions, never
+        // money. Written only by record_face_position().
+        'face_x' => ['money' => false],
+        'face_y' => ['money' => false],
     ];
     public static $rel = [];
 
@@ -351,7 +360,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     public function download_response(string $file_name, ?string $mime_type = null)
     {
         return File_Attachment_Controller::harden_file_response(
-            \Illuminate\Support\Facades\Response::download($this->__existing_path(), Rsx_File_Name::safe($file_name), $this->__type_header($mime_type))
+            $this->original_bytes_response('attachment', $file_name, $this->__type_header($mime_type))
         );
     }
 
@@ -364,12 +373,100 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      */
     public function inline_response(string $file_name, ?string $mime_type = null)
     {
-        $headers = $this->__type_header($mime_type);
-        $headers['Content-Disposition'] = Rsx_File_Name::disposition('inline', $file_name);
-
         return File_Attachment_Controller::harden_file_response(
-            \Illuminate\Support\Facades\Response::file($this->__existing_path(), $headers)
+            $this->original_bytes_response('inline', $file_name, $this->__type_header($mime_type))
         );
+    }
+
+    /**
+     * THE response that hands a client this blob's ORIGINAL bytes - /_download, /_inline,
+     * download_response() and inline_response() all build theirs here (the ZIP route applies
+     * the same patches per member). Not hardened and no cache policy: the caller adds both.
+     *
+     * An image whose EXIF carries a GPS position is served WITHOUT it while
+     * rsx.files.strip_gps_when_served is on (the default): the bytes stream out with the GPS
+     * block removed in place (Exif_Gps::patches_for_file()), same length, nothing re-encoded,
+     * and the stored file untouched. Every other file is a plain file response, byte for byte,
+     * with range support.
+     *
+     * @param string $disposition 'attachment' | 'inline'
+     * @param string $file_name The name the client is given.
+     * @param array $headers Extra headers (Content-Type, Cache-Control).
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public function original_bytes_response(string $disposition, string $file_name, array $headers = [])
+    {
+        $path = $this->__existing_path();
+        $patches = static::gps_patches_for_serving($path, $file_name);
+
+        if ($patches === []) {
+            if ($disposition === 'attachment') {
+                return \Illuminate\Support\Facades\Response::download($path, Rsx_File_Name::safe($file_name), $headers);
+            }
+            $headers['Content-Disposition'] = Rsx_File_Name::disposition('inline', $file_name);
+
+            return \Illuminate\Support\Facades\Response::file($path, $headers);
+        }
+
+        $headers['Content-Disposition'] = Rsx_File_Name::disposition($disposition, $file_name);
+        $headers['Content-Length'] = (string) filesize($path);
+        if (!isset($headers['Content-Type'])) {
+            $headers['Content-Type'] = (string) (mime_content_type($path) ?: 'application/octet-stream');
+        }
+
+        return new \Symfony\Component\HttpFoundation\StreamedResponse(function () use ($path, $patches) {
+            $handle = fopen($path, 'rb');
+            $offset = 0;
+            while (!feof($handle)) {
+                $chunk = fread($handle, 524288);
+                if ($chunk === false || $chunk === '') {
+                    break;
+                }
+                echo Exif_Gps::apply_patches($chunk, $offset, $patches);
+                $offset += strlen($chunk);
+                flush();
+            }
+            fclose($handle);
+        }, 200, $headers);
+    }
+
+    /**
+     * The patches that withhold a file's GPS position when it is served (Exif_Gps), or [] when
+     * there is nothing to withhold: the switch is off, the file is not an image carrying GPS.
+     *
+     * A malformed EXIF structure cannot be edited safely; the file is then served as stored and
+     * a warning names it (no common reader can parse a position out of it either).
+     *
+     * @param string $path The stored file
+     * @param string $label Names the file in the warning.
+     * @return array<int, string>
+     */
+    public static function gps_patches_for_serving(string $path, string $label): array
+    {
+        if (!config('rsx.files.strip_gps_when_served', true)) {
+            return [];
+        }
+
+        try {
+            return Exif_Gps::patches_for_file($path);
+        } catch (\RuntimeException $e) {
+            Log::warning("GPS not withheld from '{$label}': its EXIF is malformed ({$e->getMessage()}); served as stored");
+
+            return [];
+        }
+    }
+
+    /**
+     * Where this image was taken, from its EXIF - read from the stored original, which keeps
+     * its GPS position although no client is handed it (rsx.files.strip_gps_when_served).
+     *
+     * @return array{latitude: float, longitude: float}|null Decimal degrees, south and west
+     *                                                       negative; null when it has none.
+     * @throws \RuntimeException when the file is missing or its EXIF is malformed
+     */
+    public function gps_position(): ?array
+    {
+        return Exif_Gps::read_position($this->__existing_path());
     }
 
     private function __existing_path(): string
@@ -793,6 +890,49 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
             'process_attempt_count' => 0,
             'process_soft_failure_count' => 0,
             'process_last_attempt_at' => null,
+        ]);
+        $this->__reload_row();
+    }
+
+    /**
+     * The stored face position, or null when none is recorded (never checked, or the detector
+     * was unavailable every time it was asked).
+     *
+     * @return array{0: float, 1: float}|null [x, y] as fractions of the upright image, or
+     *                                         [-1.0, -1.0] for "checked: no face / unreadable".
+     */
+    public function face_position(): ?array
+    {
+        if ($this->face_x === null || $this->face_y === null) {
+            return null;
+        }
+
+        return [(float) $this->face_x, (float) $this->face_y];
+    }
+
+    /**
+     * Record where the face is in this blob's image: fractions (0-1) of the upright image, or
+     * -1, -1 for an answer of "no face" or "unreadable" from a WORKING detector. Only
+     * Face_Detection calls it, and only with an answer the detector actually gave - a detector
+     * that could not run records nothing.
+     *
+     * One raw statement: the blob is not site-scoped and has no revisions or realtime, so there
+     * is no lock to take and nothing to emit (the queue columns above are written the same way).
+     *
+     * @param float $x
+     * @param float $y
+     * @return void
+     */
+    public function record_face_position(float $x, float $y): void
+    {
+        $is_none = ($x === -1.0 && $y === -1.0);
+        if (!$is_none && ($x < 0.0 || $x > 1.0 || $y < 0.0 || $y > 1.0)) {
+            shouldnt_happen("record_face_position() was handed ({$x}, {$y}) for storage #{$this->id}: a face centre is two fractions 0-1, or -1, -1");
+        }
+
+        static::where('id', $this->id)->update([
+            'face_x' => $is_none ? '-1.0000' : number_format($x, 4, '.', ''),
+            'face_y' => $is_none ? '-1.0000' : number_format($y, 4, '.', ''),
         ]);
         $this->__reload_row();
     }

@@ -125,7 +125,7 @@ class Column_Equivalence {
         let canon;
         switch (d.kind) {
             case 'money': canon = Column_Equivalence._money(value); break;
-            case 'text_type': canon = Column_Equivalence._text(d.text_type, value); break;
+            case 'text_type': canon = Column_Equivalence._text(d.text_type, value, d.scale); break;
             case 'type_ref': canon = Column_Equivalence._type_ref(value); break;
             case 'integer': canon = Column_Equivalence._integer(value); break;
             case 'decimal': canon = Column_Equivalence._decimal_at_scale(value, d.scale ?? 0); break;
@@ -161,8 +161,19 @@ class Column_Equivalence {
         }
     }
 
-    static _text(type, value) {
+    /** A number side is read as its text first: at the column's scale on a DECIMAL column. */
+    static _text(type, value, scale) {
         let raw;
+
+        if (typeof value === 'number' || typeof value === 'bigint') {
+            value = scale === null
+                ? Column_Equivalence._plain_decimal(value)
+                : Column_Equivalence._decimal_at_scale(value, scale);
+
+            if (value === false) {
+                return false;
+            }
+        }
 
         if (value instanceof Rsx_Text_Abstract) {
             if (!(value instanceof type)) {
@@ -241,14 +252,17 @@ class Column_Equivalence {
         return false;
     }
 
+    /** 'Y-m-d'; a midnight tail ('T' or space, H:i or H:i:s, fractional zeros) is dropped. */
     static _date(value) {
-        const m = typeof value === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null;
+        const m = typeof value === 'string'
+            ? /^((\d{4})-(\d{2})-(\d{2}))(?:[Tt ]00:00(?::00(?:\.0+)?)?)?$/.exec(value)
+            : null;
 
         if (m === null) {
             return false;
         }
 
-        return Column_Equivalence._valid_date(Number(m[1]), Number(m[2]), Number(m[3])) ? value : false;
+        return Column_Equivalence._valid_date(Number(m[2]), Number(m[3]), Number(m[4])) ? m[1] : false;
     }
 
     static _datetime(value, fsp) {

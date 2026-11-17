@@ -1054,8 +1054,8 @@ class Document_Render_Service extends Rsx_Service_Abstract
     /**
      * Delete every cached thumbnail derived from this blob's bytes.
      *
-     * Cache filenames embed the blob hash ({preset}_{hash}_{ext}.webp and
-     * {type}_{w}x{h}_{hash}_{ext}.webp), so one glob per cache directory catches all of them
+     * Cache filenames embed the blob hash ({preset}_{hash}_{ext}_r{revision}.webp and
+     * {type}_{w}x{h}_{hash}_{ext}_r{revision}.webp), so one glob per cache directory catches all of them
      * regardless of preset, size or the extension of the attachment that requested them.
      *
      * @param File_Storage_Model $storage

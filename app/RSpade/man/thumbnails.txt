@@ -8,6 +8,7 @@ SYNOPSIS
     ------------------------------------
     <Attachment_Thumbnail $attachment_id=record.file_attachment_id $width=160 />
     <Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
+    <Attachment_Thumbnail $attachment_id=id $type="cover" $face=true $width=36 $height=36 />
     <Attachment_Thumbnail $attachment_id=id $preset="profile" />
 
     // From JavaScript
@@ -25,8 +26,9 @@ SYNOPSIS
     URL builders (FRAMEWORK-INTERNAL - the component calls these, app code does not)
     -------------------------------------------------------------------------------
     $attachment->get_thumbnail_url('cover', 200, 200)                  // PHP
+    $attachment->get_thumbnail_url('cover', 36, 36, face: true)        // PHP
     $attachment->get_thumbnail_url_preset('profile')                   // PHP
-    File_Attachment_Model.thumbnail_url(record, {type, width, height}) // JS
+    File_Attachment_Model.thumbnail_url(record, {type, width, height, face}) // JS
     $attachment->content_version()                                     // PHP (the ?v=)
     File_Attachment_Model.content_version(record)                      // JS  (the ?v=)
 
@@ -102,7 +104,8 @@ PRESET THUMBNAILS
 
     <Attachment_Thumbnail $attachment_id=id $preset="profile" />
 
-    $preset is mutually exclusive with $type/$width/$height - passing both throws.
+    $preset is mutually exclusive with $type/$width/$height/$face - passing both
+    throws. A preset has no face option (see FACE-AWARE CROPS).
 
     get_thumbnail_url_preset() still exists in PHP; it is the builder the component's
     JavaScript twin mirrors, not an app-facing API. Shipping its return value in a
@@ -160,10 +163,12 @@ CACHING BEHAVIOR
 
     Cache Storage
     -------------
-    Preset:  tmp/thumbnails/preset/{preset_name}_{hash}_{ext}.webp
-    Dynamic: tmp/thumbnails/dynamic/{type}_{w}x{h}_{hash}_{ext}.webp
+    Preset:  tmp/thumbnails/preset/{preset_name}_{hash}_{ext}_r{N}.webp
+    Dynamic: tmp/thumbnails/dynamic/{type}_{w}x{h}_{hash}_{ext}_r{N}.webp
+             tmp/thumbnails/dynamic/{type}_{w}x_{hash}_{ext}_r{N}.webp  (no height)
 
-    All thumbnails are WebP format for optimal size/quality balance.
+    All thumbnails are WebP format for optimal size/quality balance. Full
+    filename rules: FILESYSTEM STRUCTURE.
 
     THE FIRST BRANCH IS RENDER STATE, NOT THE CACHE
     -----------------------------------------------
@@ -193,7 +198,8 @@ CACHING BEHAVIOR
     When the thumbnail exists (and the blob is not PENDING/FAILED):
     1. Attempt to open file (handles race condition if deleted)
     2. Touch mtime if enabled and >10 minutes old (LRU tracking)
-    3. Serve from disk with 1-year cache headers
+    3. Serve from disk with the same cache headers a fresh render gets (?v=
+       below)
 
     Cache Misses
     ------------
@@ -424,6 +430,93 @@ CONFIGURATION OPTIONS
 
     Default: 600 (10 minutes)
     Environment: THUMBNAILS_TOUCH_INTERVAL
+
+FACE-AWARE CROPS
+
+    A cover thumbnail is cut from the centre of the picture, which beheads a
+    person photographed off-centre. Asked for a FACE-CENTRED cover, the pipeline
+    cuts it around the face in the image instead:
+
+        <Attachment_Thumbnail $attachment_id=id $type="cover" $face=true
+                              $width=36 $height=36 />
+
+        File_Attachment_Model.thumbnail_url(record, {type: 'cover', width: 96,
+                                                     height: 96, face: true})
+        $attachment->get_thumbnail_url('cover', 96, 96, face: true)
+
+    On the wire it is ?face=1 on the dynamic route. The builders add it to a
+    cover URL only.
+
+    Where to use it
+    ---------------
+    A picture OF A PERSON: a profile photo, a people avatar. The template's
+    Person_Avatar and Profile_Photo_Input ask for it. Never a document, a
+    product shot, a gallery image or a fit thumbnail - a stray face in a
+    product photo would pull the crop toward it.
+
+    What ignores it
+    ---------------
+    It acts only on a cover thumbnail of an image drawn from the image itself.
+    A fit thumbnail (never cropped), a document or its rendition, an SVG and an
+    icon ignore it, and the detector is never run for them. $face with $preset
+    throws in the component and the JS builder: a preset has no face option.
+
+    Where the answer is stored
+    --------------------------
+    The face is found the first time a face-centred thumbnail of an image is
+    asked for, by a detector in the RSpade image (OpenCV's YuNet model; the
+    largest face wins). Its centre is stored on the BLOB, so every attachment of
+    the same bytes shares one answer and the detector runs once per image:
+
+        _file_storage.face_x, face_y   the face centre as fractions (0-1) of the
+                                       UPRIGHT image's width and height
+        -1, -1                         a working detector found no face, or
+                                       could not read the image: the plain
+                                       centre crop is served
+        NULL, NULL                     not checked yet (set both back to NULL
+                                       to force a new detection)
+
+    The detector reads JPEG and PNG itself; any other image (HEIC, TIFF,
+    WebP...) is handed to it as an upright JPEG copy ImageMagick draws.
+
+    When the detector is unavailable
+    --------------------------------
+    Not installed, OpenCV or its model not loading, or a malformed answer: the
+    thumbnail never fails. The request is answered with the PLAIN centre crop,
+    and:
+      - nothing is stored on the blob (the next request asks again),
+      - the plain crop is cached under the plain cover key only - never under
+        the face key,
+      - the response carries Cache-Control: private, max-age=1800 (30 minutes)
+        even at the current ?v=, so the face crop arrives within half an hour of
+        the detector being repaired,
+      - a warning is logged: "Face detection unavailable: <reason>".
+    The rsx:health "Face Detection" row reports the detector's state (rsx:man
+    health). There is no switch: the feature is on wherever it is asked for.
+
+    Caching
+    -------
+    A found face caches under its own key, cover-face_{w}x{h}_..., beside the
+    plain cover-..., which a stored -1, -1 and an unavailable detector use.
+
+UPRIGHT, METADATA-FREE THUMBNAILS
+
+    EVERY thumbnail the pipeline draws - preset or dynamic, from an image, a PDF
+    page or a rendition - is drawn upright. A phone photo stores its pixels
+    sideways with an EXIF orientation tag, and the pipeline applies it
+    (ImageMagick autoOrient()) before any scaling, so the sizes, the crop and a
+    stored face position all refer to the picture as it is seen. The face
+    detector reads the same upright image. (A document.thumbnail_render
+    takeover's bytes are served as its handler returned them.)
+
+    A thumbnail carries NO metadata: EXIF (an orientation tag a browser would
+    apply a second time, the GPS position, camera details), XMP and IPTC are
+    stripped. The ICC colour profile is kept, so a wide-gamut photo keeps its
+    colours.
+
+    HEIC and HEIF photos (an iPhone's default format) thumbnail like any image:
+    ImageMagick decodes them through libheif with its HEVC plugin, both in the
+    RSpade image (rsx:health "HEIC Decoding").
 
 DIMENSION LIMITS AND RESOLUTION SCALING
 
@@ -694,16 +787,29 @@ FILESYSTEM STRUCTURE
 
     tmp/thumbnails/
     +-- preset/
-    |   +-- profile_abc123_jpg.webp
-    |   +-- profile_def456_png.webp
-    |   +-- gallery_abc123_jpg.webp
+    |   +-- profile_abc123_jpg_r3.webp
+    |   +-- profile_def456_png_r3.webp
+    |   +-- gallery_abc123_jpg_r3.webp
     +-- dynamic/
-        +-- cover_200x200_abc123_jpg.webp
-        +-- fit_400x300_def456_png.webp
+        +-- cover_200x200_abc123_jpg_r3.webp
+        +-- cover-face_36x36_abc123_jpg_r3.webp
+        +-- fit_400x300_def456_png_r3.webp
+        +-- fit_400x_def456_png_r3.webp
 
     Filename Format:
-    - Preset: {preset_name}_{storage_hash}_{extension}.webp
-    - Dynamic: {type}_{width}x{height}_{storage_hash}_{extension}.webp
+    - Preset: {preset_name}_{storage_hash}_{extension}_r{N}.webp
+    - Dynamic: {type}_{width}x{height}_{storage_hash}_{extension}_r{N}.webp
+      with {height} empty for a width-only request (fit/400 and fit/400/400 are
+      different pictures), and {type} cover-face for a face-centred cover cut
+      around a found face (FACE-AWARE CROPS)
+
+    The storage hash is always its own _{hash}_ segment: a blob's thumbnails are
+    purged by the glob *_{hash}_*.webp.
+
+    r{N} is the renderer revision (File_Attachment_Controller::
+    THUMBNAIL_RENDER_REVISION). It moves whenever the pixels a request produces
+    change, so a thumbnail an earlier renderer cached is never asked for again
+    and ages out under the LRU quotas.
 
     Why include extension in filename?
     Handles edge case where identical file content uploaded with different
@@ -820,6 +926,11 @@ TROUBLESHOOTING
 
 FUTURE ENHANCEMENTS
 
+    Face-Centred Presets
+    --------------------
+    A preset has no face option today. A 'face' => true key on a cover preset
+    would carry ?face=1 semantics to the preset route and its own cache name.
+
     Client-Side DPR Detection
     -------------------------
     Current limitation: Server always generates at 2x resolution regardless of
@@ -852,7 +963,8 @@ SEE ALSO
     rsx:man document_search      Text extraction, Document_Preview, the same worker
     rsx:man libreoffice          The soffice invocation and the document sandbox
     rsx:man file_upload          File attachment and upload system
+    rsx:man health               The Face Detection and HEIC Decoding rows
     rsx:man storage_directories  Storage directory organization
     rsx:man config_rsx           RSX configuration reference
 
-RSX Framework              Last updated 2026-10-20                 THUMBNAILS(1)
+RSX Framework              Last updated 2026-11-17                 THUMBNAILS(1)

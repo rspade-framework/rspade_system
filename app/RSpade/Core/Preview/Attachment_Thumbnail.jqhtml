@@ -18,8 +18,13 @@ Args:
   $type           (optional) - dynamic variant: 'fit' (default) or 'cover'.
   $width          (optional) - dynamic variant width in px (default 120).
   $height         (optional) - dynamic variant height in px; omitted -> width-only variant.
+  $face           (optional) - true: a 'cover' thumbnail of an image is cut around the face found
+                               in it instead of the centre (rsx:man thumbnails, FACE-AWARE
+                               CROPS). For a picture of a person - a profile photo, an avatar -
+                               never a document, product shot or gallery image. Has no effect
+                               with 'fit', which is never cropped. Throws with $preset.
   $preset         (optional) - named preset from rsx.thumbnails.presets. MUTUALLY EXCLUSIVE with
-                               $type/$width/$height - passing both throws.
+                               $type/$width/$height/$face - passing both throws.
   $alt            (optional) - img alt text; defaults to the attachment's file name.
   $allow_animated (optional) - true: an ANIMATED image (a GIF, an animated WebP or PNG - the
                                attachment's is_animated) is shown as the ORIGINAL file, playing,
@@ -66,7 +71,7 @@ Events OUT:
 --%>
 <Define:Attachment_Thumbnail tag="div">
     <% if (!this.args.attachment_id) { throw new Error('Attachment_Thumbnail requires $attachment_id'); } %>
-    <% if (this.args.preset && (this.args.type || this.args.width || this.args.height)) { throw new Error('Attachment_Thumbnail: $preset and $type/$width/$height are mutually exclusive'); } %>
+    <% if (this.args.preset && (this.args.type || this.args.width || this.args.height || this.args.face)) { throw new Error('Attachment_Thumbnail: $preset and $type/$width/$height/$face are mutually exclusive'); } %>
     <%
         const _record = this.data.attachment;
         const _status = (_record && _record.file_storage) ? int(_record.file_storage.render_status_id) : 'none';
@@ -75,6 +80,7 @@ Events OUT:
             type: this.args.type,
             width: this.args.width || 120,
             height: this.args.height,
+            face: this.args.face === true,
             preset: this.args.preset,
         }) : null;
     %>

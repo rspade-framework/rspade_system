@@ -65,7 +65,8 @@ use App\RSpade\Lib\Revisions\Revision_Model;
  * a stored pair the rule calls the same value, or a column the model's revisions no longer
  * record, is not another editor's change (Revision::meaningful_changes()); and a field this
  * submission sets to what is stored now ("1.5" over 1.50, "0" over false) overwrites nothing
- * and is not asked about.
+ * and is not asked about. What THIS edit wrote, by field, is written_fields(), asked in the
+ * callback after its saves.
  *
  * COVERS the record's own columns. A pivot or a detail-table field is guarded by
  * changed() - it is written only when it changed - but is not checked for a conflict.
@@ -486,6 +487,35 @@ class Form_Edit
         }
 
         return in_array($field, $this->changed, true) && !in_array($field, $this->kept, true);
+    }
+
+    /**
+     * The form fields this edit's saves changed, as a revision records them: each record's
+     * recorded_changes() (the record's and every coupled record's), named as the form names
+     * them through the record's fields: map or the coupled record's map. Asked inside the
+     * callback AFTER its saves - "did this edit change anything a person would call a
+     * change" - and empty when every save wrote nothing a revision records (only updated_at,
+     * revision_exclude or derived columns, or values equal to the stored ones). A recorded
+     * column no field is stored in is not named.
+     *
+     *     $client->save();
+     *     if ($edit->written_fields() !== []) { ... say what changed ... }
+     *
+     * @return array<int, string> Field names, in the order the saves recorded them
+     */
+    public function written_fields(): array
+    {
+        $fields = [];
+
+        foreach ($this->__sources() as $source) {
+            foreach ($source['record']->recorded_changes() as $column) {
+                foreach ($this->__fields_in($source['map'], $column) as $field) {
+                    $fields[$field] = true;
+                }
+            }
+        }
+
+        return array_keys($fields);
     }
 
     /**

@@ -736,6 +736,15 @@ EDITING A RECORD
         Is this submission writing $field? For what set() cannot do: a pivot, a
         detail-table field, a value composed from several fields.
 
+    $edit->written_fields()
+        Asked in the callback AFTER its saves: the form fields those saves changed,
+        as a revision records them - each record's recorded_changes() (the record's
+        and every coupled record's), named through fields: and the coupled maps.
+        [] when the saves wrote nothing a person would call a change (only
+        updated_at, revision_exclude or derived columns, or values equal to the
+        stored ones) - the answer to "did this edit change anything", never
+        re-derived from getChanges() (rsx:man revisions, WHAT A SAVE RECORDS).
+
     REQUIRED: the model declares `public static $revisions = true`. Form_Edit reads
     what the other person changed from revision history and throws naming the model
     when there is none. A framework model is extended to declare it (rsx:man
@@ -758,7 +767,8 @@ EDITING A RECORD
     EQUIVALENCE). Another editor's revisions are read through
     Revision::meaningful_changes(): a stored pair the rule calls the same value
     (['1.00', 1] recorded before the rule) or a column the model no longer records is
-    nobody's change. A field this submission sets to the stored value in another shape
+    nobody's change, and a polymorphic pair or fact group with one changed column is
+    a change to all of its columns. A field this submission sets to the stored value in another shape
     ("1.5" over 1.50, "0" over false, '' over NULL on a nullable column) overwrites
     nothing and is not asked about; the model's dirty check then writes nothing.
 

@@ -82,6 +82,15 @@ class Column_Equivalence_Model_Test extends Rsx_Test_Abstract
         return iterator_to_array($record->revisions(), false);
     }
 
+    /** The record's newest revision, by id. */
+    private static function __newest_revision(Column_Equivalence_Fixture_Model $record): \App\RSpade\Lib\Revisions\Revision_Model
+    {
+        $all = static::__revisions($record);
+        usort($all, fn ($a, $b) => (int) $b->id <=> (int) $a->id);
+
+        return $all[0];
+    }
+
     /**
      * Assert a save after the given assignments was a no-op in every respect.
      *
@@ -191,7 +200,7 @@ class Column_Equivalence_Model_Test extends Rsx_Test_Abstract
         static::__assert_count(1, Realtime_Emissions::_testing_pending(), 'one realtime frame');
         $lifecycle = Model_Lifecycle_Emissions::_testing_pending();
         static::__assert_count(1, $lifecycle, 'after_update() queued');
-        static::__assert_equals(['hours', 'is_flag', 'updated_at', 'updated_by_id', 'updated_by_type'], static::__sorted($lifecycle[0]['changed']), 'naming what changed');
+        static::__assert_equals(['hours', 'hours_label', 'is_flag', 'updated_at', 'updated_by_id', 'updated_by_type'], static::__sorted($lifecycle[0]['changed']), 'naming what changed, the derived column included');
     }
 
     // CE-REV-CREATE-STORAGE-FORM
@@ -341,8 +350,179 @@ class Column_Equivalence_Model_Test extends Rsx_Test_Abstract
             Revision::meaningful_changes(Column_Equivalence_Fixture_Model::class, ['name' => ['a', 'b'], 'hours' => ['1.50', '1.5']]),
             'a FQCN names the model too'
         );
+    }
 
-        static::__assert_throws(RuntimeException::class, fn () => Revision::meaningful_changes('No_Such_Probe_Model', []), 'is not a model');
+    // CE-MEANINGFUL-UNKNOWN-MODEL
+    public static function test_meaningful_changes_returns_the_diff_of_a_model_no_longer_shipped_as_stored()
+    {
+        $stored = ['a' => [1, 2], 'b' => ['x', 'x'], 'updated_at' => ['2026-01-01 00:00:00', '2026-01-02 00:00:00']];
+
+        $removed = -1;
+        static::__assert_equals($stored, Revision::meaningful_changes('No_Such_Probe_Model', $stored, $removed), 'a simple name the manifest does not know');
+        static::__assert_equals(0, $removed, 'nothing removed');
+
+        static::__assert_equals($stored, Revision::meaningful_changes('Rsx\\Models\\No_Such_Probe_Model', $stored), 'an FQCN that names no class');
+    }
+
+    // CE-MEANINGFUL-UNITS
+    public static function test_meaningful_changes_keeps_a_polymorphic_pair_and_a_fact_group_whole()
+    {
+        static::__assert_equals(
+            ['owner_type' => [5, 5], 'owner_id' => [1, 2]],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['owner_type' => [5, 5], 'owner_id' => [1, 2]]),
+            'one half of a type-ref pair changed: both halves kept'
+        );
+        static::__assert_equals(
+            ['owner_type' => [5, 6], 'owner_id' => ['1', 1]],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['owner_type' => [5, 6], 'owner_id' => ['1', 1]]),
+            'the type half changed: the id half is kept beside it'
+        );
+
+        $removed = null;
+        static::__assert_equals(
+            [],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['owner_type' => [5, 5], 'owner_id' => ['1', 1]], $removed),
+            'neither half changed: both dropped'
+        );
+        static::__assert_equals(2, $removed);
+
+        static::__assert_equals(
+            ['owner_id' => [1, 2]],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['owner_id' => [1, 2]]),
+            'a half the diff does not hold is not invented'
+        );
+
+        static::__assert_equals(
+            ['happened_at' => ['2026-11-16 12:00:55.000', '2026-11-16 13:00:00.000'], 'doc' => ['{"a": 1}', '{"a":1}']],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', [
+                'happened_at' => ['2026-11-16 12:00:55.000', '2026-11-16 13:00:00.000'],
+                'doc' => ['{"a": 1}', '{"a":1}'],
+            ]),
+            'one column of a fact group changed: the group is kept whole'
+        );
+        static::__assert_equals(
+            [],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', [
+                'happened_at' => ['2026-11-16 12:00:55.000', '2026-11-16T12:00:55Z'],
+                'doc' => ['{"a": 1}', '{"a":1}'],
+            ]),
+            'no column of the group changed: the group is dropped'
+        );
+    }
+
+    // CE-MEANINGFUL-REMOVED
+    public static function test_meaningful_changes_counts_the_pairs_it_leaves_out()
+    {
+        $removed = null;
+        $kept = Revision::meaningful_changes('Column_Equivalence_Fixture_Model', [
+            'hours' => ['1.00', 1],
+            'name' => ['a', 'b'],
+            'last_seen_at' => ['2026-11-16 09:00:00', '2026-11-17 09:00:00'],
+            'updated_at' => ['2026-11-16 09:00:00.000', '2026-11-17 09:00:00.000'],
+            'hours_label' => ['h1.00', 'h2.00'],
+            'token' => [Revision::REDACTED, Revision::REDACTED],
+        ], $removed);
+
+        static::__assert_equals(['name', 'token'], array_keys($kept));
+        static::__assert_equals(4, $removed, 'an equal pair, a revision_exclude column, updated_at and a derived column');
+
+        Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['name' => ['a', 'b'], 'hours' => ['1.00', '2.00']], $removed);
+        static::__assert_equals(0, $removed, 'an all-real diff removes nothing');
+
+        Revision::meaningful_changes('Column_Equivalence_Fixture_Model', [], $removed);
+        static::__assert_equals(0, $removed, 'an empty diff removes nothing');
+    }
+
+    // =========================================================================
+    // The number on a text-type column, the DATE with a midnight tail
+    // =========================================================================
+
+    // CE-TEXT-TYPE-NUMBER
+    public static function test_a_number_against_a_decimal_text_type_column_is_read_at_the_columns_scale()
+    {
+        $d = Column_Equivalence::descriptors(Column_Equivalence_Fixture_Model::class);
+        static::__assert_equals('text_type', $d['rate']['kind']);
+        static::__assert_equals(4, $d['rate']['scale'], "a text-type column on a DECIMAL carries the column's scale");
+        static::__assert_equals(4, Column_Equivalence::to_browser($d['rate'])['scale'], 'and the browser receives it');
+        static::__assert_null($d['token']['scale'], 'a column that is no DECIMAL carries none');
+
+        static::__assert_true(Column_Equivalence_Fixture_Model::same_value('rate', '60.0000', 60));
+        static::__assert_true(Column_Equivalence_Fixture_Model::same_value('rate', '60.0000', 60.0));
+        static::__assert_true(Column_Equivalence_Fixture_Model::same_value('rate', '0.7250', 0.725));
+        static::__assert_false(Column_Equivalence_Fixture_Model::same_value('rate', '60.0000', 61));
+        static::__assert_false(Column_Equivalence_Fixture_Model::same_value('rate', null, 0), '0 is never NULL');
+    }
+
+    // CE-DATE-MIDNIGHT
+    public static function test_a_date_with_a_midnight_time_is_that_date()
+    {
+        static::__assert_true(Column_Equivalence_Fixture_Model::same_value('due_on', '2026-01-02', '2026-01-02 00:00:00'));
+        static::__assert_true(Column_Equivalence_Fixture_Model::same_value('due_on', '2026-01-02', '2026-01-02T00:00:00.000'));
+        static::__assert_false(Column_Equivalence_Fixture_Model::same_value('due_on', '2026-01-02', '2026-01-02 00:00:01'), 'a non-midnight time is never truncated');
+        static::__assert_equals('2026-01-02', Column_Equivalence::storage_form(Column_Equivalence::descriptor(Column_Equivalence_Fixture_Model::class, 'due_on'), '2026-01-02 00:00:00'));
+
+        static::__assert_equals(
+            [],
+            Revision::meaningful_changes('Column_Equivalence_Fixture_Model', ['due_on' => ['2026-01-02 00:00:00', '2026-01-02']]),
+            'a stored pair of the date and the date at midnight is no change'
+        );
+    }
+
+    // =========================================================================
+    // recorded_dirty() / recorded_changes()
+    // =========================================================================
+
+    // CE-RECORDED-NOTHING
+    public static function test_recorded_dirty_and_changes_are_empty_for_bookkeeping_excluded_and_derived_columns()
+    {
+        static::__acting_as_user(1);
+        $record = static::__stored();
+        static::__assert_equals([], $record->recorded_changes(), 'no save of this instance yet');
+
+        $record->last_seen_at = '2026-12-01 09:00:00';
+        $record->updated_at = '2026-12-01 09:00:00.000';
+        static::__assert_equals([], $record->recorded_dirty(), 'updated_at and a revision_exclude column are dirty, none recorded');
+        $record->save();
+        static::__assert_equals([], $record->recorded_changes(), 'the save wrote nothing a revision records');
+
+        DB::update('UPDATE ' . Column_Equivalence_Fixture_Tables::TABLE . " SET hours_label = 'stale' WHERE id = ?", [$record->id]);
+        $record = Column_Equivalence_Fixture_Model::find($record->id);
+        $revisions = count(static::__revisions($record));
+        static::__assert_true($record->rederive(), 'the derived column is rewritten');
+        static::__assert_equals([], $record->recorded_changes(), 'a derived-only save records nothing');
+        static::__assert_count($revisions, static::__revisions($record), 'and no revision was written');
+    }
+
+    // CE-RECORDED-MIXED
+    public static function test_recorded_dirty_and_changes_name_the_recorded_columns_and_agree_with_the_revision()
+    {
+        static::__acting_as_user(1);
+        $record = static::__stored();
+        $record->name = 'renamed';
+        $record->hours = 1;
+        $record->token = 'secret';
+        $record->last_seen_at = '2026-12-01 09:00:00';
+        $record->owner_id = 2;
+
+        static::__assert_equals(['name', 'owner_id', 'token'], static::__sorted($record->recorded_dirty()), "hours 1 over '1.00' and the excluded column are not recorded");
+
+        $record->save();
+        $recorded = static::__sorted($record->recorded_changes());
+        static::__assert_equals(['name', 'owner_id', 'token'], $recorded);
+        static::__assert_equals($recorded, static::__sorted(array_keys(static::__newest_revision($record)->diff())), 'the revision the save wrote holds exactly these columns');
+
+        $created = new Column_Equivalence_Fixture_Model();
+        $created->name = 'new';
+        $created->hours = 3;
+        $created->code = '';
+        static::__assert_equals(['code', 'hours', 'name'], static::__sorted($created->recorded_dirty()), 'before a create: the values assigned so far');
+        $created->save();
+        static::__assert_equals(
+            static::__sorted(array_keys(static::__newest_revision($created)->diff())),
+            static::__sorted($created->recorded_changes()),
+            "after a create: the create revision's columns"
+        );
+        static::__assert_false(in_array('hours_label', $created->recorded_changes(), true), 'the derived column is never one of them');
     }
 
     /** @param array<int, string> $list */

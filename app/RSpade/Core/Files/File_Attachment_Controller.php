@@ -9,6 +9,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Exceptions\Infrastructure_Outage;
 use App\RSpade\Core\Files\Document_Render_Service;
+use App\RSpade\Core\Files\Face_Detection;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
@@ -98,6 +99,16 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * THUMBNAIL TYPES:
  *   - cover: Fills the requested dimensions, cropping as needed
  *   - fit:   Maintains aspect ratio within dimensions, transparent background
+ *
+ * FACE-CENTRED COVER (?face=1 on the dynamic route): a cover thumbnail of an IMAGE is cut
+ *   around the face Face_Detection finds (stored on the blob), instead of the centre. Anything
+ *   else - fit, a document, an SVG - ignores it and the detector is never run. No face: the
+ *   plain cover. Detector unavailable: the plain cover, cached under the plain key only and
+ *   sent `private, max-age=1800` so a repaired detector is picked up.
+ *
+ * ORIENTATION AND METADATA: every thumbnail is drawn upright (the EXIF orientation is applied
+ *   before any scaling), the same image the face detector reads, and carries no metadata
+ *   (EXIF, GPS, XMP and IPTC are stripped; only the ICC colour profile is kept).
  *
  * THUMBNAIL GENERATION:
  *   - Max dimensions: 256x256 (automatically constrained)
@@ -323,6 +334,10 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         $attachment = $outcome['attachment'];
+
+        // width / height / duration are read through ensure_media_metadata(), like every
+        // payload that carries them.
+        $attachment->ensure_media_metadata();
 
         // Build response data
         $response_data = [
@@ -586,13 +601,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $headers['Content-Type'] = $attachment->mime_type;
         }
 
-        // Return file with attachment disposition. Cacheable only for a request naming the
-        // current content version - see apply_content_version_cache_policy().
-        return static::harden_file_response(static::apply_content_version_cache_policy(Response::download(
-            $storage->get_full_path(),
-            Rsx_File_Name::safe($attachment->file_name),
-            $headers
-        ), $attachment, $params));
+        // Return file with attachment disposition - a photo's GPS position withheld
+        // (File_Storage_Model::original_bytes_response()). Cacheable only for a request naming
+        // the current content version - see apply_content_version_cache_policy().
+        return static::harden_file_response(static::apply_content_version_cache_policy(
+            $storage->original_bytes_response('attachment', $attachment->file_name, $headers),
+            $attachment,
+            $params
+        ));
     }
 
     /**
@@ -635,20 +651,19 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Content-Type from the attachment's RAW SNIFFED mime_type (NOT pipeline_mime()) - serving
         // is a security boundary; keep the conservative sniffed type. Omit if genuinely unknown so
         // the browser can sniff.
-        $headers = [
-            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
-            'Content-Disposition' => Rsx_File_Name::disposition('inline', $attachment->file_name),
-        ];
+        $headers = ['Cache-Control' => static::GATED_BYTES_CACHE_CONTROL];
         if (!empty($attachment->mime_type)) {
             $headers['Content-Type'] = $attachment->mime_type;
         }
 
-        // Return file with inline disposition. Cacheable only for a request naming the
-        // current content version - see apply_content_version_cache_policy().
-        return static::harden_file_response(static::apply_content_version_cache_policy(Response::file(
-            $storage->get_full_path(),
-            $headers
-        ), $attachment, $params));
+        // Return file with inline disposition - a photo's GPS position withheld
+        // (File_Storage_Model::original_bytes_response()). Cacheable only for a request naming
+        // the current content version - see apply_content_version_cache_policy().
+        return static::harden_file_response(static::apply_content_version_cache_policy(
+            $storage->original_bytes_response('inline', $attachment->file_name, $headers),
+            $attachment,
+            $params
+        ));
     }
 
     /**
@@ -752,8 +767,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 }
 
                 // Per-entry Content-Type from the RAW SNIFFED mime_type (serve-time security
-                // boundary, not pipeline_mime()).
-                $complete = $zip->add_file_from_path($name, $path, $attachment->mime_type);
+                // boundary, not pipeline_mime()). A photo's GPS position is withheld from the
+                // member exactly as /_download withholds it.
+                $complete = $zip->add_file_from_path(
+                    $name,
+                    $path,
+                    $attachment->mime_type,
+                    File_Storage_Model::gps_patches_for_serving($path, $name)
+                );
                 if (!$complete) {
                     Log::error("download_multiple_zip: stream truncated for attachment {$attachment->id} ({$name})");
                     $zip->add_empty_entry(static::_error_marker_name($name));
@@ -1101,7 +1122,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *   PENDING /     No real thumbnail exists YET (PENDING) or ever will (FAILED). The extension
      *   FAILED        icon is served as an explicit PLACEHOLDER: Cache-Control: no-store, and
      *                 NOTHING is written to the cache. This is the whole point of the branch. The
-     *                 cache key is {type}_{w}x{h}_{hash}_{ext}.webp - the key a real render will
+     *                 cache key is {type}_{w}x{h}_{hash}_{ext}_r{revision}.webp - the key a real render will
      *                 want - so writing an icon under it poisons it permanently: a later cache hit
      *                 is a cache hit, and no success ever replaces it. The cache is not READ here
      *                 either, so a stale entry left by an older install is bypassed rather than
@@ -1115,12 +1136,21 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *                 queue and this request serves the placeholder - self-healing, and the browser
      *                 is told no-store so it comes back.
      *
+     * FACE-CENTRED COVER ($face_cache_filename given): only a cover thumbnail of an image drawn
+     * from the blob itself (not an SVG, not a rendition) consults Face_Detection, on the
+     * ORIGINAL image file. A found face renders around it and caches under $face_cache_filename;
+     * no face (-1, -1) is the plain cover under the plain key; an unavailable detector is the
+     * plain cover under the plain key, sent with a half-hour max-age instead of a week, so the
+     * face crop arrives soon after the detector is repaired. Anything else ignores the request.
+     *
      * @param File_Attachment_Model $attachment
      * @param string $type Thumbnail type: 'cover' or 'fit'
      * @param int $width Width in pixels
      * @param int|null $height Height in pixels
      * @param string $cache_type Either 'preset' or 'dynamic'
      * @param string $cache_filename Cache filename
+     * @param string|null $face_cache_filename The face-centred cache filename when a face-centred
+     *                                         cover was asked for; null otherwise.
      * @return Response
      */
     protected static function __generate_and_serve_thumbnail(
@@ -1129,7 +1159,8 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         $width,
         $height,
         $cache_type,
-        $cache_filename
+        $cache_filename,
+        ?string $face_cache_filename = null
     ) {
         // Get storage file (materializing external bytes on demand). Handlers never affect
         // thumbnails - resolve_storage() is the only handler touchpoint here.
@@ -1146,18 +1177,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             return static::__serve_thumbnail_placeholder($attachment, $width, $height);
         }
 
-        // Build cache path
-        $cache_path = static::_get_cache_path($cache_type, $cache_filename);
-
-        // Check cache
-        if (file_exists($cache_path)) {
-            $response = static::_serve_cached_thumbnail($cache_path);
-            if ($response !== null) {
-                return $response;
-            }
-            // If null, file was deleted (race condition) - fall through to regeneration
-        }
-
         // A rendered document rasterizes from its rendition; everything else from the blob itself.
         //
         // A SPREADSHEET IS "everything else" DESPITE BEING RENDERED. Its renderer's rendition is
@@ -1167,9 +1186,43 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // the branch below treats a missing PDF as corruption, logs it and calls
         // requeue_render(), so a spreadsheet would re-queue on every thumbnail request forever
         // while the worker dutifully produced the HTML the branch was not looking for.
+        $uses_rendition = $render_status === File_Storage_Model::RENDER_STATUS_RENDERED
+            && Document_Render_Service::rendition_format_for_mime($attachment->pipeline_mime()) !== 'html';
+
+        // Face-centred cover: decided before the cache is consulted, because the answer picks the
+        // cache key. The stored position is read from the blob row already loaded; the detector
+        // runs only the first time a blob is asked.
+        $face_center = null;
+        $cache_control = static::GATED_BYTES_CACHE_CONTROL;
+        if ($face_cache_filename !== null
+            && $type === 'cover'
+            && $attachment->is_image()
+            && !$attachment->is_svg()
+            && !$uses_rendition) {
+            $center = Face_Detection::face_center($storage, $storage->get_full_path());
+
+            if ($center === null) {
+                $cache_control = 'private, max-age=' . Face_Detection::UNAVAILABLE_MAX_AGE_SECONDS;
+            } elseif ($center[0] >= 0.0 && $center[1] >= 0.0) {
+                $face_center = $center;
+                $cache_filename = $face_cache_filename;
+            }
+        }
+
+        // Build cache path
+        $cache_path = static::_get_cache_path($cache_type, $cache_filename);
+
+        // Check cache
+        if (file_exists($cache_path)) {
+            $response = static::_serve_cached_thumbnail($cache_path, $cache_control);
+            if ($response !== null) {
+                return $response;
+            }
+            // If null, file was deleted (race condition) - fall through to regeneration
+        }
+
         $rendition_path = null;
-        if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED
-            && Document_Render_Service::rendition_format_for_mime($attachment->pipeline_mime()) !== 'html') {
+        if ($uses_rendition) {
             $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
 
             if (!file_exists($rendition_path)) {
@@ -1190,7 +1243,8 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $type,
             $width,
             $height,
-            $rendition_path
+            $rendition_path,
+            $face_center
         );
 
         // Save to cache
@@ -1204,7 +1258,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Return thumbnail (serve from memory, don't re-read from disk)
         return Response::make($thumbnail_data, 200, [
             'Content-Type' => 'image/webp',
-            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
+            'Cache-Control' => $cache_control,
         ]);
     }
 
@@ -1352,13 +1406,26 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Generate cache filename (materialize external bytes to obtain the content hash).
+        $hash = $attachment->resolve_storage()->hash;
         $cache_filename = static::_get_cache_filename_dynamic(
             $type,
             $width,
-            $height ?? $width,
-            $attachment->resolve_storage()->hash,
+            $height,
+            $hash,
             $attachment->file_extension
         );
+
+        // A face-centred cover has a key of its own, used only when a face is actually found.
+        $face_cache_filename = null;
+        if ($type === 'cover' && static::_face_requested($params)) {
+            $face_cache_filename = static::_get_cache_filename_dynamic(
+                'cover-face',
+                $width,
+                $height,
+                $hash,
+                $attachment->file_extension
+            );
+        }
 
         // Generate and serve. A real thumbnail is cacheable only for a request naming the
         // current content version; a placeholder is no-store already and stays so.
@@ -1368,8 +1435,23 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $width,
             $height,
             'dynamic',
-            $cache_filename
+            $cache_filename,
+            $face_cache_filename
         ), $attachment, $params));
+    }
+
+    /**
+     * Does a dynamic thumbnail request ask for a face-centred cover? The query string's `face`
+     * is '1' or 'true' (case-insensitive); anything else, absent included, is no.
+     *
+     * @param array $params The route's params (carries the query string).
+     * @return bool
+     */
+    public static function _face_requested(array $params): bool
+    {
+        $face = $params['face'] ?? null;
+
+        return is_string($face) && in_array(strtolower($face), ['1', 'true'], true);
     }
 
     // ============================================================================================
@@ -1418,9 +1500,12 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *                                    caller (the serving path / the cache-warming command) is
      *                                    what knows the render state; null means "rasterize the
      *                                    blob itself", the historic behavior.
+     * @param array|null $face_center [x, y] fractions of the upright image to cut a cover
+     *                                thumbnail around (Face_Detection::face_center()); null =
+     *                                the centre crop.
      * @return string WebP binary data.
      */
-    public static function _render_thumbnail_data($attachment, string $source_path, string $type, int $width, ?int $height, ?string $rendition_path = null): string
+    public static function _render_thumbnail_data($attachment, string $source_path, string $type, int $width, ?int $height, ?string $rendition_path = null, ?array $face_center = null): string
     {
         // App thumbnail resolve chain (document.thumbnail_render). Contract:
         //   null                     = decline (fall through to the framework renderer registry)
@@ -1518,7 +1603,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                     $max = config('rsx.thumbnails.max_dynamic_size', 800) * 2;
                     $image = $fqcn::render($source_path, $max, $max);
 
-                    return static::__generate_thumbnail($image, $type, $width, $height);
+                    return static::__generate_thumbnail($image, $type, $width, $height, $face_center);
                 } catch (\Throwable $e) {
                     error_log("Thumbnail renderer '{$renderer_simple}' failed for attachment {$attachment->key}: " . $e->getMessage());
                     // Explicit extension-icon substitution below.
@@ -1567,14 +1652,33 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * @param string   $type   Thumbnail type: 'cover' or 'fit'
      * @param int      $width  Target width
      * @param int|null $height Target height (null = maintain aspect ratio)
+     * @param array|null $face_center [x, y] fractions of the upright image: a cover crop is cut
+     *                                around it (Face_Detection::crop_offset()) instead of the
+     *                                centre. Ignored for fit.
      * @return string  Binary image data (WebP format)
      */
     protected static function __generate_thumbnail(
         \Imagick $image,
         string $type,
         int $width,
-        ?int $height = null
+        ?int $height = null,
+        ?array $face_center = null
     ): string {
+        // Upright first: a phone photo stores its pixels sideways with an EXIF orientation tag,
+        // and every dimension and offset below is about the picture as it is seen. The face
+        // detector reads the same upright image, so a stored face position lands where it was
+        // found. A source with no orientation (a PDF page, a screenshot) is left as it is.
+        $image->autoOrient();
+
+        // A thumbnail carries NO metadata: the source's EXIF (an orientation tag a browser
+        // would apply a second time, GPS position, camera details), XMP and IPTC are all
+        // dropped. The ICC colour profile is the one exception, re-attached before encoding:
+        // it holds no personal data, and without it a wide-gamut photo (Display P3, Adobe RGB)
+        // would be shown with the wrong colours.
+        $icc_profiles = $image->getImageProfiles('icc', true);
+        $icc_profile = $icc_profiles['icc'] ?? null;
+        $image->stripImage();
+
         // Get original dimensions
         $original_width = $image->getImageWidth();
         $original_height = $image->getImageHeight();
@@ -1634,9 +1738,20 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             // Resize
             $image->resizeImage($resize_width, $resize_height, \Imagick::FILTER_LANCZOS, 1);
 
-            // Crop to exact dimensions (center crop)
-            $offset_x = (int)round(($resize_width - $width) / 2);
-            $offset_y = (int)round(($resize_height - $height) / 2);
+            // Crop to exact dimensions: around the face when one is known, else the centre
+            if ($face_center !== null) {
+                [$offset_x, $offset_y] = Face_Detection::crop_offset(
+                    $resize_width,
+                    $resize_height,
+                    $width,
+                    $height,
+                    $face_center[0],
+                    $face_center[1]
+                );
+            } else {
+                $offset_x = (int)round(($resize_width - $width) / 2);
+                $offset_y = (int)round(($resize_height - $height) / 2);
+            }
             $image->cropImage($width, $height, $offset_x, $offset_y);
 
         } else {
@@ -1666,6 +1781,13 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $image = $canvas;
         }
 
+        // Nothing but the colour profile (see the strip above). The fit canvas is a new image,
+        // so the profile is attached to whichever image is encoded.
+        $image->stripImage();
+        if ($icc_profile !== null) {
+            $image->profileImage('icc', $icc_profile);
+        }
+
         // Set image format to WebP
         $image->setImageFormat('webp');
 
@@ -1686,11 +1808,23 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     // ============================================================================================
 
     /**
+     * The revision of the thumbnail renderer, carried in every cache filename as `_r{N}` before
+     * `.webp`. It moves whenever the pixels a given request produces change, so a thumbnail
+     * cached by an earlier renderer is never served again: nothing asks for its name, and it
+     * ages out under the LRU quotas like any unused entry. Revision 2 draws every thumbnail
+     * upright (EXIF orientation applied) and strips its metadata; names without a revision were
+     * drawn without either. Revision 3 gives a width-only dynamic request a name of its own
+     * (`{w}x_`): before it, `fit/800` and `fit/800/800` shared `fit_800x800_`, so whichever was
+     * drawn first was served for both.
+     */
+    public const THUMBNAIL_RENDER_REVISION = 3;
+
+    /**
      * Generate cache filename for preset thumbnail
      *
      * Internal helper - do not call directly from application code.
      *
-     * Format: {preset_name}_{hash}_{ext}.webp
+     * Format: {preset_name}_{hash}_{ext}_r{revision}.webp
      *
      * @param string $preset_name Preset name from config
      * @param string $hash File storage hash
@@ -1699,7 +1833,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     public static function _get_cache_filename_preset($preset_name, $hash, $extension)
     {
-        return "{$preset_name}_{$hash}_{$extension}.webp";
+        return "{$preset_name}_{$hash}_{$extension}_r" . static::THUMBNAIL_RENDER_REVISION . '.webp';
     }
 
     /**
@@ -1707,18 +1841,27 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *
      * Internal helper - do not call directly from application code.
      *
-     * Format: {type}_{width}x{height}_{hash}_{ext}.webp
+     * Format: {type}_{width}x{height}_{hash}_{ext}_r{revision}.webp, and
+     *         {type}_{width}x_{hash}_{ext}_r{revision}.webp for a width-only request
      *
-     * @param string $type Thumbnail type (cover or fit)
+     * A width-only request is a different picture from the same width and height given
+     * explicitly (fit/800 keeps the source's aspect ratio, fit/800/800 fits inside a square), so
+     * an omitted height is never spelled as the width.
+     *
+     * The blob hash is always its own `_{hash}_` segment: every purge of a blob's thumbnails
+     * globs `*_{hash}_*.webp`.
+     *
+     * @param string $type Thumbnail type (cover or fit), or 'cover-face' for a cover cut around
+     *                     a face
      * @param int $width Width in pixels
-     * @param int $height Height in pixels
+     * @param int|null $height Height in pixels; null when the request gave none
      * @param string $hash File storage hash
      * @param string $extension File extension (normalized)
      * @return string Cache filename
      */
-    public static function _get_cache_filename_dynamic($type, $width, $height, $hash, $extension)
+    public static function _get_cache_filename_dynamic($type, $width, ?int $height, $hash, $extension)
     {
-        return "{$type}_{$width}x{$height}_{$hash}_{$extension}.webp";
+        return "{$type}_{$width}x{$height}_{$hash}_{$extension}_r" . static::THUMBNAIL_RENDER_REVISION . '.webp';
     }
 
     /**
@@ -1744,9 +1887,12 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * Returns null if file cannot be opened (caller should regenerate).
      *
      * @param string $cache_path Full path to cached file
+     * @param string $cache_control The response's Cache-Control (a week, private, unless the
+     *                              request is a face-centred cover served while the detector is
+     *                              unavailable)
      * @return Response|null Response if successful, null if file unavailable
      */
-    protected static function _serve_cached_thumbnail($cache_path)
+    protected static function _serve_cached_thumbnail($cache_path, string $cache_control = self::GATED_BYTES_CACHE_CONTROL)
     {
         // Attempt to open file
         $handle = @fopen($cache_path, 'r');
@@ -1774,7 +1920,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Serve file
         return Response::file($cache_path, [
             'Content-Type' => 'image/webp',
-            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
+            'Cache-Control' => $cache_control,
         ]);
     }
 

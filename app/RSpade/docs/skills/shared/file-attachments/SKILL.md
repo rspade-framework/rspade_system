@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data, {on_progress}) and upload progress bars, the claim flow (find_by_key, can_user_assign_this_file, attach_to), the duplicate-upload question (duplicates_on(), Rsx_Duplicate_Upload, Rsx_Form.call_answering(), 'Upload Again' / 'Skip This File' / 'Cancel Upload'), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(). Use when building an upload UI or claim endpoint or showing a file, or on 'File uploads are disabled' / 'File reads are disabled'."
+description: "Uploading files and attaching them to records - the three mandatory gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize), Ajax.upload(form_data, {on_progress}) and upload progress bars, the claim flow (find_by_key, can_user_assign_this_file, attach_to), the duplicate-upload question (duplicates_on(), Rsx_Duplicate_Upload, Rsx_Form.call_answering(), 'Upload Again' / 'Skip This File' / 'Cancel Upload'), find_attachment, claim_for_embed, <Attachment_Thumbnail>, <File_Type_Icon>, file_type_label, max_file_size_human, Rsx_Temp_Files, #[Blob_Reference], ZIP downloads, recording a download from a gate handler under Site_Lock::write_exception(), face-centred avatar thumbnails ($face=true, ?face=1), displayed width / height / duration and ensure_media_metadata(), GPS withheld from served originals (get_gps_position(), rsx.files.strip_gps_when_served), HEIC photos and get_display_url(). Use when building an upload UI or claim endpoint or showing a file or profile photo, reading an attachment's width or a photo's location, or on 'File uploads are disabled' / 'File reads are disabled'."
 ---
 
 # File attachments
@@ -218,9 +218,11 @@ A tighter app cap: `min()` it against the framework number and render it the sam
 $attachment->get_url();            // "/_inline/{key}?v=41-0"   - view in browser
 $attachment->get_download_url();   // "/_download/{key}?v=41-0" - forces the download dialog
 $attachment->get_preview_url();    // "/_preview/pdf/{key}?v=41-0" (/_preview/sheet/ for a workbook)
+$attachment->get_display_url();    // an image at full size in an <img>: get_url() when a browser
+                                   //   displays the format, else a large upright WebP (HEIC, TIFF, PSD)
 ```
 
-Two different routes for the bytes. There is no `?download=1` query parameter.
+Two different routes for the bytes; there is no `?download=1` query parameter. **An original is served with its GPS position withheld.** `/_inline`, `/_download`, ZIP members and `download_response()` / `inline_response()` stream an image's EXIF GPS block out (the stored file keeps it; `rsx.files.strip_gps_when_served`, default true). Read where a photo was taken server-side with `$attachment->get_gps_position()` (`['latitude' => .., 'longitude' => ..]` or null). A position in XMP or a maker note is NOT withheld. `rsx:man file_upload`, GPS POSITIONS.
 
 **Every file URL carries the attachment's content version, and only a builder's URL is cacheable.** An attachment's key is permanent; its bytes are not (`relink_storage()` repoints it, a stale external blob is re-materialized). `content_version()` is `<file_storage_id>-<the blob's rendered_at in unix seconds, or 0>` (`0-0` with no resident blob) — it moves when the attachment points at different bytes and when a document's render lands — and every builder appends it as `?v=`. The routes **always serve the current bytes whatever `v` says**; `v` decides the cache policy: a request at the current version gets `Cache-Control: private, max-age=604800` (a week, the requester's browser only - **gated bytes are never shared-cacheable**, since a proxy or CDN that kept them would serve them past a revocation), and a request with **no `v` or a superseded one is answered `no-store`**. So:
 
@@ -255,6 +257,7 @@ The map lives in `File_Attachment_Model_Abstract` and the derivation is one `#[R
 ```jqhtml
 <Attachment_Thumbnail $attachment_id=doc.file_attachment_id $width=160 />
 <Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
+<Attachment_Thumbnail $attachment_id=id $type="cover" $face=true $width=36 $height=36 />   <%-- an avatar --%>
 <Attachment_Thumbnail $attachment_id=id $preset="profile" />
 <Attachment_Thumbnail $attachment_id=id $width=320 $allow_animated=true />   <%-- an animated GIF plays --%>
 ```
@@ -269,7 +272,8 @@ $el.component('Attachment_Thumbnail', {attachment_id: id, width: 160});
 | `$type` | `'fit'` (default) or `'cover'` |
 | `$width` | px, default 120 |
 | `$height` | px; omitted → a width-only variant |
-| `$preset` | a name from `config('rsx.thumbnails.presets')` — **mutually exclusive** with `$type`/`$width`/`$height`, passing both throws |
+| `$face` | `true`: a `cover` of an image is cut around the face found in it, not the centre. **For a picture of a person only** — a profile photo, an avatar; never a document, product shot or gallery image. No effect with `fit`; throws with `$preset` |
+| `$preset` | a name from `config('rsx.thumbnails.presets')` — **mutually exclusive** with `$type`/`$width`/`$height`/`$face`, passing both throws |
 | `$alt` | defaults to the attachment's file name |
 
 Extra classes go on the invocation as an ordinary HTML attribute (`class="me-2"`), which jqhtml keeps on the host element — there is no `$class` arg. Style the host and let the picture fill it:
@@ -292,6 +296,8 @@ The same component works unchanged on **portal** pages (`File_Attachment_Model` 
 
 A record that cannot be fetched (deleted, or not visible to this caller) paints a quiet empty box, never an error.
 
+**Every thumbnail is upright and metadata-free** — EXIF orientation applied before scaling, EXIF/GPS/XMP/IPTC stripped (ICC kept) — HEIC/HEIF included. **A face-centred cover** (`$face=true`) finds the face once per image and stores its centre on the blob (`_file_storage.face_x/face_y`; `-1,-1` no face, NULL not checked); with the detector unavailable it serves the plain centre crop with `max-age=1800`, stores nothing and logs `Face detection unavailable: ...` (rsx:health "Face Detection" WARNs). `rsx:man thumbnails`, FACE-AWARE CROPS.
+
 **Reacting to the picture is the `preview_loaded` event, never the component's `<img>`.** The component emits it once the image has settled and **always eventually emits it** — a broken image and the empty box report too — and because jqhtml events are sticky, a picture that was cached and decoded before you subscribed is still delivered:
 
 ```javascript
@@ -305,7 +311,7 @@ on_ready() {
 
 `state` is `loaded` (the picture decoded — the raster, or the type icon of a file with no raster), `preparing` (the extension icon of a render still queued; it reports again after the swap), `failed` (the image would not load, or the icon of a failed render) or `unavailable` (no record). `variant` is `'thumbnail'` or — when `$allow_animated` showed the upload itself — `'original'`, and `natural_width`/`natural_height` are **the served image's**, so they are the upload's own size only under `'original'` (otherwise read the attachment's `width`/`height`). It fires again after every swap and after a `reload()` onto another `$attachment_id`. It is not named `loaded` because that is a reserved jqhtml lifecycle event. The shared state table and guarantee: `rspade:document-preview` (**`preview_loaded`**), `rsx:man thumbnails`.
 
-`File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment; a record holding only a key has no content version (`0-0`), so that picture is served uncacheable. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
+`File_Attachment_Model.thumbnail_url(record, {type, width, height, face, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment; a record holding only a key has no content version (`0-0`), so that picture is served uncacheable. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
 
 ### File-type marks: `<File_Type_Icon>`, never your own extension map
 
@@ -322,9 +328,12 @@ $attachment->file_extension;  // lowercased, no dot
 $attachment->mime_type;
 $attachment->file_type_label;  // human-facing format name; display + sort only
 $attachment->get_size();      // bytes (works even for externally-resident bytes)
+$attachment->ensure_media_metadata()->width;   // DISPLAYED size; see below
 $attachment->fileable_type;   // polymorphic PAIR with fileable_id (+ fileable_category)
 $attachment->fileable;        // the PARENT RECORD itself (null while unclaimed)
 ```
+
+**`width` / `height` / `duration` are the DISPLAYED size, and NULL until read.** A portrait phone photo (EXIF orientation 5-8) and a rotated phone video report the size as seen; a video's comes from ffprobe (rsx:health "ffprobe"). They fill on demand: `fetch()`, the `/_upload` response and the Files API call `ensure_media_metadata()` first, and **server code reading `->width` directly calls it first too** — it stores the three columns under `Site_Lock::write_exception()` (safe from a reader), and a failed read stays NULL and is logged. A canvas resize in the browser reads with `createImageBitmap(file, {imageOrientation: 'from-image'})`, or a portrait uploads sideways. `rsx:man file_upload`, MEDIA METADATA.
 
 **`fileable` is the framework's own `#[Relationship]` `morphTo()` — never hand-roll one.** Read it as a PROPERTY; call the method only for the relation object (`$attachment->fileable()->withTrashed()->first()`). The integer discriminator in `fileable_type` is transparent: it is declared `type_ref` in the model's `$columns`, so stock `morphTo()` resolves it.
 

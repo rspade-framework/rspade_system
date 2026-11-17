@@ -46,7 +46,7 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * GET /_preview/pdfjs.mjs       - pdf.js main module bytes (lazy-loaded; NOT in any bundle)
  * GET /_preview/pdf_worker.mjs  - pdf.js worker module bytes (lazy-loaded)
  * POST (Ajax) get_preview_info  - {viewer, mime, file_name, extension, preview_unavailable,
- *                                  render_status_id, urls{rendition|null, inline, icon}} for a Document_Preview
+ *                                  render_status_id, urls{rendition|null, inline, display|null, icon}} for a Document_Preview
  * POST (Ajax) get_extracted_text - {status, text|null} for a Document_Text_Preview
  * POST (Ajax) get_markdown_html  - {status, html|null, truncated} for a Markdown_Viewer
  *
@@ -598,6 +598,10 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             'urls' => [
                 'rendition' => $rendition_url,
                 'inline' => $attachment->get_url(),
+                // What Image_Viewer shows: the image itself where a browser can display its
+                // format, else a large WebP the thumbnail pipeline draws from it (a HEIC from a
+                // phone). Null for anything that is not an image.
+                'display' => $attachment->get_display_url(),
                 'icon' => Rsx_Portal::internal_url(Rsx::Route('File_Attachment_Controller::icon_by_extension', ['extension' => $attachment->file_extension])),
             ],
         ];

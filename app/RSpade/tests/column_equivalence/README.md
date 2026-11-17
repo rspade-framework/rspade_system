@@ -16,9 +16,12 @@ ISO instant over its stored form, a reordered JSON document, `''` over NULL on a
 column) writes nothing, records no revision, moves neither `updated_at` nor the `updated_by`
 pair, and fires no realtime frame and no `after_update()`. The revision writer records each
 side in the column's storage form and skips pairs equal under the rule;
-`Revision::meaningful_changes()` applies the same judgement to diffs stored earlier. A save
-whose only dirty columns are derived or `revision_exclude` columns leaves the audit stamp
-alone.
+`Revision::meaningful_changes()` applies the same judgement to diffs stored earlier - keeping a
+type-ref pair or a fact group whole, counting what it leaves out, and returning a retired
+model's diff as stored. `recorded_dirty()` / `recorded_changes()` answer which columns a save's
+revision records, from the writer's own definition (`__recorded_pairs()`), and
+`Form_Edit::written_fields()` the same by form field. A save whose only dirty columns are
+derived or `revision_exclude` columns leaves the audit stamp alone.
 
 ## THE VECTOR FILE
 
@@ -43,8 +46,10 @@ alone.
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - `same_value()`,
   `blank_distinct_columns()`, `originalIsEquivalent()`, `save()` (the clean-save and unstamped
   paths, `__dirty_only_unrecorded()`, `_merge_unstamped_write()`), `_record_revision_on_save()`,
-  `_revision_value()`, `_revision_unrecorded_lookup()`
-- `app/RSpade/Lib/Revisions/Revision.php` - `meaningful_changes()`
+  `_revision_value()`, `__recorded_pairs()`, `recorded_dirty()`, `recorded_changes()`,
+  `_revision_records_column()`, `_revision_unrecorded_lookup()`
+- `app/RSpade/Lib/Revisions/Revision.php` - `meaningful_changes()`, `__fact_units()`
+- `app/RSpade/Core/Forms/Form_Edit.php` - `written_fields()` (tested in `tests/forms/`, FE-WRITTEN-FIELDS)
 - `app/RSpade/Core/Database/Rsx_Schema.php` - the `fsp` key, `fractional_precision()`
 - `app/RSpade/Core/Database/Field_Length_Script.php` - `equivalence_for_models()`, the
   script's third line `Rsx.__column_equivalence_data`
@@ -54,12 +59,15 @@ alone.
 
 ## Man page(s)
 
-- `rsx:man model` (COLUMN EQUIVALENCE - planned), `rsx:man revisions`
+- `rsx:man model` (COLUMN EQUIVALENCE), `rsx:man revisions` (WHAT A SAVE RECORDS, API REFERENCE),
+  `rsx:man form_conventions` (EDITING A RECORD)
 
 ## Testable surface
 
 - php: the vectors (`Column_Equivalence_Vectors_Test`); the model wiring, storage forms,
-  descriptors and the reader helper (`Column_Equivalence_Model_Test`, on the runtime table
-  `column_equivalence_fixtures`)
+  descriptors, the reader helper and the recorded-column accessors
+  (`Column_Equivalence_Model_Test`, on the runtime table `column_equivalence_fixtures`, whose
+  model also declares a text type on a DECIMAL column, a derived column and a fact group;
+  `Column_Equivalence_Fixture_Text.js` is the fixture text type's JS twin)
 - playwright: the same vectors in the browser (`playwright/column_equivalence_vectors.js`,
   run with `node`)

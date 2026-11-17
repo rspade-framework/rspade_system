@@ -123,13 +123,13 @@ class Document_Serving_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Both cache filenames (preset + dynamic) this blob would use for a fit/{w}x{w} thumbnail.
+     * The dynamic cache filename this blob would use for a width-only fit/{w} thumbnail.
      */
     private static function __dynamic_cache_path(File_Storage_Model $storage, string $extension, int $width): string
     {
         return File_Attachment_Controller::_get_cache_path(
             'dynamic',
-            File_Attachment_Controller::_get_cache_filename_dynamic('fit', $width, $width, $storage->hash, $extension)
+            File_Attachment_Controller::_get_cache_filename_dynamic('fit', $width, null, $storage->hash, $extension)
         );
     }
 

@@ -1,6 +1,6 @@
 ---
 name: document-preview
-description: "Previewing, rendering and searching documents - Document_Render_Service (one worker for the PDF rendition and text extraction), rsx.documents.renderers, <Document_Preview>, <Document_Text_Preview>, Spreadsheet_Viewer, the viewer registry, the document.* resolve chains, search_text() / search_ranked() (must be site-scoped), LIBREOFFICE_SANDBOX, rsx:documents:status. Use when showing a PDF, Office file or workbook, searching uploads, or stuck on 'Preparing preview...' or '(Extracting Text...)'."
+description: "Previewing, rendering and searching documents - Document_Render_Service (one worker for the PDF rendition and text extraction), rsx.documents.renderers, <Document_Preview>, <Document_Text_Preview>, Spreadsheet_Viewer, the viewer registry, the document.* resolve chains, search_text() / search_ranked() (must be site-scoped), LIBREOFFICE_SANDBOX, rsx:documents:status, Image_Viewer and urls.display (HEIC / TIFF / PSD shown as a WebP via get_display_url()). Use when showing a PDF, Office file or workbook, searching uploads, or stuck on 'Preparing preview...' or '(Extracting Text...)'."
 ---
 
 # Document preview and search
@@ -104,7 +104,9 @@ Args: `$attachment_id` (**required** — the component throws without it), `$pag
 - `FAILED` → a failed state. `render_error` is **never** sent to the browser; the operator reads it with `rsx:documents:failed`.
 - `RENDERED` / `NOT_REQUIRED` → `urls.rendition` is present and the viewer loads it.
 
-**The same subscription follows a REPLACED file.** `urls.rendition` and `urls.inline` are the model builders' URLs and carry the attachment's content version (`?v=<storage id>-<rendered_at or 0>`, `rspade:file-attachments` §5), so after `relink_storage()` — or a re-render — `get_preview_info()` answers a different payload, `refresh()` repaints, the viewer loads the new URL and `preview_loaded` reports again. That holds for a PDF and an image exactly as for a converted document. A viewer you register is handed the versioned `url`; pass it on untouched — a URL rebuilt from the key is served `no-store`.
+**An image previews from `urls.display`** (`get_display_url()`): the original where a browser displays its format (`rsx.preview.browser_inline`), else a large upright WebP the thumbnail pipeline draws — HEIC/HEIF, TIFF and PSD, which `can_open_inline()` is false for. A viewer you register is handed `urls.inline` as its `url` (the original bytes), so one registered for `image/*` shows nothing for a HEIC.
+
+**The same subscription follows a REPLACED file.** `urls.rendition`, `urls.inline` and `urls.display` are the model builders' URLs and carry the attachment's content version (`?v=<storage id>-<rendered_at or 0>`, `rspade:file-attachments` §5), so after `relink_storage()` — or a re-render — `get_preview_info()` answers a different payload, `refresh()` repaints, the viewer loads the new URL and `preview_loaded` reports again. That holds for a PDF and an image exactly as for a converted document. A viewer you register is handed the versioned `url`; pass it on untouched — a URL rebuilt from the key is served `no-store`.
 
 A thumbnail of the same document is `<Attachment_Thumbnail $attachment_id=... />` and follows the identical placeholder-then-swap story — see `rspade:file-attachments` §5 and `rsx:man thumbnails`.
 

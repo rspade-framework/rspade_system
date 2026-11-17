@@ -162,6 +162,43 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         static::__assert_equals('original@example.com', $stored->email, 'an unchanged field is left alone');
     }
 
+    /** FE-WRITTEN-FIELDS */
+    public static function test_written_fields_names_what_the_edit_changed_by_form_field()
+    {
+        $record = static::__record();
+        $written = null;
+        $values = ['name' => 'Mine', 'hours' => '1.0', 'telephone' => '222'];
+        $params = $values + ['_changed' => array_keys($values), '_loaded_updated_at' => static::__version($record)];
+
+        usleep(3000);
+        Form_Edit::run($record, $params, function (Form_Edit $edit) use ($record, $values, &$written) {
+            foreach ($values as $field => $value) {
+                $edit->set($field, $value);
+            }
+            $record->save();
+            $written = $edit->written_fields();
+
+            return ['id' => $record->id];
+        }, fields: ['phone' => 'telephone']);
+
+        sort($written);
+        static::__assert_equals(['name', 'telephone'], $written, "the mapped field by its form name; hours '1.0' over '1.00' changed nothing");
+
+        $record = static::__stored($record->id);
+        $params = ['name' => 'Mine', '_changed' => ['name'], '_loaded_updated_at' => static::__version($record)];
+
+        usleep(3000);
+        Form_Edit::run($record, $params, function (Form_Edit $edit) use ($record, &$written) {
+            $edit->set('name', 'Mine');
+            $record->save();
+            $written = $edit->written_fields();
+
+            return ['id' => $record->id];
+        });
+
+        static::__assert_equals([], $written, 'an edit that saved the stored values changed nothing');
+    }
+
     /** FE-04 */
     public static function test_saves_of_different_fields_both_stand_and_nobody_is_asked()
     {

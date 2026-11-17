@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Files;
 
 use Exception;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Imagick;
 use ImagickException;
@@ -16,12 +17,13 @@ use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Files\Imagick_Policy;
+use App\RSpade\Core\Files\Media_Metadata;
 use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
+use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Ip_Address;
@@ -79,7 +81,7 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * @property int $deleted_by_id
  * @property string $deleted_by_type type ref: a model class name, stored as a type-ref id
  * @property string $destroyed_at
- * @property int $duration
+ * @property int $duration not recorded in revisions
  * @property string $file_extension
  * @property string $file_name
  * @property int $file_size
@@ -95,7 +97,7 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * @property int $frame_count
  * @property string $handler_class
  * @property array $handler_ref
- * @property int $height
+ * @property int $height not recorded in revisions
  * @property int $id
  * @property bool $is_animated
  * @property string $key
@@ -105,7 +107,7 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * @property string $updated_at
  * @property int $updated_by_id
  * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
- * @property int $width
+ * @property int $width not recorded in revisions
  *
  * @property-read string $file_type_id__label
  * @property-read string $file_type_id__constant
@@ -235,6 +237,11 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             ],
         ]],
         'fileable_type' => ['type_ref' => true],
+        // Read from the bytes, never entered by anybody (Media_Metadata; regenerated on demand
+        // by ensure_media_metadata()), so filling them in is bookkeeping, not an edit.
+        'width' => ['revision_exclude' => true],
+        'height' => ['revision_exclude' => true],
+        'duration' => ['revision_exclude' => true],
     ];
 
     /**
@@ -791,6 +798,44 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * The URL an <img> shows this image at full size: the original bytes (get_url()) when a
+     * browser can display its format (can_open_inline()), otherwise a large fit thumbnail - a
+     * WebP drawn upright by the thumbnail pipeline, at most twice rsx.thumbnails.max_dynamic_size
+     * on its long side - for a format no browser (or only Safari) displays: HEIC, HEIF, TIFF,
+     * PSD. The original is untouched and still downloads as itself. Null for anything that is
+     * not an image.
+     *
+     * @return string|null
+     */
+    public function get_display_url(): ?string
+    {
+        if (!$this->is_image()) {
+            return null;
+        }
+
+        if ($this->can_open_inline()) {
+            return $this->get_url();
+        }
+
+        return $this->get_thumbnail_url('fit', (int) config('rsx.thumbnails.max_dynamic_size', 800));
+    }
+
+    /**
+     * Where this photo was taken, read from its stored original's EXIF: decimal degrees, south
+     * and west negative, or null when it records no position (or is not an image format that
+     * carries EXIF). The stored file keeps its GPS position; what clients are handed does not
+     * (rsx.files.strip_gps_when_served), so this server-side read is how an application
+     * geocodes its images. Materializes external bytes like any byte access.
+     *
+     * @return array{latitude: float, longitude: float}|null
+     * @throws \RuntimeException when the image's EXIF is malformed
+     */
+    public function get_gps_position(): ?array
+    {
+        return $this->resolve_storage()->gps_position();
+    }
+
+    /**
      * Get the download URL for this file
      *
      * @return string Relative URL
@@ -822,19 +867,28 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     /**
      * Get thumbnail URL for this file (dynamic thumbnails)
      *
+     * $face asks for a FACE-CENTRED cover: a cover thumbnail of an image is cut around the face
+     * found in it rather than the centre (rsx:man thumbnails, FACE-AWARE CROPS). It is for a
+     * picture of a person - a profile photo, an avatar - and nothing else. It adds `face=1` to a
+     * cover URL only; a fit thumbnail is never cropped, so the flag is left off it.
+     *
      * @param string $type   Thumbnail type: 'cover' or 'fit'
      * @param int    $width  Thumbnail width in pixels
      * @param int    $height Optional thumbnail height in pixels
+     * @param bool   $face   Cut a cover thumbnail around the face in the image
      * @return string Relative URL
      */
-    public function get_thumbnail_url($type = 'fit', $width = 400, $height = null)
+    public function get_thumbnail_url($type = 'fit', $width = 400, $height = null, bool $face = false)
     {
-        $version = $this->content_version();
+        $query = 'v=' . $this->content_version();
+        if ($face && $type === 'cover') {
+            $query .= '&face=1';
+        }
 
         if ($height === null) {
-            return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?v={$version}");
+            return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?{$query}");
         }
-        return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}?v={$version}");
+        return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}?{$query}");
     }
 
     /**
@@ -1085,7 +1139,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     private function __fetch_payload(): array
     {
-        $data = $this->toArray();
+        $data = $this->ensure_media_metadata()->toArray();
 
         $data['file_storage'] = null;
 
@@ -1588,8 +1642,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         } finally {
             if ($sanitized_path !== null && file_exists($sanitized_path)) {
                 unlink($sanitized_path);
-            }
-        }
+            }        }
 
         // Extract metadata using ImageMagick. In strict reject-mode a content-parse failure throws
         // Unparseable_Upload_Exception - but create_from_upload() is NOT transactional (the row +
@@ -2585,64 +2638,173 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     private function __process_image_or_video($file_path)
     {
-        Imagick_Policy::assert_safe();
-
-        $imagick = new Imagick($file_path);
-
-        // Get dimensions from first frame
-        $this->width = $imagick->getImageWidth();
-        $this->height = $imagick->getImageHeight();
-
-        // Get format for special handling
-        $format = strtolower($imagick->getImageFormat());
-
-        // Count frames to detect animation
-        $frame_count = $imagick->getNumberImages();
-
-        // Formats that should NOT be treated as animated even with multiple frames
-        // PSD, TIFF, ICO, and other multi-layer formats have frames but aren't animations
-        $non_animated_formats = ['psd', 'tiff', 'tif', 'ico', 'xcf'];
-
-        if ($frame_count > 1 && !in_array($format, $non_animated_formats)) {
-            // This is an animated image (GIF, WebP, APNG, etc.)
-            $this->is_animated = true;
-            $this->frame_count = $frame_count;
-
-            // Calculate duration for animated images
-            // Sum delays across all frames
-            $total_delay = 0;
-            $imagick->setFirstIterator();
-            do {
-                // Get delay in 1/100th of a second (centiseconds)
-                $delay = $imagick->getImageDelay();
-                $total_delay += $delay;
-            } while ($imagick->nextImage());
-
-            // Convert centiseconds to seconds (rounded)
-            $this->duration = (int) round($total_delay / 100);
-
-            // Upgrade file type from IMAGE to ANIMATED_IMAGE
-            if ($this->file_type_id == self::FILE_TYPE_IMAGE) {
-                $this->file_type_id = self::FILE_TYPE_ANIMATED_IMAGE;
-            }
-        } else {
-            // Static image (or multi-layer format like PSD)
-            $this->is_animated = false;
-            $this->frame_count = in_array($format, $non_animated_formats) ? null : 1;
-            $this->duration = null;
-        }
-
-        // For videos, try to get duration from metadata
+        // A video is read by ffprobe: ImageMagick has no video coder (the shipped policy refuses
+        // every one), so handing it an MP4 would degrade every video to a generic file.
         if ($this->file_type_id == self::FILE_TYPE_VIDEO) {
-            // ImageMagick doesn't reliably extract video duration
-            // For now, leave duration null for videos
-            // Future enhancement: use ffmpeg/ffprobe for accurate video metadata
             $this->is_animated = false; // Videos are not "animated images"
             $this->frame_count = null;
+
+            $probe = Media_Metadata::probe_video($file_path);
+
+            if ($probe['status'] === 'unavailable') {
+                // Nothing is guessed: the size and running time stay empty, are read on demand
+                // once ffprobe is installed (ensure_media_metadata()), and the health row says why.
+                Log::warning("Video metadata not read for attachment {$this->key}: {$probe['reason']}");
+                $this->width = null;
+                $this->height = null;
+                $this->duration = null;
+
+                return;
+            }
+
+            if ($probe['status'] === 'unreadable') {
+                // The bytes are not a video ffprobe can read: the same content-parse failure an
+                // unparseable image is, handled by process_file()'s catch.
+                throw new Exception("ffprobe could not read the video: {$probe['reason']}");
+            }
+
+            $this->width = $probe['width'];
+            $this->height = $probe['height'];
+            $this->duration = $probe['duration'];
+
+            return;
         }
 
-        $imagick->clear();
-        $imagick->destroy();
+        // An image: its UPRIGHT size (EXIF orientation applied) and its animation.
+        $metadata = Media_Metadata::read_image($file_path);
+
+        $this->width = $metadata['width'];
+        $this->height = $metadata['height'];
+        $this->is_animated = $metadata['is_animated'];
+        $this->frame_count = $metadata['frame_count'];
+        $this->duration = $metadata['duration'];
+
+        // Upgrade file type from IMAGE to ANIMATED_IMAGE
+        if ($metadata['is_animated'] && $this->file_type_id == self::FILE_TYPE_IMAGE) {
+            $this->file_type_id = self::FILE_TYPE_ANIMATED_IMAGE;
+        }
+    }
+
+    // ============================================================================================
+    // MEDIA METADATA ON DEMAND
+    // ============================================================================================
+
+    /**
+     * Attachment ids this process already tried to read media metadata for and could not, so a
+     * page listing one file twice (or a missing ffprobe) costs one failed attempt per process,
+     * not one per read, and logs it once.
+     *
+     * @var array<int, true>
+     */
+    private static array $__media_metadata_failed = [];
+
+    /**
+     * Does this attachment owe its width / height (and, for a video, duration)?
+     *
+     * They are facts read from the bytes, and NULL means "not read yet": an upload whose
+     * metadata could not be read (ffprobe missing), an attachment added through a path that
+     * does not read it, or a row whose stored values were cleared so they are read again by
+     * the current rule (upright sizes). An SVG keeps no size, and an attachment with no
+     * resident bytes (an external one never materialized) is not fetched just to measure it.
+     *
+     * @return bool
+     */
+    public function needs_media_metadata(): bool
+    {
+        if ($this->file_storage_id === null || $this->preview_unavailable) {
+            return false;
+        }
+
+        if ($this->is_video()) {
+            return $this->duration === null;
+        }
+
+        if ($this->is_image() && !$this->is_svg()) {
+            return $this->width === null || $this->height === null;
+        }
+
+        return false;
+    }
+
+    /**
+     * Read and store this attachment's width / height (and a video's or animation's duration)
+     * when they are not stored. THE ONE WAY a reader gets them: every framework payload that
+     * carries the three columns (fetch(), the /_upload response, the Files API) calls this
+     * first, and code reading `$attachment->width` for display does the same.
+     *
+     * Only the three columns are written. Classification (file_type_id, is_animated,
+     * frame_count) is decided once, at upload, and never moves under a reader.
+     *
+     * HOW IT IS WRITTEN, AND WHY UNDER A WRITE EXCEPTION. The values are a cache of facts
+     * fixed by the immutable bytes the attachment points at: every concurrent computation
+     * writes the same numbers, nothing is decided from them, and nobody edits them. Readers -
+     * fetch(), a GET thumbnail page, the Files API - must be able to fill them, and a reader
+     * cannot take the site's write lock (there is no upgrade). So the one statement runs under
+     * Site_Lock::write_exception(), the sanctioned form for a reader's bookkeeping record, as a
+     * raw single-row update: no updated_at bump (the
+     * columns are revision_exclude, and Form_Edit reads updated_at as the record's version),
+     * no realtime frame (the caller is already holding the values it asked for).
+     *
+     * A failure stores nothing and is logged once per process; the next request (a new
+     * process) tries again.
+     *
+     * @return $this
+     */
+    public function ensure_media_metadata(): static
+    {
+        if (!$this->needs_media_metadata() || isset(self::$__media_metadata_failed[(int) $this->id])) {
+            return $this;
+        }
+
+        $storage = File_Storage_Model::find($this->file_storage_id);
+        $path = $storage?->get_full_path();
+        if ($path === null || !file_exists($path)) {
+            self::$__media_metadata_failed[(int) $this->id] = true;
+            Log::warning("Media metadata not read for attachment {$this->key}: its stored file is missing");
+
+            return $this;
+        }
+
+        $values = null;
+        if ($this->is_video()) {
+            $probe = Media_Metadata::probe_video($path);
+            if ($probe['status'] === 'ok') {
+                $values = ['width' => $probe['width'], 'height' => $probe['height'], 'duration' => $probe['duration']];
+            } else {
+                Log::warning("Video metadata not read for attachment {$this->key} ({$probe['status']}): {$probe['reason']}");
+            }
+        } else {
+            try {
+                $metadata = Media_Metadata::read_image($path);
+                $values = ['width' => $metadata['width'], 'height' => $metadata['height'], 'duration' => $metadata['duration']];
+            } catch (Throwable $e) {
+                Log::warning("Image metadata not read for attachment {$this->key}: " . $e->getMessage());
+            }
+        }
+
+        if ($values === null) {
+            self::$__media_metadata_failed[(int) $this->id] = true;
+
+            return $this;
+        }
+
+        // updated_at is held where it is in the statement: Eloquent would stamp it, and the
+        // column's ON UPDATE would move it.
+        $id = (int) $this->id;
+        $statement_values = $values + ['updated_at' => DB::raw('`updated_at`')];
+        Site_Lock::write_exception('record the media metadata read from an attachment\'s bytes', function () use ($id, $statement_values) {
+            static::without_site_scope(fn () => static::withTrashed()
+                ->where('id', $id)
+                ->raw_bulk()
+                ->update($statement_values));
+        });
+
+        foreach ($values as $column => $value) {
+            $this->setAttribute($column, $value);
+        }
+        $this->syncOriginalAttributes(array_keys($values));
+
+        return $this;
     }
 
     /**

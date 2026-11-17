@@ -26,8 +26,11 @@ class File_Attachment_Model extends Base_File_Attachment_Model {
      *
      * @param {Object} record   A File_Attachment_Model record (.key, and .file_storage_id +
      *                          .file_storage for the version).
-     * @param {Object} options  {type, width, height} for a dynamic variant, or {preset} for a named
-     *                          preset. The two forms are mutually exclusive.
+     * @param {Object} options  {type, width, height, face} for a dynamic variant, or {preset} for a
+     *                          named preset. The two forms are mutually exclusive. face: true asks
+     *                          for a cover cut around the face in the image - for a profile photo
+     *                          or avatar only; it adds face=1 to a cover URL and is left off a fit
+     *                          one, which is never cropped.
      * @returns {string}
      */
     static thumbnail_url(record, options = {}) {
@@ -39,17 +42,21 @@ class File_Attachment_Model extends Base_File_Attachment_Model {
 
         // The route exists in both realms; a portal page asks its own (Rsx_Portal.internal_url).
         if (options.preset) {
+            if (options.face) {
+                throw new Error('File_Attachment_Model.thumbnail_url(): face is a dynamic cover option and cannot be combined with preset');
+            }
             return Rsx_Portal.internal_url('/_thumbnail/preset/' + record.key + '/' + options.preset + '?v=' + v);
         }
 
         const type = options.type || 'fit';
         const width = int(options.width || 400);
+        const query = '?v=' + v + (options.face === true && type === 'cover' ? '&face=1' : '');
 
         if (options.height === undefined || options.height === null || options.height === '') {
-            return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '?v=' + v);
+            return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + query);
         }
 
-        return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '/' + int(options.height) + '?v=' + v);
+        return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '/' + int(options.height) + query);
     }
 
     /**

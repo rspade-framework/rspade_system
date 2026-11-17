@@ -80,6 +80,8 @@ place.
 | `mysql-client` | `migrate`, `db:query`, the schema-cache restore and operator access all shell out to it. The SERVER is a dev-target concern |
 | `ca-certificates`, `curl`, `wget`, `gnupg2`, `unzip` | fetching and verifying at build time and at run time (composer, mirrored assets, package keys) |
 | `imagemagick`, `ghostscript`, `optipng` | thumbnails and uploads: ImageMagick rasterises, Ghostscript is how it reads a PDF's first page, optipng shrinks what is stored |
+| `libheif-plugin-libde265` | the HEVC decoder libheif needs to read a HEIC/HEIF photo (a phone's default format) for ImageMagick: its size, its thumbnail and the face detector's copy of it |
+| `ffmpeg` | `ffprobe` reads an uploaded video's width, height, duration and rotation (ImageMagick has no video coder). rsx:health's `ffprobe` row fails without it |
 | `libreoffice`, `poppler-utils` | document preview and search: soffice converts Office files to a PDF rendition, `pdftotext` extracts text. Runtime features, so not dev-only |
 | Chromium (`npx playwright install chromium`, in `/opt/ms-playwright`) | the browser itself, at the build the shipped Playwright package launches. See "The headless browser" below |
 | `libnss3`, `libnspr4`, `libatk-bridge2.0-0`, `libatspi2.0-0`, `libdrm2`, `libgbm1`, `libxkbcommon0`, `libxcomposite1`, `libxdamage1`, `libxfixes3`, `libxrandr2`, `libxcursor1`, `libasound2t64` | the shared libraries headless Chromium links. **Not a test-only dependency**: besides `rsx:debug` and the browser tests, a downstream application drives the same browser through the shipped `playwright` package to **generate PDFs on the server**. That is why they are in prod, and why they must stay |
@@ -87,6 +89,9 @@ place.
 | `git`, `openssh-client` | framework updates and `rsx:git`; `openssh-client` is git's transport for an ssh remote, which git only recommends, so it is named |
 | `rsync`, `procps`, `less`, `nano` | the updater copies with rsync; `ps`/`pkill` are how workers and the health checks see processes; a pager and an editor for whoever shells in |
 | `python3` | `bin/mysqlpv`, the progress viewer on a database dump or restore. Base and not dev, because the schema-cache restore runs on `migrate` in every target |
+| `python3-venv` | creates the face detector's private virtualenv (`python3 -m venv` needs ensurepip, which Ubuntu ships here) |
+| `opencv-python-headless`, `numpy` (pip, pinned, in `/opt/rspade/face_detection/venv`) | the face detector behind face-aware cropped thumbnails. See "Face detection" below |
+| YuNet model `face_detection_yunet_2023mar.onnx` (in `/opt/rspade/face_detection/`) | the face detection network the detector loads; downloaded at build and checked against its sha256 |
 | PHP 8.5 and its extensions | the list mirrors `Rsx_Php_Requirements::REQUIRED_EXTENSIONS`, which every request enforces at boot. `sodium` and OPcache are compiled into the binary and have no package |
 | Composer | application-layer packages (`rsx:composer`) |
 | Node 23, npm 11 | the framework's own helpers are node: the realtime relay, Proxority, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. npm is pinned to 11 because 12 refuses this node |
@@ -126,6 +131,40 @@ The `playwright` package finds it with nothing to configure:
   Playwright update.
 - Chromium refuses to start its own sandbox as root, so a process running as root
   passes `args: ['--no-sandbox']`. Hand it only HTML the application generated.
+
+### Face detection
+
+A face-aware cropped thumbnail is cut around the face in a photo instead of around
+its middle. The face is found once per stored image by OpenCV's YuNet detector, and
+both images carry it, because thumbnails are a runtime feature:
+
+| Path | What |
+|---|---|
+| `/opt/rspade/face_detection/venv/bin/python` | a private virtualenv's interpreter: `opencv-python-headless` and `numpy` at exact versions (`ARG OPENCV_HEADLESS_VERSION`, `ARG NUMPY_VERSION`), installed from manylinux wheels for the architecture being built |
+| `/opt/rspade/face_detection/detect_face.py` | the detector (source: `face_detection/detect_face.py`; its header holds the contract) |
+| `/opt/rspade/face_detection/face_detection_yunet_2023mar.onnx` | the model, downloaded from the OpenCV model zoo at build time and verified against `ARG YUNET_SHA256`; a mismatch fails the build. It is not committed to the repository |
+
+```bash
+/opt/rspade/face_detection/venv/bin/python /opt/rspade/face_detection/detect_face.py \
+    /opt/rspade/face_detection/face_detection_yunet_2023mar.onnx /path/to/photo.jpg
+```
+
+It prints exactly one JSON line: `{"status":"found","x":..,"y":..,"score":..}` (the face
+centre as fractions of the upright image), `{"status":"none"}` or
+`{"status":"failed","error":"unreadable image"}`, all with exit 0; exit 3 with
+`{"status":"unavailable",...}` means OpenCV or the model could not be loaded. EXIF
+orientation is applied before detection, so the answer is about the upright photo.
+The framework hands it JPEG and PNG as stored; any other image (a HEIC, a TIFF) arrives
+as an upright JPEG copy ImageMagick draws. Using it from an application: `rsx:man
+thumbnails`, FACE-AWARE CROPS.
+
+The virtualenv keeps these packages out of the distribution's Python and away from
+everything else in the image. The image contract is not raised for it: an image
+without the detector serves plain centre-cropped thumbnails, and `rsx:health` says so.
+
+**Licenses.** OpenCV (`opencv-python-headless`) is Apache-2.0 and bundles the
+third-party libraries its wheel lists in its own license files; numpy is BSD-3-Clause;
+the YuNet model is MIT (OpenCV model zoo, `models/face_detection_yunet`).
 
 ## Services
 
@@ -528,7 +567,10 @@ Every step is idempotent; a restart finds its work done and says nothing.
 
 ## Architecture
 
-Authored to build on amd64 and arm64 alike: everything installs through apt or a
-distribution setup script, nothing fetches an architecture-pinned binary, and the
+Authored to build on amd64 and arm64 alike: everything installs through apt, a
+distribution setup script, or a package manager that resolves the build's
+architecture itself (Playwright's browser download, pip's manylinux wheels for the
+face detector); the only direct download, the face detection model, is
+architecture-independent data. Nothing fetches an architecture-pinned binary, and the
 base image is pinned by tag rather than by a single-arch digest. Keep it that way
 — a hardcoded `x86_64` download URL is what breaks the arm64 build.

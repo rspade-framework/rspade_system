@@ -13,7 +13,8 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
  * Test fixture: a text type whose sanitizer collapses every run of whitespace to one space and
  * trims the ends, so "a  b" and " a b " are the same stored content and "a b" / "a c" are not.
  * The vector file's text_type rows name it; the browser runner declares the same class at run
- * time (a browser test cannot see the test tree). Declared on no model.
+ * time (a browser test cannot see the test tree); Column_Equivalence_Fixture_Text.js is its
+ * twin. Declared on Column_Equivalence_Fixture_Model's rate column.
  */
 class Column_Equivalence_Fixture_Text extends Rsx_Text_Abstract
 {

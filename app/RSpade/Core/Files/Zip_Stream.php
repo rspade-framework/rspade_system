@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Files;
 
+use App\RSpade\Core\Files\Exif_Gps;
+
 /**
  * Zip_Stream - a hand-rolled streaming ZIP container writer (PKWARE APPNOTE).
  *
@@ -167,9 +169,11 @@ class Zip_Stream
      * @param string      $zip_path    Path inside the archive.
      * @param string      $source_path Absolute path to the source file.
      * @param string|null $mime        Source mime (selects store vs deflate).
+     * @param array<int, string> $patches Byte ranges overlaid on the source as it streams
+     *                                    (offset => replacement, Exif_Gps::apply_patches()).
      * @return bool True if fully streamed, false if truncated / unreadable.
      */
-    public function add_file_from_path(string $zip_path, string $source_path, ?string $mime = null): bool
+    public function add_file_from_path(string $zip_path, string $source_path, ?string $mime = null, array $patches = []): bool
     {
         $this->__assert_writable();
 
@@ -203,6 +207,10 @@ class Zip_Stream
             }
             if ($chunk === '') {
                 break;
+            }
+
+            if ($patches !== []) {
+                $chunk = Exif_Gps::apply_patches($chunk, $uncompressed, $patches);
             }
 
             hash_update($crc_ctx, $chunk);
