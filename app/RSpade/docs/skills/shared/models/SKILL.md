@@ -1,6 +1,6 @@
 ---
 name: models
-description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), derived_columns()), derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-TEXT-HTML-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
+description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), blank_distinct_columns(), derived_columns()), the column equivalence rule (Model::same_value() / Model.same_value(), blank_distinct, the dirty check that ignores equal values in other shapes), revision_include, derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-TEXT-HTML-01, MODEL-REVISION-NOISE-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
 ---
 
 # Writing a model
@@ -24,6 +24,8 @@ public static $columns = [
     'budget'        => ['money' => true],
     'api_secret'    => ['never_export' => true],
     'view_count'    => ['revision_exclude' => true],
+    'promo_code'    => ['revision_include' => 'chosen by staff when the deal is struck'],
+    'nickname'      => ['blank_distinct' => true],
     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
 ];
 ```
@@ -36,12 +38,14 @@ public static $columns = [
 | `money` | `true` / `false` | `true`: a DECIMAL(p,2) amount read as an `Rsx_Money`, never a float; `false`: not money, said explicitly |
 | `never_export` | `true` | a secret: never in any payload, redacted in revisions |
 | `revision_exclude` | `true` | not recorded in revision history |
+| `revision_include` | a non-empty reason | named like bookkeeping, but a person sets it: recorded (`MODEL-REVISION-NOISE-01`) |
+| `blank_distinct` | `true` | nullable, yet `''` is a value of its own, never the same as NULL |
 | `derived` + `from` | method name + list of this record's columns | STORED, computed by the model on save, never assigned |
 
 **The grammar** (checked at manifest build by `MODEL-COLUMNS-01`, a FATAL - a malformed entry would otherwise fail silently):
 
-- Only those eight keys; anything else is an error. A flag (`type_ref`, `never_export`, `revision_exclude`) is the literal `true` or absent - never `false`; `money` is an answer, literal `true` or `false` (`false` = not money, no kind).
-- At most ONE of `enum` / `text_type` / `type_ref` / `money => true` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already). A `derived` column may also be an enum, text type, type ref or money - its value is assigned through `setAttribute()`, so the kind still applies.
+- Only those ten keys; anything else is an error. A flag (`type_ref`, `never_export`, `revision_exclude`, `blank_distinct`) is the literal `true` or absent - never `false`; `money` is an answer, literal `true` or `false` (`false` = not money, no kind).
+- At most ONE of `enum` / `text_type` / `type_ref` / `money => true` per column. `never_export` combines with anything; `revision_exclude` combines with anything except `derived` (a derived column is never recorded already); `revision_include` never sits beside `revision_exclude` or `derived`; `blank_distinct` never beside `enum`, `type_ref` or `money => true` (those never hold `''`). A `derived` column may also be an enum, text type, type ref or money - its value is assigned through `setAttribute()`, so the kind still applies.
 - A money or text-type column carries no `$casts` entry - the declaration is its cast.
 - `derived` and `from` come together; see [Derived columns](#derived-columns).
 - `'column' => []` declares an explicitly plain column.
@@ -69,9 +73,20 @@ The effective declaration overlays every class from `Rsx_Model_Abstract` down to
 | `Model::money_limit('col')` | the largest `Rsx_Money` the column's DECIMAL holds |
 | `Model::never_exported_columns()` | the secrets |
 | `Model::revision_excluded_columns()` | `revision_exclude` columns plus every derived column |
+| `Model::blank_distinct_columns()` | the `blank_distinct` columns |
+| `Model::same_value('col', $a, $b)` | whether two values of the column are the same value (below) |
 | `Model::derived_columns()` | column => `['method', 'from']`, in dependency order |
 
-`Model::enum_values('status_id')` is how code reaches an enum's raw map (a label table, a validation list); prefer the generated helpers below for everything they cover. JS: `Model.is_derived_column('col')`, `Model.is_money_column('col')`; the enum helpers are on the JS model too.
+`Model::enum_values('status_id')` is how code reaches an enum's raw map (a label table, a validation list); prefer the generated helpers below for everything they cover. JS: `Model.is_derived_column('col')`, `Model.is_money_column('col')`, `Model.same_value('col', a, b)`; the enum helpers are on the JS model too.
+
+### Column equivalence - the one "did it change" rule
+
+**Whether two values of a column are the same value is decided ONCE, by the column's declared kind and schema type** (`Column_Equivalence`, PHP and JS twins over one shared vector file), and everything that asks "did it change" asks it: `isDirty()` / `getDirty()` / `getChanges()`, the `updated_at` / `updated_by` stamp, the revision writer, `after_update()`, the realtime frame, `Form_Edit`, `Rsx_Settings::set()`. Ask it yourself with `Model::same_value('col', $a, $b)` / `Model.same_value('col', a, b)` - never a hand-rolled `(string)` cast, `==`, float epsilon or `deep_equal()`.
+
+- DECIMAL (not money): exact decimals at the column's scale - `"1.50"`, `1.5`, `"1.5"` are one value. Money: `Rsx_Money::same()`. Integer / enum / FK: as integers. TINYINT(1): `{true, 1, '1'}` vs `{false, 0, '0'}`. DATETIME: one instant at the column's precision (ISO, zoned, `.000`, second-only). JSON: decoded, keys in any order. Text type: the type's canonical storage. Type ref: the registry id.
+- **`''` is NULL on a nullable column** unless it is declared `'blank_distinct' => true`. **Never loosened**: `0` / `0.00` / `false` vs NULL.
+- So a save assigning stored values in other shapes is CLEAN: no write, no revision, `updated_at` unmoved, no `after_update()`, no realtime frame. A save changing only `revision_exclude` / derived columns writes them and leaves `updated_at` and `updated_by` alone.
+- `Model.same_value()` reads its descriptors from the bundle's field-length script and throws for a `never_export` or system column, or with the script missing. Contract: `rsx:man model`, COLUMN EQUIVALENCE.
 
 ## The kinds
 
@@ -126,7 +141,9 @@ The column (`DECIMAL(p,2)`, p <= 18 - `MODEL-MONEY-01`) reads as an `Rsx_Money` 
 'last_seen_at' => ['revision_exclude' => true],
 ```
 
-For values that change without anybody changing them: counters, last-seen stamps, cached aggregates. The column is still stored - this is NOT a security control (a secret is `never_export`). On a `never_export` column it wins: nothing is recorded at all. `updated_at`, the `updated_by` pair and `_`-prefixed columns are excluded automatically; derived columns are never recorded. Depth: `rspade:revisions`.
+For values that change without anybody changing them: counters, last-seen stamps, cached aggregates. The column is still stored - this is NOT a security control (a secret is `never_export`). On a `never_export` column it wins: nothing is recorded at all. A save of only such columns leaves `updated_at` and the `updated_by` pair alone. `updated_at`, the `updated_by` pair and `_`-prefixed columns are excluded automatically; derived columns are never recorded.
+
+**On a `$revisions` model, a column NAMED like bookkeeping must declare which it is** (`MODEL-REVISION-NOISE-01`, rsx:check): `*_cache`, `*_cache_id`, `last_*_at`, `last_*_by*`, `last_seen`, `*_synced_at`, `*_read_at`, `*_viewed_at`, `*_count`, `sort_order`, `position`, `*_position`, `*_token`, `*_code`, `*_key`, `*_hash` - answered `revision_exclude`, `derived`, or `'revision_include' => '<why a person sets it>'`. No marker suppresses it; nothing is excluded by name automatically. A bookkeeping column outside the patterns is declared `revision_exclude` all the same. Depth: `rspade:revisions`.
 
 ### `derived` + `from` - a stored value the model computes
 
@@ -193,7 +210,8 @@ Ask, in order, for EVERY column you add:
 4. **Does it point at a record of one of SEVERAL models?** -> a BIGINT `{relation}_type` + `{relation}_id` pair, `type_ref` on the `_type` column, plus `$fact_groups` when one form field edits the pair.
 5. **Would its disclosure be a security event** (hash, token, secret, key/value bag)? -> `never_export`.
 6. **Is it computed from other data and never typed by a person?** -> `derived` + `from`, with a derive method. If a person may ALSO set it when no rule applies, that is two columns (source + derived).
-7. **Does it change without anybody changing it** (counter, last-seen, cached aggregate) on a `$revisions` model? -> `revision_exclude` (a derived column needs nothing).
+7. **Does it change without anybody changing it** (counter, last-seen, cached aggregate) on a `$revisions` model? -> `revision_exclude` (a derived column needs nothing). Named like bookkeeping but a person sets it? -> `revision_include` with the reason.
+7a. **Is it nullable text where `''` must stay distinct from NULL?** -> `blank_distinct` (otherwise the two are one value).
 8. **Is it a computed value JS needs but nobody queries?** -> not a column: an appended property.
 9. **Is it edited as one thing with other columns?** -> `$fact_groups`.
 
@@ -238,16 +256,16 @@ public static $fact_groups = [
 A computed value that must reach JavaScript but is not stored is an APPENDED PROPERTY - DECLARED, never hand-copied onto one payload (a value that must be queried or sorted on is a derived column instead):
 
 ```php
-protected $appends = ['party_id_formatted'];
+protected $appends = ['invoice_number_formatted'];
 
-public function party_id_formatted()                      // the DEFINITION
+public function invoice_number_formatted(): string                // the DEFINITION
 {
-    return '#PA' . str_pad($this->id, 3, '0', STR_PAD_LEFT);
+    return 'INV-' . str_pad((string) $this->invoice_number, 4, '0', STR_PAD_LEFT);
 }
 
-public function getPartyIdFormattedAttribute(): string    // only its serialization
+public function getInvoiceNumberFormattedAttribute(): string      // only its serialization
 {
-    return $this->party_id_formatted();
+    return $this->invoice_number_formatted();
 }
 ```
 
@@ -257,7 +275,7 @@ public function getPartyIdFormattedAttribute(): string    // only its serializat
 - **Cost**: an accessor runs on EVERY serialization. One that reads other rows is paid per record.
 - The property name IS the method name. `get{Property}Attribute` is one of the two Laravel spellings the naming rule exempts.
 
-Worked example: `system/app/RSpade/resource/reference_app/models/party_model.php`.
+Worked example: `system/app/RSpade/resource/reference_app/models/invoice_model.php` (`invoice_number_formatted`; `total` is one that reads rows - a `sum_money()` over the invoice's entries).
 
 ## Column length: `field_length()`
 

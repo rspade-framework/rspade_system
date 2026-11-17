@@ -8,6 +8,7 @@
 namespace App\RSpade\Lib\Settings;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Database\Models\Column_Equivalence;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Date;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -150,14 +151,24 @@ class Rsx_Settings
     }
 
     /**
-     * Set (and persist) a setting's value for the relevant scope.
+     * Set (and persist) a setting's value for the relevant scope, and say whether that
+     * changed the setting's value: the value get() answered before (the stored override, else
+     * the definition's default) against the new one, compared by the setting's declared type
+     * through the column equivalence rule (Column_Equivalence) - "5" and 5 on an integer,
+     * "1.50" and 1.5 on a decimal, '' and null on text, the same JSON document in another key
+     * order are no change; null and 0 are a change. The value is written either way, exactly
+     * as given.
+     *
+     *     if (Rsx_Settings::set('billing_dow_cutoff', $params['billing_dow_cutoff'])) {
+     *         // record the change
+     *     }
      *
      * @param string $key
      * @param mixed $value
      * @param int|null $site_id Override the site for a site-scoped setting
-     * @return void
+     * @return bool Whether the setting's value changed
      */
-    public static function set(string $key, mixed $value, ?int $site_id = null): void
+    public static function set(string $key, mixed $value, ?int $site_id = null): bool
     {
         $def = self::_definition($key);
         if (!$def) {
@@ -168,8 +179,10 @@ class Rsx_Settings
         $stored = $value === null ? null : self::_to_storage($value, (int)$def->type_id, $key);
 
         $match = ['setting_id' => $def->id, 'site_id' => $resolved_site_id];
+        $existing = DB::table('_setting_values')->where($match)->first();
+        $before = $existing ? $existing->value : $def->default_value;
 
-        if (DB::table('_setting_values')->where($match)->exists()) {
+        if ($existing) {
             DB::table('_setting_values')->where($match)->update([
                 'value' => $stored,
                 'updated_at' => now(),
@@ -181,6 +194,8 @@ class Rsx_Settings
                 'updated_at' => now(),
             ]);
         }
+
+        return !Column_Equivalence::same(self::_descriptor($def), $before, $stored);
     }
 
     /**
@@ -371,6 +386,35 @@ class Rsx_Settings
         }
 
         shouldnt_happen("Rsx_Settings: unknown type id {$type_id}");
+    }
+
+    /**
+     * The column equivalence descriptor a setting's stored value is compared by: its declared
+     * type as a column kind. A decimal with a 'scale' in its meta is compared at that scale,
+     * one without as an exact decimal. Every stored value may be null (no value set).
+     */
+    private static function _descriptor(object $def): array
+    {
+        $meta = $def->meta !== null ? json_decode($def->meta, true) : [];
+        $scale = is_array($meta) && isset($meta['scale']) ? (int)$meta['scale'] : null;
+
+        $kind = match ((int)$def->type_id) {
+            self::TYPE_TEXT => Column_Equivalence::KIND_STRING,
+            self::TYPE_INTEGER => Column_Equivalence::KIND_INTEGER,
+            self::TYPE_DECIMAL => $scale !== null ? Column_Equivalence::KIND_DECIMAL : Column_Equivalence::KIND_FLOAT,
+            self::TYPE_FLOAT => Column_Equivalence::KIND_FLOAT,
+            self::TYPE_BOOLEAN => Column_Equivalence::KIND_BOOLEAN,
+            self::TYPE_DATE => Column_Equivalence::KIND_DATE,
+            self::TYPE_DATETIME => Column_Equivalence::KIND_DATETIME,
+            self::TYPE_JSON => Column_Equivalence::KIND_JSON,
+        };
+
+        return Column_Equivalence::normalize_descriptor([
+            'kind' => $kind,
+            'nullable' => true,
+            'scale' => $kind === Column_Equivalence::KIND_DECIMAL ? $scale : null,
+            'fsp' => $kind === Column_Equivalence::KIND_DATETIME ? 3 : null,
+        ]);
     }
 
     /**

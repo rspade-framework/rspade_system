@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Database;
 
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Database\Models\Column_Equivalence;
 use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -16,11 +17,12 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
 
 /**
  * A BUNDLE'S FIELD-LENGTH SCRIPT: the schema facts about the columns of the models a compiled
- * bundle carries - each column's max length and each money column's limit - as two lines of
- * JavaScript the page loads after the bundle.
+ * bundle carries - each column's max length, each money column's limit and each column's
+ * equivalence descriptor - as three lines of JavaScript the page loads after the bundle.
  *
  *     Rsx.__field_length_data = {"Contact_Model": {"first_name": 100, ...}, ...};
  *     Rsx.__money_limit_data = {"Project_Model": {"budget": "9999999999999.99"}, ...};
+ *     Rsx.__column_equivalence_data = {"Project_Model": {"budget": {"kind": "money", "nullable": true}, ...}, ...};
  *
  * WHY IT IS A SCRIPT OF ITS OWN. A column's length and a money column's limit (its DECIMAL
  * precision) are facts about the DATABASE; everything else a model's JS stub declares is a
@@ -42,6 +44,14 @@ use App\RSpade\Lib\Portal\Rsx_Portal;
  * WHICH LIMITS. Every money column of the model (money_columns(), system columns excepted as
  * above), each with the PHP model's own money_limit() answer as its canonical decimal string.
  * A model with no money columns, or no table, gets an empty entry.
+ *
+ * WHICH DESCRIPTORS. Every column of the model except system columns and never_export
+ * columns, each with Column_Equivalence's descriptor in its browser form
+ * (Column_Equivalence::to_browser(): default-valued keys left out). A descriptor is half code
+ * (the declared kind) and half schema (type, nullability, scale, fractional precision), so it
+ * travels here and not in the stub. A never_export column is left out because the browser
+ * never holds its value, so it never has one to compare; Rsx_Js_Model.same_value() throws for
+ * it. A model with no table gets an empty entry.
  *
  * THE URL NAMES THE BUNDLE'S OWN APP SCRIPT - /_field_lengths/<Bundle>__<hash>.js, where
  * <hash> is the one in <Bundle>__app.<hash>.js - so the script is exactly as reachable as
@@ -121,6 +131,9 @@ class Field_Length_Script
             . ";\n"
             . 'Rsx.__money_limit_data = '
             . json_encode(self::money_limits_for_models($list['models']), JSON_FORCE_OBJECT | JSON_UNESCAPED_SLASHES)
+            . ";\n"
+            . 'Rsx.__column_equivalence_data = '
+            . json_encode(self::equivalence_for_models($list['models']), JSON_FORCE_OBJECT | JSON_UNESCAPED_SLASHES)
             . ";\n";
 
         RsxCache::set($cache_key, $body);
@@ -196,6 +209,40 @@ class Field_Length_Script
                 }
 
                 $data[$model_class][$column] = $record['fqcn']::money_limit($column)->to_decimal();
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * model class => column => equivalence descriptor (browser form), for the named models
+     * (see the class docblock for which columns).
+     *
+     * @param string[] $model_classes Simple model class names
+     * @return array<string, array<string, array>>
+     */
+    public static function equivalence_for_models(array $model_classes): array
+    {
+        $data = [];
+
+        foreach ($model_classes as $model_class) {
+            $record = Manifest::php_model_record($model_class);
+
+            if ($record === null) {
+                shouldnt_happen("Field_Length_Script: {$model_class} is in a bundle's model list and is not a model in the manifest");
+            }
+
+            $data[$model_class] = [];
+            $secret = array_flip($record['fqcn']::never_exported_columns());
+
+            // No table in the connected database (not migrated yet): an empty entry.
+            foreach (Column_Equivalence::descriptors($record['fqcn']) ?? [] as $column => $descriptor) {
+                if ((str_starts_with($column, '_') && !str_starts_with($column, '__')) || isset($secret[$column])) {
+                    continue;
+                }
+
+                $data[$model_class][$column] = Column_Equivalence::to_browser($descriptor);
             }
         }
 

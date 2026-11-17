@@ -822,11 +822,12 @@ class RestrictedEloquentBuilder extends Builder
             // authorship stamp is - this call is the statement, and merging the pair into it is
             // what keeps a soft delete ONE UPDATE. The model decides whether anything applies
             // (it returns $values untouched for every non-soft-delete write reaching here).
-            // A save that changes only derived columns holds updated_at here the same way.
+            // A save that changes only derived and revision_exclude columns holds updated_at here
+            // the same way.
             $model = $this->getModel();
             if ($model instanceof Rsx_Model_Abstract) {
                 $values = $model->_merge_soft_delete_stamp($values);
-                $values = $model->_merge_derived_only_write($values);
+                $values = $model->_merge_unstamped_write($values);
             }
 
             return parent::update($values);

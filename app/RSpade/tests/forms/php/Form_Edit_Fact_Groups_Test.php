@@ -52,6 +52,7 @@ class Form_Edit_Fact_Groups_Test extends Rsx_Test_Abstract
             id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(255) NULL, email VARCHAR(255) NULL, phone VARCHAR(255) NULL,
             level_id BIGINT NULL, secret_token VARCHAR(255) NULL,
+            hours DECIMAL(8,2) NULL, is_active TINYINT(1) NULL,
             {$audit}
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 

@@ -150,7 +150,7 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | forms-fl-03 | no length answers null | `'id'`; a name that is no column | null; null | implemented |
 | forms-fl-04 | a class extending a model answers through it | `class X extends User_Model` | the model's answer | implemented |
 | forms-fl-05 | missing data throws | `Rsx.__field_length_data = null`; `= {}` | a throw naming the model and the script, both times | implemented |
-| forms-fl-07 | the script is two assignments; `money_limit()` answers an `Rsx_Money` from `Rsx.__money_limit_data` | the served body; a probe class declaring a money column, the data carrying its limit | two lines, `User_Model: {}`; `99999999.99` | implemented |
+| forms-fl-07 | the script is three assignments; `money_limit()` answers an `Rsx_Money` from `Rsx.__money_limit_data` | the served body; a probe class declaring a money column, the data carrying its limit | three lines, `User_Model: {}`; `99999999.99` | implemented |
 | forms-fl-08 | `money_limit()` throws for a column that is not money, a money column with no limit, and with the data gone | `User_Model.money_limit('first_name')`; the probe; `Rsx.__money_limit_data = null` | each throws, naming the cause | implemented |
 
 ## field_length_script_delayed.js (playwright) - the page boots only after its field-length script
@@ -198,6 +198,10 @@ Runtime-mounted on `/_sys`, once as the page is served and once after the in-pag
 | FE-16 | a field set to the value already saved is not asked about | the same value as the other save | no question; written | implemented |
 | FE-17 | a revision names the actor the record's stamp names | a signed-in save | the revision's created_by pair equals the record's updated_by pair | implemented |
 | FE-18 | the view URL the endpoint passes rides the question | `run(..., $view_url)` | `question.view_url` | implemented |
+| FE-37 | a decimal submitted in another shape is not asked about (column equivalence) | hours 1.00 saved as 1.50; submission sends "1.5" | no question | implemented |
+| FE-38 | a boolean submitted as text is not asked about | is_active saved false; submission sends "0" | no question | implemented |
+| FE-39 | a different decimal is still a conflict | hours saved 1.50; submission sends "2" | `field_conflict` on hours; nothing written | implemented |
+| FE-40 | a stored noise revision is not another editor's change (Revision::meaningful_changes()) | a revision recording hours ['1.00', 1] with updated_at moved; submission sends "2" | no question; 2.00 written | implemented |
 | FE-19 | the composite version is the newest updated_at of the records given | `version_of($record, $coupled)` in both orders, and of one record | the coupled record's updated_at; one record's own (`Form_Edit_Coupled_Test`) | implemented |
 | FE-20 | a coupled save of a mapped field the submission sends is a conflict on the FORM field, naming the record it was saved on | coupled `kind_id` saved; submission sends `activity_kind` | `field_conflict` on `activity_kind`, `fields[].record` the coupled record, nothing written; answer false keeps theirs and writes the rest | implemented |
 | FE-21 | a coupled save of an unmapped column, or of a mapped field not sent, asks nothing | coupled `note` and `start_hour` saved; submission sends `name`, `activity_kind` | no question; both changes stand; result `updated_at` is the composite | implemented |
@@ -235,6 +239,9 @@ label "Date and time"); its runtime table is created in setup() and the schema t
 | FES-03 | a programmatic val() is reported though the form stays clean | `val()` | reported, `dirty()` false | implemented |
 | FES-04 | a before_submit value is reported | hook adds a key | `_changed` names it | implemented |
 | FES-05 | a successful submit moves the snapshot and version | answer with `updated_at` | next submit reports nothing, new version | implemented |
+| FES-06 | a hook that changes the object it was given is seen: it gets a deep copy of the serialization | hook adds a key and returns its argument; hook adds a key and returns nothing | `_changed` names the key; the key is sent | implemented |
+| FES-07 | a hook's key naming a column of the seed's model is compared with the seed by the column equivalence rule | Site_Model seed; hook sends "23" / '' / 0 for 23 / null / false, then different values | `_changed` []; then the three columns | implemented |
+| FES-08 | a hook's key the seed carries but no model column names is compared with the seed by deep_equal | plain seed `tags: ['a']`; hook sends ['a'], then ['b'] | `_changed` []; then `tags` | implemented |
 
 ## blade_autocomplete_off.js (playwright) - Blade fields default to autocomplete="off"
 

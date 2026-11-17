@@ -220,6 +220,11 @@ WAYS IN
         from_submitted(), then a refusal (range, "This amount is larger than
         this field can hold.") when the amount is beyond money_limit('col').
         The endpoint's door for a money field (IN AN ENDPOINT).
+        'col' is a money column of THAT model: a money column on a detail
+        table is read through the detail model
+        (Billable_Entry_Time_Detail_Model::money_from_submitted('hourly_rate', $x));
+        the base model throws "... is not a money column" for it
+        (rsx:man detail_tables, WRITE).
 
     Rsx_Money::from_aggregate($x)
         An SQL total: null (SUM over no rows) is 0.00; an int is whole units;

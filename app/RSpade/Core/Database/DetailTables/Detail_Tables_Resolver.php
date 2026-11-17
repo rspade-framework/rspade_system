@@ -5,18 +5,18 @@ namespace App\RSpade\Core\Database\DetailTables;
 /**
  * Detail_Tables_Resolver - pure helpers that interpret a base model's $detail_tables map.
  *
- * The map is the single source of truth for Class-Table Inheritance (see man detail_tables):
+ * The map is the single source of truth for Class-Table Inheritance (rsx:man detail_tables):
  *
  *   public static $detail_tables = [
  *       'type_id' => [                                    // the discriminator column
- *           self::TYPE_PERSON  => Party_Person_Detail_Model::class,
- *           self::TYPE_COMPANY => Party_Company_Detail_Model::class,
- *           // TYPE_GROUP absent => no detail (all fields universal)
+ *           self::TYPE_TIME => Billable_Entry_Time_Detail_Model::class,
+ *           self::TYPE_EXPENSE => Billable_Entry_Expense_Detail_Model::class,
+ *           // TYPE_FIXED_FEE absent => no detail (all fields universal)
  *       ],
  *   ];
  *
  * The detail accessor name is derived from the detail model basename
- * (Party_Person_Detail_Model -> party_person). Multiple discriminator values may map to
+ * (Billable_Entry_Time_Detail_Model -> billable_entry_time). Multiple discriminator values may map to
  * the same detail model (and thus the same accessor). These functions are stateless and
  * take the raw map so they are trivially testable without loading models.
  */
@@ -61,7 +61,7 @@ class Detail_Tables_Resolver
 
     /**
      * Derive the accessor name from a detail model class.
-     * Party_Person_Detail_Model -> party_person.
+     * Billable_Entry_Time_Detail_Model -> billable_entry_time.
      */
     public static function accessor_name(string $detail_class): string
     {

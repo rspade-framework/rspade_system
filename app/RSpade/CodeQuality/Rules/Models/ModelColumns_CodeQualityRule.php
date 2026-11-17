@@ -25,7 +25,11 @@ use App\RSpade\Core\Manifest\Manifest;
  *   4. At most one of EXCLUSIVE_KEYS per column, an answer counting only when `true`.
  *   5. Value shapes: `enum` is a non-empty map of integer value => array, whose `constant`
  *      and `label`, when present, are non-empty strings; `text_type` is a non-empty string
- *      (that it names a real Rsx_Text_Abstract with a JS twin is TEXT-TYPE-01's check).
+ *      (that it names a real Rsx_Text_Abstract with a JS twin is TEXT-TYPE-01's check);
+ *      `blank_distinct` never sits beside `enum`, `type_ref` or `money => true` (such a
+ *      column never holds '', so the flag would declare nothing); `revision_include` is a
+ *      non-empty reason string and never sits beside `revision_exclude` or `derived` (those
+ *      say the column is never recorded, it says the column is).
  *   6. A replacing entry never drops a protection: an entry replacing an inherited one that
  *      carries `never_export` carries it too, and an entry for one of the audit type
  *      columns Rsx_Model_Abstract declares `type_ref` keeps `type_ref`.
@@ -57,10 +61,10 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
     private const RULE_ID = 'MODEL-COLUMNS-01';
 
     /** Every key a column entry may carry. */
-    public const ALLOWED_KEYS = ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'derived', 'from'];
+    public const ALLOWED_KEYS = ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'revision_include', 'blank_distinct', 'derived', 'from'];
 
     /** Keys whose only legal value is the literal true. */
-    public const FLAG_KEYS = ['type_ref', 'never_export', 'revision_exclude'];
+    public const FLAG_KEYS = ['type_ref', 'never_export', 'revision_exclude', 'blank_distinct'];
 
     /**
      * Keys that answer a question either way: the literal true (the column is that kind) or
@@ -533,6 +537,37 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
             $this->report($abs_file, $contents, $line,
                 "{$where}['text_type'] is " . get_debug_type($entry['text_type'])
                 . ': it names a text type class, e.g. Rich_Text::class.');
+        }
+
+        if (array_key_exists('revision_include', $entry)) {
+            $reason = $entry['revision_include'];
+
+            if (!is_string($reason) || trim($reason) === '') {
+                $this->report($abs_file, $contents, $line,
+                    "{$where}['revision_include'] is " . var_export($reason, true) . ": it is the reason the column's "
+                    . "history is worth recording - what a person enters or decides there - as a non-empty string.");
+            }
+
+            foreach (['revision_exclude', 'derived'] as $unrecorded) {
+                if (array_key_exists($unrecorded, $entry)) {
+                    $this->report($abs_file, $contents, $line,
+                        "{$where} declares both 'revision_include' and '{$unrecorded}': the one says revisions record "
+                        . "the column, the other that they never do. Keep the one that is true.");
+                }
+            }
+        }
+
+        if (array_key_exists('blank_distinct', $entry)) {
+            $holds_no_blank = array_values(array_filter(
+                ['enum', 'type_ref', 'money'],
+                fn (string $key): bool => array_key_exists($key, $entry) && ($key !== 'money' || $entry[$key] === true)
+            ));
+
+            if ($holds_no_blank !== []) {
+                $this->report($abs_file, $contents, $line,
+                    "{$where} declares blank_distinct beside {$holds_no_blank[0]}: such a column never holds '', so "
+                    . "there is no blank to keep apart from NULL. Remove blank_distinct.");
+            }
         }
     }
 

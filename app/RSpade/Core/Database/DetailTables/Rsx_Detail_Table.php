@@ -20,7 +20,7 @@ use Illuminate\Support\Str;
  *   CREATE TABLE {detail_table} (
  *       id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
  *       {parent}_id BIGINT NOT NULL,           -- UNIQUE: enforces the 1:1
- *       ...caller columns (nullable by default so auto-create shells succeed)...,
+ *       ...caller columns (NULL unless the spec says 'nullable' => false)...,
  *       created_at / updated_at / created_by_id / created_by_type / updated_by_id / updated_by_type,
  *       [deleted_at / deleted_by_id / deleted_by_type when $soft_deletes],
  *       UNIQUE KEY uk_{detail_table}_{parent}_id ({parent}_id),
@@ -28,10 +28,9 @@ use Illuminate\Support\Str;
  *   )
  *
  * Usage (from a migration):
- *   Rsx_Detail_Table::create('party_person_details', 'parties', [
- *       ['name' => 'first_name', 'type' => 'VARCHAR(255)'],
- *       ['name' => 'last_name',  'type' => 'VARCHAR(255)'],
- *       ['name' => 'date_of_birth', 'type' => 'DATE'],
+ *   Rsx_Detail_Table::create('billable_entry_time_details', 'billable_entries', [
+ *       ['name' => 'hours', 'type' => 'DECIMAL(8,2)', 'nullable' => false],
+ *       ['name' => 'hourly_rate', 'type' => 'DECIMAL(12,2)', 'nullable' => false],
  *   ]);
  */
 class Rsx_Detail_Table
@@ -39,8 +38,8 @@ class Rsx_Detail_Table
     /**
      * Create a CTI detail table.
      *
-     * @param string      $detail_table The detail table name (e.g. 'party_person_details')
-     * @param string      $parent_table The base table name (e.g. 'parties')
+     * @param string      $detail_table The detail table name (e.g. 'billable_entry_time_details')
+     * @param string      $parent_table The base table name (e.g. 'billable_entries')
      * @param array       $columns      Type-specific columns: each ['name'=>, 'type'=>, 'nullable'?=>bool, 'default'?=>string]
      * @param string|null $parent_key   FK column name; defaults to Str::singular($parent_table) . '_id'
      * @param bool        $soft_deletes Add deleted_at + the deleted_by pair (mirror the parent's delete semantics)
@@ -52,7 +51,7 @@ class Rsx_Detail_Table
 
     /**
      * Derive the FK column name for a detail table joining $parent_table.
-     * 'parties' -> 'party_id', 'companies' -> 'company_id'.
+     * 'billable_entries' -> 'billable_entry_id', 'companies' -> 'company_id'.
      */
     public static function parent_key_for(string $parent_table): string
     {
@@ -98,8 +97,9 @@ class Rsx_Detail_Table
     }
 
     /**
-     * Build a single column definition line. Detail columns default to NULL so that a
-     * default shell row can be auto-created on save (see the auto-create-shell contract).
+     * Build a single column definition line. A column is NULL unless its spec declares
+     * 'nullable' => false; the detail row is always written by the developer (rsx:man
+     * detail_tables, WRITE), so a NOT NULL column is filled before the detail is saved.
      */
     private static function __build_column_line(array $column): string
     {

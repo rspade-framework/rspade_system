@@ -9,6 +9,7 @@ SYNOPSIS
         public static $columns = [
             'last_seen_at'    => ['revision_exclude' => true],
             'open_task_count' => ['revision_exclude' => true],
+            'promo_code'      => ['revision_include' => 'chosen by staff when the deal is struck'],
         ];
     }
 
@@ -27,6 +28,9 @@ SYNOPSIS
         $revision->diff();                // ['name' => ['Acme', 'Acme Ltd'], ...]
         Revision_Model::is_redacted($v);  // a never_export column: changed, value not recorded
         $revision->transaction->actor;    // who did it
+
+        // What a history shows: legacy noise and now-excluded columns dropped.
+        Revision::meaningful_changes($revision->record_type, $revision->diff());
     }
 
     // PHP: everything that happened to this client, its contacts included.
@@ -69,6 +73,10 @@ DESCRIPTION
     who, from where, over which endpoint, from which IP, and for an API call
     which _api_request_log row.
 
+    THE RULE, in one sentence: a revision records a column only when its value
+    changed by the column's kind (rsx:man model, COLUMN EQUIVALENCE) AND the
+    column holds something a person entered or decided (BOOKKEEPING COLUMNS).
+
     It is NOT a database transaction. Revisions are written on the SAME
     connection as the record write they describe, immediately - never through
     DB::afterCommit(). A real database transaction that rolls back therefore
@@ -99,7 +107,10 @@ OPTING IN
     list is for columns that CHANGE without the user having changed anything -
     denormalized counters, last-seen timestamps, cached aggregates. Recording
     them turns a history into noise, and a diff of what the user changed is the
-    whole product.
+    whole product. A save whose only changes are revision_exclude (and derived)
+    columns also leaves updated_at and the updated_by pair where they were:
+    updated_at is Form_Edit's version, and moving it would ask another editor
+    about a change nobody made.
 
     revision_exclude is NOT a security control. An excluded column is still
     stored in the record. To keep a value out of the database, do not put it
@@ -135,6 +146,35 @@ OPTING IN
     quietly missing rows, months later, with nothing to trace it back to -
     which is why the rule is fatal rather than advisory. Suppress a genuine
     exception with @REVISION-01-EXCEPTION on the method or in the file.
+
+BOOKKEEPING COLUMNS
+
+    On a model with $revisions, every column of its table whose WHOLE name
+    matches a bookkeeping pattern must say which it is:
+
+        *_cache  *_cache_id  last_*_at  last_*_by*  last_seen  *_synced_at
+        *_read_at  *_viewed_at  *_count  sort_order  position  *_position
+        *_token  *_code  *_key  *_hash
+
+    The three answers, in the model's $columns:
+
+        'last_emailed_at' => ['revision_exclude' => true],          // bookkeeping: never recorded
+        'open_task_count' => ['derived' => 'derive_open_task_count', 'from' => [...]],
+        'promo_code'      => ['revision_include' => 'chosen by staff when the deal is struck'],
+
+    An undeclared one is MODEL-REVISION-NOISE-01 (rsx:check, high; read from
+    the live schema, skipped when no database answers). There is no marker
+    to suppress it: revision_include and its reason ARE the acknowledgement,
+    on the column they speak for. Nothing is excluded by name automatically -
+    last_name would match last_* - and a bookkeeping column whose name
+    matches no pattern is declared revision_exclude all the same; the rule
+    only insists where the name gives it away. A column a class override
+    inherits is judged by the effective declaration, so an override of a
+    core model answers only what its base leaves open.
+
+    User_Model_Abstract declares its own: last_seen (the account's activity
+    stamp) and invite_code (minted with each invitation sent) are
+    revision_exclude.
 
 AUTOMATIC EXCLUSIONS
 
@@ -185,8 +225,11 @@ WHAT EACH OPERATION RECORDS
               [REDACTED, REDACTED]). A created record's
               history must be readable on its own, without inferring the
               starting state from the schema.
-    Updated   Only the columns that actually changed. An update that changed
-              nothing records nothing, and an update whose every changed column
+    Updated   Only the columns that actually changed - by the column's kind,
+              so '1.50' -> 1.5 on a DECIMAL, '' -> NULL on a nullable text
+              column or one instant in another form is no change. An update
+              that changed nothing records nothing (and, with nothing dirty,
+              is not written at all), and an update whose every changed column
               was excluded records nothing either.
     Deleted   An EMPTY document, soft delete and hard delete alike. A delete
               does not change fields, it removes the record; what its values
@@ -196,7 +239,12 @@ WHAT EACH OPERATION RECORDS
               it. The diff carries the deleted_at / deleted_by columns.
 
     Both halves of a pair are the FULL stored value, never a delta. Answering
-    "what changed" must not require replaying every earlier revision.
+    "what changed" must not require replaying every earlier revision. Each
+    side is the column's STORAGE FORM - what the column holds, not the shape
+    it was assigned in: "1.00" for 1 on a DECIMAL(8,2), 1 for true on a
+    boolean, 'Y-m-d H:i:s.v' for an ISO instant on a DATETIME(3). A create
+    leaves out a column whose value is the same as NULL ('' on a nullable
+    column).
 
 THE TABLES
 
@@ -468,6 +516,17 @@ API REFERENCE
         record pair OR the root pair, so it answers for both directions of
         #[Revision_Parent].
 
+    meaningful_changes(string $model_class, array $diff): array
+        The pairs of an ALREADY STORED diff a history should show: drops a
+        column the model's revisions no longer record (revision_exclude,
+        derived, the automatic exclusions - declared after it was recorded)
+        and a pair whose sides are the same value by the column's kind
+        (['1.00', 1] written before the rule existed). Keeps a redacted pair,
+        and a pair for a column the table no longer has. $model_class is the
+        revision's record_type or a FQCN; throws for a class that is not a
+        model. Every history reader passes its diffs through it - Form_Edit's
+        conflict check does - and skips an update left empty.
+
   On the model - Rsx_Model_Abstract
 
     revisions(): Rsx_Result_Set
@@ -667,7 +726,13 @@ EXAMPLES
             echo $transaction->endpoint;
             echo $revision->operation_id__label;
 
-            foreach ($revision->diff() as $field => [$before, $after]) {
+            $changes = Revision::meaningful_changes($revision->record_type, $revision->diff());
+
+            if ($changes === [] && (int) $revision->operation_id === Revision_Model::OPERATION_UPDATE) {
+                continue;   // stored noise: nothing a person would call a change
+            }
+
+            foreach ($changes as $field => [$before, $after]) {
                 if (Revision_Model::is_redacted($after)) {
                     echo "{$field}: changed";
                     continue;
@@ -693,7 +758,17 @@ TROUBLESHOOTING
     A field never appears in a diff
         It is revision_exclude, it is an automatic exclusion (updated_at,
         the updated_by pair, a `_`-prefixed column, a derived column), or the write did not
-        actually change it - an update records only what moved.
+        actually change it - an update records only what moved, judged by the
+        column's kind ("1.5" over 1.50 is not a move).
+
+    MODEL-REVISION-NOISE-01 reports a column
+        Its name looks like bookkeeping. Declare revision_exclude (the system
+        moves it), derive it, or declare 'revision_include' => '<reason>' (a
+        person sets it). BOOKKEEPING COLUMNS.
+
+    A history shows changes nobody made ('1.00' -> 1, a last-viewed stamp)
+        Rows recorded before the column rule, or before the column was
+        excluded. Read the diff through Revision::meaningful_changes().
 
     A field's values read "__RSX_REDACTED__"
         Correct: the column is in the model's never-export list, so its change

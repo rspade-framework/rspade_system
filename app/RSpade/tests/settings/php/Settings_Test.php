@@ -166,4 +166,34 @@ class Settings_Test extends Rsx_Test_Abstract
         static::__assert_true(in_array('listed_a', $keys, true));
         static::__assert_true(in_array('listed_b', $keys, true));
     }
+    /** set-19 */
+    public static function test_set_says_whether_the_value_changed_by_its_type()
+    {
+        Rsx_Settings::define(['key' => 'changed_int', 'label' => 'Int', 'type' => Rsx_Settings::TYPE_INTEGER, 'default' => 5]);
+        static::__assert_false(Rsx_Settings::set('changed_int', '5'), '"5" over the default 5 is no change');
+        static::__assert_true(Rsx_Settings::set('changed_int', 6), 'a different integer is a change');
+        static::__assert_false(Rsx_Settings::set('changed_int', 6), 'the same again is no change');
+        static::__assert_true(Rsx_Settings::set('changed_int', null), 'null over 6 is a change');
+        static::__assert_true(Rsx_Settings::set('changed_int', 0), '0 over null is a change');
+        static::__assert_equals(0, Rsx_Settings::get('changed_int'), 'the value is written');
+
+        Rsx_Settings::define(['key' => 'changed_rate', 'label' => 'Rate', 'type' => Rsx_Settings::TYPE_DECIMAL, 'default' => '1.50', 'meta' => ['scale' => 2]]);
+        static::__assert_false(Rsx_Settings::set('changed_rate', 1.5), '1.5 is the stored 1.50 at scale 2');
+        static::__assert_true(Rsx_Settings::set('changed_rate', '1.51'), 'a different decimal is a change');
+
+        Rsx_Settings::define(['key' => 'changed_flag', 'label' => 'Flag', 'type' => Rsx_Settings::TYPE_BOOLEAN, 'default' => false]);
+        static::__assert_false(Rsx_Settings::set('changed_flag', 0), '0 is false');
+        static::__assert_true(Rsx_Settings::set('changed_flag', '1'), '"1" is true');
+
+        Rsx_Settings::define(['key' => 'changed_text', 'label' => 'Text', 'type' => Rsx_Settings::TYPE_TEXT]);
+        static::__assert_false(Rsx_Settings::set('changed_text', ''), "'' over no value is no change");
+        static::__assert_true(Rsx_Settings::set('changed_text', 'x'), 'text is a change');
+
+        Rsx_Settings::define(['key' => 'changed_json', 'label' => 'Json', 'type' => Rsx_Settings::TYPE_JSON, 'default' => ['a' => 1, 'b' => 2]]);
+        static::__assert_false(Rsx_Settings::set('changed_json', ['b' => 2, 'a' => 1]), 'the same document in another key order');
+        static::__assert_true(Rsx_Settings::set('changed_json', ['a' => 1, 'b' => 3]), 'a different document');
+
+        Rsx_Settings::define(['key' => 'changed_at', 'label' => 'At', 'type' => Rsx_Settings::TYPE_DATETIME, 'default' => '2026-01-02T03:04:05.000Z']);
+        static::__assert_false(Rsx_Settings::set('changed_at', '2026-01-02T03:04:05Z'), 'the same instant in another form');
+    }
 }

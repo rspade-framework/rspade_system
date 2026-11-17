@@ -8,7 +8,14 @@
  *   c. a programmatic val() is reported though it does not make the form dirty: it is a
  *      value the record does not hold, and an endpoint must write it;
  *   d. a value a before_submit hook altered is reported;
- *   e. a successful submit moves the snapshot and the version to what the server answered.
+ *   e. a successful submit moves the snapshot and the version to what the server answered;
+ *   f. a hook that ADDS a key to the object it was given and returns that object has the key
+ *      reported (it is handed a deep copy, so the serialization it is compared with is
+ *      untouched), and so does one that changes it without returning anything;
+ *   g. with a model instance as the seed, a hook reshaping column values into another shape
+ *      of the same value ("23" for 23, '' for null on a nullable string, 0 for false) reports
+ *      nothing, a different value is reported, and a key the seed carries is reported only
+ *      when it differs from the seed.
  *
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S: the page is the control panel at /_sys and the
  * form is the panel's own site-rename form, mounted at runtime with a made-up site. Each
@@ -141,6 +148,39 @@ async function run() {
             form.before_submit = (values) => Object.assign({}, values, { extra_value: 'set by the host' });
             await form.submit();
             out.d_hook = sent.length > fresh && last()._changed.includes('extra_value');
+
+            // f - settle the snapshot first (a successful save), so only the hook speaks.
+            form.before_submit = null;
+            answer = { updated_at: '2026-11-02T01:02:05.000Z' };
+            await form.submit();
+            answer = {};
+            form.before_submit = (values) => { values.added_by_hook = 'kept'; return values; };
+            await form.submit();
+            out.f_mutated_and_returned = JSON.stringify(last()._changed) === '["added_by_hook"]';
+            form.before_submit = (values) => { values.added_in_place = 'kept'; };
+            await form.submit();
+            out.f_mutated_in_place = JSON.stringify(last()._changed) === '["added_in_place"]'
+                && last().added_in_place === 'kept';
+
+            // g
+            const seed = new Site_Model({
+                id: 999999, name: 'Probe Site edited', slug: 'derived-slug', portal_domain: null,
+                is_enabled: false, created_by_id: 23, updated_at: '2026-11-02T01:02:05.000Z',
+            });
+            form.state.values = seed;
+            form.before_submit = (values) => Object.assign(values, { created_by_id: '23', portal_domain: '', is_enabled: 0 });
+            await form.submit();
+            out.g_reshaped_reports_nothing = JSON.stringify(last()._changed) === '[]';
+            form.before_submit = (values) => Object.assign(values, { created_by_id: '24', portal_domain: 'portal.example.com', is_enabled: 1 });
+            await form.submit();
+            out.g_different_reported = JSON.stringify([...last()._changed].sort()) === '["created_by_id","is_enabled","portal_domain"]';
+            form.state.values = { id: 999999, name: 'Probe Site edited', slug: 'derived-slug', tags: ['a'], updated_at: '2026-11-02T01:02:05.000Z' };
+            form.before_submit = (values) => Object.assign(values, { tags: ['a'] });
+            await form.submit();
+            out.g_plain_seed_same = JSON.stringify(last()._changed) === '[]';
+            form.before_submit = (values) => Object.assign(values, { tags: ['b'] });
+            await form.submit();
+            out.g_plain_seed_different = JSON.stringify(last()._changed) === '["tags"]';
 
             Ajax.call_detailed = real_call;
             $('#rsx_edit_state_mount_temp').remove();

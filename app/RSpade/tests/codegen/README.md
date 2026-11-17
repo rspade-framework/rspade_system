@@ -48,7 +48,7 @@ structurally impossible.
 | strip_owned_regions removes all marker families | php | implemented |
 | Fail loud: duplicate docblocks / unbalanced fences / missing class / parse error | php | implemented |
 | Self-check aborts on dropped hand-written line | php | implemented |
-| Command output spans CTI detail columns `(detail: <table>)`, BEM/typed enum members, string dates | php | implemented (Party demo) |
+| Command output spans CTI detail columns `(detail: <table>)`, BEM/typed enum members, string dates | php | implemented (the template's `Billable_Entry_Model`) |
 | Each column's `@property` line states its kind and its read type (DECIMAL/uncast JSON string, boolean bool) | php | implemented (Column_Kinds_Fixture_Model) |
 
 See `issues_encountered.md` for the dual-implementation finding (now resolved).

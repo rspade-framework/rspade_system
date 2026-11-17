@@ -610,6 +610,36 @@ function clone(obj) {
 }
 
 /**
+ * Creates a deep copy of plain data: every plain object (one whose prototype is
+ * Object.prototype or null) and every array is copied, at any depth, so a change to the copy
+ * never reaches the original. Any other object - a class instance such as an Rsx_Money or a
+ * text type value, a Date, a File - is the same object in the copy: a value object is never
+ * changed in place, and a File cannot be copied. Use clone() for a one-level copy.
+ *
+ * @param {*} value - Value to copy
+ * @returns {*} The copy (a primitive is returned as is)
+ */
+function deep_clone(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => deep_clone(item));
+    }
+
+    if (value !== null && typeof value === 'object') {
+        const prototype = Object.getPrototypeOf(value);
+
+        if (prototype === Object.prototype || prototype === null) {
+            const copy = prototype === null ? Object.create(null) : {};
+            for (const key of Object.keys(value)) {
+                copy[key] = deep_clone(value[key]);
+            }
+            return copy;
+        }
+    }
+
+    return value;
+}
+
+/**
  * Returns the first non-null/undefined value from arguments
  * @param {...*} arguments - Values to check
  * @returns {*} First non-null/undefined value, or null if none found

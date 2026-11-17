@@ -148,6 +148,13 @@ API REFERENCE
     clone(obj)                  SHALLOW copy of an object, array or function.
                                 Nested objects are shared - for an editor buffer
                                 cloned off this.data, that matters.
+    deep_clone(value)           DEEP copy of plain data: every plain object and
+                                array is copied at any depth, so a change to the
+                                copy never reaches the original. Any other
+                                object - an Rsx_Money, a text type value, a
+                                model, a Date, a File - is the same object in
+                                the copy (a value object is never changed in
+                                place). A primitive is returned as is.
     coalesce(...values)         the first value that is neither null nor
                                 undefined, else null
 
@@ -197,7 +204,11 @@ API REFERENCE
 
     hash(the_var, calc_sha1 = true, ignored_keys = null)
         Deep hash of any value - objects, arrays, circular references. Returns
-        a SHA1 string, or the flattened JSON when calc_sha1 is false.
+        a SHA1 string, or the flattened JSON when calc_sha1 is false. Every
+        leaf keeps its type, so values of different types never hash alike:
+        [] and {} differ, null and "null" differ, undefined (top-level or
+        nested) and "undefined" differ, true and "true" differ, 5 and "5"
+        differ. Object property order never affects the hash; array order does.
 
         ignored_keys DEFAULTS TO ['$']. That default is load-bearing: a jqhtml
         component carries a `$` jQuery reference, so hashing component data
@@ -205,8 +216,12 @@ API REFERENCE
         default - include '$' yourself if the value may contain a component.
 
     deep_equal(a, b)
-        Deep comparison ignoring property order and functions. The right test
-        for "did this data actually change" before re-rendering.
+        Deep comparison ignoring property order and functions, keeping types
+        (hash() above). The right test for "did this data actually change"
+        before re-rendering. Whether two values of a model COLUMN are the same
+        value - "1.50" and 1.5, '' and null on a nullable column - is the
+        column's rule, Model.same_value('col', a, b) (rsx:man model, COLUMN
+        EQUIVALENCE), never deep_equal().
 
   Error (error.js)
 
@@ -363,9 +378,8 @@ TROUBLESHOOTING
 
     "clone() did not isolate my edits."
         It is a SHALLOW copy - nested objects and arrays are shared with the
-        original. For an editor buffer over nested data, copy the nested level
-        you are editing too (or round-trip through
-        json_decode(json_encode(x))).
+        original. For an editor buffer over nested data use deep_clone(), which
+        copies every nested plain object and array and keeps value objects.
 
     "My debounced function ran later than the delay I set."
         By design: guarantee 3 - the delay timer starts AFTER the callback
@@ -386,7 +400,9 @@ TROUBLESHOOTING
 
     "deep_equal() says two objects differ and I cannot see how."
         It ignores functions and property order but not types: 1 and '1' differ,
-        as do null and undefined. Log json_encode() of both.
+        as do null and undefined, null and "null", [] and {}, true and "true".
+        Log json_encode() of both. For two values of a model column, ask
+        Model.same_value() instead.
 
     "is_mobile() disagrees with my CSS."
         The global is_mobile() from browser.js is a user-agent sniff with a

@@ -58,7 +58,8 @@ components - because the first SPA page draws before `app_ready`.
   `Form_Utils.js` renders per-field errors.
 - `Rsx_Js_Model.js` — the base of every generated model stub (`Base_<Model>.js`, written by
   `Core/Database/Model_Stub_ManifestSupport`): `fetch()`, `fetch_or_null()`, lazy
-  relationships, enum helpers, `field_length()` (fed by the bundle's field-length script).
+  relationships, enum helpers, `field_length()`, `money_limit()`, `column_descriptor()` and
+  `same_value()` (fed by the bundle's field-length script).
 - `Permission.js`, `Portal_Permission.js` — client mirrors of `can_access()` and the role /
   permission checks, from data the server resolved; display only, never enforcement.
 - `Rsx_Session.js`, `Rsx_Csrf.js` — page-view reporting for the idle limit, the lost-session
@@ -70,6 +71,10 @@ components - because the first SPA page draws before `app_ready`.
   money type (`Core/Database/Money/`): the same algorithms step for step on BigInt, one own
   property (`_decimal`), the jqhtml object printer and cache class, the display read from
   `rsxapp.money_display` (`rsx:man money`).
+- `Column_Equivalence.js` — the JS twin of `Core/Database/Models/Column_Equivalence.php`:
+  whether two values of a column are the same value, by its declared kind and schema type,
+  the same algorithms step for step and one shared vector file; `Rsx_Js_Model.same_value()`
+  reads each column's descriptor from the field-length script.
 - `Rsx_Realtime.js` — websocket subscriptions (`this.subscribe()` on components).
 - `Mutex.js` (`@mutex`), `ReadWriteLock.js` (`rwlock`), `decorator.js` (the `@decorator`
   marker) — decorator and locking primitives.
@@ -85,7 +90,7 @@ components - because the first SPA page draws before `app_ready`.
 
 - **One implementation per algorithm.** Where PHP owns a rule (a text type's encoding, a
   permission's resolution), the JS side reads the server's answer instead of re-implementing
-  it; where both languages carry a twin (`Rsx_Time`, `Rsx_Money`, `Login_Redirect`), the API is identical.
+  it; where both languages carry a twin (`Rsx_Time`, `Rsx_Money`, `Column_Equivalence`, `Login_Redirect`), the API is identical.
 - Static methods never use naked `this`; jQuery callbacks alias `$(this)` (`JS-THIS-01`).
 - No `setTimeout` debounce or timeout of your own: `debounce()` in `async.js` is the one.
 

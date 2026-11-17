@@ -24,6 +24,17 @@ a change to both. The column's limit is `Rsx_Model_Abstract::money_limit()` (liv
 `Rsx_Schema`), the query side is `RestrictedEloquentBuilder` (`Rsx_Money` binds as its decimal
 string; `sum_money()`). Contract: `rsx:man money`.
 
+## Column equivalence (`Models/Column_Equivalence.php`)
+
+The ONE rule for "are these two values of a column the same value", by the column's declared
+kind (`$columns`) and its schema type (`Rsx_Schema`: type, nullability, scale, `fsp`). Every
+dirty answer goes through it (`Rsx_Model_Abstract::originalIsEquivalent()`), as do the revision
+writer (storage forms, equal pairs skipped) and `Revision::meaningful_changes()`. A descriptor
+is half code and half schema, so the browser receives it in the field-length script
+(`Rsx.__column_equivalence_data`), never in a stub; the JS twin is `Core/Js/Column_Equivalence.js`,
+and both run `tests/column_equivalence/resource/column_equivalence_vectors.json`. A change to
+one language is a change to both.
+
 ## Database Rules
 
 - **No mass assignment**: All fields assigned explicitly

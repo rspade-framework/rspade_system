@@ -433,8 +433,9 @@ class Rsx_Form extends Component {
 
         /**
          * Optional payload hook, installed by the host (Modal.form's before_submit
-         * option, or a page action). Receives the serialized vals; may return an
-         * adjusted object, or throw a {field: message} object rendered as validation.
+         * option, or a page action). Receives a deep copy of the serialized vals, which it
+         * may change and return, or return a new object; or throw a {field: message} object
+         * rendered as validation.
          */
         this.before_submit = null;
 
@@ -612,8 +613,14 @@ class Rsx_Form extends Component {
      * names the fields that differ from the record the form was given, and
      * `_loaded_updated_at` says which version of the record that was. Form_Edit reads both.
      *
-     * A field a before_submit hook altered counts as changed: the hook is the host writing
-     * a value, and its value is what is submitted.
+     * An input reports its own field, in its own vocabulary (is_changed_from_record()).
+     * Beyond that, a key the before_submit hook added or altered - it was handed a deep copy
+     * of the serialization (submit()), so whatever it changed, nested values included,
+     * differs from `serialized` - is judged against the record SEED: a key naming a column
+     * of the seed's model by the column equivalence rule (Model.same_value(): a hook
+     * reshaping "23" to 23, '' to null, false to 0, or a value object to its text reports
+     * nothing), any other key the seed carries by deep_equal(), and a key the seed does not
+     * carry is reported - the hook is writing a value the record was not loaded with.
      *
      * See: php artisan rsx:man form_conventions (EDITING A RECORD)
      *
@@ -630,8 +637,29 @@ class Rsx_Form extends Component {
             }
         });
 
+        const seed = this.state.values && typeof this.state.values === 'object' ? this.state.values : {};
+        const SeedModel = seed instanceof Rsx_Js_Model ? seed.constructor : null;
+
         for (const name of Object.keys(values)) {
-            if (!changed.includes(name) && !deep_equal(values[name], serialized[name])) {
+            // undefined is not sent (JSON drops it), so it writes nothing.
+            if (changed.includes(name) || values[name] === undefined) {
+                continue;
+            }
+
+            if (Object.hasOwn(serialized, name) && deep_equal(values[name], serialized[name])) {
+                continue;
+            }
+
+            if (!Object.hasOwn(seed, name) || seed[name] === undefined) {
+                changed.push(name);
+                continue;
+            }
+
+            const same = SeedModel !== null && Rsx_Form.__names_column(SeedModel, name)
+                ? SeedModel.same_value(name, seed[name], values[name])
+                : deep_equal(seed[name], values[name]);
+
+            if (!same) {
                 changed.push(name);
             }
         }
@@ -664,6 +692,27 @@ class Rsx_Form extends Component {
         }
 
         return name.replace(/_id$/, '').replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase());
+    }
+
+    /**
+     * Whether a submitted key is a column of the seed's model the browser holds a descriptor
+     * for (Model.column_descriptor() throws for any other key: no such column, a system
+     * column, a never_export one). When the page carries no descriptors for the model at all,
+     * column_descriptor() is asked anyway, so the missing field-length script fails loud.
+     *
+     * @param {Function} Model The seed's model class
+     * @param {string} name The submitted key
+     * @returns {boolean}
+     */
+    static __names_column(Model, name) {
+        const data = Rsx.__column_equivalence_data;
+        const model_name = Model.getModelName();
+
+        if (data === null || !Object.hasOwn(data, model_name)) {
+            Model.column_descriptor(name);
+        }
+
+        return Object.hasOwn(data[model_name], name);
     }
 
     /** Call fn(component, name) for every named input the form owns (shallow - see vals()). */
@@ -808,7 +857,10 @@ class Rsx_Form extends Component {
         }
 
         const serialized = this.vals();
-        let values = serialized;
+        // The hook gets a deep COPY: a hook that changes what it was given and returns it has
+        // then changed exactly what it changed, and __edit_state() sees it against the
+        // untouched serialization.
+        let values = deep_clone(serialized);
 
         // Host payload hook. A thrown {field: message} object renders as validation;
         // returning FALSE aborts the submit silently - the seam for interaction

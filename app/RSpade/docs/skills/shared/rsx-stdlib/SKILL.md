@@ -1,6 +1,6 @@
 ---
 name: rsx-stdlib
-description: "The shared utility library in PHP and JS - type checks, escape_html / sanitize_rich_text_html / nl2brhtml / html_to_text, debounce, rwlock, deep_equal, Rsx_Storage, Rsx.url_hash_*, the response_* and array_* helpers, Arr::first, Manifest reflection, Rsx_Money for amounts, and the guaranteed third-party tier (brick/money, league/csv, commonmark, libphonenumber, playwright PDFs). Use before hand-writing any utility or installing a package for money, CSV, markdown, phone numbers or PDFs, or for an exact signature."
+description: "The shared utility library in PHP and JS - type checks, escape_html / sanitize_rich_text_html / nl2brhtml / html_to_text, debounce, rwlock, deep_equal, deep_clone, Model::same_value(), Rsx_Storage, Rsx.url_hash_*, the response_* and array_* helpers, Arr::first, Manifest reflection, Rsx_Money for amounts, and the guaranteed third-party tier (brick/money, league/csv, commonmark, libphonenumber, playwright PDFs). Use before hand-writing any utility or installing a package for money, CSV, markdown, phone numbers or PDFs, or for an exact signature."
 ---
 
 # RSpade standard library
@@ -12,7 +12,7 @@ Before hand-rolling anything, search first:
 | Where | What |
 |---|---|
 | `php artisan rsx:man helpers` | **PHP** globals (`helpers.php`): `response_*`, `array_*`, string/HTML, filesystem/paths, `exec_safe`, formatting, `random_hash`, debug and `shouldnt_happen`. |
-| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `escape_html`/`sanitize_rich_text_html`/`nl2brhtml`/`html_to_text`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, browser helpers. |
+| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `escape_html`/`sanitize_rich_text_html`/`nl2brhtml`/`html_to_text`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, `clone`/`deep_clone`, browser helpers. |
 | `Manifest.php` (below) | reflection - **check for an existing manifest function before hand-rolling any of it.** |
 
 Those two man pages carry the full rosters with exact signatures. The judgment worth repeating here:
@@ -21,7 +21,8 @@ Those two man pages carry the full rosters with exact signatures. The judgment w
 - **`debounce(fn, delay)` - always use it, never a hand-rolled timer.** The behavioural gotcha: the delay timer starts AFTER your callback completes, so a slow callback cannot stack up behind itself. Decorator form `@debounce(250)` (with the `/** @decorator */` comment). **250 ms is the recommended delay for almost everything** - pick another only for a compelling, stated reason. It runs the first call at once, coalesces every call made during a run or the delay after it into ONE follow-up, and never overlaps runs - exactly what a realtime refetch, a search box or a resize handler wants. Never an in-flight or "run again" flag beside it.
 - **`clone()` is SHALLOW** and **`empty(0)` is true** - these globals follow PHP semantics, not JavaScript ones.
 - **`hash()` ignores the `$` key by default**, because jqhtml component data carries a jQuery reference that would otherwise hash the DOM. Supplying your own `ignored_keys` REPLACES that default.
-- **`deep_equal(a, b)`** is the right "did this actually change" test before a repaint.
+- **`deep_equal(a, b)`** is the right "did this actually change" test before a repaint. It and `hash()` keep types: `[]` is not `{}`, `null` is not `"null"`, `undefined` is not `"undefined"`, `true` is not `"true"`, `5` is not `"5"`. **Two values of a model column are compared with `Model::same_value('col', $a, $b)` / `Model.same_value()`**, never `deep_equal()`, `==` or a float epsilon (`"1.50"` and `1.5` are one DECIMAL value; skill `rspade:models`).
+- **`deep_clone(value)`** copies every plain object and array at any depth and keeps class instances (`Rsx_Money`, text types, models, `Date`, `File`) as the same object; `clone()` is one level only.
 - **`rsxrealpath()`, not `realpath()`** - `/rsx` and `system/.env` are symlinks whose logical path is the meaningful one.
 - **`random_hash()`** for tokens and keys; never `rand()`/`uniqid()`.
 - **`exec_safe()`** is the one subprocess wrapper (explicit bash, merged stderr, real exit status) - but an artisan subprocess goes through `Rsx_Artisan`.

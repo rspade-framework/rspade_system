@@ -25,6 +25,7 @@ Type: php. Last updated: 2026-06-22.
 | set-16 | integer validation rejects non-integer | set 'not a number' | throws | implemented |
 | set-17 | define is idempotent (updates) | define key twice | latest definition wins | implemented |
 | set-18 | all() lists definitions with values | define a + b | both present with values | implemented |
+| set-19 | set() says whether the value changed, by the setting's type (column equivalence) | "5" over 5, 1.5 over 1.50, 0 over false, '' over none, reordered JSON, an instant in another form; then different values, null / 0 | false for each same value; true for each change; the value is written | implemented |
 
 ## Deferred / planned
 

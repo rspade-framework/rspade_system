@@ -491,6 +491,22 @@ column list, so each fixture model is a temp-file class judged against a stated 
 | NEXP-RULE-05 | a marker naming a column with a reason excuses that column only | php | marker for `display_token`; `api_token` unlisted | 1 violation, for `api_token` | implemented | 2026-10-20 |
 | NEXP-RULE-06 | a marker with no reason excuses nothing | php | bare marker | 1 violation | implemented | 2026-10-20 |
 
+## MODEL-REVISION-NOISE-01 - a bookkeeping column on a revisioned model declares its history (`Model_Revision_Noise_Rule_Test`)
+
+The rule reads the live schema; its `evaluate_class($fqcn, $abs_file, $columns)` seam takes the
+column list, so each fixture model is a temp-file class judged against a stated list. The
+`revision_include` grammar is MODEL-COLUMNS-01's, driven through that rule's seam.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RNOISE-RULE-01 | undeclared bookkeeping columns on a revisioned model are flagged | php | `last_emailed_at`, `sort_order`, `name` | exactly the two bookkeeping columns | implemented | 2026-11-17 |
+| RNOISE-RULE-02 | the patterns are the request's list, whole-name | php | one name per pattern, plus near misses (`last_name`, `position_title`, `code`, `read_at`, `_sort_order`, ...) | every pattern name, no near miss | implemented | 2026-11-17 |
+| RNOISE-RULE-03 | a model without revisions is not judged | php | no `$revisions` | 0 violations | implemented | 2026-11-17 |
+| RNOISE-RULE-04 | each of the three answers satisfies the rule | php | `revision_exclude`, derived, `revision_include` with a reason | only the unanswered column is flagged | implemented | 2026-11-17 |
+| RNOISE-RULE-05 | a blank reason is no answer | php | `'revision_include' => '  '` | 1 violation | implemented | 2026-11-17 |
+| RNOISE-RULE-06 | the remediation names all three answers | php | one undeclared column | suggestion carries each entry shape | implemented | 2026-11-17 |
+| RNOISE-RULE-07 | MODEL-COLUMNS-01 checks `revision_include`: a non-empty string, never beside `revision_exclude` / `derived` | php | a reasoned, a blank, a `true` and a contradicting entry | 3 violations, the reasoned entry legal | implemented | 2026-11-17 |
+
 ## MODEL-COLUMNS-01 / MODEL-COLUMNS-02 - the `$columns` declaration (`Model_Columns_Rule_Test`)
 
 MODEL-COLUMNS-01 is a manifest-build FATAL over every class that declares `$columns` itself,

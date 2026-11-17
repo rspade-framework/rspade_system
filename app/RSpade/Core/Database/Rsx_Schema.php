@@ -37,6 +37,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *   precision     total digits, for decimal (DECIMAL(15,2) is 15); null for every other type
  *   scale         digits after the point, for decimal (DECIMAL(15,2) is 2); null for every
  *                 other type
+ *   fsp           fractional-second digits, for datetime/timestamp/time (DATETIME(3) is 3,
+ *                 DATETIME is 0); null for every other type
  *   nullable      bool
  *   key           MySQL's COLUMN_KEY ('PRI', 'UNI', 'MUL', '')
  *   default       MySQL's COLUMN_DEFAULT
@@ -73,7 +75,7 @@ class Rsx_Schema
      * reduced-volatility database; the version suffix is bumped when the stored shape
      * changes in a way the code key would not already notice.
      */
-    private const CACHE_KEY = RsxCache::RVC_PREFIX . 'rsx_schema_tables_v2';
+    private const CACHE_KEY = RsxCache::RVC_PREFIX . 'rsx_schema_tables_v3';
 
     /**
      * This process's copy of the whole database's column map, or null before the first read.
@@ -332,6 +334,21 @@ class Rsx_Schema
     }
 
     /**
+     * Fractional-second digits of a datetime/timestamp/time column type ("datetime(3)" is 3,
+     * "timestamp" is 0); null for every other type.
+     *
+     * @param string $type MySQL column type
+     */
+    public static function fractional_precision(string $type): ?int
+    {
+        if (!preg_match('/^(?:datetime|timestamp|time)(?:\((\d)\))?/i', $type, $matches)) {
+            return null;
+        }
+
+        return isset($matches[1]) ? (int) $matches[1] : 0;
+    }
+
+    /**
      * The query: every column of every table in the connected database, in table and
      * ordinal order.
      *
@@ -362,6 +379,7 @@ class Rsx_Schema
                 'max_length' => self::varchar_length($row->column_type),
                 'precision' => $is_decimal ? (int) $row->numeric_precision : null,
                 'scale' => $is_decimal ? (int) $row->numeric_scale : null,
+                'fsp' => self::fractional_precision($row->column_type),
                 'nullable' => ($row->is_nullable === 'YES'),
                 'key' => $row->column_key,
                 'default' => $row->column_default,

@@ -15,6 +15,7 @@ use App\RSpade\Core\Forms\Form_Edit;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Revisions\Revision;
 use App\RSpade\Lib\Revisions\Revision_Model;
 use App\RSpade\Tests\Forms\Php\Form_Edit_Fixture_Model;
 use App\RSpade\Tests\Forms\Php\Form_Edit_Plain_Fixture_Model;
@@ -39,6 +40,8 @@ class Form_Edit_Test extends Rsx_Test_Abstract
             phone VARCHAR(255) NULL,
             level_id BIGINT NULL,
             secret_token VARCHAR(255) NULL,
+            hours DECIMAL(8,2) NULL,
+            is_active TINYINT(1) NULL,
             created_at TIMESTAMP(3) NULL DEFAULT NULL,
             updated_at TIMESTAMP(3) NULL DEFAULT NULL,
             deleted_at TIMESTAMP(3) NULL DEFAULT NULL,
@@ -70,6 +73,8 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         $record->email = 'original@example.com';
         $record->phone = '111';
         $record->level_id = Form_Edit_Fixture_Model::LEVEL_LOW;
+        $record->hours = '1.00';
+        $record->is_active = true;
         $record->save();
 
         return Form_Edit_Fixture_Model::find($record->id);
@@ -104,7 +109,7 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         usleep(3000);
 
         return Form_Edit::run($record, $params, function (Form_Edit $edit) use ($record, $values) {
-            foreach (['name', 'email', 'phone', 'level_id', 'secret_token'] as $field) {
+            foreach (['name', 'email', 'phone', 'level_id', 'secret_token', 'hours', 'is_active'] as $field) {
                 $edit->set($field, $values[$field] ?? 'NOT SUBMITTED');
             }
 
@@ -290,6 +295,7 @@ class Form_Edit_Test extends Rsx_Test_Abstract
     {
         $record = static::__record();
 
+        DB::flushQueryLog();
         DB::enableQueryLog();
         static::__submit($record, static::__version($record), ['name' => 'Mine']);
         $queries = array_column(DB::getQueryLog(), 'query');
@@ -297,7 +303,7 @@ class Form_Edit_Test extends Rsx_Test_Abstract
 
         $locked = array_filter($queries, fn ($query) => stripos($query, 'for update') !== false);
 
-        static::__assert_true(count($locked) === 1, 'one locking read');
+        static::__assert_true(count($locked) === 1, 'one locking read, got: ' . implode(' | ', $locked));
     }
 
     /** FE-14 */
@@ -358,6 +364,70 @@ class Form_Edit_Test extends Rsx_Test_Abstract
 
         static::__assert_true(is_array($result), 'nothing would be overwritten, so no question');
         static::__assert_equals('Same', static::__stored($record->id)->name);
+    }
+
+    /** FE-37 */
+    public static function test_a_decimal_submitted_in_another_shape_is_not_asked_about()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__other_save($record->id, 'hours', '1.50');
+        $result = static::__submit($record, $loaded, ['hours' => '1.5']);
+
+        static::__assert_true(is_array($result), '"1.5" is the stored 1.50 under the column\'s kind, so nothing would be overwritten');
+        static::__assert_equals('1.50', static::__stored($record->id)->hours);
+    }
+
+    /** FE-38 */
+    public static function test_a_boolean_submitted_as_text_is_not_asked_about()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__other_save($record->id, 'is_active', false);
+        $result = static::__submit($record, $loaded, ['is_active' => '0']);
+
+        static::__assert_true(is_array($result), '"0" is the stored false on a boolean column');
+    }
+
+    /** FE-39 */
+    public static function test_a_different_decimal_is_still_a_conflict()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__other_save($record->id, 'hours', '1.50');
+        $result = static::__submit($record, $loaded, ['hours' => '2']);
+
+        static::__assert_instance_of(Error_Response::class, $result);
+        $field = $result->get_metadata()['question']['fields'][0];
+        static::__assert_equals('hours', $field['field']);
+        static::__assert_equals('1.50', static::__stored($record->id)->hours, 'nothing written before the answer');
+    }
+
+    /** FE-40 */
+    public static function test_a_stored_noise_revision_is_not_another_editors_change()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        // A revision written before the column rule existed: hours "changed" from '1.00' to
+        // 1, the same value, and updated_at moved with it.
+        usleep(3000);
+        DB::table('form_edit_fixtures')->where('id', $record->id)->update([
+            'updated_at' => now()->format('Y-m-d H:i:s.v'),
+        ]);
+        $moved = static::__stored($record->id);
+        Revision::_record($moved, Revision_Model::OPERATION_UPDATE, ['hours' => ['1.00', 1]], [
+            'type' => 'Form_Edit_Fixture_Model',
+            'id' => (int) $moved->id,
+        ]);
+
+        $result = static::__submit($record, $loaded, ['hours' => '2']);
+
+        static::__assert_true(is_array($result), 'a stored pair equal under the column\'s kind is nobody\'s change, so nothing is asked');
+        static::__assert_equals('2.00', static::__stored($record->id)->hours, 'the submission is written');
     }
 
     /** FE-17 */

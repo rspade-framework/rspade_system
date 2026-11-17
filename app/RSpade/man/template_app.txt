@@ -45,6 +45,9 @@ WHAT IT INCLUDES
     Staff application (/rsx/app/, server-rendered + SPA):
       - Authentication (login, multi-tenant session) and user management.
       - A CRM: clients, contacts, projects (CRUD modules, DataGrids, forms).
+      - Billing: time, expenses and fixed fees logged against projects, an approval
+        queue, and per-site numbered client invoices (the worked example of
+        rsx:man detail_tables and of exact money, rsx:man money).
       - The per-client "Portal" admin page (Clients_Portal_Action): members, documents,
         requests, announcements, projects.
     Client portal (/rsx/portal/, the parallel external experience) - see portal(3):
@@ -301,4 +304,4 @@ SEE ALSO
     rsx:man class_override
     rsx:man framework_debug_and_contrib
 
-RSX Framework              Last updated 2026-09-01              TEMPLATE_APP(3)
+RSX Framework              Last updated 2026-11-16              TEMPLATE_APP(3)

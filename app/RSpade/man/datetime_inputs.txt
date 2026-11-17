@@ -70,7 +70,7 @@ BASIC USAGE
                         no timezone, no seconds).
 
     In practice the reference app uses only $type="date" (project start/due
-    dates, party date_of_birth). Verify a field renders and round-trips before
+    dates, task due dates, billing entry dates, invoice issue/due/paid dates). Verify a field renders and round-trips before
     relying on time / datetime-local - see PITFALLS.
 
     Binding in a form is identical to any other input: $name on the input is

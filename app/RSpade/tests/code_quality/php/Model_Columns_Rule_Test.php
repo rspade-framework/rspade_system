@@ -123,10 +123,29 @@ class Model_Columns_Rule_Test extends Rsx_Test_Abstract
     public static function test_the_allowed_keys_are_exactly_the_declared_kinds()
     {
         static::__assert_equals(
-            ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'derived', 'from'],
+            ['enum', 'text_type', 'type_ref', 'money', 'never_export', 'revision_exclude', 'revision_include', 'blank_distinct', 'derived', 'from'],
             ModelColumns_CodeQualityRule::ALLOWED_KEYS,
             'the one list a new kind extends'
         );
+    }
+
+    public static function test_blank_distinct_is_a_flag_on_a_column_that_can_hold_a_blank()
+    {
+        static::__assert_count(0, static::__evaluate_columns('Columns_Rule_Fixture_Blank_Ok_Model', "['code' => ['blank_distinct' => true], 'note' => ['blank_distinct' => true, 'revision_exclude' => true]]"), 'a plain column takes it');
+
+        $violations = static::__evaluate_columns('Columns_Rule_Fixture_Blank_False_Model', "['code' => ['blank_distinct' => false]]");
+        static::__assert_count(1, $violations, 'one finding: ' . static::__messages($violations));
+        static::__assert_contains("['blank_distinct'] is false", $violations[0]->message, 'a flag');
+
+        $violations = static::__evaluate_columns('Columns_Rule_Fixture_Blank_Enum_Model', "['status_id' => ['blank_distinct' => true, 'enum' => [1 => ['label' => 'Open']]]]");
+        static::__assert_count(1, $violations, 'one finding: ' . static::__messages($violations));
+        static::__assert_contains('blank_distinct beside enum', $violations[0]->message, 'naming the kind');
+
+        $violations = static::__evaluate_columns('Columns_Rule_Fixture_Blank_Money_Model', "['budget' => ['blank_distinct' => true, 'money' => true]]");
+        static::__assert_count(1, $violations, 'one finding: ' . static::__messages($violations));
+        static::__assert_contains('blank_distinct beside money', $violations[0]->message);
+
+        static::__assert_count(0, static::__evaluate_columns('Columns_Rule_Fixture_Blank_Not_Money_Model', "['code' => ['blank_distinct' => true, 'money' => false]]"), 'money => false declares no kind');
     }
 
     public static function test_a_false_flag_is_fatal()

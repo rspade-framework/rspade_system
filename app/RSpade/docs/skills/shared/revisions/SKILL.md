@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading revision history - $revisions = true, the revision_exclude column kind in $columns, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
+description: "Recording and reading revision history - $revisions = true, the revision_exclude and revision_include column keys in $columns, MODEL-REVISION-NOISE-01 for bookkeeping columns, Revision::meaningful_changes() for history readers, storage-form diffs, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports, the eager writer-request row and its request history columns. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01, MODEL-REVISION-NOISE-01, a history full of changes nobody made ('1.00' -> 1, a last-viewed stamp) or a diff reading '__RSX_REDACTED__'."
 ---
 
 # Revision history
@@ -8,6 +8,12 @@ description: "Recording and reading revision history - $revisions = true, the re
 Every committed `save()` / `delete()` on an opted-in model is recorded as a
 `{field: [before, after]}` document, grouped under ONE transaction per unit of work.
 Contract: `php artisan rsx:man revisions`.
+
+**The rule, in one sentence: a revision records a column only when its value changed by
+the column's kind AND the column holds something a person entered or decided.** "By the
+column's kind" is the column equivalence rule (`Model::same_value()`, skill `rspade:models`):
+`"1.5"` over 1.50 or `''` over NULL is no change - the save writes nothing and records
+nothing. "Entered or decided" is the declaration below.
 
 **The transaction is the point.** A revision says "this field changed". The question a
 history screen asks is "what did that one action change" - a client save that also wrote
@@ -32,7 +38,9 @@ That is the whole wiring - shaped exactly like `$realtime`, and off costs one st
 
 `updated_at`, the `updated_by` pair, every `_`-prefixed system column and every DERIVED
 column (computed by the model, never edited - skill `rspade:models`) are excluded
-automatically; a save that changes only derived columns writes no revision at all. `created_at` and the `created_by` pair are NOT: they appear once, on the
+automatically; a save that changes only derived or `revision_exclude` columns writes no
+revision at all and leaves `updated_at` / `updated_by` alone (`updated_at` is `Form_Edit`'s
+version: moving it would ask another editor about a change nobody made). `created_at` and the `created_by` pair are NOT: they appear once, on the
 create, where they are the record's provenance.
 
 **`revision_exclude` is not a security control.** An excluded column is still stored in
@@ -46,6 +54,27 @@ type included: the marker replaces the value before anything encodes it). One de
 covers payloads and revisions; don't add `revision_exclude` to a secret unless even
 "it changed" is noise, in which case it wins and nothing is recorded. (Both are entries of
 the model's `$columns` - grammar: skill `rspade:models`.)
+
+## Bookkeeping columns: MODEL-REVISION-NOISE-01
+
+On a `$revisions` model, `rsx:check` reports every column of its table whose whole name
+looks like bookkeeping - `*_cache`, `*_cache_id`, `last_*_at`, `last_*_by*`, `last_seen`,
+`*_synced_at`, `*_read_at`, `*_viewed_at`, `*_count`, `sort_order`, `position`,
+`*_position`, `*_token`, `*_code`, `*_key`, `*_hash` - until `$columns` answers it one of
+three ways:
+
+```php
+'last_emailed_at' => ['revision_exclude' => true],                       // the system moves it
+'open_task_count' => ['derived' => 'derive_open_task_count', 'from' => []], // computed: never recorded
+'promo_code'      => ['revision_include' => 'chosen by staff when the deal is struck'], // a person sets it
+```
+
+There is no exception marker - `revision_include` and its reason are the acknowledgement.
+Nothing is excluded by name automatically (`last_name` matches `last_*`), and a bookkeeping
+column outside the patterns (a `portal_last_activity_at` stamped on each visit) is declared
+`revision_exclude` all the same. Live schema, skipped with no database; the effective
+declaration is judged, so a core-model override answers only what its base leaves open.
+`User_Model_Abstract` already excludes `last_seen` and `invite_code`.
 
 ## Filing a child under its parent
 
@@ -83,6 +112,7 @@ app is the worked example of a model that opts in and deliberately declares no p
 foreach ($client->revisions() as $revision) {              // this record only
     $revision->operation_id__label;                        // Created/Updated/Deleted/Restored
     $revision->diff();                                     // ['name' => ['Acme', 'Acme Ltd']]
+    Revision::meaningful_changes($revision->record_type, $revision->diff()); // what a history SHOWS
     Revision_Model::is_redacted($after);                   // a never_export column: show "changed", never the marker
     $revision->transaction->actor;                         // who
     $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test/Companion
@@ -96,6 +126,16 @@ Revision::for_transaction($id);                            // one unit's revisio
 ```
 
 All of them return `Rsx_Result_Set` - the set is unbounded, so a screen pages it.
+
+**Each side of a pair is the column's STORAGE FORM** - `"1.00"` for 1 on a DECIMAL(8,2), `1`
+for `true` on a boolean - what the column holds, not the shape it was assigned in.
+
+**A history reader shows `Revision::meaningful_changes($model_class, $diff)`, never the raw
+`diff()`.** It drops, from an already stored diff, a column the model no longer records
+(excluded or derived since) and a pair equal by the column's kind (`['1.00', 1]` written
+before the rule existed); it keeps a redacted pair and a column the table no longer has. An
+update left empty is skipped. `Form_Edit`'s conflict check reads through it too, so stored
+noise never asks an editor a question.
 
 ## The activity-row recipe (the app writes the sentence)
 
@@ -125,7 +165,7 @@ The reference app's worked example is one endpoint feeding one component:
 - `system/app/RSpade/resource/reference_app/theme/components/view/revision_history/`
 - `system/app/RSpade/resource/reference_app/app/frontend/clients/history/Clients_History_Action.js`
 
-The three decisions worth copying:
+The four decisions worth copying:
 
 1. **The endpoint reads the record through the model's own `fetch()`**, so every
    record-level rule that model enforces governs its history too and a denial is
@@ -136,6 +176,9 @@ The three decisions worth copying:
    field names; the browser turns an enum id into a label with the generated stub's
    `Model.field__enum_labels()`, an `_at` / `_date` column through `Rsx_Time` / `Rsx_Date`
    (JQHTML-DATETIME-01), and a null into `<Empty_Value>`.
+4. **Every diff goes through `Revision::meaningful_changes()`**; an update left empty is
+   skipped, a transaction left with nothing is left off the page, and the next page's
+   cursor is the last transaction READ, not the last one shown.
 
 ```jqhtml
 <Revision_History $record_type="Client_Model" $record_id=_record.id />
@@ -213,8 +256,9 @@ Never call the internal `_reset_request_state()` / `_snapshot_request_state()` y
   declared its units - see above. Existing rows are not regrouped.
 - **A rolled-back database transaction takes its revisions with it.** They are written on
   the same connection, immediately - never `afterCommit`. That is the intended behavior.
-- **An update that changed nothing records nothing**, and an update whose every changed
-  column was excluded records nothing either.
+- **An update that changed nothing records nothing** - judged by the column's kind, so
+  equal values in other shapes are nothing - and an update whose every changed column was
+  excluded records nothing either.
 - **A child's writes missing from the parent's history** means no `#[Revision_Parent]`, or
   the foreign key was null at write time - the root pair is written at write time and is
   never recomputed.

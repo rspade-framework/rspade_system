@@ -238,6 +238,10 @@ $edit->set('budget', $budget);              // inside Form_Edit::run()
   (null - no amount, never zero) or the envelope `Money_Input` sends, and refuses beyond the
   column's limit. Its refusals are input problems (`format` / `scale` / `range`) whose message is
   written for the person - hand it to the field error unchanged.
+- **Ask the model that owns the column.** A money column on a DETAIL table (skill
+  `rspade:detail-tables`) is the detail model's: `Billable_Entry_Time_Detail_Model::money_from_submitted('hourly_rate', $x)`.
+  The base model answers `... is not a money column`, and its JS `editor_component_for()` does not
+  know the column - name `Money_Input` directly.
 - **Catch only `is_input_problem()`**. `rounding`, `division` and `argument` are the calculation or
   the CODE - rethrow them.
 - The business rule (not negative, not over a cap) is yours, written with the methods.

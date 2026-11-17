@@ -18,8 +18,8 @@ SYNOPSIS
     // Read a value in program code
     $cutoff = Rsx_Settings::get('billing_dow_cutoff');   // 1 (int)
 
-    // Set a value (usually from an admin screen)
-    Rsx_Settings::set('billing_dow_cutoff', 5);
+    // Set a value (usually from an admin screen); true when the value changed
+    $changed = Rsx_Settings::set('billing_dow_cutoff', 5);
 
 DESCRIPTION
     Rsx_Settings is a database-backed key/value store for application behaviour
@@ -89,8 +89,18 @@ API REFERENCE
         Resolved, type-cast value: the stored override for the scope, else the
         definition default. Throws if the key is not defined.
 
-    Rsx_Settings::set(string $key, mixed $value, ?int $site_id = null): void
+    Rsx_Settings::set(string $key, mixed $value, ?int $site_id = null): bool
         Validate against the type and persist. Throws if undefined or mistyped.
+        Returns whether the setting's VALUE changed: what get() answered before
+        (the stored override, else the default) against the new value, compared
+        by the declared type through the column equivalence rule (rsx:man
+        model, COLUMN EQUIVALENCE) - "5" and 5 on an integer, "1.50" and 1.5 on
+        a decimal, '' and null on text, one JSON document in another key order
+        are no change; null and 0 are a change. The value is written either way.
+
+            if (Rsx_Settings::set('billing_dow_cutoff', $params['billing_dow_cutoff'])) {
+                // record the change
+            }
 
     Rsx_Settings::forget(string $key, ?int $site_id = null): void
         Remove the stored value, reverting to the definition default.

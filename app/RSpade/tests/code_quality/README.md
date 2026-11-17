@@ -101,6 +101,12 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   fixture models: an HTML type (`STORES_HTML` true, `Text_Html_Rule_Fixture_Html_Text`) on
   an unsuffixed column, a plain type or no type on a `*_html` column, and the passing
   shapes; a framework-private `_` table is not judged.
+- **Revision noise (implemented):** `Model_Revision_Noise_Rule_Test` drives
+  MODEL-REVISION-NOISE-01 through `evaluate_class()` over a stated column list with
+  temp-loaded fixture models: every bookkeeping pattern and its near misses (`last_name`,
+  `position_title`, `read_at`), the three answers (`revision_exclude`, derived,
+  `revision_include` with a reason), a blank reason, a model without revisions; and the
+  `revision_include` grammar through MODEL-COLUMNS-01's seam.
 - **Bundle includes of the framework application tree (implemented):**
   `Bundle_Include_Path_Rule_Test` drives CONV-BUNDLE-02's critical half - an `rsx/`
   bundle may not name anything under `app/RSpade/Sys` (the system control panel), by

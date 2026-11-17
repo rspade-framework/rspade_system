@@ -650,21 +650,27 @@ BUNDLE RENDERING
 
     Never call from controllers - only from Blade files.
 
-    THE FIELD-LENGTH SCRIPT. A column's max length and a money column's limit
-    are facts about the DATABASE, so they are not compiled into a bundle: the
-    framework serves them, per bundle, as two lines of JavaScript -
+    THE FIELD-LENGTH SCRIPT. A column's max length, a money column's limit and
+    a column's equivalence descriptor are facts about the DATABASE, so they are
+    not compiled into a bundle: the framework serves them, per bundle, as three
+    lines of JavaScript -
 
         Rsx.__field_length_data = {"Contact_Model": {"first_name": 100, ...}, ...};
         Rsx.__money_limit_data = {"Project_Model": {"budget": "9999999999999.99"}, ...};
+        Rsx.__column_equivalence_data = {"Project_Model": {"budget": {"kind": "money", "nullable": true}, ...}, ...};
 
-    - and Model.field_length('column') and Model.money_limit('column') read
+    - and Model.field_length('column'), Model.money_limit('column') and
+    Model.same_value('column', a, b) (rsx:man model, COLUMN EQUIVALENCE) read
     those objects, synchronously. Both list exactly the models whose stubs are
     in the bundle's compiled app script (the compiler records them in
     build/bundle_models/<Bundle>.json, in every mode; a sealed build's seal
     covers that file): each varchar/char column with the PHP model's own
     field_length() answer, and each money column with its money_limit() as a
-    decimal string (rsx:man money), single-underscore system columns left out.
-    A model whose table is not in the database yet gets an empty entry in both.
+    decimal string (rsx:man money), and every column with its equivalence
+    descriptor (kind, nullability, scale, fractional precision) except
+    never_export columns; single-underscore system columns left out of all
+    three. A model whose table is not in the database yet gets an empty entry
+    in each.
 
     The URL names the bundle's own app script hash, so the script is exactly as
     reachable as the bundle (any other name is a 404), and carries the STATE key
@@ -674,8 +680,8 @@ BUNDLE RENDERING
 
     A PAGE THAT PRINTS A BUNDLE'S TAGS BY HAND GETS NO FIELD LENGTHS. The tag is
     emitted by render(); a layout that writes its own <script src="/_compiled/...">
-    tags instead does not load the script, and Model.field_length() throws there,
-    naming the script. Render bundles with render().
+    tags instead does not load the script, and Model.field_length() and
+    Model.same_value() throw there, naming the script. Render bundles with render().
 
     ON-DEMAND COMPILE. In development a request for a /_compiled/ file that is not
     on disk compiles the named bundle first - but only when the name is a concrete
@@ -873,8 +879,8 @@ JAVASCRIPT STUBS
 
     A stub is generated from the model's CODE alone - enums, relationships,
     declared text types, appended properties, derived columns. It carries no column lengths:
-    field_length() is one inherited method that reads the page's field-length
-    script (BUNDLE RENDERING, above).
+    field_length(), money_limit() and same_value() are inherited methods that
+    read the page's field-length script (BUNDLE RENDERING, above).
 
     A MODEL STUB FOLLOWS THE CLASS THAT EXTENDS IT. A generated model stub is
     emitted at the include position of the PHP model file, AND behind every JS

@@ -13,6 +13,7 @@ use App\RSpade\Core\Database\DetailTables\Rsx_Detail_Model_Abstract;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Emissions;
 use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
 use App\RSpade\Core\Database\Migration_Guard;
+use App\RSpade\Core\Database\Models\Column_Equivalence;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
@@ -277,7 +278,7 @@ abstract class Rsx_Model_Abstract extends Model
             }
         }
 
-        // Class-Table Inheritance: detail accessor (e.g. $record->party_person).
+        // Class-Table Inheritance: detail accessor (e.g. $record->billable_entry_time).
         // Returns the embedded/loaded detail for the active type, or throws on wrong-type.
         if (static::has_detail_tables() && static::__is_detail_accessor($key)) {
             return $this->__get_detail_for_accessor($key);
@@ -355,7 +356,7 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         // A detail accessor is "set" only when it matches this record's active type
-        // (so `$record->party_company ?? null` yields null rather than throwing wrong-type).
+        // (so `$record->billable_entry_expense ?? null` yields null rather than throwing wrong-type).
         if (static::has_detail_tables() && static::__is_detail_accessor($key)) {
             return $key === $this->__active_detail_accessor();
         }
@@ -474,7 +475,7 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         // Class-Table Inheritance: eager-embed the active PERSISTED detail so the client
-        // resolves `await record.party_person()` from the same payload (no extra fetch). It
+        // resolves `await record.billable_entry_time()` from the same payload (no extra fetch). It
         // rides under a single "__details" blob (not the accessor key) so it never collides
         // with the generated accessor method of the same name on the JS model.
         if (static::has_detail_tables()) {
@@ -587,13 +588,13 @@ abstract class Rsx_Model_Abstract extends Model
      *
      * public static $detail_tables = [
      *     'type_id' => [                                   // discriminator column
-     *         self::TYPE_PERSON  => Party_Person_Detail_Model::class,
-     *         self::TYPE_COMPANY => Party_Company_Detail_Model::class,
+     *         self::TYPE_TIME => Billable_Entry_Time_Detail_Model::class,
+     *         self::TYPE_EXPENSE => Billable_Entry_Expense_Detail_Model::class,
      *         // a value absent from the map => that type has no detail row
      *     ],
      * ];
      *
-     * Detail accessors (e.g. $record->party_person) are generated from this map; the
+     * Detail accessors (e.g. $record->billable_entry_time) are generated from this map; the
      * detail is eager-embedded on read and throws on wrong-type access. Null when the
      * model has no detail tables.
      *
@@ -616,6 +617,7 @@ abstract class Rsx_Model_Abstract extends Model
      *     'mileage_rate'  => ['money' => false, 'revision_exclude' => true],
      *     'api_secret'    => ['never_export' => true],
      *     'view_count'    => ['revision_exclude' => true],
+     *     'promo_code'    => ['revision_include' => 'chosen by staff when the deal is struck'],
      *     'project_id'    => ['derived' => 'derive_project_id', 'from' => ['parent_type', 'parent_id', 'direct_project_id']],
      * ];
      *
@@ -655,6 +657,12 @@ abstract class Rsx_Model_Abstract extends Model
      *                      updated_by pair). For values that change without anybody changing
      *                      them (counters, last-seen stamps, cached aggregates). Not a security
      *                      control. On a never_export column it wins: nothing is recorded.
+     *   revision_include - a non-empty string, the reason a column whose name looks like
+     *                      bookkeeping holds something a person enters or decides, so its
+     *                      changes ARE recorded. On a model with $revisions, every column of
+     *                      its table named like bookkeeping (*_count, last_*_at, sort_order,
+     *                      *_code, ...) is revision_exclude, derived, or carries this
+     *                      (MODEL-REVISION-NOISE-01). Never beside revision_exclude or derived.
      *   derived          - the name of a public, non-static method of the model, taking no
      *                      required argument, that computes the column's value (it may read
      *                      other tables). The framework writes the column on save(): on an
@@ -664,20 +672,24 @@ abstract class Rsx_Model_Abstract extends Model
      *   from             - the list of THIS record's columns the derive method reads (may be
      *                      [], may name another derived column, never the column itself).
      *                      Only allowed beside `derived`.
+     *   blank_distinct   - true: '' is a value of its own, never the same as NULL, though the
+     *                      column is nullable. Without it '' and NULL are the same value on a
+     *                      nullable column (Column_Equivalence, BLANK). Never beside enum,
+     *                      type_ref or money => true (those columns never hold '').
      *
      * A DERIVED COLUMN IS NEVER ASSIGNED. save() throws a LogicException when one was set by
      * hand - on a new record any assignment at all, even null or the value it would compute -
      * and a bulk update() naming one, Form_Edit::set() of one, and a raw-SQL (Expression)
      * bulk update of a `from` column throw too. Assign the `from` columns instead, or call
      * rederive() when what the method reads lives elsewhere (another table) and has moved.
-     * A save that changes only derived columns leaves updated_at and the updated_by pair as
-     * they were; a derived column never appears in revision history. An explicit
+     * A save that changes only derived and revision_exclude columns leaves updated_at and the
+     * updated_by pair as they were; a derived column never appears in revision history. An explicit
      * ->raw_bulk()->update() of a `from` column writes no derived value: the caller rederives.
      *
      * At most one of enum / text_type / type_ref / money => true per column (money => false
      * declares no kind and sits beside any of them); never_export and revision_exclude combine
      * with anything except that revision_exclude never sits beside derived (a derived column is
-     * never recorded already). A flag (type_ref, never_export, revision_exclude) is `true` or
+     * never recorded already) and revision_include never sits beside either. A flag (type_ref, never_export, revision_exclude, blank_distinct) is `true` or
      * absent - a kind is removed by replacing the entry, and `'column' => []` declares an
      * explicitly plain column.
      *
@@ -696,7 +708,8 @@ abstract class Rsx_Model_Abstract extends Model
      *
      * Read ONLY through columns() and its kind views (enum_columns(), enum_values(),
      * text_type_columns(), type_ref_columns(), money_columns(), never_exported_columns(),
-     * revision_excluded_columns(), derived_columns()) - never as a property. Every declared
+     * revision_excluded_columns(), blank_distinct_columns(), derived_columns()) - never as a
+     * property. Every declared
      * column and every `from` name is checked against the model's table the first time a
      * model with derived columns saves, on rederive() and on Form_Edit::run()
      * (_assert_columns_exist()), and by MODEL-ENUM-01 in rsx:check.
@@ -831,6 +844,69 @@ abstract class Rsx_Model_Abstract extends Model
     }
 
     /**
+     * Every column declared ['blank_distinct' => true]: '' is a value of its own there, never
+     * the same as NULL, even when the column is nullable (Column_Equivalence, BLANK).
+     *
+     * @return array<int, string>
+     */
+    public static function blank_distinct_columns(): array
+    {
+        return static::__column_views()['blank_distinct'];
+    }
+
+    /**
+     * Whether two values of a column are the same value, by the column's declared kind and
+     * schema type (Column_Equivalence - the ONE rule every "did it change" question in the
+     * framework asks): '1.00' and 1 on a DECIMAL(8,2), an ISO instant and its stored form on
+     * a DATETIME, '' and NULL on a nullable text column, the same JSON document in another key
+     * order. 0 and NULL are never the same. Throws when the model has no such column.
+     *
+     *     if (!Project_Model::same_value('hour_estimate', $project->hour_estimate, $submitted)) { ... }
+     *
+     * @param string $column A column of this model's table
+     * @param mixed $a
+     * @param mixed $b
+     * @return bool
+     */
+    public static function same_value(string $column, mixed $a, mixed $b): bool
+    {
+        return Column_Equivalence::same(Column_Equivalence::descriptor(static::class, $column), $a, $b);
+    }
+
+    /**
+     * The dirty check, by the column equivalence rule (Column_Equivalence) instead of
+     * Laravel's own: an attribute whose value is the same value as the original under the
+     * column's kind is NOT dirty - so it is not written, records no revision, does not move
+     * updated_at or the updated_by pair, and fires no after_update() and no realtime frame.
+     * An attribute that is not a column of the table (a selected alias) keeps Laravel's
+     * answer.
+     *
+     * @param string $key
+     * @return bool
+     */
+    public function originalIsEquivalent($key)
+    {
+        if (!array_key_exists($key, $this->original)) {
+            return false;
+        }
+
+        $attribute = $this->attributes[$key] ?? null;
+        $original = $this->original[$key];
+
+        if ($attribute === $original) {
+            return true;
+        }
+
+        $descriptor = Column_Equivalence::descriptor_or_null(static::class, $key);
+
+        if ($descriptor === null) {
+            return parent::originalIsEquivalent($key);
+        }
+
+        return Column_Equivalence::same($descriptor, $original, $attribute);
+    }
+
+    /**
      * Every derived column: column => ['method' => derive method, 'from' => source columns],
      * in DEPENDENCY ORDER - a derived column named in another's `from` comes before it. A
      * cycle among derived columns throws a LogicException naming its path. Empty for a model
@@ -846,7 +922,7 @@ abstract class Rsx_Model_Abstract extends Model
     /**
      * columns() and each kind view of it, built once per class and memoized.
      *
-     * @return array{columns: array, enum: array, text_type: array, type_ref: array, money: array, never_export: array, revision_exclude: array, derived: array}
+     * @return array{columns: array, enum: array, text_type: array, type_ref: array, money: array, never_export: array, revision_exclude: array, blank_distinct: array, derived: array}
      */
     private static function __column_views(): array
     {
@@ -890,6 +966,7 @@ abstract class Rsx_Model_Abstract extends Model
             'money' => [],
             'never_export' => [],
             'revision_exclude' => [],
+            'blank_distinct' => [],
             'derived' => [],
         ];
 
@@ -902,7 +979,7 @@ abstract class Rsx_Model_Abstract extends Model
             if (array_key_exists('text_type', $entry)) {
                 $views['text_type'][$column] = $entry['text_type'];
             }
-            foreach (['type_ref', 'never_export', 'revision_exclude', 'money'] as $flag) {
+            foreach (['type_ref', 'never_export', 'revision_exclude', 'blank_distinct', 'money'] as $flag) {
                 if (($entry[$flag] ?? false) === true) {
                     $views[$flag][] = $column;
                 }
@@ -2150,9 +2227,9 @@ EXAMPLE;
 
     /**
      * Set around the write of a save that changes only derived columns, so the UPDATE holds
-     * updated_at where it is (see _merge_derived_only_write()).
+     * updated_at where it is (see _merge_unstamped_write()).
      */
-    private bool $__derived_only_write = false;
+    private bool $__unstamped_write = false;
 
     /**
      * Override save to derive the derived columns, stamp authorship, and fire the write's
@@ -2183,14 +2260,23 @@ EXAMPLE;
             $this->__apply_derivations($derived, $was_existing, $this->__rederive_all);
         }
 
-        // A save whose only changes are derived columns records nobody as the updater and
-        // leaves updated_at alone: nobody edited the record, the framework kept it consistent.
-        $derived_only = $derived !== [] && $was_existing && $this->__dirty_only_derived($derived);
+        // A save whose only changes are derived or revision_exclude columns records nobody as
+        // the updater and leaves updated_at alone: nobody edited the record - the framework
+        // kept it consistent, or bookkeeping (a last-seen stamp, a counter) moved. updated_at
+        // is Form_Edit's version, so moving it here would ask another editor about a change
+        // nobody made.
+        $unstamped = $was_existing && $this->__dirty_only_unrecorded();
 
         // Stamp authorship BEFORE the write so the columns ride the same INSERT/UPDATE.
-        if (!$derived_only) {
+        if (!$unstamped) {
             $this->__apply_audit_stamp($was_existing);
         }
+
+        // A save of an existing record with nothing dirty - nothing assigned, or every value
+        // assigned the same value under the column's kind (Column_Equivalence) - writes nothing,
+        // so it has no effects to fire: no revision, no text-type hook, no realtime frame, no
+        // after_update().
+        $clean = $was_existing && !$this->isDirty();
 
         // Snapshot the BEFORE values while they still exist. parent::save() ends with
         // syncOriginal(), so once the write returns the "original" IS the new row and the
@@ -2207,12 +2293,12 @@ EXAMPLE;
         // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
         // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
         // recurse). Decremented in finally so an exception cannot leave the guard stuck on.
-        // A derived-only write also turns Eloquent's timestamps off for its duration and asks
+        // An unstamped write also turns Eloquent's timestamps off for its duration and asks
         // the builder to hold updated_at in the statement (MySQL's ON UPDATE would bump it).
         $uses_timestamps = $this->timestamps;
-        if ($derived_only) {
+        if ($unstamped) {
             $this->timestamps = false;
-            $this->__derived_only_write = true;
+            $this->__unstamped_write = true;
         }
 
         self::$_single_model_write_depth++;
@@ -2221,14 +2307,16 @@ EXAMPLE;
         } finally {
             self::$_single_model_write_depth--;
 
-            if ($derived_only) {
+            if ($unstamped) {
                 $this->timestamps = $uses_timestamps;
-                $this->__derived_only_write = false;
+                $this->__unstamped_write = false;
             }
         }
 
         if ($result) {
-            $this->_dispatch_write_effects_on_save($was_existing, $revision_original, $text_hook_before);
+            if (!$clean) {
+                $this->_dispatch_write_effects_on_save($was_existing, $revision_original, $text_hook_before);
+            }
             $this->__derived_written = [];
         }
 
@@ -2416,19 +2504,25 @@ EXAMPLE;
     }
 
     /**
-     * Whether this save changes something, and every change is a derived column.
-     *
-     * @param array<string, array{method: string, from: array<int, string>}> $derived
+     * Whether this save changes something, and every change is a column no revision records
+     * by declaration - a derived or revision_exclude column (revision_excluded_columns()).
      */
-    private function __dirty_only_derived(array $derived): bool
+    private function __dirty_only_unrecorded(): bool
     {
+        $unrecorded = static::revision_excluded_columns();
+
+        if ($unrecorded === []) {
+            return false;
+        }
+
         $dirty = array_keys($this->getDirty());
 
-        return $dirty !== [] && array_diff($dirty, array_keys($derived)) === [];
+        return $dirty !== [] && array_diff($dirty, $unrecorded) === [];
     }
 
     /**
-     * Hold updated_at in a derived-only save's UPDATE: `updated_at = updated_at`. Eloquent's
+     * Hold updated_at in an unstamped save's UPDATE (only derived and revision_exclude columns
+     * changed): `updated_at = updated_at`. Eloquent's
      * timestamps are off for that write, but every normalized table declares updated_at
      * ON UPDATE CURRENT_TIMESTAMP, which MySQL applies to any UPDATE that does not name the
      * column. Returns $values untouched for every other write, and for a record that has no
@@ -2440,9 +2534,9 @@ EXAMPLE;
      * @param array<string, mixed> $values The columns the UPDATE is about to write
      * @return array<string, mixed>
      */
-    public function _merge_derived_only_write(array $values): array
+    public function _merge_unstamped_write(array $values): array
     {
-        if (!$this->__derived_only_write) {
+        if (!$this->__unstamped_write) {
             return $values;
         }
 
@@ -3305,6 +3399,13 @@ EXAMPLE;
      * wrote nothing and records nothing. A restore is an UPDATE whose deleted_at went back
      * to null, and is recorded as its own operation so a history can name it.
      *
+     * A pair whose two sides are the same value under the column's kind (Column_Equivalence)
+     * is never recorded - on a create, a value the same as NULL ('' on a nullable column);
+     * on an update, a column the dirty check should already have left clean - and an update
+     * left with no pair records no revision (a create is always recorded). Each recorded
+     * side is the column's STORAGE FORM ("1.00" for 1 on a DECIMAL(8,2), 1 for true on a
+     * boolean): what the column holds, not the shape the value was assigned in.
+     *
      * A never-exported column is recorded REDACTED - both sides Revision::REDACTED - decided
      * before _revision_value() sees the value, so neither the old nor the new value of a
      * secret ever reaches the document in any form.
@@ -3329,12 +3430,18 @@ EXAMPLE;
                     continue;
                 }
 
+                $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
+
+                if ($descriptor !== null && Column_Equivalence::same($descriptor, null, $value)) {
+                    continue;
+                }
+
                 if (isset($redacted[$column])) {
                     $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
                     continue;
                 }
 
-                $diff[$column] = [null, $this->_revision_value($value)];
+                $diff[$column] = [null, $this->_revision_value($descriptor, $value)];
             }
 
             Revision::_record($this, Revision_Model::OPERATION_CREATE, $diff, $this->_revision_root());
@@ -3355,19 +3462,26 @@ EXAMPLE;
                 continue;
             }
 
+            $descriptor = Column_Equivalence::descriptor_or_null(static::class, $column);
+            $before = $original[$column] ?? null;
+
+            if ($descriptor !== null && Column_Equivalence::same($descriptor, $before, $value)) {
+                continue;
+            }
+
             if (isset($redacted[$column])) {
                 $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
                 continue;
             }
 
             $diff[$column] = [
-                $this->_revision_value($original[$column] ?? null),
-                $this->_revision_value($value),
+                $this->_revision_value($descriptor, $before),
+                $this->_revision_value($descriptor, $value),
             ];
         }
 
-        // Everything that changed was excluded - the record moved, but nothing a history
-        // would show did.
+        // Everything that changed was excluded or the same value - the record moved, but
+        // nothing a history would show did.
         if (empty($diff)) {
             return;
         }
@@ -3429,6 +3543,19 @@ EXAMPLE;
      */
     private function _revision_excluded_columns(): array
     {
+        return static::_revision_unrecorded_lookup();
+    }
+
+    /**
+     * Every column this model's revisions never record, as a lookup: the automatic exclusions
+     * (updated_at, the updated_by pair) plus revision_excluded_columns(). System columns
+     * ('_'-prefixed) are excluded by name, separately. Framework-internal ('_' prefix): the
+     * revision writer and Revision::meaningful_changes() read it.
+     *
+     * @return array<string, bool>
+     */
+    public static function _revision_unrecorded_lookup(): array
+    {
         $excluded = [
             'updated_at' => true,
             'updated_by_id' => true,
@@ -3475,18 +3602,22 @@ EXAMPLE;
     }
 
     /**
-     * One stored value, reduced to something JSON can carry.
+     * One recorded side: the column's storage form (Column_Equivalence::storage_form()), then
+     * reduced to something JSON can carry - anything that is still not a scalar (an
+     * Expression, a value object a custom cast produced) is encoded rather than allowed to
+     * make the whole document unserializable.
      *
-     * Raw attributes are already the values that went to the database - scalars and strings
-     * - so this is a floor, not a conversion: anything else (an Expression, a value object a
-     * custom cast produced) is encoded rather than allowed to make the whole document
-     * unserializable.
-     *
+     * @param array|null $descriptor The column's descriptor; null for an attribute that is not
+     *                               a column of the table
      * @param mixed $value
      * @return mixed
      */
-    private function _revision_value($value)
+    private function _revision_value(?array $descriptor, $value)
     {
+        if ($descriptor !== null && ($value === null || is_scalar($value))) {
+            $value = Column_Equivalence::storage_form($descriptor, $value);
+        }
+
         if ($value === null || is_scalar($value)) {
             return $value;
         }
@@ -3820,7 +3951,7 @@ EXAMPLE;
     }
 
     /**
-     * Resolve a detail accessor by name (e.g. $record->party_company). Wrong-type access
+     * Resolve a detail accessor by name (e.g. $record->billable_entry_expense). Wrong-type access
      * (the accessor does not match this record's discriminator) throws - fail loud, local.
      * For the active type, returns the persisted detail, or a vivified new instance with the
      * parent FK pre-set (plain construction, parent FK populated), cached so the caller can fill

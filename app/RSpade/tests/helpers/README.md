@@ -10,6 +10,7 @@ report prints through (rsx:man helpers). Its JS twin lives in `Core/Js/functions
 
 - `app/RSpade/helpers.php` - `bytes_to_human()`
 - `app/RSpade/Lib/Ui/Qr/Rsx_Qr_Code.php` - `Rsx_Qr_Code::generate()`, the one QR code generator
+- `app/RSpade/Core/Js/hash.js` - `hash()` / `deep_equal()`; `Core/Js/functions.js` - `deep_clone()`
 
 ## Man page(s)
 

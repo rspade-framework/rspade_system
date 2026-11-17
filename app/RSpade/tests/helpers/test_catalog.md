@@ -36,3 +36,11 @@ Type: php. Last updated: 2026-10-11.
 | HELP-CMD-01 | `command_exists()` finds a binary on the PATH and refuses an unknown or empty name | php | `bash`, `php`, an unknown name, `''` | true, true, false, false | implemented | 2026-10-29 |
 | HELP-CMD-02 | a name with a directory separator is checked as an executable file | php | `PHP_BINARY`, `/etc/hostname`, `/tmp` | true, false, false | implemented | 2026-10-29 |
 | HELP-CMD-03 | shell syntax in the name runs nothing | php | `bash; touch <marker>` and five other shapes | false each; the marker never exists | implemented | 2026-10-29 |
+
+## hash / deep_equal / deep_clone (`playwright/hash_deep_equal_helpers.js`)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| helpers-hash-01 | values of different types never compare equal: every leaf keeps its JSON type | [] / {}, null / "null", undefined / "undefined" (top-level and nested), true / "true", 5 / "5", null / "" | `deep_equal()` false for each pair | implemented |
+| helpers-hash-02 | property order never matters, list order does | reordered keys; reversed list | true; false | implemented |
+| helpers-hash-03 | `deep_clone()` copies every plain object and array, keeps a value object as the same object | nested data with an Rsx_Money, the copy changed | original untouched, nested containers distinct, the Rsx_Money identical | implemented |

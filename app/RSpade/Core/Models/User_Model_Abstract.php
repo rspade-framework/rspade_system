@@ -53,12 +53,12 @@ use App\RSpade\Lib\Settings\Has_Preference_Variables;
  * @property string $first_name
  * @property int $id
  * @property string $invite_accepted_at never exported to the browser
- * @property string $invite_code never exported to the browser
+ * @property string $invite_code never exported to the browser; not recorded in revisions
  * @property string $invite_expires_at never exported to the browser
  * @property bool $is_api_access_enabled
  * @property bool $is_enabled
  * @property string $last_name
- * @property string $last_seen
+ * @property string $last_seen not recorded in revisions
  * @property int $login_user_id
  * @property string $phone
  * @property int $role_id enum: ROLE_ROOT_ADMIN, ROLE_SITE_OWNER, ROLE_SITE_ADMIN, ROLE_MANAGER, ROLE_USER, ROLE_VIEWER (also $role_id__label and the other $role_id__* properties)
@@ -190,12 +190,19 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      * sent to the browser (window.rsxapp.user, model fetch, relationship and list payloads, the
      * external API).
      *
+     * Two columns are bookkeeping, never recorded in revision history
+     * (MODEL-REVISION-NOISE-01): invite_code is minted by the framework each time an
+     * invitation is sent - the invitation is the decision, the code is not - and last_seen is
+     * the account's own activity stamp (written with a bare statement on a page view, never
+     * through save(); declared so that a save that does carry it records nothing for it).
+     *
      * role_id carries each role's ACL permissions and can_admin_roles. A static property
      * initializer cannot name self:: constants here, so the values are literals that must match
      * the ROLE_* and PERM_* constants defined above.
      */
     public static $columns = [
-        'invite_code' => ['never_export' => true],
+        'invite_code' => ['never_export' => true, 'revision_exclude' => true],
+        'last_seen' => ['revision_exclude' => true],
         'invite_accepted_at' => ['never_export' => true],
         'invite_expires_at' => ['never_export' => true],
         'role_id' => ['enum' => [

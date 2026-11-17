@@ -8,9 +8,11 @@
 namespace App\RSpade\Lib\Revisions;
 
 use RuntimeException;
+use App\RSpade\Core\Database\Models\Column_Equivalence;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Result_Set;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Lib\Revisions\Revision_Codec;
@@ -275,6 +277,63 @@ class Revision
         return Revision_Model::where('transaction_id', $transaction_id)
             ->orderBy('sequence', 'asc')
             ->result_set();
+    }
+
+    /**
+     * The pairs of an ALREADY STORED diff that a history should show: every pair of
+     * $revision->diff() except
+     *
+     *   - a column the model's revisions do not record NOW: revision_exclude, derived, and the
+     *     automatic exclusions (updated_at, the updated_by pair, '_'-prefixed system columns) -
+     *     a column declared excluded after it was recorded stops showing everywhere at once;
+     *   - a pair whose two sides are the same value under the column's kind
+     *     (Model::same_value(): ['1.00', 1] on a DECIMAL, an instant in two forms, '' over
+     *     NULL on a nullable text column) - written before the rule existed.
+     *
+     * A redacted pair (a never_export column) is always kept: it says the secret changed. A
+     * pair for a column the table no longer has is kept as stored - nothing remains to judge
+     * it by. Every history reader passes its diffs through here, so stored noise is hidden
+     * the same way on every screen; an update revision left empty is one a reader skips.
+     *
+     * @param string $model_class The revision's model (its record_type), simple name or FQCN
+     * @param array<string, array{0: mixed, 1: mixed}> $diff A stored `{field: [before, after]}`
+     * @return array<string, array{0: mixed, 1: mixed}>
+     */
+    public static function meaningful_changes(string $model_class, array $diff): array
+    {
+        $fqcn = str_contains($model_class, '\\')
+            ? ltrim($model_class, '\\')
+            : (Manifest::php_model_record($model_class)['fqcn'] ?? null);
+
+        if ($fqcn === null || !is_subclass_of($fqcn, Rsx_Model_Abstract::class)) {
+            throw new RuntimeException("Revision::meaningful_changes(): {$model_class} is not a model in the manifest's registry.");
+        }
+
+        $unrecorded = $fqcn::_revision_unrecorded_lookup();
+        $descriptors = Column_Equivalence::descriptors($fqcn) ?? [];
+        $kept = [];
+
+        foreach ($diff as $column => $pair) {
+            $column = (string) $column;
+
+            if (isset($unrecorded[$column]) || (str_starts_with($column, '_') && !str_starts_with($column, '__'))) {
+                continue;
+            }
+
+            if (!is_array($pair) || count($pair) !== 2 || !isset($descriptors[$column])
+                || Revision_Model::is_redacted($pair[0]) || Revision_Model::is_redacted($pair[1])) {
+                $kept[$column] = $pair;
+                continue;
+            }
+
+            [$before, $after] = array_values($pair);
+
+            if (!Column_Equivalence::same($descriptors[$column], $before, $after)) {
+                $kept[$column] = $pair;
+            }
+        }
+
+        return $kept;
     }
 
     /**

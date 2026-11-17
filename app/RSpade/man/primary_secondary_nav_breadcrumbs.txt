@@ -557,8 +557,9 @@ PAGE HEADER STRUCTURE
         The template app ships Record_Page_Actions (Back, optional Edit) and
         List_Page_Actions (New, optional Export and Reports) in
         rsx/theme/components/page/; a page with buttons of its own declares a
-        small component beside the action
-        (system/app/RSpade/resource/reference_app/app/frontend/party/list/party_index_page_actions.jqhtml).
+        small component beside the action - the billing list's New entry menu
+        of the three entry kinds
+        (system/app/RSpade/resource/reference_app/app/frontend/billing/list/billing_index_page_actions.jqhtml).
 
 BREADCRUMB CHAIN EXAMPLE
     For URL /contacts/edit/1, the breadcrumb chain resolves as:

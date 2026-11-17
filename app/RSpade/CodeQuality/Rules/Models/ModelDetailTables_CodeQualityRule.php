@@ -99,7 +99,7 @@ class ModelDetailTables_CodeQualityRule extends CodeQualityRule_Abstract
                 "Model {$fqcn} \$detail_tables must declare exactly one discriminator column (found " . count($detail_tables) . ")",
                 $lines[$line - 1] ?? '',
                 "v1 supports a single discriminator column, e.g.:\n" .
-                "public static \$detail_tables = ['type_id' => [self::TYPE_PERSON => Party_Person_Detail_Model::class]];"
+                "public static \$detail_tables = ['type_id' => [self::TYPE_TIME => Billable_Entry_Time_Detail_Model::class]];"
             );
             return;
         }

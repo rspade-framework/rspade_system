@@ -524,6 +524,68 @@ class Rsx_Js_Model {
     }
 
     /**
+     * The column's equivalence descriptor ({kind, nullable?, scale?, fsp?, blank_distinct?,
+     * text_type?}) as the PHP model computes it (Column_Equivalence::descriptors()), from the
+     * page's field-length script, which assigns Rsx.__column_equivalence_data beside the
+     * lengths because a descriptor is half schema.
+     *
+     * THROWS when the script's data is not there or holds nothing for this model, and when it
+     * holds no descriptor for the column - no such column, a system column, or a never_export
+     * column (the browser never holds a secret's value, so it never compares one).
+     *
+     * @param {string} column - Column name
+     * @returns {Object}
+     */
+    static column_descriptor(column) {
+        const CurrentClass = this;
+        const model_name = CurrentClass.getModelName();
+        const data = Rsx.__column_equivalence_data;
+
+        if (data === null || !Object.hasOwn(data, model_name)) {
+            throw new Error(
+                `${model_name}.column_descriptor('${column}'): ` +
+                (data === null
+                    ? `the page's field-length script did not load, so no column descriptors are available. `
+                    : `the page's field-length script carries no column descriptors for ${model_name}. `) +
+                `Check that the page's <script src="/_field_lengths/..."> tag (emitted after the app bundle) ` +
+                `is present and answered 200, and that ${model_name} is in this page's bundle.`
+            );
+        }
+
+        const descriptors = data[model_name];
+
+        if (!Object.hasOwn(descriptors, column)) {
+            throw new Error(
+                `${model_name}.column_descriptor('${column}'): the page's field-length script carries no descriptor for it - ` +
+                `it is not a column of the model's table, or it is a system or never_export column the browser never holds.`
+            );
+        }
+
+        return descriptors[column];
+    }
+
+    /**
+     * Whether two values of a column are the same value, by the column's declared kind and
+     * schema type - the PHP Model::same_value() rule (Column_Equivalence): '1.50' and 1.5 on
+     * a DECIMAL(8,2), '' and null on a nullable text column, the same JSON document in another
+     * key order, an instant in two forms. 0 and null are never the same. Synchronous.
+     *
+     *     if (!Project_Model.same_value('hour_estimate', record.hour_estimate, values.hour_estimate)) { ... }
+     *
+     * Throws as column_descriptor() does, and for an undefined side.
+     *
+     * @param {string} column - Column name
+     * @param {*} a
+     * @param {*} b
+     * @returns {boolean}
+     */
+    static same_value(column, a, b) {
+        const CurrentClass = this;
+
+        return Column_Equivalence.same(CurrentClass.column_descriptor(column), a, b);
+    }
+
+    /**
      * Watch this model's record for changes (for NON-component code).
      *
      * Sugar over Rsx_Realtime.watch('Model_Changed_Topic', {model, id}, cb). Inside a
@@ -552,13 +614,13 @@ class Rsx_Js_Model {
     }
 
     /**
-     * Resolve a Class-Table Inheritance detail accessor (e.g. await record.party_company()).
+     * Resolve a Class-Table Inheritance detail accessor (e.g. await record.billable_entry_expense()).
      * Generated detail accessors on the model stub delegate here. The detail rides embedded
      * in this record's payload (under __details), so there is no network call. Wrong-type
      * access - the accessor does not match this record's discriminator value - throws locally.
      * Returns the hydrated detail model, or null when no persisted detail exists.
      *
-     * @param {string} accessor - The detail accessor name (e.g. 'party_company')
+     * @param {string} accessor - The detail accessor name (e.g. 'billable_entry_expense')
      * @returns {Object|null} The hydrated detail model instance, or null
      */
     __resolve_detail(accessor) {
@@ -579,6 +641,14 @@ class Rsx_Js_Model {
         const raw = (this.__details || {})[accessor];
         if (raw === null || raw === undefined) {
             return null;
+        }
+
+        // The record's own hydration walked __details with every other field, so a detail
+        // that arrived as a {__MODEL} record is already its model, its money and text values
+        // already rehydrated. Walking it again would rebuild it as a plain object and turn
+        // each Rsx_Money into a bare {_decimal} - so an instance is returned as it is.
+        if (raw instanceof Rsx_Js_Model) {
+            return raw;
         }
 
         return Rsx_Js_Model._instantiate_models_recursive(raw);

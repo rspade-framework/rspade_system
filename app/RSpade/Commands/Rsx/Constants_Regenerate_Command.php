@@ -522,6 +522,7 @@ class Constants_Regenerate_Command extends Command
      *   derived: computed by derive_x() from a, b; never assigned  (tagged @property-read)
      *   never exported to the browser
      *   not recorded in revisions
+     *   blank is a value, never NULL
      *   decimal                                               (typed string)
      *   json                                                  (typed string: no array cast)
      *
@@ -585,6 +586,10 @@ class Constants_Regenerate_Command extends Command
         // A derived column is never recorded already; the note is for a declared exclusion.
         if (!isset($derived[$column]) && in_array($column, $class::revision_excluded_columns(), true)) {
             $notes[] = 'not recorded in revisions';
+        }
+
+        if (in_array($column, $class::blank_distinct_columns(), true)) {
+            $notes[] = 'blank is a value, never NULL';
         }
 
         $tag_name = isset($derived[$column]) ? '@property-read' : '@property';

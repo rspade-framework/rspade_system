@@ -11,12 +11,14 @@ use Illuminate\Support\Facades\DB;
 use LogicException;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Database\Models\Column_Equivalence;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Money\Rsx_Money;
 use App\RSpade\Core\Database\Money\Rsx_Money_Exception;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Forms\Form_Questions;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Lib\Revisions\Revision;
 use App\RSpade\Lib\Revisions\Revision_Model;
 
 /**
@@ -58,6 +60,12 @@ use App\RSpade\Lib\Revisions\Revision_Model;
  * `$revisions = true`. A write that recorded no revision (raw_bulk(), raw SQL, a change
  * only to excluded columns) moves updated_at and names no field; that is asked as a plain
  * 'confirm', and "No" writes nothing.
+ *
+ * WHAT IS A CHANGE. The model's answer, the column equivalence rule (Model::same_value()):
+ * a stored pair the rule calls the same value, or a column the model's revisions no longer
+ * record, is not another editor's change (Revision::meaningful_changes()); and a field this
+ * submission sets to what is stored now ("1.5" over 1.50, "0" over false) overwrites nothing
+ * and is not asked about.
  *
  * COVERS the record's own columns. A pivot or a detail-table field is guarded by
  * changed() - it is written only when it changed - but is not checked for a conflict.
@@ -537,7 +545,11 @@ class Form_Edit
                 $any_revision = true;
                 $newest = max($newest, (int) $revision->id);
 
-                foreach ($revision->diff() as $column => $values) {
+                // Only what the model's revisions record NOW, and only real changes: a pair
+                // equal under the column's kind, or a column since excluded or derived, was
+                // never a change anybody made (Revision::meaningful_changes()). A fact group
+                // whose every column is equal is therefore no change at all.
+                foreach (Revision::meaningful_changes(get_class($model), $revision->diff()) as $column => $values) {
                     // A column of a fact group changes the whole group: every field stored in
                     // any of its columns.
                     $group = $groups[$column] ?? null;
@@ -806,36 +818,24 @@ class Form_Edit
     }
 
     /**
-     * Does the submission set the column to what is stored now? Compared stored-form and as
-     * shown; an amount of money by its exact value.
+     * Does the submission set the column to what is stored now? Asked of the column
+     * equivalence rule (Model::same_value() - the model's own answer to "did it change"), with
+     * the submitted side first read as the column reads it on assignment: an amount of money
+     * through Rsx_Money::from_submitted() (blank is null; one that is not an amount differs
+     * from anything stored - assigning it throws, and the endpoint reports that), and a bare
+     * string on a text-type column as plain text. A column the table no longer has cannot be
+     * compared, so it is asked about.
      */
     private function __same_value(Rsx_Model_Abstract $model, string $column, $stored, $submitted): bool
     {
-        if ($stored instanceof Rsx_Money || $submitted instanceof Rsx_Money || get_class($model)::is_money_column($column)) {
-            return $this->__same_money($stored, $submitted);
+        $class = get_class($model);
+        $descriptor = Column_Equivalence::descriptor_or_null($class, $column);
+
+        if ($descriptor === null) {
+            return false;
         }
 
-        $plain = fn ($value) => $value instanceof Rsx_Text_Abstract ? $value->to_plain_text() : $value;
-
-        if (is_scalar($plain($stored)) || $stored === null) {
-            if ((string) $plain($stored) === (string) (is_scalar($plain($submitted)) ? $plain($submitted) : json_encode($plain($submitted)))) {
-                return true;
-            }
-        }
-
-        return $this->__kind($model, $column) !== self::FIELD_SECRET
-            && $this->__display($model, $column, $stored) === $this->__display($model, $column, $submitted);
-    }
-
-    /**
-     * Two amounts of money, compared exactly. A submitted value that is not an Rsx_Money is
-     * read as the endpoint would read it (from_submitted(): blank is null); one that is not an
-     * amount at all differs from anything stored - assigning it throws, and the endpoint
-     * reports that.
-     */
-    private function __same_money($stored, $submitted): bool
-    {
-        if (!$submitted instanceof Rsx_Money) {
+        if ($descriptor['kind'] === Column_Equivalence::KIND_MONEY && !$submitted instanceof Rsx_Money) {
             try {
                 $submitted = Rsx_Money::from_submitted($submitted);
             } catch (Rsx_Money_Exception $e) {
@@ -843,11 +843,11 @@ class Form_Edit
             }
         }
 
-        if ($stored === null || $submitted === null) {
-            return $stored === null && $submitted === null;
+        if ($descriptor['kind'] === Column_Equivalence::KIND_TEXT_TYPE && is_string($submitted)) {
+            $submitted = $descriptor['text_type']::from_plain_text($submitted);
         }
 
-        return $stored instanceof Rsx_Money && $stored->equals($submitted);
+        return Column_Equivalence::same($descriptor, $stored, $submitted);
     }
 
     /** One value as a person reads it: an enum's label, a referenced record's name, plain text. */

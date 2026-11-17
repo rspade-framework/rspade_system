@@ -131,6 +131,13 @@ class Rsx_Schema_Test extends Rsx_Test_Abstract
         static::__assert_equals(2, Rsx_Schema::varchar_length('char(2)'));
         static::__assert_null(Rsx_Schema::varchar_length('text'), 'only varchar/char carry a length');
         static::__assert_null(Rsx_Schema::varchar_length('bigint'));
+
+        static::__assert_equals(3, Rsx_Schema::fractional_precision('datetime(3)'));
+        static::__assert_equals(6, Rsx_Schema::fractional_precision('timestamp(6)'));
+        static::__assert_equals(0, Rsx_Schema::fractional_precision('datetime'), 'no precision written is 0');
+        static::__assert_equals(2, Rsx_Schema::fractional_precision('time(2)'));
+        static::__assert_null(Rsx_Schema::fractional_precision('date'), 'only datetime, timestamp and time carry one');
+        static::__assert_null(Rsx_Schema::fractional_precision('varchar(20)'));
     }
 
     /**
@@ -149,6 +156,7 @@ class Rsx_Schema_Test extends Rsx_Test_Abstract
                 'max_length' => Rsx_Schema::varchar_length($column->Type),
                 'precision' => $is_decimal ? (int) $digits[1] : null,
                 'scale' => $is_decimal ? (int) $digits[2] : null,
+                'fsp' => Rsx_Schema::fractional_precision($column->Type),
                 'nullable' => ($column->Null === 'YES'),
                 'key' => $column->Key,
                 'default' => $column->Default,

@@ -168,7 +168,7 @@ function check(ok, what, detail) {
             String(result.missing_model_error)
         );
         check(result.restored === result.first_name, 'the page is left as it was found');
-        check(result.body_lines === 2, '(g) the script is two assignments', String(result.body_lines));
+        check(result.body_lines === 3, '(g) the script is three assignments', String(result.body_lines));
         check(
             result.limits_loaded && JSON.stringify(result.served_limits_user) === '{}',
             '(g) the served limits carry an empty entry for a model with no money column',

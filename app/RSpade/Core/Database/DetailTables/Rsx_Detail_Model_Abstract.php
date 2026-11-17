@@ -8,21 +8,21 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * Rsx_Detail_Model_Abstract - base class for a Class-Table Inheritance (CTI) detail model.
  *
  * A detail model holds the type-specific fields for one discriminator value of a base
- * model (see man detail_tables). It is a STANDARD model (default `id` PK) joined 1:1 to
+ * model (rsx:man detail_tables). It is a STANDARD model (default `id` PK) joined 1:1 to
  * the base by a UNIQUE foreign key ({parent}_id). It is reached only through the base
- * record's generated detail accessor (e.g. `$party->party_person`) - it has NO fetch()
+ * record's generated detail accessor (e.g. `$entry->billable_entry_time`) - it has NO fetch()
  * and is never independently fetchable from JS; its authorization IS the parent's.
  *
  * A concrete detail model only declares its parent:
  *
- *   class Party_Person_Detail_Model extends Rsx_Detail_Model_Abstract
+ *   class Billable_Entry_Time_Detail_Model extends Rsx_Detail_Model_Abstract
  *   {
- *       protected $table = 'party_person_details';
- *       protected static $parent_model = Party_Model::class;
+ *       protected $table = 'billable_entry_time_details';
+ *       protected static $parent_model = Billable_Entry_Model::class;
  *   }
  *
  * The FK column ($parent_key) is derived from the parent model's basename
- * (Party_Model -> party_id); override $parent_key only for a non-conventional name.
+ * (Billable_Entry_Model -> billable_entry_id); override $parent_key only for a non-conventional name.
  */
 abstract class Rsx_Detail_Model_Abstract extends Rsx_Model_Abstract
 {
@@ -53,7 +53,7 @@ abstract class Rsx_Detail_Model_Abstract extends Rsx_Model_Abstract
 
     /**
      * The FK column name on this detail table that references the base's id.
-     * Derived from the parent model basename (Party_Model -> party_id) unless overridden.
+     * Derived from the parent model basename (Billable_Entry_Model -> billable_entry_id) unless overridden.
      */
     public static function parent_key(): string
     {

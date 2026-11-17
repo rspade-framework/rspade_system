@@ -1,0 +1,153 @@
+"DID IT CHANGE" IS ONE RULE, BY THE COLUMN'S KIND; REVISIONS RECORD ONLY WHAT A PERSON CHANGED
+Date: 2026-11-17
+
+IF YOU DO NOTHING: an assignment of '' to a nullable column holding NULL (or "1.5" to a
+    DECIMAL holding 1.50) no longer saves anything - no write, no after_update(), no realtime
+    frame, no revision - so code that relied on that save firing does nothing, silently; and
+    `php artisan rsx:check` fails with MODEL-REVISION-NOISE-01 for every bookkeeping-named
+    column of a revisioned model until it is declared.
+
+SUMMARY
+    Category 2: a changed default in the model layer, a type change in two JavaScript
+    globals, and a declaration every revisioned model with bookkeeping columns now owes.
+
+    - One rule decides whether two values of a column are the same value, by its declared
+      kind and schema type: Model::same_value('col', $a, $b) in PHP and
+      Model.same_value('col', a, b) in JavaScript. The model's dirty check uses it, so
+      isDirty(), getDirty(), getChanges(), the updated_at / updated_by stamp, the revision
+      writer, after_update(), the realtime frame, Form_Edit and Rsx_Settings::set() all
+      answer by it.
+    - '' and NULL are ONE value on a nullable column unless it is declared
+      'blank_distinct' => true. 0 / 0.00 / false and NULL stay different.
+    - A save whose only changes are revision_exclude or derived columns no longer moves
+      updated_at or the updated_by pair.
+    - Revisions store each side in the column's storage form ("1.00", not 1).
+      Revision::meaningful_changes($model_class, $diff) is what a history shows.
+    - MODEL-REVISION-NOISE-01 (rsx:check): a bookkeeping-named column on a $revisions model
+      is declared revision_exclude, derived, or 'revision_include' => '<reason>'.
+    - hash() and deep_equal() keep value types.
+    - Rsx_Form hands before_submit a deep copy of the values; a hook key is judged against
+      the record seed.
+
+    Contract: php artisan rsx:man model (COLUMN EQUIVALENCE), rsx:man revisions
+    (BOOKKEEPING COLUMNS), rsx:man form_conventions (EDITING A RECORD), rsx:man
+    js_functions. Skills: rspade:models, rspade:revisions, rspade:form-engine. Worked example:
+    system/app/RSpade/resource/reference_app/tests/Column_Equivalence_Template_Test.php and
+    system/app/RSpade/resource/reference_app/app/frontend/*/edit/*_Edit_Action.js.
+
+THE CHANGE
+    Before, the dirty check was Laravel's own comparison: "1.00" against 1 on a DECIMAL,
+    one instant in two forms, '' against NULL and one JSON document in another key order
+    were all "changed". Each fake change wrote the row, moved updated_at (Form_Edit's
+    version, so another editor was asked about a change nobody made), recorded a revision
+    and fired after_update() and a realtime frame. Now they are the same value and the save
+    of an existing record with nothing dirty does nothing at all.
+
+THE FIX
+    Column_Equivalence (PHP and JS twins, one shared vector file),
+    Rsx_Model_Abstract::originalIsEquivalent(), the revision writer, Revision::
+    meaningful_changes(), Form_Edit, Rsx_Form, hash.js, Rsx_Settings. It arrives with the
+    framework; nothing here is copied.
+
+ACTION REQUIRED - CODE THAT DEPENDS ON A SAVE FIRING
+    Find code that runs because a save happened, where the save may assign a value equal to
+    the stored one in another shape:
+
+        grep -rn "after_update\|getDirty\|getChanges\|isDirty\|wasChanged" rsx/ --include='*.php'
+
+    For each, decide: if it must run on every save() call regardless of change, it now does
+    not for an equal value - move that work to the caller. A guard such as
+    `if ($record->isDirty('hours'))` now answers false for "1.5" over 1.50, which is
+    normally what it always meant.
+
+ACTION REQUIRED - A NULLABLE COLUMN WHERE '' AND NULL MEAN DIFFERENT THINGS
+    Any nullable string, text or other column whose code tells '' from NULL ("asked and
+    left blank" vs "never asked"): declare it, or the '' is never written over a NULL and a
+    NULL never over a '':
+
+        'nickname' => ['blank_distinct' => true],
+
+    Not allowed beside enum, type_ref or money => true (those never hold '').
+
+ACTION REQUIRED - BOOKKEEPING COLUMNS ON REVISIONED MODELS
+    1. List them:
+           php artisan rsx:check
+       Each MODEL-REVISION-NOISE-01 finding names a model and a column whose name looks like
+       bookkeeping: *_cache, *_cache_id, last_*_at, last_*_by*, last_seen, *_synced_at,
+       *_read_at, *_viewed_at, *_count, sort_order, position, *_position, *_token, *_code,
+       *_key, *_hash.
+    2. Answer each in the model's $columns, one of three ways:
+           'last_emailed_at' => ['revision_exclude' => true],      // the system moves it
+           'open_task_count' => ['derived' => 'derive_open_task_count', 'from' => [...]],
+           'promo_code'      => ['revision_include' => 'chosen by staff when the deal is struck'],
+       A column with an entry already adds the key beside the others
+       ('total' => ['money' => true, 'revision_exclude' => true]). There is no exception
+       marker: revision_include and its reason are the acknowledgement.
+    3. Review every OTHER column of each revisioned model the same way - a column the system
+       moves on its own whose name matches no pattern (a portal visit stamp, an import
+       checksum) is declared revision_exclude too; the rule only insists where the name
+       gives it away. Reference: portal_last_activity_at in
+       system/app/RSpade/resource/reference_app/models/client_model.php.
+    4. A save that changes only such columns no longer moves updated_at. A list sorted by
+       updated_at to mean "recently viewed" or "recently emailed" sorts by that column
+       instead.
+
+ACTION REQUIRED - CODE THAT READS REVISION DIFFS
+    A history screen, export or activity feed that renders $revision->diff():
+        foreach (Revision::meaningful_changes($revision->record_type, $revision->diff()) as $field => [$before, $after]) { ... }
+    and skips an update left empty. It hides the noise stored before this release
+    (['1.00', 1], [0, true], a column since excluded). New rows store each side in the
+    column's storage form, so code that compared a stored side against a PHP value by `===`
+    ("1.00" === 1.0) compares with Model::same_value() instead. Reference:
+    system/app/RSpade/resource/reference_app/app/frontend/revisions/revisions_controller.php.
+
+ACTION REQUIRED - hash() AND deep_equal() KEEP TYPES
+    These now differ where they were equal: [] and {}, null and "null", undefined and
+    "undefined", true and "true", 5 and "5" - including nested. Find the callers:
+
+        grep -rn "deep_equal(\|hash(" rsx/ --include='*.js' --include='*.jqhtml'
+
+    A comparison of data from two sources that spell one value differently (a server number
+    against an input's string) now reports a difference: normalize both sides, or, for
+    values of a model column, use Model.same_value('col', a, b). A stored hash() result
+    (a cache key in storage) is a different string for such values; it is rebuilt on the
+    next miss.
+
+ACTION REQUIRED - before_submit HOOKS
+    A hook now receives a DEEP COPY of the form's values. A hook that changes the object in
+    place and returns it now has that change reported in _changed (before, it was silently
+    left out and Form_Edit skipped the field). A key the hook adds is judged against the
+    form's $data seed - by the column rule when the seed is a model instance - so a hook
+    that only reshapes a loaded value ("23" to 23) reports nothing. Delete any per-form
+    helper that existed to keep a hook's values in the loaded shape. To have keys judged by
+    the column rule, seed the edit form with the record the page fetched:
+
+        const record = await X_Model.fetch(this.args.id);
+        this.data.form_data = Object.assign(record, { /* the page's input shapes */ });
+
+    A plain-object seed keeps working; its keys are judged by deep_equal().
+
+ACTION REQUIRED - DELETE COMPARISON WORKAROUNDS
+    Remove application code written around the old answers, now that the framework gives
+    the right one:
+    - a float epsilon or a "same instant" helper comparing column values: Model::same_value()
+    - a hand-written diff in a settings endpoint: Rsx_Settings::set() returns whether the
+      value changed (bool; it returned nothing before)
+    - an app-side filter dropping equal pairs from stored revisions:
+      Revision::meaningful_changes()
+    - a "skip the save when nothing really changed" guard: an equal save already does
+      nothing
+
+ACTION REQUIRED - RUN THE SUITE ON A FRESH DATABASE
+    Every dirty answer in the application moved, so run the whole application suite once
+    against a freshly migrated test database:
+
+        php artisan rsx:test --fresh
+
+    A test asserting that an equal-valued save wrote a revision, moved updated_at or fired
+    an event now fails; correct the test, not the framework.
+
+VERIFICATION
+    php artisan rsx:check                 - no MODEL-REVISION-NOISE-01 finding
+    php artisan rsx:test --fresh          - the application suite passes
+    An edit saved with no field changed records no revision and leaves updated_at as it was.

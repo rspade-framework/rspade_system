@@ -8,17 +8,19 @@
 // ============================================================================
 
 /**
- * Generates a unique hash for any value (handles objects, arrays, circular references)
+ * Generates a unique hash for any value (handles objects, arrays, circular references).
+ *
+ * Every leaf keeps its JSON type, so values of different types never hash alike: [] and {}
+ * differ, null and "null" differ, undefined (top-level or nested) and "undefined" differ,
+ * true and "true" differ, 5 and "5" differ. Object property order never affects the hash;
+ * array order does.
+ *
  * @param {*} the_var - Value to hash
  * @param {boolean} [calc_sha1=true] - If true, returns SHA1 hash; if false, returns JSON
  * @param {Array<string>} [ignored_keys=null] - Keys to ignore when hashing objects
  * @returns {string} SHA1 hash or JSON string of the value
  */
 function hash(the_var, calc_sha1 = true, ignored_keys = null) {
-    if (typeof the_var == undef) {
-        the_var = '__undefined__';
-    }
-
     if (ignored_keys === null) {
         ignored_keys = ['$'];
     }
@@ -52,12 +54,26 @@ function hash(the_var, calc_sha1 = true, ignored_keys = null) {
 
         // Does not account for dates i think...
 
-        if (is_object(the_var) && typeof the_var._cache_key == 'function') {
+        if (the_var === undefined) {
+            // A non-empty array leaf: an array or object leaf is always EMPTY (its members
+            // are entries of their own), so no other value flattens to this.
+            flat_var[prefix] = ['undefined'];
+        } else if (the_var === null || typeof the_var === 'boolean') {
+            flat_var[prefix] = the_var;
+        } else if (is_object(the_var) && typeof the_var._cache_key == 'function') {
             // Use _cache_key to hash components
             flat_var[prefix] = the_var._hash_key();
         } else if (is_object(the_var) && typeof Abstract !== 'undefined' && the_var instanceof Abstract) {
             // Stringify all class objects
             flat_var[prefix] = json_stringify_nocirc(the_var);
+        } else if (is_array(the_var)) {
+            // Iterate arrays (before the object branch, which an array also satisfies)
+            flat_var[prefix] = [];
+            let i = 0;
+            foreach(the_var, (v) => {
+                _flatten(v, prefix + '..' + i, depth + 1);
+                i++;
+            });
         } else if (is_object(the_var)) {
             // Iterate other objects
             flat_var[prefix] = {};
@@ -66,14 +82,6 @@ function hash(the_var, calc_sha1 = true, ignored_keys = null) {
                     _flatten(the_var[k], prefix + '..' + k, depth + 1);
                 }
             }
-        } else if (is_array(the_var)) {
-            // Iterate arrays
-            flat_var[prefix] = [];
-            let i = 0;
-            foreach(the_var, (v) => {
-                _flatten(v, prefix + '..' + i, depth + 1);
-                i++;
-            });
         } else if (is_function(the_var)) {
             // nothing
         } else if (!is_numeric(the_var)) {
@@ -108,7 +116,8 @@ function hash(the_var, calc_sha1 = true, ignored_keys = null) {
 }
 
 /**
- * Deep comparison of two values (ignores property order and functions)
+ * Deep comparison of two values (ignores property order and functions; types are kept, so
+ * [] is not {}, null is not "null" and undefined is not "undefined" - see hash())
  * @param {*} a - First value to compare
  * @param {*} b - Second value to compare
  * @returns {boolean} True if values are deeply equal

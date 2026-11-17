@@ -17,11 +17,11 @@ declaration rules (MODEL-COLUMNS-01's derived checks, MODEL-DERIVED-01) are test
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - the `$columns` grammar
   docblock; `derived_columns()` (dependency order, the cycle refusal) and
   `revision_excluded_columns()` built in `__column_views()`; `save()` (the guard
-  `__assert_no_explicit_derived_assignment()`, `__apply_derivations()`, the derived-only
-  detection, timestamps off and `_merge_derived_only_write()`); `rederive()`;
+  `__assert_no_explicit_derived_assignment()`, `__apply_derivations()`, the unstamped (derived and
+  revision_exclude only) detection, timestamps off and `_merge_unstamped_write()`); `rederive()`;
   `_derived_drift()`; `_assert_columns_exist()` / `_columns_missing_from()`.
 - `app/Database/RestrictedEloquentBuilder.php` - `update()`: the single-write branch's
-  `_merge_derived_only_write()` call, `_refuse_derived_column_write()`, and
+  `_merge_unstamped_write()` call, `_refuse_derived_column_write()`, and
   `_has_side_effect_surface()` counting derived columns.
 - `app/RSpade/Core/Forms/Form_Edit.php` - `set()`'s derived refusal and `run()`'s
   `_assert_columns_exist()`.

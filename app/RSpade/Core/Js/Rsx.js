@@ -105,6 +105,15 @@ class Rsx {
     static __money_limit_data = null;
 
     /**
+     * Column equivalence descriptors for the models in this page's bundle - {Model_Name:
+     * {column: {kind, nullable?, scale?, fsp?, blank_distinct?, text_type?}}} - or null until
+     * the page's field-length script has run. Assigned by the same script as
+     * __field_length_data, and read by Rsx_Js_Model.column_descriptor(), which is the only
+     * reader.
+     */
+    static __column_equivalence_data = null;
+
+    /**
      * Framework-reserved hash key naming the element to scroll to.
      *
      * Reserved the same way DataGrid reserves `dg_*`: an application must not

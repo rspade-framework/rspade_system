@@ -12,18 +12,20 @@ SYNOPSIS
         // base model
         public static $detail_tables = [
             'type_id' => [
-                self::TYPE_PERSON  => Party_Person_Detail_Model::class,
-                self::TYPE_COMPANY => Party_Company_Detail_Model::class,
-                // a value absent from the map => that type has no detail
+                self::TYPE_TIME => Billable_Entry_Time_Detail_Model::class,
+                self::TYPE_EXPENSE => Billable_Entry_Expense_Detail_Model::class,
+                // TYPE_FIXED_FEE absent => no detail row.
             ],
         ];
 
-        $party->name                       // universal (base)
-        $party->party_person->first_name   // person-only (detail) - the path is the scope
-        $party->party_company              // THROWS if $party is not a Company
+        $entry->description                    // universal (base)
+        $entry->billable_entry_time->hours     // time-only (detail) - the path is the scope
+        $entry->billable_entry_expense         // THROWS if $entry is not an expense
 
-    Worked reference: the Party entity (/rsx/models/party_model.php + the staff
-    module under /rsx/app/frontend/party/).
+    Worked reference: the template's billing entries - Billable_Entry_Model and its
+    two detail models in /rsx/models/, the staff module under
+    /rsx/app/frontend/billing/ (its CLAUDE.md walks the pattern), and the app test
+    /rsx/tests/Billable_Entry_Test.php.
 
 DESCRIPTION
     Class-Table Inheritance models a record that has a shared field set common to a
@@ -33,10 +35,10 @@ DESCRIPTION
     hold one type's fields, joined 1:1 to the base.
 
     Scope becomes a SCHEMA FACT: the table a field lives in is the constraint, and
-    the access path (party.party_person.first_name) is the documentation. A column
+    the access path (entry.billable_entry_time.hours) is the documentation. A column
     can legally exist on both the base and a detail and mean different things, because
-    access is namespaced (party.image vs party.party_person.image) - though that is a
-    smell and emits a build warning.
+    access is namespaced (entry.notes vs entry.billable_entry_expense.notes) - though
+    that is a smell and emits a build warning.
 
     PHYSICAL SHAPE (surrogate id + UNIQUE FK, NOT a literal shared PK)
         The detail table keeps the framework-standard
@@ -56,17 +58,24 @@ DECLARATION
 
     Detail model: extends Rsx_Detail_Model_Abstract, declares $parent_model. It is a
     STANDARD model (default id PK) - no custom $primaryKey/$incrementing. The FK column
-    ($parent_key) is derived from the parent model basename (Party_Model -> party_id);
-    override $parent_key only for a non-conventional name.
+    ($parent_key) is derived from the parent model basename (Billable_Entry_Model ->
+    billable_entry_id); override $parent_key only for a non-conventional name.
 
-        class Party_Person_Detail_Model extends Rsx_Detail_Model_Abstract
+        class Billable_Entry_Time_Detail_Model extends Rsx_Detail_Model_Abstract
         {
-            protected $table = 'party_person_details';
-            protected static $parent_model = Party_Model::class;
+            protected $table = 'billable_entry_time_details';
+            protected $fillable = [];
+
+            protected static $parent_model = Billable_Entry_Model::class;
+
+            public static $columns = [
+                'hours' => [],
+                'hourly_rate' => ['money' => true],
+            ];
         }
 
     The accessor name is derived from the detail model basename:
-        Party_Person_Detail_Model -> party_person.
+        Billable_Entry_Time_Detail_Model -> billable_entry_time.
 
 MIGRATION
     Detail tables are created with the Rsx_Detail_Table helper (raw DDL via
@@ -75,10 +84,9 @@ MIGRATION
 
         use App\RSpade\Core\Database\DetailTables\Rsx_Detail_Table;
 
-        Rsx_Detail_Table::create('party_person_details', 'parties', [
-            ['name' => 'first_name', 'type' => 'VARCHAR(255)'],
-            ['name' => 'last_name',  'type' => 'VARCHAR(255)'],
-            ['name' => 'date_of_birth', 'type' => 'DATE'],
+        Rsx_Detail_Table::create('billable_entry_time_details', 'billable_entries', [
+            ['name' => 'hours', 'type' => 'DECIMAL(8,2)', 'nullable' => false],
+            ['name' => 'hourly_rate', 'type' => 'DECIMAL(12,2)', 'nullable' => false],
         ]);
 
     Signature: create($detail_table, $parent_table, array $columns, $parent_key=null,
@@ -91,52 +99,83 @@ MIGRATION
 
 READ
     PHP - the detail accessor is a magic property on the base:
-        $detail = $party->party_person;   // persisted row, or a vivified new instance
-        echo $party->party_person->first_name;
-        $party->party_company;            // THROWS: wrong type for a Person
+        $detail = $entry->billable_entry_time;   // persisted row, or a vivified new instance
+        echo $entry->billable_entry_time->hours;
+        $entry->billable_entry_expense;          // THROWS: wrong type for a time entry
 
     The accessor for the record's ACTIVE type returns the persisted detail row, or - if
     none exists yet - a NEW unsaved detail (plain construction) with the parent FK
-    pre-set, cached per request so you can fill and save it.
+    pre-set, cached on the instance so repeated reads return the same object to fill
+    and save.
     Accessing a detail accessor that does not match the record's discriminator throws a
     clear, local wrong-type error (the discriminator is on the record; no query). It is
     the caller's responsibility to check the type first.
 
     EMBED - toArray() eager-embeds the active PERSISTED detail under a "__details" blob
     (never the accessor key, so it cannot collide with the JS accessor method). A
-    vivified-but-unsaved detail is never serialized.
+    vivified-but-unsaved detail is never serialized - and the record remembers that
+    it had no persisted detail, so after saving a vivified detail call
+    $entry->refresh() before $entry->toArray(), or the payload leaves the new detail
+    out.
 
     JS - the generated stub exposes the detail as an async accessor that resolves from
     the embedded payload with NO network call, and throws wrong-type locally:
-        const p = await Party_Model.fetch(id);   // detail rides inside this one request
-        const person = await p.party_person();    // instant - from the embed
-        await p.party_company();                  // THROWS for a Person
+        const entry = await Billable_Entry_Model.fetch(id);  // detail rides inside this request
+        const time = await entry.billable_entry_time();       // instant - from the embed
+        await entry.billable_entry_expense();                 // THROWS for a time entry
+
+    Which accessor to call depends on the record's discriminator, so it is read after
+    the record arrives (a genuine sequential await in on_load()).
 
     SETS (avoid N+1) - serializing many base records lazy-loads each detail. Call
     Model::preload_details($collection) first to batch-load all active details in one
     query per detail table:
-        $parties = Party_Model::where(...)->get();
-        Party_Model::preload_details($parties);
-        // now $p->toArray() for each embeds its detail with no extra query
+        $entries = Billable_Entry_Model::where(...)->get();
+        Billable_Entry_Model::preload_details($entries);
+        // now $entry->toArray() for each embeds its detail with no extra query
+
+    The template application's DataGrid_Abstract (rsx/theme/components/datagrid/)
+    calls preload_details() between get() and toArray() for any grid whose query is
+    over a model with detail tables, so a grid row carries __details at one query per
+    detail table for the page.
 
 WRITE
     save() does NO detail magic. Because the FK lives on the detail, the detail can only
     be created AFTER the base has an id - so the detail is the developer's to write, in
     the same transaction. The uniform pattern (works for create and edit, every type):
 
-        DB::transaction(function () use ($party, $params) {
-            $party->type_id = Party_Model::TYPE_COMPANY;   // only set on create
-            $party->name    = $params['legal_name'];        // composed/derived base column
-            $party->save();
+        DB::transaction(function () use ($entry, $params, $hours, $hourly_rate) {
+            $entry->type_id = Billable_Entry_Model::TYPE_TIME;   // only set on create
+            $entry->amount = $hourly_rate->multiply($hours, Rsx_Money::ROUND_HALF_UP);
+            $entry->save();
 
-            $detail = $party->party_company;   // existing row, or new with party_id set
-            $detail->legal_name = $params['legal_name'];
+            $detail = $entry->billable_entry_time;   // existing row, or new with
+            $detail->hours = $hours;                 //   billable_entry_id set
+            $detail->hourly_rate = $hourly_rate;
             $detail->save();
         });
 
-    COMPOSED BASE COLUMNS - deriving a base column from detail fields (e.g. a person's
-    `name` from first+last) is ordinary endpoint code: compute it and set it before
-    $party->save(). There is no framework save hook.
+    An endpoint that edits a record through Form_Edit::run() (rsx:man
+    form_conventions) writes the same way inside its callback: the base fields through
+    $edit->set(), the base save(), then each detail field the submission changed
+    ($edit->changed('vendor')) onto the detail. Only the base row is the record
+    Form_Edit guards; a detail carries no revisions of its own.
+
+    COMPOSED BASE COLUMNS - deriving a base column from detail fields (an entry's
+    `amount` from hours x rate) is ordinary model or endpoint code: compute it and set
+    it before $entry->save(). There is no framework save hook.
+
+    MONEY ON A DETAIL COLUMN - a ['money' => true] column declared on a detail model
+    is that DETAIL model's money column. The base model's money accessors cover the
+    base table only: Billable_Entry_Model::is_money_column('hourly_rate') is false and
+    Billable_Entry_Model::money_from_submitted('hourly_rate', ...) throws
+    "... is not a money column". Read a submitted amount through the detail class:
+
+        $rate = Billable_Entry_Time_Detail_Model::money_from_submitted('hourly_rate', $value);
+
+    The same holds in JS: the base stub's is_money_column() and
+    editor_component_for() know only base columns, so a form names Money_Input
+    directly for a detail money field.
 
     REQUIRED FIELDS - a detail with NOT-NULL columns must be supplied by the developer;
     this is enforced at the endpoint/validation layer (and the DB NOT NULL), NOT by the
@@ -187,15 +226,17 @@ FILES
     system/app/RSpade/Core/Database/DetailTables/Rsx_Detail_Model_Abstract.php
     system/app/RSpade/Core/Database/DetailTables/Detail_Tables_Resolver.php
     system/app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php   (accessor, embed, save)
-    system/app/RSpade/Core/Database/Database_BundleIntegration.php  (JS stub accessors)
+    system/app/RSpade/Core/Database/Model_Stub_ManifestSupport.php  (JS stub accessors)
     system/app/RSpade/Core/Database/Rsx_Schema.php                  (column spanning)
     system/app/RSpade/Commands/Rsx/Constants_Regenerate_Command.php (docblock spanning)
 
 SEE ALSO
+    rsx:man model
     rsx:man model_fetch
     rsx:man enums
     rsx:man model_normalization
+    rsx:man money
     rsx:man crud
     rsx:man template_app
 
-RSX Framework              Last updated 2026-06-30              DETAIL_TABLES(3)
+RSX Framework              Last updated 2026-11-16              DETAIL_TABLES(3)

@@ -29,6 +29,7 @@ class Form_Edit_Fixture_Model extends Rsx_Model_Abstract
             self::LEVEL_HIGH => ['constant' => 'LEVEL_HIGH', 'label' => 'High'],
         ]],
         'secret_token' => ['never_export' => true],
+        'hours' => ['money' => false],
     ];
 
     public static $revisions = true;
