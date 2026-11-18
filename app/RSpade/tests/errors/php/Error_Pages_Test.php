@@ -97,7 +97,7 @@ class Error_Pages_Test extends Rsx_Test_Abstract
             ['/error/500' => static::__row('standard', 'exact'), '/error/generic' => static::__row('standard', 'generic')],
             [],
             function () {
-                $match = Error_Pages::resolve(500, Auth_Gates::REALM_STAFF, false);
+                $match = Error_Pages::resolve(500, Auth_Gates::REALM_STAFF, allow_exact: false);
 
                 static::__assert_equals('/error/generic', $match['pattern']);
             }

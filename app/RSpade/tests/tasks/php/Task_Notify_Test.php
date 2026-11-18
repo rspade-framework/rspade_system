@@ -142,13 +142,13 @@ class Task_Notify_Test extends Rsx_Test_Abstract
         static::__watch('Task_Changed_Topic', 901, 1);
         static::__watch('Task_Output_Topic', 901, 5);
 
-        Task_Notify::changed(901, false, true);
+        Task_Notify::changed(901, changed: false, output: true);
         static::__assert_equals([['Task_Output_Topic', 5, 901]], static::__published(), 'output only');
 
         static::__clean();
         static::__watch('Task_Changed_Topic', 901, 1);
         static::__watch('Task_Output_Topic', 901, 5);
-        Task_Notify::changed(901, true, true);
+        Task_Notify::changed(901, output: true);
         static::__assert_equals([['Task_Changed_Topic', 1, 901], ['Task_Output_Topic', 5, 901]], static::__sorted(static::__published()), 'both');
     }
 
@@ -364,7 +364,7 @@ class Task_Notify_Test extends Rsx_Test_Abstract
         static::__clean();
         static::__watch('Task_Changed_Topic', 902, 1);
 
-        Task_Notify::changed(901, true, true);
+        Task_Notify::changed(901, output: true);
         Task_Notify::lifecycle(901);
 
         static::__assert_equals([], static::__published());

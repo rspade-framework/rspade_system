@@ -93,13 +93,13 @@ class Rsx_Preboot_Service
         // Clear build directory if exists
         if (is_dir($rsx_build)) {
             console_debug('CACHE', "Clearing RSX build cache in {$rsx_build}");
-            rmdir_recursive($rsx_build, false);
+            rmdir_recursive($rsx_build, delete_self: false);
         }
 
         // Clear tmp directory if exists
         if (is_dir($rsx_tmp)) {
             console_debug('CACHE', "Clearing RSX temp cache in {$rsx_tmp}");
-            rmdir_recursive($rsx_tmp, false);
+            rmdir_recursive($rsx_tmp, delete_self: false);
         }
 
         console_debug('CACHE', 'RSX caches cleared');

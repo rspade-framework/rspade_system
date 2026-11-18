@@ -72,6 +72,6 @@ class Openapi_Api_Controller extends Rsx_Api_Controller_Abstract
             shouldnt_happen("Openapi_Api_Controller::document() was dispatched for '{$request->path()}', which has no /api/vN prefix.");
         }
 
-        return Rsx_Api::document(Api_Openapi::document(null, $version));
+        return Rsx_Api::document(Api_Openapi::document(version: $version));
     }
 }

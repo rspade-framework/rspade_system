@@ -185,7 +185,7 @@ class RenamePhpClassFunction_Command extends Command
             $this->info("");
             $this->info("Processing subclasses...");
 
-            $subclasses = Manifest::php_get_subclasses_of($class_name, true);
+            $subclasses = Manifest::php_get_subclasses_of($class_name, concrete_only: true);
 
             if (!empty($subclasses)) {
                 $this->info("Found " . count($subclasses) . " subclass(es): " . implode(', ', $subclasses));
@@ -372,7 +372,7 @@ class RenamePhpClassFunction_Command extends Command
 
         // Check subclasses (if not skipped)
         if (!$skip_subclasses) {
-            $subclasses = Manifest::php_get_subclasses_of($class_name, true);
+            $subclasses = Manifest::php_get_subclasses_of($class_name, concrete_only: true);
             foreach ($subclasses as $subclass) {
                 try {
                     $subclass_path = Manifest::php_find_class($subclass);
@@ -430,7 +430,7 @@ class RenamePhpClassFunction_Command extends Command
         }
 
         if (!$skip_subclasses) {
-            $subclasses = Manifest::php_get_subclasses_of($class_name, true);
+            $subclasses = Manifest::php_get_subclasses_of($class_name, concrete_only: true);
             if (!empty($subclasses)) {
                 $this->info("");
                 $this->line("Would recursively update " . count($subclasses) . " subclass(es):");

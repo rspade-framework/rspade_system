@@ -17,8 +17,21 @@ function _api_sample_example_value(p) {
         case 'int': return 0;
         case 'float': return 0.0;
         case 'bool': return false;
+        case 'json': return {};
         default: return 'string';
     }
+}
+
+/**
+ * api_param_text(p, value) - one param value as the text a URL, an input or a table shows.
+ * A json param's value that is not already a string is written as JSON text (the server
+ * decodes a string json param); every other value is String(value).
+ */
+function api_param_text(p, value) {
+    if (p.type === 'json' && typeof value !== 'string') {
+        return JSON.stringify(value);
+    }
+    return String(value);
 }
 
 function _api_sample_shape(ep) {
@@ -39,7 +52,7 @@ function _api_sample_shape(ep) {
     for (const p of path_params) {
         // A real example value is URL-encoded; the {name} placeholder stays readable.
         const substitute = (p.example !== null && p.example !== undefined)
-            ? encodeURIComponent(String(p.example))
+            ? encodeURIComponent(api_param_text(p, p.example))
             : ('{' + p.name + '}');
         path = path.replace(':' + p.name, substitute);
     }
@@ -52,7 +65,7 @@ function _api_sample_query(other_params) {
         return '';
     }
     const parts = other_params.map(p =>
-        encodeURIComponent(p.name) + '=' + encodeURIComponent(String(_api_sample_example_value(p)))
+        encodeURIComponent(p.name) + '=' + encodeURIComponent(api_param_text(p, _api_sample_example_value(p)))
     );
     return '?' + parts.join('&');
 }
@@ -389,8 +402,8 @@ function api_multipart_code_samples(ep, filled, file_param) {
 
 /**
  * api_tester_input(p, prefix) - HTML for one typed tester input, keyed by data-param="name".
- * bool -> select(true/false); int/float -> number input; string -> text input. Prefilled
- * from the param example when present. Attribute values are escaped via escape_html().
+ * bool -> select(true/false); int/float -> number input; every other type -> text input (a
+ * json value as JSON text). Prefilled from the param example when present. Attribute values are escaped via escape_html().
  *
  * `prefix` is the BEM prefix of the component asking, so each tester owns its own scoped
  * class names while there is still ONE implementation of "an input for a declared param".
@@ -398,7 +411,7 @@ function api_multipart_code_samples(ep, filled, file_param) {
  */
 function api_tester_input(p, prefix) {
     const cls = (prefix || '_Apidocs_Tester') + '__input';
-    const ex = (p.example !== null && p.example !== undefined) ? String(p.example) : '';
+    const ex = (p.example !== null && p.example !== undefined) ? api_param_text(p, p.example) : '';
     const name_attr = ' data-param="' + escape_html(p.name) + '"';
 
     if (p.type === 'bool') {

@@ -153,7 +153,9 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
 
         // Acquire file write lock
         // Waits forever, and holds for as long as the sweep runs - minutes to hours on a
-        // large store. That is the point: nothing else may write files underneath it.
+        // large store. That is the point: nothing else may write files underneath it. Each
+        // item calls RsxLocks::still_working(), so the waiters queued behind this hold see
+        // progress and are not failed as stalled (rsx:man locks, PROGRESS AND STALLS).
         $lock = RsxLocks::named_write_lock(RsxLocks::LOCK_FILE_WRITE);
 
         try {
@@ -171,6 +173,8 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
             // One write section per attachment on its own site (a command is enforced), inside
             // the file write lock, re-reading the row: it may have been attached since.
             foreach ($orphaned_attachments()->result_set(self::BATCH_SIZE) as $attachment) {
+                RsxLocks::still_working();
+
                 $destroyed = Site_Lock::write((int) $attachment->site_id, function () use ($attachment, $orphaned_attachments) {
                     $current = $orphaned_attachments()->find($attachment->id);
                     if ($current === null) {
@@ -208,6 +212,8 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
                 }
 
                 foreach ($batch as $storage_data) {
+                    RsxLocks::still_working();
+
                     $last_storage_id = (int) $storage_data->id;
                     $storage = File_Storage_Model::find($storage_data->id);
                     if (!$storage) {

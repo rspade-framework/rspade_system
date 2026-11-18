@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Locks;
 
 use RuntimeException;
 use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 
 /**
  * ONE socket to rsx-lockd (system/app/RSpade/resource/docker/rsx-lockd): dial with retry, the HMAC hello, newline
@@ -27,7 +28,10 @@ use App\RSpade\Core\Locks\Lockd_Unavailable_Exception;
  * WAITING IS SILENCE. A parked request receives NO frame until it is answered, so a read
  * blocks for as long as the daemon takes - a month, if that is how long the thing ahead of
  * it is held. There is NO read timeout anywhere here: reads block on stream_select() with a
- * NULL timeout, and only a frame or the socket dying ends the wait.
+ * NULL timeout, and only a frame or the socket dying ends the wait. The one frame that
+ * arrives mid-wait is a `waiting` NOTICE the request itself asked for (its `notice` key):
+ * it is handed to the request's $on_notice and the read carries on - the request is still
+ * answered by exactly one final frame.
  *
  * A CONNECTION THAT GIVES UP THROWS Lockd_Unavailable_Exception - no connect attempt
  * succeeded, the hello was refused, or an open socket died. The daemon is infrastructure
@@ -67,6 +71,13 @@ class Lockd_Connection
 
     /** Frames that arrived while a DIFFERENT request was being awaited, keyed by their id. */
     private array $parked_frames = [];
+
+    /**
+     * The protocol version the daemon's hello answer named, or null while not connected. A
+     * daemon is run from the container IMAGE, which can lag the checkout running this
+     * client, so a feature newer than protocol 1 is used only when the daemon says it has it.
+     */
+    private ?int $server_protocol = null;
 
     /** Set by use_endpoint(); null means config, then the shipped defaults. */
     private ?array $endpoint_override = null;
@@ -163,6 +174,12 @@ class Lockd_Connection
         return $this->endpoint_override ?? self::default_endpoint();
     }
 
+    /** The protocol version of the connected daemon (its hello answer), null when not connected. */
+    public function server_protocol(): ?int
+    {
+        return is_resource($this->socket) ? $this->server_protocol : null;
+    }
+
     /** True when the socket to the daemon is currently open. */
     public function is_connected(): bool
     {
@@ -190,7 +207,7 @@ class Lockd_Connection
      * @throws Lockd_Unavailable_Exception on connect failure, a rejected hello, socket death,
      *                                     or a protocol violation (the socket is dropped).
      */
-    public function request(array $frame): array
+    public function request(array $frame, ?callable $on_notice = null): array
     {
         $this->ensure_connected();
 
@@ -198,7 +215,7 @@ class Lockd_Connection
 
         $this->__write($frame);
 
-        return $this->__await($frame['id']);
+        return $this->__await($frame['id'], $on_notice);
     }
 
     /**
@@ -307,10 +324,17 @@ class Lockd_Connection
             'ts' => $ts,
             'sig' => hash_hmac('sha256', "{$host}:{$pid}:{$ts}", $key),
         ];
+        // The process start time, so an operator's kill-holder can prove a pid the daemon
+        // reports is still this process before signalling it (Lock_Status::kill_holder()).
+        // Unsigned, like the group: the HMAC key is the trust boundary.
+        $start = Process_Identity::start_time($pid);
+        if ($start !== null) {
+            $frame['start'] = $start;
+        }
         if ($this->group_id !== null) {
             $frame['group_id'] = $this->group_id;
         }
-        $frame['protocol'] = 1;
+        $frame['protocol'] = 2;
         $frame['id'] = $this->__next_id();
 
         $this->__write($frame);
@@ -323,6 +347,8 @@ class Lockd_Connection
             $this->socket = null;
             throw new Lockd_Unavailable_Exception("rsx-lockd rejected the hello handshake: {$message}");
         }
+
+        $this->server_protocol = (int) ($response['protocol'] ?? 1);
     }
 
     private function __write(array $frame): void
@@ -340,7 +366,7 @@ class Lockd_Connection
      * is waiting on it (responses genuinely arrive out of order), and an id-less frame is a
      * connection-level error the daemon emitted without a request to attach it to.
      */
-    private function __await(string $id): array
+    private function __await(string $id, ?callable $on_notice = null): array
     {
         if (isset($this->parked_frames[$id])) {
             $frame = $this->parked_frames[$id];
@@ -358,6 +384,17 @@ class Lockd_Connection
             }
 
             $frame_id = $frame['id'] ?? null;
+
+            // A `waiting` notice is never an answer: the request it names keeps waiting. One
+            // for another request is dropped, never parked - parking it would hand it to
+            // that request later as though it were the answer.
+            if (($frame['status'] ?? null) === 'waiting') {
+                if ($frame_id === $id && $on_notice !== null) {
+                    $on_notice($frame);
+                }
+
+                continue;
+            }
 
             if ($frame_id === $id) {
                 return $frame;

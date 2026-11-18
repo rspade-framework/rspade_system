@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -16,7 +17,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * attributes included, exactly as public_static_methods carries their statics - so a
  * #[Relationship] or #[Realtime_Touch] a trait supplies is seen by every registry reading
  * the map. A VENDOR trait's instance methods are not taken (they carry no RSX attribute and
- * would read as methods the class declares).
+ * would read as methods the class declares). A trait method's `file` is the trait's path in
+ * manifest key form, never the absolute path reflection reports.
  *
  * Driven through Manifest::_extract_reflection_data() over a fixture trait and class written
  * to a scratch directory and loaded, so no fixture enters the real index.
@@ -65,7 +67,9 @@ class Manifest_Trait_Instance_Methods_Test extends Rsx_Test_Abstract
 
         static::__assert_true(isset($instance['owner']), 'the trait\'s instance method is in the map');
         static::__assert_true(isset($instance['owner']['attributes']['Relationship']), 'with its attribute');
-        static::__assert_equals($trait_file, $instance['owner']['file'] ?? null, 'and the file it is written in');
+        static::__assert_equals(Rsx_Paths::relative($trait_file), $instance['owner']['file'] ?? null, 'and the file it is written in, as a manifest key');
+        static::__assert_true(!str_starts_with((string) ($instance['owner']['file'] ?? ''), '/'), 'which is not an absolute path');
+        static::__assert_equals(Rsx_Paths::relative($trait_file), $data['public_static_methods']['trait_static']['file'] ?? null, 'a trait static carries the same key');
         static::__assert_true(isset($instance['own_method']), 'the class\'s own instance method is still there');
         static::__assert_true(!isset($instance['trait_static']), 'a static stays out of the instance map');
         static::__assert_true(isset($data['public_static_methods']['trait_static']), 'and in the static map');

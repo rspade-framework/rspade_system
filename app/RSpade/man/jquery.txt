@@ -39,9 +39,10 @@ DESCRIPTION
 
 BLOCKED: $.ajax()
 
-    $.ajax() is OVERRIDDEN TO THROW. So are the shorthands built on it
-    ($.get, $.post, $.getJSON, $.load). There is no flag, option, or escape
-    hatch that re-enables them - a raw XHR is never the right call in RSpade.
+    $.ajax() to a local URL is OVERRIDDEN TO THROW. So are the shorthands
+    built on it ($.get, $.post, $.getJSON, $.getScript and .load()), with
+    the same message. There is no flag, option, or escape hatch that
+    re-enables them - a raw XHR is never the right call in RSpade.
 
     Every server call goes through a declared endpoint instead. A PHP method
     carrying #[Ajax_Endpoint] (plus its mandatory #[Auth]) is auto-callable
@@ -165,6 +166,7 @@ JQUERY HELPERS
 
         .is_in_dom()
             Returns true if element exists in and is attached to the DOM
+            (the first element of the set; an empty set is false)
 
             if ($('.dynamic-element').is_in_dom()) {
                 // Element is live in the page
@@ -172,6 +174,8 @@ JQUERY HELPERS
 
         .is_in_viewport()
             Returns true if element is currently visible in the viewport
+            (any part of the first element within the viewport's height; an
+            empty set is false)
 
             $('.lazy-image').each(function() {
                 if ($(this).is_in_viewport()) {
@@ -182,14 +186,20 @@ JQUERY HELPERS
     Scrolling
 
         .scroll_up_to(speed = 0)
-            Scrolls page up to bring element into view if it's above viewport
+            Scrolls page up to bring element into view if it's above viewport:
+            the window scrolls until the element's top is at the viewport's
+            top. An element already at or below the viewport's top, a
+            detached element and an empty set leave the page where it is.
+            speed is the animation duration in milliseconds (0 = at once).
+            Returns the set, for chaining.
 
             $('.error-field').scroll_up_to(300);
 
     Element Information
 
         .tagname()
-            Returns lowercase tag name of element
+            Returns lowercase tag name of element (the first of the set);
+            undefined for an empty set, as jQuery's own getters answer
 
             if ($element.tagname() === 'a') {
                 // It's a link

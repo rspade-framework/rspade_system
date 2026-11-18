@@ -102,7 +102,7 @@ class Rsx_Password_Confirmation
             return false;
         }
 
-        $confirmed_for = Session::get_value(self::SESSION_KEY, null, $realm['session_realm']);
+        $confirmed_for = Session::get_value(self::SESSION_KEY, realm: $realm['session_realm']);
 
         return $confirmed_for !== null && (int) $confirmed_for === (int) $realm['identity']->id;
     }
@@ -206,7 +206,7 @@ class Rsx_Password_Confirmation
         Login_Throttle::require_not_throttled((string) $identity->email);
 
         try {
-            $credential = Passkeys::verify_assertion($realm['facade'], $assertion, false);
+            $credential = Passkeys::verify_assertion($realm['facade'], $assertion, passwordless: false);
         } catch (Two_Factor_Failed_Exception | \lbuchs\WebAuthn\WebAuthnException $e) {
             $credential = null;
         }

@@ -123,6 +123,13 @@ CDN ASSETS
     everywhere. Both 'js' and 'css' lists are accepted, each entry a map with
     at least 'url'.
 
+    EVERY URL IS https://. An entry whose 'url' is http://, protocol-relative
+    (//host/...), schemeless or any other scheme, or an entry with no 'url',
+    fails the manifest build (BUNDLE-CDN-01): the downloaded bytes are
+    committed and served to every page as first-party code, so they are
+    fetched over https only. The external-resources registry holds its
+    declarations to the same rule (rsx:man external_resources).
+
     EVERY MODE MIRRORS THE ASSET. It is downloaded into
     rsx/resource/.cdn-cache/ (committed to git) on first compile and the tag
     points at /_vendor/{mirror_filename} - on a development box exactly as in a

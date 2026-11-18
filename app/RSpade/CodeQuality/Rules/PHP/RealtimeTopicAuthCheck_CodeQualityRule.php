@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * RealtimeTopicAuthCheckRule - Validates realtime topic classes declare and honor
@@ -136,7 +137,7 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
         $can_subscribe_line = $can_subscribe['line'] ?? 1;
 
         // A can_subscribe() mixed in from a trait has its body in the trait's file.
-        $body_source = isset($can_subscribe['file']) && rsxrealpath($can_subscribe['file']) !== rsxrealpath($file_path)
+        $body_source = isset($can_subscribe['file']) && Rsx_Paths::relative($can_subscribe['file']) !== Rsx_Paths::relative($file_path)
             ? $this->source()->content($can_subscribe['file'])
             : $contents;
 

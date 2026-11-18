@@ -871,9 +871,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
 
         try {
             return DB::connection('test')->table($migrations_table)->count() > 0;
-        } catch (\Throwable $e) {
-            // Database or migrations table doesn't exist yet
-            return false;
+        } catch (\Illuminate\Database\QueryException $e) {
+            // The migrations table does not exist (SQLSTATE 42S02) or the database does not
+            // exist (MySQL error 1049): no schema yet. Any other fault - a refused connection,
+            // a permission error - is not an answer to this question and propagates.
+            if ($e->getCode() === '42S02' || ($e->errorInfo[1] ?? null) === 1049) {
+                return false;
+            }
+            throw $e;
         }
     }
 

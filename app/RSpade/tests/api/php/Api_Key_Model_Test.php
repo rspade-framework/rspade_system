@@ -102,14 +102,14 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
 
     public static function test_find_by_key_expired_is_null()
     {
-        $result = Api_Key_Model::generate(self::USER_ID, 'expired', 'live', null, now()->subMinute());
+        $result = Api_Key_Model::generate(self::USER_ID, 'expired', 'live', now()->subMinute());
 
         static::__assert_null(Api_Key_Model::find_by_key($result['key']), 'a past expiry never resolves');
     }
 
     public static function test_find_by_key_future_expiry_resolves()
     {
-        $result = Api_Key_Model::generate(self::USER_ID, 'still valid', 'live', null, now()->addDay());
+        $result = Api_Key_Model::generate(self::USER_ID, 'still valid', 'live', now()->addDay());
 
         static::__assert_not_null(Api_Key_Model::find_by_key($result['key']), 'a future expiry still resolves');
     }
@@ -127,7 +127,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         $revoked->revoke();
         static::__assert_false($revoked->is_valid(), 'a revoked key is invalid');
 
-        $expired = Api_Key_Model::generate(self::USER_ID, 'expired', 'live', null, now()->subDay())['model'];
+        $expired = Api_Key_Model::generate(self::USER_ID, 'expired', 'live', now()->subDay())['model'];
         static::__assert_false($expired->is_valid(), 'an expired key is invalid');
     }
 
@@ -151,9 +151,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'scoped',
             'live',
-            null,
-            null,
-            "  /api/v1/contacts/  \n/api/v1/contacts\n"
+            scopes: "  /api/v1/contacts/  \n/api/v1/contacts\n"
         )['model'];
 
         static::__assert_equals('/api/v1/contacts', $model->scopes);
@@ -168,7 +166,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         static::__assert_throws(
             Api_Scope_Validation_Exception::class,
             function () {
-                Api_Key_Model::generate(self::USER_ID, 'bad scope', 'live', null, null, '/api/v1/contacts*');
+                Api_Key_Model::generate(self::USER_ID, 'bad scope', 'live', scopes: '/api/v1/contacts*');
             },
             'a wildcard must be a whole segment'
         );
@@ -181,7 +179,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         static::__assert_throws(
             Api_Scope_Validation_Exception::class,
             function () {
-                Api_Key_Model::generate(self::USER_ID, 'old syntax', 'live', null, null, 'Grant GET /api/v1/contacts');
+                Api_Key_Model::generate(self::USER_ID, 'old syntax', 'live', scopes: 'Grant GET /api/v1/contacts');
             },
             'must start with /api/<version>/'
         );
@@ -200,7 +198,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
 
     public static function test_set_scopes_null_returns_the_key_to_full_authority()
     {
-        $model = Api_Key_Model::generate(self::USER_ID, 'widen', 'live', null, null, '/api/v1/contacts')['model'];
+        $model = Api_Key_Model::generate(self::USER_ID, 'widen', 'live', scopes: '/api/v1/contacts')['model'];
 
         $model->set_scopes(null);
 
@@ -210,7 +208,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
 
     public static function test_set_scopes_throws_and_writes_nothing_on_a_malformed_scope()
     {
-        $model = Api_Key_Model::generate(self::USER_ID, 'keep narrow', 'live', null, null, '/api/v1/contacts')['model'];
+        $model = Api_Key_Model::generate(self::USER_ID, 'keep narrow', 'live', scopes: '/api/v1/contacts')['model'];
 
         static::__assert_throws(
             Api_Scope_Validation_Exception::class,
@@ -237,7 +235,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
 
     public static function test_generate_stores_the_read_only_flag()
     {
-        $model = Api_Key_Model::generate(self::USER_ID, 'read only', 'live', null, null, null, true)['model'];
+        $model = Api_Key_Model::generate(self::USER_ID, 'read only', 'live', read_only: true)['model'];
 
         static::__assert_true((bool) $model->read_only);
         static::__assert_true((bool) Api_Key_Model::find($model->id)->read_only, 'the flag reached the row');
@@ -248,7 +246,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         // The column is TINYINT(1); a caller asking "is this key read-only" must get a bool
         // back, not a 1, or a strict === comparison at a call site silently answers false.
         $model = Api_Key_Model::find(
-            Api_Key_Model::generate(self::USER_ID, 'cast check', 'live', null, null, null, true)['model']->id
+            Api_Key_Model::generate(self::USER_ID, 'cast check', 'live', read_only: true)['model']->id
         );
 
         static::__assert_true($model->read_only === true, 'read_only reads back as a real boolean');
@@ -262,10 +260,8 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'read only and scoped',
             'live',
-            null,
-            null,
-            '/api/v1/contacts/*',
-            true
+            scopes: '/api/v1/contacts/*',
+            read_only: true
         )['model'];
 
         static::__assert_true((bool) $model->read_only);
@@ -299,7 +295,7 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
     {
         // The only way to get one: every write path validates. Planted with raw SQL exactly
         // as an operator editing the column would produce it.
-        $model = Api_Key_Model::generate(self::USER_ID, 'hand edited', 'live', null, null, '/api/v1/me')['model'];
+        $model = Api_Key_Model::generate(self::USER_ID, 'hand edited', 'live', scopes: '/api/v1/me')['model'];
 
         DB::update('UPDATE _api_keys SET scopes = ? WHERE id = ?', ["/api/v1/me\nGrant GET /api/v1/x", (int) $model->id]);
 

@@ -414,8 +414,8 @@ HOW IT WORKS
                untouched: "we did not check" is a different answer from "that
                was wrong", and a login function must be able to say so.
             2. A failed answer is recorded as
-               Login_History::record_failure($email, STATUS_FAILED_2FA, null,
-               $login_user_id) - and record_failure() ALREADY feeds the
+               Login_History::record_failure($email, STATUS_FAILED_2FA,
+               identity_id: $login_user_id) - and record_failure() ALREADY feeds the
                throttle.
             3. Login_Throttle::record_failure() is therefore NEVER called
                here. Calling both counts one failure twice and halves the

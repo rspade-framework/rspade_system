@@ -1058,8 +1058,10 @@ class Manifest_Store
      *
      * Two byte-identical checkouts at different absolute paths must produce the same key (the
      * cluster contract), so nothing that varies with local disk state enters it:
-     *   - a file contributes its PATH and its sha1 and nothing else, which is why mtime, size
-     *     and any absolute path embedded in a reflected method record cannot reach the key;
+     *   - every path the manifest stores is project-relative (a reflected trait method's
+     *     `file` included), so no section carries the checkout's location;
+     *   - a file contributes its PATH and its sha1 and nothing else, which is why mtime and
+     *     size cannot reach the key;
      *   - the per-file lines are SORTED, so readdir order cannot reach it either;
      *   - the derived sections are hashed in their stored order, and _save() ksorts the
      *     top-level section map before calling this, so a cold build and an incremental one
@@ -1133,8 +1135,7 @@ class Manifest_Store
      *
      * Not the PHP literal emitter: this one needs no valid syntax, only injectivity, and it
      * appends to ONE string rather than streaming (the derived sections are a fraction of the
-     * index). Absolute paths are reduced to project-relative form here rather than at every
-     * producer, because the producers that embed one do so incidentally.
+     * index). Strings go in verbatim: every path in the manifest is already project-relative.
      */
     protected static function _emit_hash_material(mixed $value, string &$material): void
     {
@@ -1153,7 +1154,7 @@ class Manifest_Store
         }
 
         if (is_string($value)) {
-            $material .= '"' . _rsx_relative_build_path($value) . '"';
+            $material .= '"' . $value . '"';
 
             return;
         }

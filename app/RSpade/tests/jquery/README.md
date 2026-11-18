@@ -53,7 +53,17 @@ the browser; nothing application-side is involved, and the tests run in any inst
 | `rsx_numeric`: focus selects the whole value, mouse and keyboard alike | playwright | planned |
 | `rsx_numeric`: an edit mid-string keeps the caret where the user left it | playwright | planned |
 | `Button_Utils.set_loader()`: a registered renderer draws the busy state, the cycle is otherwise unchanged | playwright | implemented (`button_utils_loader.js`) |
-| `.click()` calls `preventDefault()`, `.click_allow_default()` does not | playwright | planned |
-| `.click_async()` busy-state, re-entrancy guard, detached-node settle | playwright | planned |
-| `$.ajax()` to a local URL throws, an external one passes through | playwright | planned |
+| `.click()` calls `preventDefault()` (and warns on a second call), `.click()` with no handler triggers, `.click_allow_default()` leaves the default | playwright | implemented (`jquery_helpers.js`) |
+| `.click_async()` busy-state, re-entrancy guard, detached-node settle | playwright | implemented (`jquery_helpers.js`) |
+| `$.ajax()` to a local URL throws, an external one passes through | playwright | implemented (`jquery_helpers.js`) |
+| `$.get()` / `$.post()` / `$.getJSON()` / `$.getScript()` / `.load()` to a local URL throw | playwright | implemented (`jquery_helpers.js`) |
 | `.width_group()` sizing, resize recalculation, pruning | playwright | planned |
+| `.exists()`, `.is_visible()`, `.is_in_dom()`, `.is_in_viewport()`, `.tagname()`, `.is_external()` | playwright | implemented (`jquery_helpers.js`) |
+| The `:focus` pseudo-selector | playwright | implemented (`jquery_helpers.js`) |
+| `.checkValidity()` / `.reportValidity()` / `.requestSubmit()`, the empty set included | playwright | implemented (`jquery_helpers.js`) |
+| `.closest_sibling()` | playwright | implemented (`jquery_helpers.js`) |
+| `.scroll_up_to()` scrolls up to an element above the viewport, never down | playwright | implemented (`jquery_helpers.js`) |
+| `.is_in_dom()` / `.is_in_viewport()` / `.tagname()` on an empty set | playwright | implemented (`jquery_helpers.js`) |
+
+`.shallowFind()`, listed in `rsx:man jquery`, is installed by the jqhtml library
+(`@jqhtml/core`), not by `Rsx_Jq_Helpers`, and is covered by jqhtml's own suite.

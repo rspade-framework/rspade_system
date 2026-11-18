@@ -103,8 +103,7 @@ class Request_History_Answer extends RuntimeException
             $this->error_code(),
             $this->getMessage(),
             $this->kind === self::EXPIRED ? 410 : 409,
-            null,
-            $this->__refusal_details(false)
+            extra: $this->__refusal_details(false)
         );
     }
 

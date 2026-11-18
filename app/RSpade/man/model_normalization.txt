@@ -50,13 +50,18 @@ ENFORCED COLUMN TYPE STANDARDS
   + BLOB, LONGBLOB   - Binary data (images, files)
 
 ### FORBIDDEN Types (Throw Exception)
-  - ENUM             - Use VARCHAR with validation instead
+  - ENUM             - Use a BIGINT column declared as an enum in the model's
+                       $columns (rsx:man enums)
   - SET              - Use JSON or separate table
   - YEAR             - Use INT or DATE
   - TIME             - Use DATETIME
 
 RATIONALE: ENUM and SET cannot be modified without table locks, causing deployment
 issues in production. YEAR and TIME types are too limited and cause conversion issues.
+
+Only a column TYPE is judged. A column, index or constraint NAMED year or time is
+allowed when the name is backtick-quoted (`year` BIGINT); an unquoted year or time
+reads as the type and is refused.
 
 CHARACTER SET ENFORCEMENT
 -------------------------
@@ -173,15 +178,28 @@ CREATE TABLE products (
 
 Result: Migration fails with exception:
 ```
-ENUM column type is forbidden in RSpade. Use VARCHAR with validation instead.
-ENUMs cannot be modified without table locks and cause deployment issues.
+ENUM column type is forbidden in RSpade. An enumerated column is a BIGINT whose
+values are declared in the model: 'status_id' => ['enum' => [1 => ['constant' =>
+'STATUS_ACTIVE', 'label' => 'Active'], ...]] in public static $columns.
+A MySQL ENUM cannot be changed without a table lock. See: php artisan rsx:man enums
 ```
 
-Developer fixes by using VARCHAR:
+Developer fixes with a BIGINT column:
 ```sql
 CREATE TABLE products (
-    status VARCHAR(20)  -- Add validation in model
+    status_id BIGINT NOT NULL DEFAULT 1
 );
+```
+
+and declares its values on the model:
+```php
+public static $columns = [
+    'status_id' => ['enum' => [
+        1 => ['constant' => 'STATUS_DRAFT', 'label' => 'Draft'],
+        2 => ['constant' => 'STATUS_PUBLISHED', 'label' => 'Published'],
+        3 => ['constant' => 'STATUS_ARCHIVED', 'label' => 'Archived'],
+    ]],
+];
 ```
 
 FRAMEWORK-REQUIRED COLUMNS
@@ -451,7 +469,8 @@ TROUBLESHOOTING
 ---------------
 
 ### Migration fails with "ENUM column type is forbidden"
-  Solution: Replace ENUM with VARCHAR and add validation in your model.
+  Solution: Replace the ENUM with a BIGINT column and declare its values as an
+  enum in the model's $columns (rsx:man enums).
 
 ### Migration fails with "SET column type is forbidden"
   Solution: Use JSON column or create a separate table.
@@ -481,7 +500,8 @@ SqlQueryTransformer uses regex-based pattern matching on SQL statements:
    - Other queries (SELECT, INSERT, etc.) pass through unchanged
 
 3. Type Validation
-   - Checks for forbidden types first (ENUM, SET, YEAR, TIME)
+   - Checks for forbidden types first (ENUM, SET, YEAR, TIME), after removing
+     comments, quoted strings and backtick-quoted identifiers
    - Throws exception immediately if found
 
 4. Type Transformation (in order)

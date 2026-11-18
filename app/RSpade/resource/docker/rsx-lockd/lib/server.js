@@ -278,7 +278,7 @@ class Lockd_Server {
             // Liveness probe, deliberately open pre-hello: it discloses nothing and lets a
             // health check confirm the daemon is answering without holding a key.
             if (op === 'ping') {
-                this._send(conn, { id: frame.id, status: protocol.STATUS_OK, pong: true });
+                this._send(conn, { id: frame.id, status: protocol.STATUS_OK, pong: true, protocol: protocol.PROTOCOL_VERSION });
                 return;
             }
 
@@ -322,6 +322,7 @@ class Lockd_Server {
             case 'dump':         return this.table.dump(frame);
             case 'force_clear':  return this.table.force_clear(frame);
             case 'log':          return this._handle_log(frame);
+            case 'progress':     return this.table.progress(conn.id, frame);
             case 'pool.lock':              return this.table.pool.lock(conn.id, frame);
             case 'pool.unlock':            return this.table.pool.unlock(conn.id, frame);
             case 'pool.join':              return this.table.pool.join(conn.id, frame);
@@ -433,6 +434,7 @@ class Lockd_Server {
             host: verified.meta.host,
             pid: verified.meta.pid,
             group_id: verified.meta.group_id || null,
+            start: verified.meta.start,
         });
 
         this._send(conn, {

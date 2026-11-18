@@ -175,7 +175,10 @@ class Search_Ranked_Test extends Rsx_Test_Abstract
 
         static::__assert_equals($expected, $matched, 'search() matches exactly the rows search_ranked() ranks');
         static::__assert_false(array_key_exists('relevance', $rows[0]->toArray()), 'search() selects no relevance column');
-        static::__assert_null($rows[0]->relevance, 'the attribute is simply absent on a search() row');
+        static::__assert_false(isset($rows[0]->relevance), 'the attribute is absent on a search() row');
+        static::__assert_throws(\LogicException::class, function () use ($rows) {
+            return $rows[0]->relevance;
+        }, "has no property 'relevance'");
     }
 
     public static function test_natural_language_mode_ranks_too()

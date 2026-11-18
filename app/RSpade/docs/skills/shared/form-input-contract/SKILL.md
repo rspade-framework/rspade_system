@@ -47,7 +47,11 @@ behaviour is expressed through `_get_value()`/`_set_value()`. Missing either thr
 `My_Custom_Input must implement _get_value()`.
 
 A class that overrides `on_create()` **must** call `super.on_create()` - that is where
-buffering state initializes and `data-name` is stamped.
+buffering state initializes and `data-name` is stamped. The manifest build enforces it
+(JS-PARENT-CHAIN-01): an override of any method an ancestor class declares calls `super`
+unless the ancestor decorates it `@Replaceable`. `_get_value()`, `_set_value()` and `_focus()`
+on `Form_Input_Abstract` (and the template's `Text_Input` / `Select_Input` accessors) are
+`@Replaceable`; a base input you write marks the seams its subclasses replace the same way.
 
 ## Timing indifference is the contract
 

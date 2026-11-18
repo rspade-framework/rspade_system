@@ -99,7 +99,7 @@ class Api_Catalog
     public static function get_versions(): array
     {
         $versions = [];
-        foreach (static::get_endpoint_list(true) as $ep) {
+        foreach (static::get_endpoint_list(include_hidden: true) as $ep) {
             $versions[$ep['version']] = true;
         }
 

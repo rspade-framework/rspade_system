@@ -93,7 +93,7 @@ class Subfeature_Create_Command extends Command
         $this->info("Creating subfeature '{$subfeature_name}' in feature '{$module_name}/{$feature_name}'...");
 
         // Generate replacements
-        $replacements = StubProcessor::generate_replacements($module_name, null, $feature_name, $subfeature_name);
+        $replacements = StubProcessor::generate_replacements($module_name, feature_name: $feature_name, subfeature_name: $subfeature_name);
 
         try {
             // Create controller

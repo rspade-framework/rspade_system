@@ -340,6 +340,11 @@ JAVASCRIPT ACTIONS
             }
         }
 
+        Values are strings, read the way the server reads the same URL: a
+        query pair splits at its first '=' (?q=a=b is "a=b") and '+' in a
+        query value is a space; in a path segment '+' stays a plus. See
+        rsx:man routing, Query Values.
+
     Lifecycle Methods:
         on_create()     Component construction, setup this.state
         on_load()       Fetch data, populate this.data (read-only this.args)
@@ -1254,10 +1259,15 @@ EXAMPLES
                 }
 
                 #[Ajax_Endpoint]
+                #[Auth('can_edit_data')]
+                #[Writer]
                 public static function save(Request $request, array $params = [])
                 {
-                    $contact = Contact_Model::findOrNew($params['id'] ?? null);
-                    $contact->fill($params);
+                    // Validate first (response_form_error()); an edit of an existing
+                    // record saves through Form_Edit::run() (rsx:man form_conventions).
+                    $contact = new Contact_Model();
+                    $contact->name = $params['name'];
+                    $contact->email = $params['email'];
                     $contact->save();
 
                     Flash_Alert::success('Contact saved');
@@ -1411,6 +1421,17 @@ TROUBLESHOOTING
         - Verify action extends Spa_Action
         - Ensure action file included in bundle
         - Run: php artisan rsx:manifest:build
+
+    The JavaScript Bundle Fails To Load:
+        The SPA page the server sends is an empty shell - the bundle's
+        <script defer> tags and an empty <div id="spa-root"> - and everything
+        that draws, routes or reports lives in the bundle. If a bundle file
+        does not arrive (a network failure, a 404, a CSP block), nothing in
+        the page recovers: there is no retry and no fall back to a
+        server-rendered page. The page stays blank, the failed request and
+        any script errors are in the browser console, and the error dialog
+        does not appear (it is in the bundle too). Reloading the page
+        requests the bundle again.
 
     Navigation Not Working:
         - Verify using Rsx.Route() not hardcoded URLs

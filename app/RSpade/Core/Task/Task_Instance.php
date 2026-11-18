@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Files\Rsx_Temp_Files;
 use App\RSpade\Core\Files\Temp_File_Model;
+use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Attachment_Model;
@@ -229,6 +230,10 @@ class Task_Instance
      * A LONG TASK REPORTS ON EVERY ITEM. A worker-run task that shows no sign of life - no
      * heartbeat and no other report - for rsx.tasks.silent_timeout seconds (30 minutes) is
      * force-killed; one that keeps reporting runs for as long as its work takes.
+     *
+     * Every report - this one included - also renews the PROGRESS of every cluster lock and
+     * semaphore slot the task holds (RsxLocks::still_working()), so a process waiting behind
+     * one keeps waiting instead of failing as stalled after rsx.locks.stall_seconds.
      */
     public function heartbeat(): void
     {
@@ -446,7 +451,7 @@ class Task_Instance
             $this->queue_stored--;
         }
 
-        Task_Notify::changed($this->id, true, false);
+        Task_Notify::changed($this->id, output: false);
     }
 
     /**
@@ -836,7 +841,7 @@ class Task_Instance
             'updated_at' => $now,
         ]);
 
-        Task_Notify::changed($task_id, false, true);
+        Task_Notify::changed($task_id, changed: false, output: true);
     }
 
     // ------------------------------------------------------------------------------------
@@ -874,6 +879,11 @@ class Task_Instance
     {
         $this->pending_touch = true;
         $this->__maybe_flush();
+
+        // A report is proof of work, and the lock daemon's stall watchdog reads it too: every
+        // waiter queued behind a cluster lock or semaphore slot this task holds keeps waiting
+        // (rsx.locks.stall_seconds). Free when the task holds none; throttled when it does.
+        RsxLocks::still_working();
     }
 
     private function __maybe_flush(): void
@@ -935,7 +945,7 @@ class Task_Instance
         $this->pending_touch = true;
         $this->flush();
 
-        Task_Notify::changed($this->id, true, false);
+        Task_Notify::changed($this->id, output: false);
     }
 
     /** @return string[] */

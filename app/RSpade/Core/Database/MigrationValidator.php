@@ -53,17 +53,10 @@ class MigrationValidator
         $lines = explode("\n", $content);
         $in_schema_block = false;
         $schema_start_line = null;
-        $current_line = 1;
         $method_buffer = '';
 
         for ($i = 0; $i < count($tokens); $i++) {
             $token = $tokens[$i];
-
-            // Track line numbers
-            if (is_array($token) && $token[0] === T_WHITESPACE) {
-                $current_line += substr_count($token[1], "\n");
-                continue;
-            }
 
             // Check for Schema:: usage
             if (is_array($token) && $token[0] === T_STRING && $token[1] === 'Schema') {
@@ -88,7 +81,7 @@ class MigrationValidator
                         if ($method !== 'hasTable' && $method !== 'hasColumn' && $method !== 'getColumnListing') {
                             // This is a forbidden Schema method
                             $in_schema_block = true;
-                            $schema_start_line = $current_line;
+                            $schema_start_line = $token[2]; // the token's own line, as token_get_all() reports it
                             $method_buffer = "Schema::{$method}";
                         }
                     }
@@ -98,7 +91,7 @@ class MigrationValidator
             // Check for Blueprint usage
             if (is_array($token) && $token[0] === T_STRING && $token[1] === 'Blueprint') {
                 $in_schema_block = true;
-                $schema_start_line = $current_line;
+                $schema_start_line = $token[2]; // the token's own line, as token_get_all() reports it
                 $method_buffer = 'Blueprint';
             }
 
@@ -111,7 +104,7 @@ class MigrationValidator
 
                 if ($j < count($tokens) && is_array($tokens[$j]) && $tokens[$j][0] === T_OBJECT_OPERATOR) {
                     $in_schema_block = true;
-                    $schema_start_line = $current_line;
+                    $schema_start_line = $token[2]; // the token's own line, as token_get_all() reports it
                     $method_buffer = '$table->';
                 }
             }

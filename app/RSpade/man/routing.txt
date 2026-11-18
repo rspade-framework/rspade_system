@@ -185,6 +185,46 @@ ROUTE PATTERNS
         - URL generation validates required parameters are provided
         - A token is replaced whole and by name: ':id' never touches ':id_two'
 
+    Parameter Names:
+        A name is letters, digits and underscores ([A-Za-z0-9_]) and ends at
+        a '/', a '.' (the '/files/:id.:ext' form), the optional marker '?'
+        or the end of the pattern. Anything else fails the manifest build
+        (ROUTE-PARAM-01): ':user-id' would otherwise be read as the
+        parameter 'user' followed by the literal text '-id'. Write
+        ':user_id' and read $params['user_id']. The rule covers every route
+        pattern - #[Route], #[Portal_Route], #[Api_Endpoint], @route and
+        @portal_route.
+
+    A Pattern Is A Path:
+        A '?' that is not an optional marker is a query part, and fails the
+        manifest build (ROUTE-PATH-01): the query string is split off the
+        URL before matching, so '/search?q=1' could match nothing. Declare
+        the path; query values arrive in $params (this.args in an action).
+
+    Parameter Values:
+        A :param value is one path segment - any characters except '/' -
+        matched against the URL as sent and then percent-decoded with PHP's
+        urldecode(): '%2F' arrives as '/', and '+' and '%20' both arrive as
+        a space. Matching is case-sensitive ('/Users' does not match
+        '/users'). In-browser SPA navigation decodes a segment with
+        decodeURIComponent(), which leaves '+' a plus, so a link that must
+        carry a space spells it '%20' (Rsx.Route() in JS encodes values
+        that way, with encodeURIComponent()).
+
+    Query Values:
+        The query string reads the same on the server ($params, $_GET) and in
+        an SPA action's this.args. Each key=value pair splits at its FIRST
+        '=' ('?q=a=b' arrives as 'a=b'; a base64 token's trailing '=' is
+        kept), a key with no '=' is the empty string, a repeated key keeps
+        its last value, and keys and values decode as form encoding: '+' is
+        a space and '%2B' a plus. That differs from a path segment in the
+        browser, where '+' stays a plus (above).
+
+    Trailing Slashes:
+        A trailing slash is ignored, on the URL and on the pattern alike:
+        the URL '/users/' and the URL '/users' both match a pattern written
+        '/users' or '/users/'. The root '/' is itself.
+
     URL Parameter Handling:
         - Required parameters (in pattern) must be provided or exception thrown
         - Extra parameters become query string (?key=value)
@@ -270,10 +310,13 @@ BUNDLE INTEGRATION
 ADVANCED PATTERNS
     Complex Parameter Examples:
         // Multiple parameters
-        #[Route('/api/v1/users/:company/:division/:id')]
-        $url = Rsx::Route('Api_V1_Users_Controller::show',
+        #[Route('/reports/:company/:division/:id')]
+        $url = Rsx::Route('Reports_Controller::show',
             ['company' => 'acme', 'division' => 'sales', 'id' => 123]);
-        // Result: /api/v1/users/acme/sales/123
+        // Result: /reports/acme/sales/123
+
+        /api/vN/ paths are reserved for #[Api_Endpoint] (rsx:man external_api);
+        a #[Route] there fails the manifest build.
 
         // Query parameters for extra values
         $url = Rsx::Route('Demo_Controller::show',
@@ -285,11 +328,10 @@ ADVANCED PATTERNS
             ['filter' => ['status' => 'active', 'type' => 'user']]);
         // Result: /demo?filter[status]=active&filter[type]=user
 
-    Route Groups and Prefixes:
-        Routes inherit prefixes from controller structure:
-        - Backend_User_Controller -> /backend/user
-        - Api_V1_User_Controller -> /api/v1/user
-        - Admin_Reports_Controller -> /admin/reports
+    No Route Prefixes:
+        A route's path is exactly the pattern its attribute declares. Nothing is
+        inferred from the controller's name or directory, and there are no route
+        groups.
 
     Custom Route Patterns:
         #[Route('/custom/path/:id')]           // Custom path

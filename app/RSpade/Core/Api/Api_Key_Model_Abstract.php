@@ -44,7 +44,6 @@ use App\RSpade\Core\Models\User_Model;
  * @property string $name
  * @property string $key_hash
  * @property string $key_prefix
- * @property int|null $user_role_id
  * @property \Carbon\Carbon|null $last_used_at
  * @property \Carbon\Carbon|null $expires_at
  * @property bool $is_revoked
@@ -84,7 +83,6 @@ use App\RSpade\Core\Models\User_Model;
  * @property int $updated_by_id
  * @property string $updated_by_type type ref: a model class name, stored as a type-ref id
  * @property int $user_id
- * @property int $user_role_id
  *
  * @mixin \Eloquent
  */
@@ -174,7 +172,6 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      * @param int $user_id User ID to create key for
      * @param string $name Human-readable key name
      * @param string $environment 'live' or 'test'
-     * @param int|null $user_role_id Optional role override
      * @param \Carbon\Carbon|null $expires_at Optional expiration date
      * @param string|null $scopes Optional scopes, one path pattern per line (see Api_Scopes);
      *                            null mints an unrestricted key carrying the user's full authority
@@ -199,13 +196,12 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         int $user_id,
         string $name,
         string $environment = 'live',
-        ?int $user_role_id = null,
         ?\Carbon\Carbon $expires_at = null,
         ?string $scopes = null,
         bool $read_only = false,
         bool $is_temporary = false
     ): array {
-        return self::__mint($user_id, $name, $environment, $user_role_id, $expires_at, $scopes, $read_only, $is_temporary, null);
+        return self::__mint($user_id, $name, $environment, $expires_at, $scopes, $read_only, $is_temporary, null);
     }
 
     /**
@@ -239,7 +235,7 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      */
     public static function generate_tester_key(int $user_id, int $session_id, \Carbon\Carbon $expires_at): array
     {
-        return self::__mint($user_id, static::TESTER_KEY_NAME, 'live', null, $expires_at, null, false, false, $session_id);
+        return self::__mint($user_id, static::TESTER_KEY_NAME, 'live', $expires_at, null, false, false, $session_id);
     }
 
     /**
@@ -286,7 +282,6 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         int $user_id,
         string $name,
         string $environment,
-        ?int $user_role_id,
         ?\Carbon\Carbon $expires_at,
         ?string $scopes,
         bool $read_only,
@@ -318,7 +313,6 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         $model->name = $name;
         $model->key_hash = hash('sha256', $plaintext_key);
         $model->key_prefix = $prefix;
-        $model->user_role_id = $user_role_id;
         $model->expires_at = $expires_at;
         $model->is_revoked = false;
         // Stored explicitly, exactly as every other field is - the column's DEFAULT 0 is for

@@ -64,7 +64,7 @@ pattern twice.** If you are about to add a regex to a provider, it belongs here.
 
 ```bash
 bash build.sh                              # compiles; out/ survives the cleanup
-node ./out/test/run_recognizer_tests.js    # 149 assertions, no editor needed
+node ./out/test/run_recognizer_tests.js    # 159 assertions, no editor needed
 ```
 
 The tests are the specification of the accepted spellings - the negatives
@@ -75,8 +75,9 @@ that is not a page) matter as much as the positives.
 
 `src/framework_vocabulary.ts` is the single list of the framework's PHP attributes
 (`PHP_ATTRIBUTES`) and JS decorators (`JS_DECORATORS`), each with its hover text:
-where it applies, its arguments, what it does, and the `rsx:man` / `skill rspade:`
-references to read. `recognize_php_attributes()` and `recognize_js_decorators()`
+where it applies, its arguments, what it does, one short `example` as written in
+source (it must contain the name itself - the tests check), and the `rsx:man` /
+`skill rspade:` references to read. `recognize_php_attributes()` and `recognize_js_decorators()`
 emit a token only for a name in it; `php_attribute_provider.ts` and
 `CombinedSemanticTokensProvider` colour those tokens and
 `FrameworkVocabularyHoverProvider` describes them - so adding a name here is the

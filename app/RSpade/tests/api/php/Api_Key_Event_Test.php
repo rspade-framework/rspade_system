@@ -65,7 +65,7 @@ class Api_Key_Event_Test extends Rsx_Test_Abstract
 
     private static function __mint(string $name = 'event test key', ?\Carbon\Carbon $expires_at = null): Api_Key_Model
     {
-        return Api_Key_Model::generate(self::USER_ID, $name, 'live', null, $expires_at, "/api/v1/me", true)['model'];
+        return Api_Key_Model::generate(self::USER_ID, $name, 'live', $expires_at, "/api/v1/me", read_only: true)['model'];
     }
 
     /**
@@ -75,7 +75,7 @@ class Api_Key_Event_Test extends Rsx_Test_Abstract
     public static function test_a_mint_fires_created_once()
     {
         static::__record();
-        $result = Api_Key_Model::generate(self::USER_ID, 'event test key', 'live', null, null, "/api/v1/me", true);
+        $result = Api_Key_Model::generate(self::USER_ID, 'event test key', 'live', scopes: "/api/v1/me", read_only: true);
 
         static::__assert_count(1, static::$fired, 'one mint, one event');
         [$event, $data] = static::$fired[0];
@@ -165,7 +165,7 @@ class Api_Key_Event_Test extends Rsx_Test_Abstract
     public static function test_the_actor_is_the_signed_in_identity()
     {
         static::__record();
-        Session::set_login_user_id(1, false);
+        Session::set_login_user_id(1, touch_last_login: false);
 
         static::__mint();
 

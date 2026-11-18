@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use App\RSpade\Core\Api\Api_Catalog;
+use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Locks\Site_Lock;
 use App\RSpade\Core\Locks\Site_Lock_Directives;
 use App\RSpade\Core\RequestHistory\Request_History;
@@ -55,7 +56,9 @@ use App\RSpade\Core\Rsx;
  * operation declaring one emits a multipart/form-data requestBody with that property typed
  * string/format:binary, instead of the application/json object body every other POST gets -
  * and 'money', an amount, which the API carries as a decimal STRING ("7708.80"): a string with
- * the decimal pattern, never a JSON number. A 'string' param named *_html carries
+ * the decimal pattern, never a JSON number - and 'json', any JSON value with no fixed shape:
+ * an empty schema ({}) as a JSON body property, and a query or path parameter described by
+ * content application/json (the parameter's text is JSON) rather than a schema. A 'string' param named *_html carries
  * contentMediaType text/html: by the naming rule (MODEL-TEXT-HTML-01) such a field is sanitized
  * HTML. Responses carry the documented example; there is no
  * response SCHEMA because the framework never had one to project - an example alone is
@@ -76,6 +79,7 @@ class Api_Openapi
         'file' => 'string',
         // An amount of money travels as a decimal string ("7708.80"), never a JSON number.
         'money' => 'string',
+        // 'json' has no entry: any JSON value, so its schema carries no type (__schema()).
     ];
 
     /**
@@ -105,7 +109,7 @@ class Api_Openapi
     public static function document(?array $accessible_targets = null, ?int $version = null): array
     {
         if ($version === null) {
-            $endpoints = Api_Catalog::get_endpoint_list(false);
+            $endpoints = Api_Catalog::get_endpoint_list(include_hidden: false);
         } else {
             if (!in_array($version, Api_Catalog::get_versions(), true)) {
                 throw new \InvalidArgumentException(
@@ -374,8 +378,15 @@ class Api_Openapi
             'name' => $param['name'],
             'in' => $in,
             'required' => $in === 'path' ? true : (bool) ($param['required'] ?? false),
-            'schema' => static::__schema($param),
         ];
+
+        // A json param's text IS JSON: OpenAPI describes such a parameter by its media type
+        // (content) instead of a schema - exactly one of the two, never both.
+        if (($param['type'] ?? null) === 'json') {
+            $out['content'] = ['application/json' => ['schema' => static::__schema($param)]];
+        } else {
+            $out['schema'] = static::__schema($param);
+        }
 
         if (!empty($param['description'])) {
             $out['description'] = $param['description'];
@@ -392,8 +403,18 @@ class Api_Openapi
      * JSON Schema for one param. A declared default is carried through; null means none was
      * declared, which is not the same as a default of null.
      */
-    private static function __schema(array $param): array
+    private static function __schema(array $param): array|\stdClass
     {
+        // Any JSON value: the empty schema, which must encode as {} (never []), plus the
+        // decoded default when one is declared.
+        if (($param['type'] ?? null) === 'json') {
+            if (array_key_exists('default', $param) && $param['default'] !== null) {
+                return ['default' => Api_Param_Validator::_json_param_value($param['default'])];
+            }
+
+            return new \stdClass();
+        }
+
         $schema = ['type' => static::TYPE_MAP[$param['type']] ?? 'string'];
 
         if (($param['type'] ?? null) === 'file') {

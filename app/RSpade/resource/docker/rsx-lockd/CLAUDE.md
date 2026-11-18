@@ -22,7 +22,7 @@ exit codes). This file is the map of the implementation.
 |---|---|---|
 | `lockd.js` | CLI dispatch, `.env` load, pidfile, daemonize, `dump` rendering, `exec` | Only inside `main()`, only under `require.main === module` |
 | `lib/protocol.js` | Frame encode/decode, the newline splitter, HMAC hello, mode/timeout normalization, THE timeout message | **None. Pure.** |
-| `lib/locktable.js` | The entire lock state machine: holders, queues, grants, timeouts, semaphores, deadlock detection. Owns the `Pool_Table` instance (`table.pool`) so connection cleanup cannot forget it | **None.** Delivery and timers are injected. |
+| `lib/locktable.js` | The entire lock state machine: holders, queues, grants, timeouts, the progress watchdog (stall / notice / progress), semaphores, deadlock detection. Owns the `Pool_Table` instance (`table.pool`) so connection cleanup cannot forget it | **None.** Delivery and timers are injected. |
 | `lib/pool.js` | Worker pool accounting (`pool.*` ops): per-pool FIFO mutex + member set, worker ids (wid) + the daemon generation, per-connection cleanup. Bespoke - shares no code with locks/semaphores | **None.** Delivery, the generation and the first wid are injected. |
 | `lib/server.js` | `net.Server` over unix and/or tcp, per-connection state, hello gate, frame dispatch | Binds sockets |
 | `lib/config.js` | Config search order, JSON parse, total validation | Reads the file it is told to read |
@@ -85,12 +85,15 @@ table.drop_connection('a');                 // -> deliver(b, granted)
    connection's memberships in every pool, releases every pool lock it holds (granting
    the next FIFO waiter) and removes its queued pool waits - answering them with an error
    frame under `release_all`, and with nothing on a real drop (the socket is gone).
-2. **No clock on a lock.** No TTL, no lease, no renewal, no heartbeat, no sweeper. The
-   only `set_timeout` on a lock path is the one armed in `_enqueue` for a caller-supplied
-   timeout, and `timeout: null` must arm nothing.
+2. **No clock on a HOLD.** No TTL, no lease, no renewal, no sweeper: nothing ever takes a
+   lock from a holder. Every `set_timeout` on a lock path is armed in `_enqueue` for a
+   WAITER, because that waiter's request asked for it - `timeout`, `stall` (the progress
+   watchdog, `_check_stall()`), `notice` (`_fire_notice()`) - and a request with none of
+   the three must arm nothing. `_remove_waiter()` clears all three.
 3. **Waiting is silence.** A parked request gets no frame until granted, timed out,
-   cancelled, or its connection dies. Never send progress, acks or keepalive frames - the
-   server sends nothing unsolicited, which is what lets a client block on read.
+   stalled, cancelled, or its connection dies - except the ONE `waiting` notice its own
+   `notice` key asked for, which echoes its id and is never final. Never send acks or
+   keepalive frames the request did not ask for, which is what lets a client block on read.
 4. **FIFO, head only.** `_run_grants` walks from the head and stops at the first
    ungrantable entry. Never scan the queue for a grantable entry further back: that is
    writer starvation.
@@ -148,7 +151,7 @@ event is a `this.log(() => '...')` call in the table plus nothing else.
 Two switches, both off by default, both live-settable through the `log` op (and `lockd.js
 log` / `RsxLocks::set_lock_logging()`):
 
-- **events** - contention only: `WAIT`, `GRANT` after a wait, `TIMEOUT`, refused
+- **events** - contention only: `WAIT`, `GRANT` after a wait, `TIMEOUT`, `STALLED`, refused
   `DEADLOCK`, `FORCE_CLEAR`, and a `DROP` that released a hold or cancelled a wait. Rare
   by construction, so it is safe to leave on forever. **Adding a per-operation event to
   this level is the mistake to avoid**; the whole value is that a quiet log means a quiet
@@ -179,6 +182,40 @@ Ordering rules the events follow, worth preserving:
 Lifecycle lines go through `logger.write()` and are never gated - they are the record that
 the daemon ran. Only events go through `logger.event()`. With no file, or a file that has
 failed, both go to stdout.
+
+## The progress watchdog (`stall`, `notice`, `progress`)
+
+Owner-requested (2026-11-18), as the answer to "a wait-forever acquire behind a hung holder
+hangs with no name": the waiter fails, BY NAME, once the holder has shown no progress for its
+window; a working holder is never interrupted and no hold is ever bounded.
+
+- **The client chooses the window per request** (`stall: N`). The PHP client sends
+  `rsx.locks.stall_seconds` (config, 600) on every cluster lock and semaphore wait, and
+  `notice` (`rsx.locks.wait_notice_seconds`, 30) on a web request's waits; the CLI and the
+  companion daemon send neither. So the daemon holds no policy and reads no config for it.
+- **Progress** is a connection's `progress_at` (the `progress` op) or a hold's own grant
+  time, whichever is later (`_own_progress_at()`). `_blocking_progress_at()` folds a target's
+  holders: MIN over a lock's holders, MAX over a semaphore's; `_conn_progress_at()` lets a
+  holder that is itself parked borrow the progress of what it waits on (a visited set
+  guards the walk; cycles cannot exist since deadlock is refused at enqueue).
+- **`_check_stall()` never polls**: it computes the deadline (`max(entry.since,
+  progress) + window`) and re-arms for exactly the remainder, so a waiter behind a
+  progressing holder costs one timer per window.
+- **Ordering**, like `TIMEOUT`: the `STALLED` log line and the frame's holder report are
+  built BEFORE `_remove_waiter`, while the holders are in place; then the grant pass.
+- **Not for pools.** A pool-lock holder does only task-table work (THE RULE), and its
+  connection is not the one a PHP `still_working()` signals on.
+- **Protocol 2** (`PROTOCOL_VERSION`), announced in the hello and ping answers: a daemon
+  runs from the IMAGE and may be older than the client, so the PHP client sends `progress`
+  only when the daemon announced 2 (`Lockd_Client::server_protocol()`), and the
+  `Lock Server` health row warns about an older daemon. Bump it again for the next wire
+  change a client must detect.
+- The hello's `start` (process start time) is stored in `conn.meta.start` and reported by
+  `dump`; `Lock_Status::kill_holder()` (PHP) compares it with `/proc/<pid>/stat` before it
+  signals anything.
+
+Tests: `tests/locks/http/lockd_stall.sh` (fake clock + live daemon),
+`tests/locks/php/Lock_Watchdog_Test.php` (the PHP client, status and kill-holder).
 
 ## Lock groups (subprocess inheritance)
 

@@ -220,7 +220,7 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
         // The verb axis a scope cannot express. Every endpoint that survives must offer GET
         // and nothing else - the panel this feeds must never show a call the dispatcher
         // would answer with read_only_key.
-        $groups = Api_Catalog::resolve_for_scopes(1, null, false, true);
+        $groups = Api_Catalog::resolve_for_scopes(1, null, read_only: true);
 
         static::__assert_not_empty($groups, 'a read-only key still reaches the GET endpoints');
 
@@ -233,8 +233,8 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
 
     public static function test_resolve_for_scopes_read_only_is_a_strict_subset()
     {
-        $everything = Api_Catalog::resolve_for_scopes(1, null, false, false);
-        $read_only = Api_Catalog::resolve_for_scopes(1, null, false, true);
+        $everything = Api_Catalog::resolve_for_scopes(1, null, read_only: false);
+        $read_only = Api_Catalog::resolve_for_scopes(1, null, read_only: true);
 
         static::__assert_less_than(
             static::__count_endpoints($everything),
@@ -272,7 +272,7 @@ class Api_Catalog_Test extends Rsx_Test_Abstract
     {
         static::__assert_equals(
             Api_Catalog::resolve_for_scopes(1, null),
-            Api_Catalog::resolve_for_scopes(1, null, false, false),
+            Api_Catalog::resolve_for_scopes(1, null, read_only: false),
             'omitting the flag is the read+write answer'
         );
     }

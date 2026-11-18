@@ -217,7 +217,7 @@ class Migration_Guard_Test extends Rsx_Test_Abstract
 
         static::__assert_contains('Migration_Guard::allow(', $run);
 
-        $counts = Migration_Guard::run(static fn () => \App\RSpade\Core\Files\File_Mime_Repair::run(true));
+        $counts = Migration_Guard::run(static fn () => \App\RSpade\Core\Files\File_Mime_Repair::run(dry_run: true));
         static::__assert_true(is_array($counts), 'a dry run inside the window completes');
     }
 

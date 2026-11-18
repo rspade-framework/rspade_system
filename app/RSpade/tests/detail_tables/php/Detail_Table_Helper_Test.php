@@ -59,7 +59,7 @@ class Detail_Table_Helper_Test extends Rsx_Test_Abstract
         static::__assert_contains('updated_by_type BIGINT', $sql, 'audit updated_by_type present');
         static::__assert_false(str_contains($sql, 'deleted_at'), 'no soft-delete columns by default');
 
-        $soft = Rsx_Detail_Table::build_sql('d', 'parties', static::__person_columns(), null, true);
+        $soft = Rsx_Detail_Table::build_sql('d', 'parties', static::__person_columns(), soft_deletes: true);
         static::__assert_contains('deleted_at TIMESTAMP(3)', $soft, 'soft-delete columns added on request');
         static::__assert_contains('deleted_by_id BIGINT', $soft, 'soft-delete deleted_by pair added on request');
         static::__assert_contains('deleted_by_type BIGINT', $soft, 'soft-delete deleted_by pair added on request');

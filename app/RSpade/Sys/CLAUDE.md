@@ -1,8 +1,8 @@
 # app/RSpade/Sys - the framework's own application
 
 This tree is an RSpade APPLICATION that happens to ship inside the framework: the
-control panel served at `/_sys` (twelve screens - dashboard, system info, debug flags, tasks, task workers,
-companions, performance, email & SMS, logs, sites, users, portal users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
+control panel served at `/_sys` (thirteen screens - dashboard, system info, debug flags, tasks, task workers,
+locks, companions, performance, email & SMS, logs, sites, users, portal users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
 API console beside it. It is built exactly the way `rsx/` is built - a
 module with a bundle, a SPA bootstrap controller, JS actions, a theme directory of
 components - and it is scanned by the manifest like any other application tree

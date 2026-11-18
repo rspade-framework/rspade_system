@@ -488,7 +488,7 @@ class Passkeys
      */
     private static function _consume_challenge(string $realm, string $key): string
     {
-        $stored = Session::get_value($key, null, $realm::SESSION_REALM);
+        $stored = Session::get_value($key, realm: $realm::SESSION_REALM);
 
         Session::forget_value($key, $realm::SESSION_REALM);
 

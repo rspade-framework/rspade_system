@@ -762,12 +762,12 @@ class Site_Lock
      */
     public static function _enforce(string $label, callable $handler): mixed
     {
-        static::_enter_enforcement($label, true);
+        static::_enter_enforcement($label, request: true);
 
         try {
             $result = $handler();
         } catch (Throwable $e) {
-            static::_leave_enforcement(false);
+            static::_leave_enforcement(fail_on_leak: false);
 
             throw $e;
         }

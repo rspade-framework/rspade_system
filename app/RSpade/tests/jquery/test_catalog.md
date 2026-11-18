@@ -78,3 +78,39 @@ busy; everything else in the busy cycle stays the framework's. The probe is a ru
 | jquery-loader-09 | `set_loader(null)` restores the framework spinner | null after a renderer | `.Button_Utils__spinner` | implemented |
 | jquery-loader-10 | the argument is validated | a string, an object, `undefined`, `true` | each throws; the spinner stays in force | implemented |
 | jquery-loader-11 | the renderer's return is validated | a renderer returning `undefined` | `set_submitting()` throws; the element is left untouched | implemented |
+
+## jquery_helpers.js (playwright) - the helpers, the click override and the `$.ajax()` block
+
+Each contract in `rsx:man jquery` installed by `Rsx_Jq_Helpers._on_framework_core_define()`,
+briefly. Elements are created at run time on `/_sys`; clicks are real mouse clicks where the
+default action is the subject. `.shallowFind()` is the jqhtml library's and is not here.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| jquery-helpers-01 | `.exists()` | a match, no match | `true`, `false` | implemented |
+| jquery-helpers-02 | `.is_visible()` | displayed, `display:none`, inside a `display:none` parent | `true`, `false`, `false` | implemented |
+| jquery-helpers-03 | `.is_in_dom()` | attached, detached | `true`, `false` | implemented |
+| jquery-helpers-04 | `.is_in_viewport()` | a top element and one 6000px down, scrolled to each | in view exactly where scrolled | implemented |
+| jquery-helpers-05 | `.tagname()` | a `div`, an `a` | `'div'`, `'a'` | implemented |
+| jquery-helpers-06 | `.is_external()` | relative href, this origin, another host | `false`, `false`, `true` | implemented |
+| jquery-helpers-07 | `:focus` | a focused and an unfocused input | matches only the focused one | implemented |
+| jquery-helpers-08 | `.checkValidity()` / `.reportValidity()` | a form with an empty, then filled, required field | `false`, then `true`; a field works too | implemented |
+| jquery-helpers-09 | `.requestSubmit()` | the valid form | one `submit` event; returns the set | implemented |
+| jquery-helpers-10 | the validation wrappers on an empty set | `$()` | `false`, `false`; `requestSubmit()` returns the set | implemented |
+| jquery-helpers-11 | `.closest_sibling()` | a near cousin and a farther match | only the nearest ancestor's match; no match is an empty jQuery | implemented |
+| jquery-helpers-12 | `.click(handler)` prevents the default | a click on `<a href="#...">` | handler runs with `isDefaultPrevented()` true; the hash is unchanged; no warning | implemented |
+| jquery-helpers-13 | a handler calling `preventDefault()` itself is told it is automatic | a click | one `console.warn` naming it | implemented |
+| jquery-helpers-14 | `.click()` with no handler triggers | `$el.click()` | the bound handler runs | implemented |
+| jquery-helpers-15 | `.click_allow_default(handler)` | a click on `<a href="#...">` | handler runs, default not prevented, the hash changes | implemented |
+| jquery-helpers-16 | `.click_async()` refuses a non-function and chains | `'not a function'`; a function | throws `$.fn.click_async() requires a function handler`; returns the set | implemented |
+| jquery-helpers-17 | `.click_async()` busy state | a click while the handler's promise is pending | handler ran once, default prevented, `btn--submitting`, content swapped | implemented |
+| jquery-helpers-18 | `.click_async()` re-entrancy | `.trigger('click')` and a native click while busy | handler still ran once | implemented |
+| jquery-helpers-19 | `.click_async()` settle | the promise resolves | class removed, content restored | implemented |
+| jquery-helpers-20 | `.click_async()` on a detached element | detach while busy, then resolve | the element is left as it was; no error | implemented |
+| jquery-helpers-21 | `$.ajax()` to a local URL throws | relative `{url}`, a bare url string, this origin's absolute URL | each throws `AJAX requests to localhost via $.ajax() are prohibited.` | implemented |
+| jquery-helpers-22 | `$.ajax()` to `/_upload` names the upload transport | `{url: '/_upload'}` | throws naming `Ajax.upload(form_data` | implemented |
+| jquery-helpers-23 | `$.ajax()` to an endpoint URL names the call to make | `/_rsx_api/Some_Controller/some_method` | the message carries `await Some_Controller.some_method(parameters)` | implemented |
+| jquery-helpers-24 | `$.ajax()` to another host is jQuery's | an external URL, cancelled from `beforeSend` (the page CSP forbids the connection) | no throw; `beforeSend` reached once | implemented |
+| jquery-helpers-25 | the shorthands are blocked too | `$.get()` / `$.post()` / `$.getJSON()` / `$.getScript()` / `.load()` to `/_sys/...`, `jQuery.get()` to this origin's absolute URL | each throws as jquery-helpers-21 | implemented |
+| jquery-helpers-26 | `.scroll_up_to()` | an element above the viewport (window 3000px below it); the same element below the viewport; an empty set | the window scrolls up to the element's top; nothing moves; nothing moves and the set chains | implemented |
+| jquery-helpers-27 | the predicates on an empty set | `$().is_in_dom()`, `$().is_in_viewport()`, `$().tagname()` | `false`, `false`, `undefined` | implemented |

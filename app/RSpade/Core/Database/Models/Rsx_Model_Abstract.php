@@ -214,9 +214,10 @@ abstract class Rsx_Model_Abstract extends Model
             $orderA = isset($sorted_config[$keyA]['order']) ? $sorted_config[$keyA]['order'] : 0;
             $orderB = isset($sorted_config[$keyB]['order']) ? $sorted_config[$keyB]['order'] : 0;
 
-            // First compare by order
+            // First compare by order. `order` is a whole number (MODEL-COLUMNS-01 refuses
+            // anything else at manifest build); <=> keeps the comparison exact regardless.
             if ($orderA !== $orderB) {
-                return $orderA - $orderB;
+                return $orderA <=> $orderB;
             }
 
             // If order is same, compare by key (use spaceship operator for string comparison)
@@ -275,6 +276,11 @@ abstract class Rsx_Model_Abstract extends Model
                         return $prop_value;
                     }
                 }
+
+                // A declared enum property whose current value does not define it (an empty
+                // column, or a value that omits that property) reads as null. It is a real
+                // property of the model, so it never reaches the missing-property refusal.
+                return null;
             }
         }
 
@@ -345,6 +351,11 @@ abstract class Rsx_Model_Abstract extends Model
             $enum_map = static::__enum_property_map();
             if (isset($enum_map[$key])) {
                 [$column, $by_value] = $enum_map[$key];
+                // A presence test never throws: an enum column this record did not load
+                // (a partial select) answers "not set" rather than the missing-property refusal.
+                if (!array_key_exists($column, $this->attributes)) {
+                    return false;
+                }
                 $current = $this->$column;
                 foreach (array_keys($by_value) as $enum_val) {
                     // Property exists if current column value matches this enum value
@@ -362,6 +373,164 @@ abstract class Rsx_Model_Abstract extends Model
         }
 
         return parent::__isset($key);
+    }
+
+    /**
+     * Depth of presence tests in progress (offsetExists(), and so isset() / `??` / data_get()).
+     * While above zero, a missing property reads as null instead of throwing.
+     */
+    private static int $__presence_test_depth = 0;
+
+    /**
+     * isset($record->x), `$record->x ?? $default`, isset($record['x']) and data_get() ask
+     * whether a property is present. Asking is never an error, so a property that does not
+     * exist answers false here instead of throwing (see
+     * throwMissingAttributeExceptionIfApplicable()).
+     */
+    public function offsetExists($offset): bool
+    {
+        self::$__presence_test_depth++;
+        try {
+            return parent::offsetExists($offset);
+        } finally {
+            self::$__presence_test_depth--;
+        }
+    }
+
+    /**
+     * READING A PROPERTY THE MODEL DOES NOT HAVE THROWS.
+     *
+     * Eloquent reaches this method from getAttribute() once every source of a value has
+     * declined: the loaded attributes, a cast, an accessor, a relationship. RSpade's own magic
+     * (enum properties `col__prop`, the static enum lookups, detail accessors) answers in
+     * __get() before Eloquent is asked. So a key arriving here names nothing - most often a
+     * typo (`role_id_can_admin_roles` for `role_id__can_admin_roles`) whose null would
+     * otherwise flow silently into a guard or a payload.
+     *
+     *   A record loaded from the database: every column it was loaded with is an attribute,
+     *   so the key is either not a column at all, or a column the query did not select.
+     *   Both throw - the second names the select.
+     *
+     *   A record not loaded from the database (new, or created by this process): an
+     *   unassigned column legitimately reads as null - the row does not exist yet, or holds
+     *   only what was assigned - so a column of the model's table answers null. Any other
+     *   key throws, exactly as on a loaded record.
+     *
+     * Presence tests (isset(), `??`, data_get()) never throw: see offsetExists().
+     *
+     * Laravel's own switch for this (Model::preventAccessingMissingAttributes()) is global to
+     * every Eloquent model and exempts new records entirely; this override applies to RSpade
+     * models only and keeps the typo check on new records.
+     *
+     * @param string $key
+     * @return null
+     */
+    protected function throwMissingAttributeExceptionIfApplicable($key)
+    {
+        if (self::$__presence_test_depth > 0) {
+            return null;
+        }
+
+        $table = $this->getTable();
+        $schema_columns = Rsx_Schema::table_columns($table);
+        $loaded = $this->exists && !$this->wasRecentlyCreated;
+
+        // A table the schema reader does not describe (a fixture table a test created with
+        // plain DDL after the schema was read) gives an unloaded record nothing to judge a
+        // key against, so it keeps Eloquent's answer. Every migrated table is described.
+        if ($schema_columns === null && !$loaded) {
+            return null;
+        }
+
+        $table_columns = $schema_columns ?? [];
+        $is_column = array_key_exists($key, $table_columns);
+
+        if ($is_column && !$loaded) {
+            return null;
+        }
+
+        $class = static::class;
+        $presence_hint = "Test whether a property is present with isset(\$record->{$key}) or "
+            . "array_key_exists('{$key}', \$record->getAttributes()); reading one that is absent throws.";
+
+        if ($is_column) {
+            throw new LogicException(
+                "{$class}::{$key} was not loaded on this record: it is a column of '{$table}', but the "
+                . "query that loaded the record did not select it. Add '{$key}' to the query's select(), "
+                . "or load the whole row. {$presence_hint}"
+            );
+        }
+
+        $message = "{$class} has no property '{$key}': it is not a column of '{$table}', an enum "
+            . 'property, an appended property, an accessor, a relationship or a detail accessor.';
+
+        $suggestion = static::__suggest_property_name(
+            (string) $key,
+            array_merge(array_keys($table_columns), array_keys($this->attributes)),
+            $this->getAppends()
+        );
+        if ($suggestion !== null) {
+            $message .= " Did you mean '{$suggestion}'?";
+        }
+
+        throw new LogicException($message . ' ' . $presence_hint);
+    }
+
+    /**
+     * The property a missing key was most likely meant to be, or null.
+     *
+     * First the degraded enum property: `col_prop` (one underscore) where `col__prop` is a
+     * declared enum property or static lookup. Then the nearest known name (a column, an enum
+     * property, an appended property, a relationship, a detail accessor) within two edits.
+     *
+     * @param string $key
+     * @param string[] $columns
+     * @param string[] $appends
+     * @return string|null
+     */
+    private static function __suggest_property_name(string $key, array $columns, array $appends): ?string
+    {
+        $enum_keys = array_keys(static::__enum_property_map());
+        foreach (array_keys(static::enum_columns()) as $enum_column) {
+            foreach (['__enum', '__enum_select', '__enum_labels', '__enum_ids'] as $suffix) {
+                $enum_keys[] = $enum_column . $suffix;
+            }
+        }
+
+        // Every single underscore in the key, doubled in turn.
+        $offset = 0;
+        while (($pos = strpos($key, '_', $offset)) !== false) {
+            $is_single = ($pos === 0 || $key[$pos - 1] !== '_')
+                && ($pos === strlen($key) - 1 || $key[$pos + 1] !== '_');
+            if ($is_single) {
+                $candidate = substr($key, 0, $pos) . '__' . substr($key, $pos + 1);
+                if (in_array($candidate, $enum_keys, true)) {
+                    return $candidate;
+                }
+            }
+            $offset = $pos + 1;
+        }
+
+        $known = array_merge(
+            $columns,
+            $enum_keys,
+            $appends,
+            static::get_relationships(),
+            array_keys(static::detail_accessors())
+        );
+
+        $best = null;
+        $best_distance = 3;
+        foreach ($known as $name) {
+            $name = (string) $name;
+            $distance = levenshtein($key, $name);
+            if ($distance < $best_distance) {
+                $best = $name;
+                $best_distance = $distance;
+            }
+        }
+
+        return $best;
     }
 
     /**
@@ -464,8 +633,17 @@ abstract class Rsx_Model_Abstract extends Model
             }
         }
 
-        // Add enum field extra data - ALL properties (BEM-style: field__property)
+        // Add enum field extra data - ALL properties (BEM-style: field__property).
+        //
+        // Only for a column that is still IN the payload: every `col__*` extra names the
+        // column's value as surely as the value itself (a label is one-to-one with its id),
+        // so a column stripped above - never_export, a system `_` column, Laravel $hidden -
+        // gets no extras either.
         foreach (static::enum_columns() as $column => $definitions) {
+            if (!array_key_exists($column, $array)) {
+                continue;
+            }
+
             if (isset($this->$column) && isset($definitions[$this->$column])) {
                 foreach ($definitions[$this->$column] as $prop => $value) {
                     // Add all enum properties to the export
@@ -625,7 +803,7 @@ abstract class Rsx_Model_Abstract extends Model
      *
      *   enum             - integer-keyed map of value => ['constant' => 'NAME', 'label' => 'Shown',
      *                      ...]: optional `constant` (generated as a class constant), `label`,
-     *                      `order`, `selectable` (false hides it from __enum_select()) and any
+     *                      `order` (an int), `selectable` (false hides it from __enum_select()) and any
      *                      custom property, readable as $record->{column}__{property}. The column
      *                      is a BIGINT; Model::{column}__enum() and the JS stub mirror it.
      *   text_type        - class-string of an Rsx_Text_Abstract subclass that owns the column's
@@ -1418,7 +1596,8 @@ abstract class Rsx_Model_Abstract extends Model
     /**
      * Override the fill method to prevent mass assignment
      *
-     * Exception: Allow timestamp-only updates from Laravel's query builder
+     * Any non-empty array is refused. An empty one is a no-op: Eloquent's constructor and
+     * newInstance() call fill() with the empty array they were given.
      *
      * @param array $attributes
      * @return $this
@@ -1430,20 +1609,6 @@ abstract class Rsx_Model_Abstract extends Model
             return $this;
         }
 
-        // Allow if ONLY timestamps are being set (Laravel's query builder does this)
-        $timestampColumns = array_filter([
-            $this->getCreatedAtColumn(),
-            $this->getUpdatedAtColumn(),
-        ]);
-
-        $nonTimestampAttributes = array_diff(array_keys($attributes), $timestampColumns);
-
-        // If only timestamps are being set, allow it (Laravel internals)
-        if (empty($nonTimestampAttributes)) {
-            return parent::fill($attributes);
-        }
-
-        // Otherwise, block mass assignment
         throw new MassAssignmentException(
             get_class($this),
             array_keys($attributes)
@@ -1453,7 +1618,11 @@ abstract class Rsx_Model_Abstract extends Model
     /**
      * Override the forceFill method to prevent mass assignment
      *
-     * Exception: Allow timestamp-only updates from Laravel's query builder
+     * One array is assigned: one holding ONLY the model's timestamp columns. Eloquent's
+     * Builder::addUpdatedAtColumn() runs the updated_at value of every query-builder
+     * update() through the column's cast with newInstance()->forceFill([updated_at => ...]),
+     * and every RSX model casts its timestamps (Rsx_DateTime_Cast). The attributes are set
+     * directly, never through fill(), which refuses every array.
      *
      * @param array $attributes
      * @return $this
@@ -1465,20 +1634,19 @@ abstract class Rsx_Model_Abstract extends Model
             return $this;
         }
 
-        // Allow if ONLY timestamps are being set (Laravel's query builder does this)
-        $timestampColumns = array_filter([
+        $timestamp_columns = array_filter([
             $this->getCreatedAtColumn(),
             $this->getUpdatedAtColumn(),
         ]);
 
-        $nonTimestampAttributes = array_diff(array_keys($attributes), $timestampColumns);
+        if (empty(array_diff(array_keys($attributes), $timestamp_columns))) {
+            foreach ($attributes as $column => $value) {
+                $this->setAttribute($column, $value);
+            }
 
-        // If only timestamps are being set, allow it (Laravel internals)
-        if (empty($nonTimestampAttributes)) {
-            return parent::forceFill($attributes);
+            return $this;
         }
 
-        // Otherwise, block mass assignment
         throw new MassAssignmentException(
             get_class($this),
             array_keys($attributes),

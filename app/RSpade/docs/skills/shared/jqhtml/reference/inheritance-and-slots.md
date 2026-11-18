@@ -75,6 +75,33 @@ break downstream. This is the most common silent failure when building on an abs
 own class and every concrete descendant inherits that look for free - which is what makes an
 abstract base worth having.
 
+## Overriding a parent's methods
+
+A component class extending ANOTHER component of the application or framework calls the parent's
+method from every override of it - `super.on_create()`, `await super.on_ready()`,
+`super._set_value(value)` - unless the parent decorates that method `@Replaceable`
+(JS-PARENT-CHAIN-01, a manifest-build fatal). jqhtml runs only the most-derived hook, so the
+parent's own setup (a Tom Select instance, an input's buffering, a layout's region wiring) runs
+only through that call. The first component over jqhtml's own `Component` is free: that base is
+outside the manifest.
+
+```javascript
+class Select_Input extends Form_Input_Abstract {
+    on_ready() { this.tom_select = new TomSelect(this.$sid('input').get(0), this._tom_select_config()); this._mark_ready(); }
+
+    @Replaceable
+    _tom_select_config() { return {...}; }        // a seam subclasses replace
+}
+
+class Remote_Select_Input extends Select_Input {
+    _tom_select_config() { return {...}; }        // replaces the seam, owes no super
+}
+```
+
+An abstract base that wants a hook REPLACED (an empty default, a stub throwing "must implement")
+decorates it `@Replaceable`; one whose hook does work every subclass needs leaves it plain.
+`rsx:man coding_standards`, OVERRIDES CALL THEIR PARENT.
+
 ## Gotcha: slot-only inheritance re-scopes `$sid`
 
 Covered as P1 in `reference/semantic-composition.md`. A child defined by slot-only inheritance

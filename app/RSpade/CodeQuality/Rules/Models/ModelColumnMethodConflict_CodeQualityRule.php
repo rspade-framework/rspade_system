@@ -2,8 +2,9 @@
 
 namespace App\RSpade\CodeQuality\Rules\Models;
 
-use Exception;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Schema;
+use PDOException;
 use ReflectionClass;
 use ReflectionMethod;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
@@ -59,73 +60,72 @@ class ModelColumnMethodConflict_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
+        $reflection = new ReflectionClass($class_name);
+
+        // Get the $table property value
+        $table_prop = $reflection->getProperty('table');
+        $table_prop->setAccessible(true);
+        $instance = $reflection->newInstanceWithoutConstructor();
+        $table_name = $table_prop->getValue($instance);
+
+        // Get table columns from database. With no database reachable (CI, before
+        // migrations) the check cannot run and is skipped.
         try {
-            $reflection = new ReflectionClass($class_name);
-
-            // Get the $table property value
-            $table_prop = $reflection->getProperty('table');
-            $table_prop->setAccessible(true);
-            $instance = $reflection->newInstanceWithoutConstructor();
-            $table_name = $table_prop->getValue($instance);
-
-            // Get table columns from database
             $columns = Schema::getColumnListing($table_name);
-
-            // Get all public methods defined in this class (not inherited)
-            $methods = $reflection->getMethods(ReflectionMethod::IS_PUBLIC);
-            $lines = explode("\n", $contents);
-
-            foreach ($methods as $method) {
-                // Only check methods defined in this class, not inherited
-                if ($method->class !== $class_name) {
-                    continue;
-                }
-
-                $method_name = $method->getName();
-
-                // Check if this method name conflicts with a column name
-                if (in_array($method_name, $columns)) {
-                    $line_number = $method->getStartLine();
-
-                    $this->add_violation(
-                        $file_path,
-                        $line_number,
-                        "Method '{$method_name}()' conflicts with database column '{$method_name}' in table '{$table_name}'",
-                        $lines[$line_number - 1] ?? '',
-                        'Rename the method to avoid conflict with the database column name',
-                        'critical'
-                    );
-                }
-            }
-
-            // Also check enum definitions - they shouldn't reference methods
-            $fqcn = $reflection->getName();
-            foreach ($fqcn::enum_columns() as $enum_field => $definitions) {
-                // Check if this enum field name matches a method
-                if (method_exists($class_name, $enum_field)) {
-                    // Find where this enum is defined
-                    $line_number = 1;
-                    foreach ($lines as $i => $line) {
-                        if (preg_match('/[\'"]' . preg_quote($enum_field) . '[\'"\s]*=>/', $line)) {
-                            $line_number = $i + 1;
-                            break;
-                        }
-                    }
-
-                    $this->add_violation(
-                        $file_path,
-                        $line_number,
-                        "Enum field '{$enum_field}' conflicts with method '{$enum_field}()' on the model",
-                        $lines[$line_number - 1] ?? '',
-                        'Either rename the method or remove the enum definition',
-                        'critical'
-                    );
-                }
-            }
-        } catch (Exception $e) {
-            // If we can't check the database schema (e.g., during CI or before migrations),
-            // skip this validation
+        } catch (QueryException | PDOException $e) {
             return;
+        }
+
+        // Get all public methods defined in this class (not inherited)
+        $methods = $reflection->getMethods(ReflectionMethod::IS_PUBLIC);
+        $lines = explode("\n", $contents);
+
+        foreach ($methods as $method) {
+            // Only check methods defined in this class, not inherited
+            if ($method->class !== $class_name) {
+                continue;
+            }
+
+            $method_name = $method->getName();
+
+            // Check if this method name conflicts with a column name
+            if (in_array($method_name, $columns)) {
+                $line_number = $method->getStartLine();
+
+                $this->add_violation(
+                    $file_path,
+                    $line_number,
+                    "Method '{$method_name}()' conflicts with database column '{$method_name}' in table '{$table_name}'",
+                    $lines[$line_number - 1] ?? '',
+                    'Rename the method to avoid conflict with the database column name',
+                    'critical'
+                );
+            }
+        }
+
+        // Also check enum definitions - they shouldn't reference methods
+        $fqcn = $reflection->getName();
+        foreach ($fqcn::enum_columns() as $enum_field => $definitions) {
+            // Check if this enum field name matches a method
+            if (method_exists($class_name, $enum_field)) {
+                // Find where this enum is defined
+                $line_number = 1;
+                foreach ($lines as $i => $line) {
+                    if (preg_match('/[\'"]' . preg_quote($enum_field) . '[\'"\s]*=>/', $line)) {
+                        $line_number = $i + 1;
+                        break;
+                    }
+                }
+
+                $this->add_violation(
+                    $file_path,
+                    $line_number,
+                    "Enum field '{$enum_field}' conflicts with method '{$enum_field}()' on the model",
+                    $lines[$line_number - 1] ?? '',
+                    'Either rename the method or remove the enum definition',
+                    'critical'
+                );
+            }
         }
     }
 }

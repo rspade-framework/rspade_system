@@ -111,6 +111,10 @@ class Permission {
         if (!user) {
             return false;
         }
+        // A membership with no role fails every floor: null <= n is true in JavaScript.
+        if (user.role_id === null || user.role_id === undefined) {
+            return false;
+        }
         // Lower role_id = higher privilege
         return user.role_id <= role_id;
     }

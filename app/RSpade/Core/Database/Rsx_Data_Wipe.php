@@ -85,7 +85,7 @@ class Rsx_Data_Wipe
 
         $removed = self::measure_directory_contents($root);
 
-        rmdir_recursive($root, false);
+        rmdir_recursive($root, delete_self: false);
 
         return $removed;
     }

@@ -105,6 +105,7 @@ class Rsx_Text_Abstract {
      *
      * @returns {boolean}
      */
+    @Replaceable
     _local_is_empty() {
         return this._raw.trim() === '';
     }
@@ -126,6 +127,7 @@ class Rsx_Text_Abstract {
      * @param {string} raw
      * @returns {string}
      */
+    @Replaceable
     static sanitize_encoded(raw) {
         return raw;
     }

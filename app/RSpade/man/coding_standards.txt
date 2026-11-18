@@ -339,6 +339,62 @@ OPENING A NEW TAB (JS-NEW-TAB-01)
     Rsx.navigate(download_url). '@JS-NEW-TAB-01-EXCEPTION <reason>' excuses
     one finding - rare, and reviewed. rsx:man navigation, NEW TABS.
 
+OVERRIDES CALL THEIR PARENT (PHP-PARENT-CHAIN-01, JS-PARENT-CHAIN-01)
+    An override CHAINS by default. A method that overrides a same-named method
+    declared by an ancestor class in the manifest calls it - parent::method()
+    in PHP, super.method() in JavaScript - somewhere in its body, unless the
+    NEAREST ancestor declaring the method opts out:
+
+        PHP:  #[Replaceable] on the parent method (or the parent is abstract)
+        JS:   the @Replaceable decorator on the parent method
+
+    Both are manifest-build FATALs. Neither language requires the call, and a
+    forgotten one fails silently: a booted() that skips parent::booted() drops
+    the site scope; an on_create() / on_ready() / on_stop() that skips super
+    drops whatever the parent component does there (jqhtml calls only the
+    most-derived hook).
+
+        class Select_Input extends Form_Input_Abstract {
+            on_ready() {
+                this.tom_select = new TomSelect(...);
+                this._mark_ready();
+            }
+
+            @Replaceable
+            _tom_select_config() { return {...}; }
+        }
+
+        class Remote_Select_Input extends Select_Input {
+            async on_ready() {
+                await super.on_ready();          // the parent builds the widget
+                this.tom_select.on('type', ...);
+            }
+
+            _tom_select_config() { return {...}; } // replaces it; no super owed
+        }
+
+    The call may sit anywhere in the body (a branch, a loop, an arrow function);
+    it must name the same method - super.other() does not count - and a mention
+    in a comment or a string is not a call. Static methods are covered the same
+    way. Not covered: the JavaScript constructor (the language already refuses a
+    derived constructor that skips super()), getters, setters and #private
+    methods.
+
+    A parent OUTSIDE the manifest imposes nothing: a vendor or npm class, and
+    jqhtml's own Component base, so a component's own on_ready() is free. Its
+    sub-component's on_ready() over it is not. The anchor is the NEAREST
+    declaring ancestor: a class that re-declares a @Replaceable method without
+    the decorator makes it chain-mandatory again for its own descendants.
+
+    Fixing a finding is a decision about the PARENT: when its method does work
+    every subclass needs, the child calls it; when it is a hook overriders are
+    meant to replace (an empty default, a stub that throws "must implement"),
+    the parent method is marked Replaceable. '@JS-PARENT-CHAIN-01-EXCEPTION
+    <rationale>' (or the PHP twin) above an override excuses that one method -
+    for an override of a framework method you cannot mark; rare, and reviewed.
+    @Replaceable is a JavaScript decorator only: written in a docblock it is a
+    comment and exempts nothing. rsx:man js_decorators.
+
 FUNCTION ORGANIZATION PHILOSOPHY
     Prefer Inline Code with Comments:
         - Comment above a few lines better than separate methods
@@ -366,35 +422,58 @@ FUNCTION ORGANIZATION PHILOSOPHY
         - Not arbitrarily split across multiple methods
 
 OPTIONAL PARAMETERS
-    Public (rsx-developer-facing) functions take their required/obvious arguments as
-    POSITIONAL parameters, followed by a SINGLE optional associative-array of options
-    when optional parameters are appropriate.
+    PHP: required, obvious arguments are POSITIONAL. An optional setting is a
+    parameter with a default, and the CALLER passes it BY NAME (a PHP named
+    argument). Never a positional null placeholder to reach a later
+    parameter, and never a bare positional true / false / null literal into
+    an optional parameter.
 
-    Rules:
-        - NOT a long tail of defaulted positionals (foo($a, $b = null, $c = 1, $d = false)).
-        - NOT native PHP named arguments.
-        - Document every accepted option key in the docblock.
-        - Valueless flags are boolean keys: ['authorized' => true].
-        - No argument-overloading: a positional's meaning must never shift with the
-          argument count (e.g. Modal.alert()'s title-vs-body flip). Kill this for NEW APIs.
-        - JS mirror: a trailing options object with the same documented keys.
+        // Signature
+        public static function system_lock(string $name, ?int $timeout = null,
+                                           bool $db_scoped = true): string
 
-        // Good (PHP)
-        // @param array $options { 'site_id'?: int, 'run_as_system'?: bool }
-        public static function dispatch(string $service, string $method, array $params = [],
-                                        array $options = []) { }
+        // Good
+        RsxLocks::system_lock($name, db_scoped: false);
+        rmdir_recursive($dir, delete_self: false);
 
-        // Good (JS)
-        // options: { short?: bool, on_complete?: fn }
-        countdown(element, target_time, options = {}) { }
+        // Bad - a placeholder, then a flag nobody can read
+        RsxLocks::system_lock($name, null, false);
+        rmdir_recursive($dir, false);
 
-        // Avoid
-        public static function dispatch($service, $method, $params = [], $site = 0,
-                                        $user = 0, $system = false, $delay = 0) { }
+    A new PHP function does not take an options array. A misspelt named
+    argument fails loudly ("Unknown named parameter $db_scopd"); a misspelt
+    options key is ignored without a word. The exception is a genuinely open
+    key set - route parameters or task parameters passed through as a map.
 
-    Rationale: one obvious call shape, self-documenting keys, no positional bookkeeping,
-    and additive evolution (a new option never shifts an existing signature). Existing
-    non-conforming signatures are swept to this standard as a backlog item (B-57).
+    JavaScript: required arguments positional, optional settings in ONE
+    trailing options object. A framework function taking an options object
+    throws on an unknown key.
+
+        // Good
+        Ajax.upload(form_data, {on_progress: fn});
+
+        // Bad - positional flags
+        countdown(element, target_time, true, null, fn);
+
+    No argument-overloading in either language: a positional argument's
+    meaning never shifts with the argument count.
+
+    Why: a positional tail is the commonest way a call goes silently wrong.
+    A slot miscounted, or a parameter inserted ahead of it, moves a value
+    into a different setting with no error. A named argument reads at the
+    call site and survives a signature that grows.
+
+    Enforced by PHP-NAMED-OPTIONAL-01 (rsx:check, high): a literal null, true
+    or false passed positionally into a defaulted parameter of a framework or
+    application function or static method the checker can resolve. Pass the
+    argument by name; every positional argument after it becomes named too,
+    and a placeholder that only repeated the default is dropped:
+
+        f($a, null, true)   ->   f($a, third: true)
+
+    Vendor callees, calls through a variable, instance calls and variadic
+    parameters are not judged. '@PHP-NAMED-OPTIONAL-01-EXCEPTION <rationale>'
+    on the call's line or the line above excuses that one call.
 
 LOSSY CONVERSIONS ARE SPELLED OUT
     An intentional lossy conversion is always written explicitly - (int), (int) round(),
@@ -723,5 +802,6 @@ APPLICATION RULES (rsx:check)
 SEE ALSO
     error_handling - Error handling patterns and shouldnt_happen()
     navigation - Rsx.navigate(), the new-tab policy, JS-NAVIGATE-01, JS-NEW-TAB-01
+    js_decorators - @Replaceable and the other JavaScript decorators
     js_functions - escape_html(), nl2brhtml(), html_to_text()
     config_rsx - Framework configuration standards

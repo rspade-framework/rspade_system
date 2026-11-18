@@ -2,7 +2,6 @@
 
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
-use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
 use ReflectionClass;
@@ -52,20 +51,15 @@ class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        try {
-            // Get the class name from the AST
-            $class_name = $this->get_class_name($ast);
-            
-            if ($class_name) {
-                // Try to use reflection if the class is loadable
-                $this->check_with_reflection($class_name, $file_path);
-            } else {
-                // Fall back to AST-only checking
-                $this->check_methods($ast, $file_path);
-            }
-        } catch (Error $error) {
-            // Parse error - skip this file for naming checks
-            return;
+        // Get the class name from the AST
+        $class_name = $this->get_class_name($ast);
+
+        if ($class_name) {
+            // Try to use reflection if the class is loadable
+            $this->check_with_reflection($class_name, $file_path);
+        } else {
+            // Fall back to AST-only checking
+            $this->check_methods($ast, $file_path);
         }
     }
     

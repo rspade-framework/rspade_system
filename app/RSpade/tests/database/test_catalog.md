@@ -31,6 +31,34 @@ Type: php / cli / asset / http / playwright.
 | db-rf-05 | an empty relation list is not a load | load([]), loadMissing([]), loadCount([]) | each returns $this | implemented |
 | db-rf-06 | loading a relation is still refused | load / loadMissing / loadCount / with() naming a relation | RuntimeException naming the refusal | implemented |
 
+## Model_Mass_Assignment_Test (php, default isolation) - no attribute array reaches a model
+
+Fixture: `Country_Model` (framework, not site-scoped).
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-ma-01 | fill() and forceFill() refuse an attribute array, in a plain-ASCII message | `fill(['name', 'alpha2'])`, `forceFill(['name'])` | MassAssignmentException `[ERROR] MASS ASSIGNMENT PROHIBITED` naming the method and each field, no non-ASCII byte | implemented | 2026-11-17 |
+| db-ma-02 | the constructor refuses one (Eloquent fills from it) | `new Country_Model(['name' => ...])` | MassAssignmentException, method fill() | implemented | 2026-11-17 |
+| db-ma-03 | static create() refuses and writes nothing | `Country_Model::create($fields)` | MassAssignmentException naming create(); no row | implemented | 2026-11-17 |
+| db-ma-04 | the builder's create() refuses and writes nothing | `Country_Model::query()->create($fields)` | MassAssignmentException; no row | implemented | 2026-11-17 |
+| db-ma-05 | firstOrCreate / firstOrNew / updateOrCreate refuse attributes and values alike | each with attributes, and with values only | MassAssignmentException naming the method; no row | implemented | 2026-11-17 |
+| db-ma-06 | instance update(array) refuses and changes nothing | `$record->update(['name' => ...])` | MassAssignmentException naming update(); stored row unchanged | implemented | 2026-11-17 |
+| db-ma-07 | an empty array is not mass assignment | `fill([])`, `forceFill([])` | the instance, nothing dirty | implemented | 2026-11-17 |
+| db-ma-08 | explicit assignment creates and updates; update() with no array saves | field-by-field assignment + save(), then update() | row created, updated | implemented | 2026-11-17 |
+| db-ma-09 | only forceFill() of the timestamp columns alone is accepted (Eloquent's builder update() casts updated_at that way); fill() refuses even that | `fill(['updated_at'])`, `forceFill(['updated_at', 'name'])`, `forceFill(['created_at', 'updated_at'])`, `Country_Model::query()->where(...)->update(['name' => ...])` | the framework MassAssignmentException twice; both timestamps assigned and nothing else; the builder update writes | implemented | 2026-11-17 |
+
+## Model_Static_Eager_Load_Test (php, default isolation) - eager loading refused at the static and builder doors
+
+The instance forms are db-rf-06. Fixture: `User_Model` and its `login_user` relation.
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-el-01 | static with() is refused | `User_Model::with('login_user')`, `with(['login_user'])` | RuntimeException "Eager loading is not allowed", naming the relation | implemented | 2026-11-17 |
+| db-el-02 | static withCount() and every with*() aggregate are refused | withCount / withMax / withMin / withSum / withAvg / withExists / withAggregate | RuntimeException naming the method | implemented | 2026-11-17 |
+| db-el-03 | the builder refuses with() / withCount() mid-chain | `query()->with()`, `where()->with()`, `where()->withCount()` | RuntimeException | implemented | 2026-11-17 |
+| db-el-04 | an empty builder with([]) / withCount([]) is not a load | `query()->with([])->withCount([])->find(1)` | the record, no relation loaded | implemented | 2026-11-17 |
+| db-el-05 | a result collection refuses load / loadMissing / loadCount | `where()->get()->load('login_user')` ... | RuntimeException | implemented | 2026-11-17 |
+
 ## Result_Set_Tripwire_Test (php, default isolation) - dev row-count warning
 
 | ID | Purpose | Input | Expected | Status |
@@ -220,11 +248,44 @@ prove the per-class memos are not shared.
 
 ## Check_Indexes_Advice_Test (php, no DB) - rsx:db:check_indexes recommends only what changes a plan
 
+Pure logic over `Index_Advisor` with a fixture context (fixture tables as arrays); model facts
+read from `Check_Indexes_Site_Fixture_Model` / `Check_Indexes_Plain_Fixture_Model`.
+
 | ID | Purpose | Input | Expected | Status | Last updated |
 |----|---------|-------|----------|--------|--------------|
-| db-ci-01 | a requirement leading with the primary key needs no index | `(id, site_id)`, `(id)` | null | implemented | 2026-09-25 |
-| db-ci-02 | a trailing primary key is dropped from the requirement | `(site_id, id)`; `(user_id, site_id)` | `(site_id)`; untouched | implemented | 2026-09-25 |
-| db-ci-03 | an existing index serves a requirement by its leading columns | `(thread_id)` vs `(thread_id, created_at)`; `(status_id)` vs `(site_id, status_id)` | served; not served | implemented | 2026-09-25 |
+| db-ci-01 | the model's own table qualifier is stripped | `where('fx_customers.email')` | `{email}` on fx_customers | implemented | 2026-11-18 |
+| db-ci-02 | a joined table's column is credited to that table, never the root | `join('fx_customers as c')->where('c.region_id')` | `{region_id}` on fx_customers, no site_id | implemented | 2026-11-18 |
+| db-ci-03 | a column qualified with an unknown table is dropped | `where('fx_elsewhere.region_id')` | dropped | implemented | 2026-11-18 |
+| db-ci-04 | an unqualified column in a joined chain is kept only when the root alone has it | `name` on both, `placed_at` root only; a non-literal join | name dropped, placed_at kept; nothing | implemented | 2026-11-18 |
+| db-ci-05 | a site-scoped requirement carries site_id, served by `(site_id, col)` | `where('customer_id')` | `{site_id, customer_id}`, served by idx_site_customer | implemented | 2026-11-18 |
+| db-ci-06 | withoutGlobalScopes / without_site_scope(fn) on a model sharing the flag holder remove site_id; another model's switch does not | three chains | `{customer_id}`, `{customer_id}`, `{site_id, customer_id}` | implemented | 2026-11-18 |
+| db-ci-07 | equality is a set matched in any order; an index leading outside the set, or with no selective column of it, does not serve | `{site_id, code}` vs `(code, site_id)`; `(name)` vs `(region_id, name)`; `{site_id, status_id, name}` | served; not served; not served | implemented | 2026-11-18 |
+| db-ci-18 | a selective leading column in the set serves it; site_id or an enum alone does not | `(customer_id)` vs `{site_id, customer_id}`; `(site_id)`; `(status_id)`; `(name, customer_id)`; exact `(status_id, site_id)` | served; not; not; not; served | implemented | 2026-11-18 |
+| db-ci-08 | a trailing range / sort column is optional for serving | `(site_id, customer_id)` + range / sort; range-only | served | implemented | 2026-11-18 |
+| db-ci-09 | whereIn / whereNull are equality, whereNotNull is a range, orderBy is sort | two chains | eq set + sort; eq set + range, sort dropped | implemented | 2026-11-18 |
+| db-ci-10 | one range column; sort only without a range; the recommended shape | two ranges + orderBy | first range, no sort | implemented | 2026-11-18 |
+| db-ci-11 | TEXT / JSON columns and a leading-wildcard LIKE are never recommended; a prefix LIKE is a range | `bio` MEDIUMTEXT, `notes`, `payload`, `'%@x'`, `'pat%'` | dropped; range | implemented | 2026-11-18 |
+| db-ci-12 | the primary key needs no index; a range / sort on it is dropped; a sort alone filters nothing | `where('id')`, `id >` + `orderBy('id')`, `orderBy('name')` | none; `{email}`; none | implemented | 2026-11-18 |
+| db-ci-13 | flag / status / enum requirements are low value; a range or selective column is not | enum, boolean, MySQL ENUM, + range, + customer_id | true x3, false x2 | implemented | 2026-11-18 |
+| db-ci-14 | identical requirements aggregate with distinct call sites; merged into one index; low-value folded or listed apart; unused idx_auto_ dropped | seven items | two creates, one low-value, one drop | implemented | 2026-11-18 |
+| db-ci-15 | an index missing one equality column of an unserved requirement is named as nearly serving, with the columns it leads with; an index that is exactly those columns is preferred | `{site_id, name}`; `{site_id, is_paid, name}` vs a wider and an exact index | unserved; idx_site, missing name; the exact index | implemented | 2026-11-18 |
+| db-ci-16 | model facts: site scope, flag holder, enums, framework table | the two fixture models | as declared | implemented | 2026-11-18 |
+| db-ci-17 | the migration text alters each table and names its call sites; long names are shortened | one create, one drop | ALTER TABLE statements; 64 chars | implemented | 2026-11-18 |
+
+## Check_Indexes_Source_Test (php, no DB) - rsx:db:check_indexes reads the right sources and each chain's shape
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-cs-01 | tests/ trees, rsx/app/dev and seed directories are not sources | paths | test / dev / seeder / null | implemented | 2026-11-18 |
+| db-cs-02 | a class whose only role is seeding is a seeder | `#[Command('app:seed_demo')]`, *Seeder subclass, mixed commands | true, true, false | implemented | 2026-11-18 |
+| db-cs-03 | a file that does not parse reports its error | broken source | error set, no chains | implemented | 2026-11-18 |
+| db-cs-04 | equality shapes; whereNotNull is a range | where, `=`, whereIn, whereNull, whereNotNull, array where, first() | six eq steps, one range | implemented | 2026-11-18 |
+| db-cs-05 | range and sort shapes | `>=`, whereBetween, orderBy, orderByDesc, latest(), oldest(col) | range x2, sort x4 | implemented | 2026-11-18 |
+| db-cs-06 | a leading-wildcard LIKE (literal, interpolated, concatenated) is skipped; `!=` is skipped | five wheres | skip x4, range x1 | implemented | 2026-11-18 |
+| db-cs-07 | a dynamic column or an orWhere abandons the chain; an OR inside a nested group does not | three chains | dynamic_column, or, kept | implemented | 2026-11-18 |
+| db-cs-08 | only the outermost call of a chain is read; static:: resolves to the enclosing class | one chain in a class | one chain, root resolved | implemented | 2026-11-18 |
+| db-cs-09 | joins (alias, closure, non-literal) and scope switches | one chain | join x3, unscope | implemented | 2026-11-18 |
+| db-cs-10 | a chain inside without_site_scope(fn) records the unscoping class | two chains | `[]`, `['Fx_Customer_Model']` | implemented | 2026-11-18 |
 
 ## Field_Length_Script_Test (php) - a bundle's field-length script
 
@@ -274,3 +335,20 @@ through `$columns` only (`Model_Columns_Fixture_Base_Model_Abstract` -> `_Child_
 | db-col-08 | the never-export and revision-exclude views | each fixture | per the overlay | implemented | 2026-11-13 |
 | db-col-09 | every model carries the audit type-ref columns | the fixtures and every concrete model in the manifest | all three in `type_ref_columns()` and `columns()` | implemented | 2026-11-13 |
 | db-col-10 | the memo is per class | the leaf asked first, then its ancestors | no ancestor answers a descendant's columns; a second ask answers the same | implemented | 2026-11-13 |
+
+## Model_Missing_Property_Test (php, default isolation) - reading a missing property throws
+
+Fixtures: `Missing_Property_Fixture_Model` (enum with a custom property, system column, never_export column, appended property, relationship, detail table) + `Missing_Property_Fixture_Note_Detail_Model`, tables created in setup; `Country_Model` for the schema-described cases.
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-mp-01 | a degraded enum property throws and names the right one | `$record->role_id_can_admin_roles` | LogicException naming the model, the key, "Did you mean 'role_id__can_admin_roles'?" | implemented | 2026-11-18 |
+| db-mp-02 | a near-miss of a column suggests it | `$record->nmae` | "Did you mean 'name'?" | implemented | 2026-11-18 |
+| db-mp-03 | enum properties and lookups still read | label, custom property, omitted property, NULL column, `__enum_ids` | values; null for omitted / NULL; no throw | implemented | 2026-11-18 |
+| db-mp-04 | system and never_export columns still read | `_sys_note`, `secret_token` | stored values | implemented | 2026-11-18 |
+| db-mp-05 | appended property and relationship still read | `display_name`, `parent` | values; an empty relation is null | implemented | 2026-11-18 |
+| db-mp-06 | a detail accessor still reads | `missing_property_fixture_note` | the detail, saved and re-read | implemented | 2026-11-18 |
+| db-mp-07 | presence tests never throw | isset(), `??`, ArrayAccess isset, data_get() | false / default / null; a later plain read still throws | implemented | 2026-11-18 |
+| db-mp-08 | a partial select throws for an unselected column | `select(['id', 'alpha2'])` then `->name` | "Country_Model::name was not loaded on this record"; isset() false | implemented | 2026-11-18 |
+| db-mp-09 | a new record reads unassigned columns as null, refuses typos | `new Country_Model()` | `id`, `name` null; `nmae` throws | implemented | 2026-11-18 |
+| db-mp-10 | a typo on a loaded framework model names the column | `$country->common_nam` | "not a column of 'countries'", "Did you mean 'common_name'?" | implemented | 2026-11-18 |

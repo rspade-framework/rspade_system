@@ -112,7 +112,7 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
      */
     public static function test_openapi_narrows_to_one_version()
     {
-        $doc = Api_Openapi::document(null, 2);
+        $doc = Api_Openapi::document(version: 2);
         static::__assert_equals('v2', $doc['info']['version']);
 
         $urls = array_keys($doc['paths']);
@@ -122,7 +122,7 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
         static::__assert_false(in_array(static::__path(1, '/items'), $urls, true), 'not the v1 row a v2 row replaces');
         static::__assert_false(in_array(static::__path(1, '/items/{id}'), $urls, true), 'not the superseded v1 endpoint');
 
-        static::__assert_throws(\InvalidArgumentException::class, fn () => Api_Openapi::document(null, 99), 'No API version 99');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Api_Openapi::document(version: 99), 'No API version 99');
     }
 
     /**
@@ -188,7 +188,7 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
         $user = User_Model::without_site_scope(fn () => User_Model::find(1));
         $user->is_api_access_enabled = 1;
         $user->save();
-        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid(), 'live', null, null, $scopes)['key'];
+        $key = Api_Key_Model::generate(1, 'versioning probe ' . uniqid(), 'live', scopes: $scopes)['key'];
 
         return static::__dispatch_get($url, $key, $refuse_with);
     }
@@ -236,7 +236,7 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
             static::__assert_contains('application/json', (string) $response->headers->get('Content-Type'), "{$url} is JSON");
 
             $body = json_decode((string) $response->getContent(), true);
-            $expected = json_decode(json_encode(Api_Openapi::document(null, $version), JSON_UNESCAPED_SLASHES), true);
+            $expected = json_decode(json_encode(Api_Openapi::document(version: $version), JSON_UNESCAPED_SLASHES), true);
             static::__assert_equals($expected, $body, "{$url} is v{$version}'s document exactly");
             static::__assert_equals("v{$version}", $body['info']['version']);
             static::__assert_false(array_key_exists('_duration_ms', $body), "{$url} is unstamped (_duration_ms)");
@@ -306,7 +306,7 @@ class Api_Versioning_Test extends Rsx_Test_Abstract
      */
     public static function test_the_framework_endpoints_are_served_at_every_version()
     {
-        $paths = Api_Openapi::document(null, 2)['paths'];
+        $paths = Api_Openapi::document(version: 2)['paths'];
 
         foreach (self::FRAMEWORK_ROUTES as $route => $handler) {
             [$verb, $path_key] = explode(' ', $route);

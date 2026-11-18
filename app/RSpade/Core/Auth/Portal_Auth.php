@@ -111,8 +111,7 @@ class Portal_Auth
                 Portal_Login_History::record_failure(
                     $email,
                     Portal_Login_History::STATUS_FAILED_PASSWORD,
-                    null,
-                    (int) $portal_user->id
+                    identity_id: (int) $portal_user->id
                 );
             }
 

@@ -362,6 +362,12 @@ MAIN HOOKS
     An application may define one /rsx/main.php extending Main_Abstract with
     static hooks. The dispatcher calls them by reflection:
 
+    Every concrete class extending Main_Abstract is called, not only
+    /rsx/main.php. Where there are several, the ORDER they run in is not a
+    contract: each hook must be correct whichever runs first, and for
+    pre_dispatch() and unhandled_route() the first non-null answer ends the
+    loop, so the others do not run.
+
     - pre_dispatch(Request $request, array $params) runs before EVERY dispatch -
       both for a matched route (after its gates pass, before the controller's
       own pre_dispatch) and for an unmatched URL. A non-null return halts and
@@ -408,7 +414,10 @@ ROUTE MATCHING
         /files/:id.:ext           mixed - segments split on the literal dot
 
     Matched parameter values are urldecoded. An absent optional parameter is
-    omitted from $params entirely (it is not set to an empty string).
+    omitted from $params entirely (it is not set to an empty string). A
+    parameter name is [A-Za-z0-9_] and a pattern carries no query part - both
+    are manifest-build FATALs (ROUTE-PARAM-01, ROUTE-PATH-01; rsx:man
+    routing, Parameter Names).
 
     Specificity, not declaration order, decides which pattern wins. Every
     pattern is scored and the highest score is tried first:

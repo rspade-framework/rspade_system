@@ -701,7 +701,7 @@ abstract class Rsx_Two_Factor_Abstract
     {
         $identity = static::__enrolling_identity();
 
-        $secret = Session::get_value(static::TOTP_PENDING_KEY, null, static::SESSION_REALM);
+        $secret = Session::get_value(static::TOTP_PENDING_KEY, realm: static::SESSION_REALM);
 
         if (!is_string($secret) || $secret === '') {
             throw new Two_Factor_Failed_Exception('That setup has expired. Please start again.');
@@ -1207,7 +1207,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         // The challenge lives as long as the code it was just sent: a window that closed
         // before the code would make the message's "expires in" a lie.
-        $raw = Session::get_value(static::CHALLENGE_KEY, null, static::SESSION_REALM);
+        $raw = Session::get_value(static::CHALLENGE_KEY, realm: static::SESSION_REALM);
         $raw['codes_issued'] = $pending['codes_issued'] + 1;
         $raw['expires_at'] = $expires_at;
 
@@ -1742,7 +1742,7 @@ abstract class Rsx_Two_Factor_Abstract
         $refusal = 'That passkey could not sign you in.';
 
         try {
-            $credential = Passkeys::verify_assertion(static::class, $assertion, true);
+            $credential = Passkeys::verify_assertion(static::class, $assertion, passwordless: true);
         } catch (Two_Factor_Failed_Exception | \lbuchs\WebAuthn\WebAuthnException $e) {
             // Caught NARROWLY: these are the verdicts of a verification, and each becomes the
             // one recorded failure and the one sentence. Nothing else is swallowed.
@@ -2084,7 +2084,7 @@ abstract class Rsx_Two_Factor_Abstract
      */
     protected static function __pending_challenge(): ?array
     {
-        $pending = Session::get_value(static::CHALLENGE_KEY, null, static::SESSION_REALM);
+        $pending = Session::get_value(static::CHALLENGE_KEY, realm: static::SESSION_REALM);
 
         if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'], $pending['challenge_id'], $pending['expires_at'])) {
             return null;
@@ -2350,7 +2350,7 @@ abstract class Rsx_Two_Factor_Abstract
             return null;
         }
 
-        $marker = Session::get_value(static::__completed_key(), null, static::SESSION_REALM);
+        $marker = Session::get_value(static::__completed_key(), realm: static::SESSION_REALM);
 
         if (!is_array($marker) || !is_string($marker['challenge_id'] ?? null)) {
             return null;

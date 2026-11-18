@@ -93,7 +93,9 @@ the one point every answer passes, which also adds the timing fields.
 - `Api_Param_Validator.php` — pure validate-and-coerce over the baked specs: undeclared keys
   rejected, defaults applied, `file` params passed through, a `string` param the string sent,
   a `money` param an `Rsx_Money` read from a plain decimal (`Rsx_Money::_from_api_param()`;
-  an envelope is not an amount).
+  an envelope is not an amount), a `json` param any JSON value (a string is JSON text,
+  decoded; a value already structured in a JSON body taken as it is; parsing is the only
+  check, `_json_param_value()` shared with the build and the OpenAPI projection).
 - `Api_Scopes.php` + `Api_Scope_Validation_Exception.php` — the scope language: one bare
   path-pattern GRANT per line, `?` / `#` / trailing `*` as whole segments; the OpenAPI
   document's path is granted to every key. `validate()` is the

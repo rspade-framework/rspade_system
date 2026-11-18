@@ -19,10 +19,11 @@ time (`is_expired()`) and pruned every six hours by `Zip_Download_Cleanup_Servic
 
 The endpoint validates EVERYTHING before streaming: the request resolves and is not
 expired, every entry passes BOTH the thumbnail and download authorization gates (identical
-cascade to `download_file()`, against the DOWNLOADING session), and the archive fits
-inside the non-ZIP64 envelope (4GB / 65k entries). An unknown or expired key throws one
-opaque invalid/expired message; a single denied file fails the whole request with one
-opaque message BEFORE any bytes stream (no partial archive). During streaming, a member
+cascade to `download_file()`, against the DOWNLOADING session). An unknown or expired key
+is refused with one opaque invalid/expired sentence; a single unknown or denied file fails
+the whole request with one opaque denial sentence BEFORE any bytes stream (no partial
+archive). Both are `Rsx_User_Facing_Exception`. Every archive is ZIP64-framed, so there is
+no size or entry-count limit. During streaming, a member
 whose bytes cannot be resolved (external fetch failed, blob missing) or whose stream
 truncates is replaced by a zero-byte `~ERROR~<name>.inf` marker (directory prefix
 preserved) and logged, keeping the archive well-formed.
@@ -35,11 +36,12 @@ streaming a large set.
 
 - `app/RSpade/Core/Files/Zip_Stream.php` - the streaming ZIP container writer
   (`#[Instantiatable]`; per-archive state). PKWARE local header + data descriptor +
-  central directory + EOCD; store-vs-deflate per mime; ZIP64 defensively guarded.
+  central directory + ZIP64 EOCD record/locator + EOCD, ZIP64 on every archive;
+  store-vs-deflate per mime.
 - `app/RSpade/Core/Files/File_Attachment_Controller.php` -
   `download_multiple_zip()` (the endpoint) plus the pure seams
   `_sanitize_zip_entry_name`, `_dedupe_zip_names`, `_error_marker_name`,
-  `_sanitize_zip_filename`, `_zip64_limit_error`.
+  `_sanitize_zip_filename`.
 - `app/RSpade/Core/Files/Zip_Download_Request_Model.php` - the minted download request
   (`_zip_download_requests`): `create_request()` (fail-loud structure validation),
   `find_by_download_key()`, `get_download_url()`, `is_expired()`, `get_files()`.
@@ -60,8 +62,14 @@ streaming a large set.
   past the window; `get_download_url()` carries the key + the `/_download_zip` prefix. (php)
 - Cleanup task: seeded fresh + stale rows, run the task directly - stale deleted, fresh
   kept; the configured window is honored; a backlog clears across chunks. (php)
-- Writer conformance: two-DEFLATE-member archive opens under `ZipArchive::CHECKCONS`,
-  entries readable, content roundtrips, `unzip -t` passes (CRC). (php)
+- Writer conformance: every archive is checked by three real readers in the image -
+  Info-ZIP `unzip -t` (CRC), Python `zipfile` (`testzip()` + parsed central directory) and
+  libzip (`ZipArchive::CHECKCONS`); content roundtrips. (php)
+- ZIP64 framing pinned byte for byte (version 4.5, 0xFFFFFFFF markers + 0x0001 extra,
+  24-byte descriptors, ZIP64 EOCD record + locator, marked classic EOCD). (php)
+- Past the classic limits: 70,000 entries; a >4GB member and a local header offset past
+  4GB (sparse source into a sparse archive - no 4GB of real data written). (php)
+- Empty source file member (deflated and stored) is a valid zero-byte member. (php)
 - Store selection: a store-mime member (image/jpeg) is CM_STORE with comp == size. (php)
 - Marker: an empty entry is a valid zero-byte member. (php)
 - UTF-8 name + directory prefix survive verbatim. (php)
@@ -74,8 +82,9 @@ streaming a large set.
   no-extension names, distinct names untouched. (php - pure seam)
 - Error-marker naming: plain + directory-prefixed. (php - pure seam)
 - Download filename sanitizer: default, suffix, path strip, quote strip. (php - pure seam)
-- ZIP64 guard: within limits -> null; too many entries / single-file too large / total
-  over 4GB -> error. (php - pure seam)
+- Refusals (`Zip_Download_Refusal_Test`): unknown key and expired request answer the same
+  invalid/expired sentence; an unknown member and a thumbnail- or download-gate refusal
+  answer the same denial sentence naming no file; all are `Rsx_User_Facing_Exception`. (php)
 - Full HTTP round-trip (mint via `create_request()` then GET `/_download_zip/:key`, auth
   cascade, streaming headers incl. X-Accel-Buffering, byte-identical extraction, dedup
   over the wire, the invalid/expired-key path and the denial path with no partial bytes,

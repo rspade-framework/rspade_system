@@ -146,7 +146,9 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | An overridden model brings its application JS class into a bundle naming no application path, once, after its stub | php (child build + compile) |
 | `window.rsxapp.mode` names the mode; `Rsx.is_dev()` / `is_debug()` / `is_prod()` answer from it | playwright |
 | A pattern covers no view in the render-time coverage check | php (planned) |
-| Module bundle cannot include a module bundle | php (planned) |
+| Module bundle cannot include a module bundle: refused with remediation, directly and through a child compile | php (child build + compile) |
+| Adding, removing or changing an `npm` declaration moves the vendor and app cache keys; declaration order does not | php |
+| Two simultaneous compiles of one bundle serialize on LOCK_BUNDLE_BUILD and leave one consistent artifact | php (child build + detached compiles) |
 | Asset bundle discovered via scan cannot declare directory includes | php (planned) |
 
 ## Fixture policy

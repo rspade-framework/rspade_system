@@ -578,13 +578,7 @@ class Rsx
      */
     public static function is_dev_site(): bool
     {
-        try {
-            $hostname = self::get_hostname();
-            return str_contains($hostname, '.dev.');
-        } catch (\Exception $e) {
-            // If hostname can't be determined, assume dev for safety
-            return true;
-        }
+        return str_contains(self::get_hostname(), '.dev.');
     }
 
     /**

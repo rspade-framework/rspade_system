@@ -124,7 +124,7 @@ class Error_Screens_Test extends Rsx_Test_Abstract
             static::__assert_contains('You do not have permission to view this page.', $plain->getContent(), 'no reason: the framework sentence');
             static::__assert_false(str_contains($plain->getContent(), 'perform this action'), 'never the code\'s default text');
 
-            $direct = Error_Screens::unauthorized($request, null, 'Restricted by policy.');
+            $direct = Error_Screens::unauthorized($request, message: 'Restricted by policy.');
             static::__assert_contains('Restricted by policy.', $direct->getContent(), 'Error_Screens::unauthorized() takes the message');
         } finally {
             static::__reset_session();

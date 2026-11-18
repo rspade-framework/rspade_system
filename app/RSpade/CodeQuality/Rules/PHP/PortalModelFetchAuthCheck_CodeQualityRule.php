@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * PortalModelFetchAuthCheckRule - Validates the RECORD-LEVEL contract of a model
@@ -127,7 +128,7 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         $is_trait_provided = isset($declared_fetch['file'])
-            && rsxrealpath($declared_fetch['file']) !== rsxrealpath($file_path);
+            && Rsx_Paths::relative($declared_fetch['file']) !== Rsx_Paths::relative($file_path);
 
         if ($is_trait_provided) {
             return;

@@ -6,6 +6,7 @@ use Exception;
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Locks\Lock_Stalled_Exception;
 use App\RSpade\Core\Locks\Lock_Timeout_Exception;
 use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Locks\Lockd_Connection;
@@ -23,11 +24,20 @@ if (file_exists($helpers_path)) {
  * Advisory locking.
  *
  * A lock is held from the moment it is granted until it is released or the holder dies.
- * There is NO lease, NO TTL, NO renewal and NO heartbeat: a critical section may run for a
- * minute or for a day and it keeps its lock throughout, and a holder that is SIGKILLed
- * releases instantly. A timeout, when one is given at all, is a WAIT budget and nothing
- * else - it never bounds how long a granted lock is held. `$timeout = null` (the default
- * everywhere) means wait forever, which is the right answer far more often than any number.
+ * There is NO lease, NO TTL and NO renewal: a critical section may run for a minute or for a
+ * day and it keeps its lock throughout, and a holder that is SIGKILLed releases instantly. A
+ * timeout, when one is given at all, is a WAIT budget and nothing else - it never bounds how
+ * long a granted lock is held. `$timeout = null` (the default everywhere) means wait for as
+ * long as the holder is working, which is the right answer far more often than any number.
+ *
+ * THE PROGRESS WATCHDOG bounds a wait on a holder that has gone SILENT, never on one that is
+ * working (rsx.locks.stall_seconds, owner-requested). A cluster lock or semaphore waiter whose
+ * holder has shown no progress for that window fails with Lock_Stalled_Exception naming the
+ * holder. A holder shows progress by being granted and by still_working() - which every task
+ * report calls - so a long holder that reports keeps its waiters waiting indefinitely, and the
+ * holder itself is never touched. A web request that has waited rsx.locks.wait_notice_seconds
+ * logs one warning naming the holder and keeps waiting. SYSTEM (flock) locks have neither:
+ * their waits are kernel flock() calls the daemon never sees.
  *
  * TWO KINDS OF LOCK. They are different things and the choice is not a tuning knob:
  *
@@ -140,6 +150,25 @@ class RsxLocks
 
     // _cleanup_locks is registered once per process, before any backend is touched.
     private static bool $shutdown_registered = false;
+
+    // Test override for "is this a web request?" - the question that decides whether a
+    // cluster lock wait asks the daemon for the wait-attribution notice. Null derives it from
+    // app()->runningInConsole(); a framework test (always CLI) sets true to exercise the web
+    // path deterministically. See _force_web_context().
+    private static ?bool $force_web_context = null;
+
+    // microtime() of the last progress frame still_working() sent, so a caller reporting in a
+    // tight loop costs at most one round trip per STILL_WORKING_MIN_INTERVAL.
+    private static float $last_progress_sent = 0.0;
+
+    /**
+     * still_working() sends at most one progress frame per this many seconds. A progress
+     * signal only restarts waiters' stall windows, which are minutes long
+     * (rsx.locks.stall_seconds); a second signal within one second carries nothing those
+     * windows can use, and a task reporting on every item of a fast loop must not turn each
+     * report into a daemon round trip. It delays nothing and bounds nothing.
+     */
+    private const STILL_WORKING_MIN_INTERVAL = 1.0;
 
     /**
      * Is the fleet quiesced, so that a CLUSTER lock has nothing left to exclude?
@@ -289,12 +318,15 @@ class RsxLocks
             return self::__grant_maintenance_noop($domain, $name, $effective_type, $count_key);
         }
 
-        $response = self::__lockd([
-            'op' => 'acquire',
-            'name' => self::__wire_name($domain, $name, $db_scoped),
-            'mode' => $type === self::READ_LOCK ? 'read' : 'write',
-            'timeout' => $timeout,
-        ]);
+        $response = self::__lockd(
+            [
+                'op' => 'acquire',
+                'name' => self::__wire_name($domain, $name, $db_scoped),
+                'mode' => $type === self::READ_LOCK ? 'read' : 'write',
+                'timeout' => $timeout,
+            ] + self::__wait_watch($timeout),
+            self::__notice_logger("{$type} lock {$domain}:{$name}")
+        );
 
         // Maintenance came up under us (the straggler path): re-enter, and the backend
         // selection at the top now resolves to the no-op grant.
@@ -306,6 +338,10 @@ class RsxLocks
 
         if ($status === 'timeout') {
             throw new Lock_Timeout_Exception(self::__timeout_message($domain, $name, $type, (int) $timeout));
+        }
+
+        if ($status === 'stalled') {
+            throw new Lock_Stalled_Exception(self::__stalled_message("{$type} lock {$domain}:{$name}", "{$domain}:{$name}", $response));
         }
 
         if ($status === 'deadlock') {
@@ -677,11 +713,14 @@ class RsxLocks
             return $new_token;
         }
 
-        $response = self::__lockd([
-            'op' => 'upgrade',
-            'token' => $lock_info['server_token'],
-            'timeout' => $timeout,
-        ]);
+        $response = self::__lockd(
+            [
+                'op' => 'upgrade',
+                'token' => $lock_info['server_token'],
+                'timeout' => $timeout,
+            ] + self::__wait_watch($timeout),
+            self::__notice_logger(self::WRITE_LOCK . " lock {$lock_info['domain']}:{$lock_info['name']} (upgrade)")
+        );
 
         if ($response === null) {
             // Maintenance came up mid-flight: the daemon is gone, so the read hold no longer
@@ -704,6 +743,14 @@ class RsxLocks
             throw new Lock_Timeout_Exception(
                 self::__timeout_message($lock_info['domain'], $lock_info['name'], self::WRITE_LOCK, (int) $timeout)
             );
+        }
+
+        if ($status === 'stalled') {
+            throw new Lock_Stalled_Exception(self::__stalled_message(
+                self::WRITE_LOCK . " lock {$lock_info['domain']}:{$lock_info['name']} (upgrade)",
+                "{$lock_info['domain']}:{$lock_info['name']}",
+                $response
+            ));
         }
 
         if ($status === 'deadlock') {
@@ -1060,6 +1107,168 @@ class RsxLocks
     }
 
     // =============================================================================================
+    // PROGRESS (the stall watchdog's keep-alive)
+    // =============================================================================================
+
+    /**
+     * Tell rsx-lockd this process is still working: a progress signal covering every cluster
+     * lock and semaphore slot it holds. It restarts the stall window of every waiter queued
+     * behind those holds (rsx.locks.stall_seconds) and changes nothing else - a hold is never
+     * extended, renewed or bounded by it, because nothing ever takes a hold away.
+     *
+     * WHO CALLS IT: any process that legitimately holds a cluster lock or semaphore for longer
+     * than the stall window - an approved long-running named lock, a daily multi-hour export
+     * holding its semaphore - calls it periodically while it works, at least once per window.
+     * A TASK needs nothing: every Task_Instance report (heartbeat(), status(), progress(), a
+     * log line) calls it. A holder that never calls it keeps its lock, and every waiter behind
+     * it fails with Lock_Stalled_Exception once the window passes, naming it.
+     *
+     * Cheap by construction: it opens no connection (a process holding no cluster lock or
+     * slot has nothing to report and sends nothing), and it sends at most one frame per
+     * STILL_WORKING_MIN_INTERVAL however often it is called. Under maintenance mode nothing is
+     * held anywhere and it does nothing. System (flock) locks have no watchdog and are not
+     * covered.
+     */
+    public static function still_working(): void
+    {
+        if (self::__maintenance_degraded()) {
+            return;
+        }
+
+        $holds_lockd = self::$held_semaphores !== [];
+        if (!$holds_lockd) {
+            foreach (self::$held_locks as $info) {
+                if ($info['backend'] === 'lockd') {
+                    $holds_lockd = true;
+                    break;
+                }
+            }
+        }
+
+        if (!$holds_lockd || !Lockd_Client::is_connected()) {
+            return;
+        }
+
+        // A daemon older than protocol 2 has no watchdog - nothing waits on a progress signal
+        // there, and it would refuse the op. rsx:health's Lock Server row reports such a
+        // daemon until it is restarted from a current image.
+        if ((Lockd_Client::server_protocol() ?? 1) < 2) {
+            return;
+        }
+
+        $now = microtime(true);
+        if ($now - self::$last_progress_sent < self::STILL_WORKING_MIN_INTERVAL) {
+            return;
+        }
+        self::$last_progress_sent = $now;
+
+        $response = self::__lockd(['op' => 'progress']);
+
+        // Maintenance came up mid-flight: the daemon went with every hold, so there is no
+        // waiter left to keep waiting.
+        if ($response === null) {
+            return;
+        }
+
+        if (($response['status'] ?? 'error') !== 'ok') {
+            throw new RuntimeException('rsx-lockd refused a progress signal: ' . ($response['message'] ?? 'unknown error'));
+        }
+    }
+
+    /**
+     * FRAMEWORK-INTERNAL test seam: force the web-request answer that decides whether a
+     * cluster lock wait asks for the wait-attribution notice (true = web, false = CLI, null =
+     * derive it). A framework test is always CLI; production never calls this.
+     */
+    public static function _force_web_context(?bool $web): void
+    {
+        self::$force_web_context = $web;
+    }
+
+    /**
+     * The watchdog keys a parked request carries, from config:
+     *
+     *   stall   rsx.locks.stall_seconds - every cluster lock and semaphore wait, unless the
+     *           caller's own $timeout ends the wait first (a shorter explicit timeout keeps
+     *           its own semantics, and a probe never parks at all);
+     *   notice  rsx.locks.wait_notice_seconds - a WEB request's waits only, likewise unless
+     *           its own $timeout ends the wait first.
+     *
+     * Either key at 0 in config is off.
+     */
+    private static function __wait_watch(?int $timeout): array
+    {
+        $watch = [];
+
+        $stall = (int) config('rsx.locks.stall_seconds', 600);
+        if ($stall > 0 && ($timeout === null || $timeout > $stall)) {
+            $watch['stall'] = $stall;
+        }
+
+        $notice = (int) config('rsx.locks.wait_notice_seconds', 30);
+        if ($notice > 0 && ($timeout === null || $timeout > $notice)
+            && (self::$force_web_context ?? !app()->runningInConsole())) {
+            $watch['notice'] = $notice;
+        }
+
+        return $watch;
+    }
+
+    /**
+     * The handler for a wait's `waiting` notice: ONE warning in the Laravel log naming what
+     * this web request is waiting for and who holds it, and the wait continues. Diagnostic
+     * only - the point is that a request held up behind a lock is attributed while it is
+     * still waiting, instead of presenting as "the site is slow".
+     */
+    private static function __notice_logger(string $what): callable
+    {
+        return function (array $frame) use ($what) {
+            \Illuminate\Support\Facades\Log::warning(
+                'RsxLocks: this web request has waited ' . self::__seconds((int) ($frame['waited_ms'] ?? 0))
+                . " for {$what} and is still waiting - held by " . self::__describe_holders($frame['holders'] ?? [])
+            );
+        };
+    }
+
+    /**
+     * The Lock_Stalled_Exception message: what was waited for, for how long, every holder with
+     * how long it has held and since when it last showed progress, and the two remedies.
+     */
+    private static function __stalled_message(string $what, string $display_name, array $response): string
+    {
+        return 'Lock stalled: this process waited ' . self::__seconds((int) ($response['waited_ms'] ?? 0))
+            . " for {$what}, and its holder showed no progress for " . (int) ($response['stall'] ?? 0) . 's'
+            . ' (rsx.locks.stall_seconds) - held by ' . self::__describe_holders($response['holders'] ?? [])
+            . '. A holder that is still working calls RsxLocks::still_working() at least once per window'
+            . ' (a task does it on every report, heartbeat() included); a hung holder is ended with'
+            . " php artisan rsx:locks:status --kill-holder={$display_name}";
+    }
+
+    /** "web-1:3140 (connection c7) WRITE for 912.3s, last progress 611.0s ago, and ..." */
+    private static function __describe_holders(array $holders): string
+    {
+        if ($holders === []) {
+            return 'nobody (the queue ahead of it)';
+        }
+
+        $parts = [];
+        foreach ($holders as $holder) {
+            $what = isset($holder['slot']) ? 'slot ' . $holder['slot'] : strtoupper((string) ($holder['mode'] ?? ''));
+            $parts[] = ($holder['host'] ?? '?') . ':' . ($holder['pid'] ?? '?')
+                . ' (connection ' . ($holder['conn_id'] ?? '?') . ") {$what}"
+                . ' for ' . self::__seconds((int) ($holder['held_ms'] ?? 0))
+                . ', last progress ' . self::__seconds((int) ($holder['progress_ms'] ?? 0)) . ' ago';
+        }
+
+        return implode(', and ', $parts);
+    }
+
+    private static function __seconds(int $ms): string
+    {
+        return number_format($ms / 1000, 1, '.', '') . 's';
+    }
+
+    // =============================================================================================
     // COUNTING SEMAPHORES (max-concurrency quotas)
     // =============================================================================================
 
@@ -1096,12 +1305,15 @@ class RsxLocks
 
         self::__register_shutdown();
 
-        $response = self::__lockd([
-            'op' => 'sem_acquire',
-            'name' => self::__lock_scope_prefix() . $name,
-            'max_slots' => $max_slots,
-            'timeout' => $timeout,
-        ]);
+        $response = self::__lockd(
+            [
+                'op' => 'sem_acquire',
+                'name' => self::__lock_scope_prefix() . $name,
+                'max_slots' => $max_slots,
+                'timeout' => $timeout,
+            ] + self::__wait_watch($timeout),
+            self::__notice_logger("semaphore slot {$name}")
+        );
 
         // Maintenance came up mid-flight: the daemon was the only quota store, and capping
         // concurrency is meaningless with the fleet down. Hand out the unlimited sentinel.
@@ -1113,6 +1325,12 @@ class RsxLocks
 
         if ($status === 'timeout') {
             return null;
+        }
+
+        // Never null: null is the caller's own wait budget elapsing, which it chose and
+        // degrades from. A stall is a silent holder, and is reported loudly.
+        if ($status === 'stalled') {
+            throw new Lock_Stalled_Exception(self::__stalled_message("semaphore slot {$name}", $name, $response));
         }
 
         if ($status === 'deadlock') {
@@ -1205,10 +1423,10 @@ class RsxLocks
      * @return array|null The response frame, or NULL if the caller must re-enter.
      * @throws Lockd_Unavailable_Exception when the daemon is gone outside maintenance.
      */
-    private static function __lockd(array $frame): ?array
+    private static function __lockd(array $frame, ?callable $on_notice = null): ?array
     {
         try {
-            return Lockd_Client::request($frame);
+            return Lockd_Client::request($frame, $on_notice);
         } catch (Lockd_Unavailable_Exception $e) {
             if (Framework_Maintenance::is_active_on_disk()) {
                 self::$maintenance_forced = true;

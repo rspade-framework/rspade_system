@@ -109,6 +109,10 @@ validation, and schema normalization.
   queued, and the step's position (`Rederive_Queue_Drain_Test`).
 - **php** (implemented): the whitelist mode policy and the constants-regeneration scope
   (`Whitelist_Prod_Mode_Test`, `Constants_Regenerate_Scope_Test`).
+- **php** (implemented): the migration DDL rewrite - integer widths to BIGINT, FLOAT/REAL to
+  DOUBLE, TEXT to LONGTEXT, CHAR to VARCHAR, millisecond temporal precision, utf8mb4 - and the
+  ENUM / SET / YEAR / TIME refusals (`Sql_Query_Transformer_Test`); the Schema-builder ban
+  (`Schema::`, `Blueprint`, `$table->`) with raw SQL passing (`Migration_Validator_Schema_Builder_Test`).
 - **cli / integration** (deferred): end-to-end proof that a normalize failure during
   `php artisan migrate` triggers the physical datadir snapshot restore and leaves no
   orphaned `.migrating` flag or backup dir. Requires a real MySQL datadir + Docker

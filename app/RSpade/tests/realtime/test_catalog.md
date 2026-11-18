@@ -234,3 +234,17 @@ gates are EMITTER dispatch-gate tests' subject.
 | BULKCHG-02 | Two bulk_changed() calls in one transaction kick once, at commit, with no model-change frame | php | update + call x2, commit | 0 before commit, 1 after, 0 frames | implemented | 2026-11-08 |
 | BULKCHG-03 | A rolled-back transaction drops the kick and leaves nothing for a later commit | php | update + call, rollBack, then a plain commit | 0 kicks, dirty false | implemented | 2026-11-08 |
 | BULKCHG-04 | Outside a transaction the kick flushes at once | php | update + call | 1 kick | implemented | 2026-11-08 |
+
+## rsx:realtime:map (the graph, read-only)
+
+Realtime_Map_Command_Test, in-process `Artisan::call()` over this concern's fixture models
+(the unresolvable `Realtime_Attr_Bad_Fixture_Model` makes every unfiltered run exit 1).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RTMAP-01 | The tree shows each attribute edge with method + resolved FK, the run-time node, the cascade under it, and emitters with their constraint | cli | no options | edge, override and emitter lines present, [realtime]/[framework] marks | implemented | 2026-11-17 |
+| RTMAP-02 | A #[Realtime_Touch] on a non-belongsTo is an [ERROR] row with the runtime's message, exit 1 | cli | no options | `[ERROR] Realtime_Attr_Bad_Fixture_Model:` | implemented | 2026-11-17 |
+| RTMAP-03 | --json carries models (flags), edges (as the registry resolves them), emitters, errors | cli | --json | decoded graph | implemented | 2026-11-17 |
+| RTMAP-04 | --model keeps what notifies or is notified by the model, transitively, and its constrained emitters | cli | --model=<fixture> | slice only, exit 0 | implemented | 2026-11-17 |
+| RTMAP-05 | --edges is a flat child -> parent list incl. run-time touches | cli | --edges --model | one row per edge | implemented | 2026-11-17 |
+| RTMAP-06 | An unknown --model is refused | cli | --model=Not_A_Model_At_All | exit 1 + message | implemented | 2026-11-17 |

@@ -54,7 +54,11 @@ again.**
   extraction against the manifest's route tables.
 - `Route_ManifestSupport.php` — builds the route index from `#[Route]` at manifest time; each
   row carries its `auth` gate list. Hosts the build FATALs `ROUTE-ERROR-01` (the `/error/`
-  prefix) and `ROUTE-VERB-01` (GET/POST only); the portal twin calls both.
+  prefix) and `ROUTE-VERB-01` (GET/POST only); the portal twin calls both. Also hosts
+  `assert_route_pattern()` - `ROUTE-PATH-01` (a pattern is a path) and `ROUTE-PARAM-01`
+  (a parameter name is `[A-Za-z0-9_]`) - called by every route-pattern source: this module,
+  `Portal_Route_ManifestSupport`, `Spa_ManifestSupport`, `Portal_Spa_ManifestSupport` and
+  `Api_Endpoint_ManifestSupport`.
 
 ## Invariants
 

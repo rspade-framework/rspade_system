@@ -386,8 +386,8 @@ class Portal_Url_Test extends Rsx_Test_Abstract
 
     public static function test_nothing_is_checked_while_the_portal_is_disabled()
     {
-        static::__assert_null(Rsx_Portal_Url::check('not a url at all', self::APP, false, Rsx_Tenancy::MULTI, false));
-        static::__assert_null(Rsx_Portal_Url::check('/_portal', self::APP, false, Rsx_Tenancy::MULTI, false));
+        static::__assert_null(Rsx_Portal_Url::check('not a url at all', self::APP, false, Rsx_Tenancy::MULTI, enabled: false));
+        static::__assert_null(Rsx_Portal_Url::check('/_portal', self::APP, false, Rsx_Tenancy::MULTI, enabled: false));
     }
 
     // =========================================================================

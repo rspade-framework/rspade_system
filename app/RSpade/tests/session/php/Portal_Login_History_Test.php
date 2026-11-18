@@ -199,8 +199,7 @@ class Portal_Login_History_Test extends Rsx_Test_Abstract
             $id,
             $portal_user->email,
             Portal_Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
-            null,
-            ['ip_address' => '10.0.0.12', 'user_agent' => 'portal-history-sweep-' . uniqid()]
+            client_context: ['ip_address' => '10.0.0.12', 'user_agent' => 'portal-history-sweep-' . uniqid()]
         );
 
         $user_agent_id = (int) DB::table('_portal_login_history')->where('portal_user_id', $id)->value('user_agent_id');

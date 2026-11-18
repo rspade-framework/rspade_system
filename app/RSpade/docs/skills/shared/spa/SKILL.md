@@ -1,6 +1,6 @@
 ---
 name: spa
-description: "Building SPA modules - the #[SPA] bootstrap controller, @route / @layout / @spa / @auth / @title, Spa_Layout and on_action(), sublayouts, navigating with Rsx.navigate() / Rsx.redirect() (never location, history or window.open - JS-NAVIGATE-01 / JS-NEW-TAB-01), spa_hash_change, route and query params. Use when adding a screen to an authenticated area, creating a module or layout, making Back close a URL-addressed dialog, deciding SPA vs Blade, or debugging a 404 on an SPA route."
+description: "Building SPA modules - the #[SPA] bootstrap controller, @route / @layout / @spa / @auth / @title, Spa_Layout and on_action(), sublayouts, navigating with Rsx.navigate() / Rsx.redirect() (never location, history or window.open - JS-NAVIGATE-01 / JS-NEW-TAB-01), spa_hash_change, route and query params. Use when adding a screen to an authenticated area, creating a module or layout, making Back close a URL-addressed dialog, deciding SPA vs Blade, or debugging a 404 on an SPA route, or on ROUTE-PARAM-01 / ROUTE-PATH-01 (a route pattern's parameter names and query part)."
 ---
 
 # SPA Routing
@@ -267,5 +267,7 @@ engagement) does not hand-roll a `from=` parameter: that is a breadcrumb origin 
 - **A link reloads the whole page instead of navigating** - the href does not match a known SPA route (same cause as above), or it points at a different SPA module. Cross-module navigation is a real page load by design.
 - **Layout state resets on every navigation** - the layout chain changed. Two actions only share a layout instance when their `@layout` chains are identical up to that point.
 - **`this.args.id` is undefined** - the `@route` has no `:id` token, or the action was reached through a different route in a multi-`@route` action.
+- **The build fails with ROUTE-PARAM-01 / ROUTE-PATH-01** - a parameter name is `[A-Za-z0-9_]` (`:user_id`, never `:user-id`), and a pattern is a path (`?q=` is never part of it; query values arrive in `this.args`). Both hold for every route source, `#[Route]` included (`rsx:man routing`).
+- **The page is blank and the console shows a failed bundle request** - nothing recovers a bundle that did not load (no retry, no server-rendered fallback); `rsx:man spa`, TROUBLESHOOTING.
 
 Details: `php artisan rsx:man spa`.

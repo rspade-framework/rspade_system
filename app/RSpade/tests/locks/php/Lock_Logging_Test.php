@@ -38,7 +38,7 @@ class Lock_Logging_Test extends Rsx_Test_Abstract
             $fn();
         } finally {
             if ($before['events']) {
-                RsxLocks::set_lock_logging(true, null, $before['verbose']);
+                RsxLocks::set_lock_logging(true, verbose: $before['verbose']);
             } else {
                 RsxLocks::set_lock_logging(false);
             }
@@ -99,7 +99,7 @@ class Lock_Logging_Test extends Rsx_Test_Abstract
     public static function test_verbose_records_this_process_taking_and_releasing_a_lock()
     {
         static::__restoring_logging(function () {
-            $state = RsxLocks::set_lock_logging(true, null, true);
+            $state = RsxLocks::set_lock_logging(true, verbose: true);
             static::__assert_true($state['verbose']);
 
             $name = 'rsxtest_logged_' . getmypid();
@@ -158,7 +158,7 @@ class Lock_Logging_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(
             RuntimeException::class,
-            fn () => RsxLocks::set_lock_logging(false, null, true),
+            fn () => RsxLocks::set_lock_logging(false, verbose: true),
             'takes no path and no verbosity'
         );
     }

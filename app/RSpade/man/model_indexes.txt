@@ -1,458 +1,280 @@
     model_indexes - Database index analysis and recommendation system
 
 SYNOPSIS
-    Automatic detection of required database indexes from model relationships
-    and query patterns
+    php artisan rsx:db:check_indexes [--show-details] [--generate-migration]
+
+    Reports the indexes the application's model queries and relationships need
+    and the database does not have, and writes a reviewed migration for them.
 
 DESCRIPTION
-    The RSX index analysis system automatically discovers which database
-    indexes are required by analyzing model relationships and query patterns
-    in your codebase. It generates optimized index recommendations using
-    covering index logic and produces reviewable migration files.
+    The advisor reads two things:
 
-    Unlike manual index management where developers must remember to create
-    indexes for every foreign key and query pattern, RSX automatically
-    detects missing indexes by analyzing:
+    1. Model relationships - every relationship each model declares
+    2. Query patterns - the model query chains in the application's source
+       (rsx/), read from the PHP syntax tree
 
-    1. Model relationships - Foreign key columns from #[Relationship] methods
-    2. Query patterns - AST analysis of Model::where() chains in /rsx/
+    From each it derives a REQUIREMENT: the columns a query filters on, on one
+    table, split into equality columns, at most one range column, and sort
+    columns. It compares every requirement with the indexes the table already
+    has, and recommends an index only where none serves it.
 
-    Key differences from manual approaches:
-    - Manual: Developer creates indexes as they remember
-    - RSX: Automatic detection from code analysis
-
-    - Manual: No way to know if indexes are missing
-    - RSX: Command reports all missing indexes
-
-    - Manual: Risk of redundant indexes
-    - RSX: Covering index logic optimizes recommendations
-
-    Benefits:
-    - Never forget to index foreign keys
-    - Automatic detection of query patterns
-    - Optimized recommendations via covering logic
-    - Quota management prevents too many indexes
-    - Source attribution shows why each index is needed
+    It is advice, never automation: nothing is created until you generate the
+    migration, read it, and run migrate.
 
 COMMAND USAGE
-    Basic Analysis:
-        php artisan rsx:db:check_indexes
+    php artisan rsx:db:check_indexes
+        The report: sources read, what could not be read, the indexes to
+        create (and auto-generated ones to drop), then the low-value ones.
 
-        Shows summary of missing indexes and recommendations.
+    --show-details
+        Every call site behind each recommendation, every excluded source
+        file, every chain that could not be analyzed, and the list behind
+        each [WARNING] count.
 
-    Generate Migration:
-        php artisan rsx:db:check_indexes --generate-migration
+    --generate-migration
+        Writes the migration(s) - see MIGRATION GENERATION.
 
-        Creates migration file in database/migrations/ with DDL statements.
+    --include-low-value
+        Puts the low-value recommendations in the generated migration too.
 
-    Detailed Analysis:
-        php artisan rsx:db:check_indexes --show-details
+    --include-system
+        Also analyzes framework tables (see WHAT IS ANALYZED).
 
-        Shows verbose output with file counts and analysis progress.
+    --include-dev
+        Also counts development-only sources (rsx/app/dev and seeders).
 
-    Analyze Specific Table:
-        php artisan rsx:db:check_indexes --table=users
+    --table=<name>
+        Reports only this table.
 
-        Limit analysis to single table.
+    --format=json
+        The same analysis as one JSON document.
 
-    Skip Relationship Analysis:
-        php artisan rsx:db:check_indexes --no-relationships
+    --no-relationships / --no-queries
+        Skips one of the two analyses.
 
-        Only analyze query patterns, ignore relationship indexes.
+    --show-all
+        Shows every recommendation even past the per-table quota.
 
-    Skip Query Pattern Analysis:
-        php artisan rsx:db:check_indexes --no-queries
+WHAT IS ANALYZED
+    Sources:
+        Every PHP class file under rsx/ in the manifest, except:
+        - tests: any path with a tests/ directory segment (always excluded);
+        - dev: rsx/app/dev, the developer-only screens;
+        - seeders: a path with a sample_data/, seeders/ or seeds/ directory
+          segment, a class extending a *Seeder class, or a class whose every
+          #[Command] is named with a last segment beginning "seed"
+          (rsx_app:seed). Code that runs once to populate a database is not
+          a query workload.
+        --include-dev counts dev screens and seeders again.
 
-        Only analyze relationships, ignore query patterns.
+    Tables:
+        Framework tables are left out by default: a table whose name begins
+        with an underscore, and a table whose NAME is declared by framework
+        source - a core model, or an application class that extends a core
+        model's base without redeclaring $table (users, login_users, sites).
+        Their indexes ship with the framework; the summary line counts the
+        requirements left out. --include-system analyzes them.
 
-RELATIONSHIP INDEX DETECTION
-    How It Works:
-        The system scans all models extending Rsx_Model_Abstract and finds
-        methods with #[Relationship] attribute. For each relationship, it
-        determines which table needs an index on which foreign key column.
+    Nothing unread is silent:
+        A source file that does not parse and a relationship that cannot be
+        introspected are counted in a [WARNING] line, and listed under
+        --show-details. Their requirements are unknown, not absent.
 
-    Detected Relationships:
-        - hasMany() / hasOne() - Index on related table's foreign key
-        - belongsTo() - No index needed (we have the foreign key)
-        - belongsToMany() - Indexes on both pivot table foreign keys
-        - morphMany() / morphOne() - Index on related table's morph_id
+RELATIONSHIP REQUIREMENTS
+    - hasMany / hasOne: the foreign key on the related table, plus site_id
+      when the related model is site-scoped (the relation query carries its
+      global scope)
+    - morphMany / morphOne: the {relation}_type + {relation}_id pair on the
+      related table (plus site_id, as above)
+    - belongsToMany: each pivot key, on its own (a pivot is joined, never
+      queried through a model's scope)
+    - belongsTo / morphTo: nothing - they resolve through the target's
+      primary key
 
-    Priority:
-        Relationship indexes have HIGHEST priority and are never cut due to
-        quota limits. Foreign keys must always be indexed for performance.
+    Each is attributed to the file and line that declares the relationship.
 
-    Example Detection:
-        // In User_Model.php
-        #[Relationship]
-        public function posts()
-        {
-            return $this->hasMany(Post_Model::class);
-        }
+QUERY REQUIREMENTS
+    A CHAIN is a fluent expression rooted at a static call on a model class:
+    Client_Model::where(...)->...  (self:: and static:: inside a model are
+    that model). A chain built on a variable, a relation method or a closure
+    result is not read.
 
-        // Detected requirement: posts table needs index on user_id column
-        // Source attribution: rsx/models/user_model.php:45
+    Equality columns (a SET - order does not matter):
+        where('col', $v)   where('col', '=', $v)   where(['a' => 1, 'b' => 2])
+        whereIn('col', [...])   whereNull('col')
 
-QUERY PATTERN DETECTION
-    How It Works:
-        The system uses AST parsing to scan all PHP files in /rsx/ that
-        define classes. It finds Model::where() method chains and extracts
-        the column names in order.
+    Range column (the first one only - an index cannot range past it):
+        where('col', '<' | '>' | '<=' | '>=', $v)   whereBetween('col', [...])
+        whereNotNull('col')   where('col', 'LIKE', 'prefix%')
+        (IS NOT NULL reads every non-null key: a range for index use)
 
-    Detected Patterns:
-        // Single where clause
-        User_Model::where('status', 'active')->get();
-        // Detected: Index on (status)
+    Sort columns (kept only when there is no range column):
+        orderBy('col')   orderByDesc('col')   latest()   oldest()
+        (latest() / oldest() with no argument sort by created_at)
 
-        // Chained where clauses
-        User_Model::where('status', 'active')
-            ->where('created_at', '>', '2024-01-01')
-            ->get();
-        // Detected: Index on (status, created_at)
+    Never a requirement:
+        - where('col', 'LIKE', '%...'): a leading wildcard reads every row
+          (a pattern whose literal start is % or _, including "%{$term}%")
+        - where('col', '!=', ...), and an operator that is not a literal
+        - a TEXT / MEDIUMTEXT / LONGTEXT / BLOB / JSON column
+        - a column the table does not have
+        - conditions inside where(function ($q) { ... }) groups
 
-        // Multiple columns preserve order
-        Order_Model::where('user_id', $id)
-            ->where('status', 'pending')
-            ->where('created_at', '>', $date)
-            ->get();
-        // Detected: Index on (user_id, status, created_at)
+    Abandoned chains (nothing recorded; listed under --show-details):
+        - a column name that is not a literal: where($column, ...)
+        - any orWhere...(): no single composite index serves an OR
 
-    Not Detected (Documented Limitations):
-        - Variable column names: where($column, 'value')
-        - Complex WHERE clauses: whereIn(), whereRaw(), whereExists()
-        - Join conditions (handled separately via relationship analysis)
-        - Runtime-determined queries
-        - orderBy() clauses (result set ordering, not filtering)
+    Column qualifiers:
+        - 'clients.name' on Client_Model is the model's own column;
+        - a column qualified with a joined table (or its alias, 'tasks as t')
+          that is a known model table is a requirement on THAT table - with
+          no implicit site_id, because the global scope filters the root
+          model only;
+        - a column qualified with anything else is dropped;
+        - in a chain with a join, an unqualified column is kept only when the
+          root table has it and no joined table does (a join to a table that
+          is not a literal makes every unqualified column ambiguous).
 
-    Priority:
-        Query pattern indexes have MEDIUM priority and are subject to quota
-        limits. Multi-column indexes are preferred over single-column.
+    Site scope:
+        A site-scoped model (Rsx_Site_Model_Abstract, or Site_Scoped) filters
+        every query by site_id, so its requirements carry site_id among their
+        equality columns - unless the chain calls withoutGlobalScope(s), or
+        runs inside Model::without_site_scope(fn) on a model that shares its
+        scope flag (every model under Rsx_Site_Model_Abstract shares one).
 
-    Column Order:
-        The system preserves the exact order of columns from your where()
-        chain because MySQL index order matters for left-prefix matching.
+    The primary key:
+        InnoDB clusters every table on its primary key and appends it to
+        every secondary index. An equality set holding the whole primary key
+        is a primary-key lookup and needs nothing; a range or sort on the
+        primary key is dropped - (a) already orders and ranges by id within a.
 
-COVERING INDEX OPTIMIZATION
-    Left-Prefix Matching Rule:
-        MySQL can use an index (a, b, c) to satisfy queries filtering on:
-        - (a) alone
-        - (a, b) together
-        - (a, b, c) together
+MATCHING AND RECOMMENDING
+    Selective and low-cardinality columns:
+        A column is LOW-CARDINALITY when it is a boolean (TINYINT(1)), a MySQL
+        ENUM, a declared model enum ($columns 'enum'), or is named like a flag
+        or status: is_*, has_*, status, *_status, status_id. Every other column
+        except site_id is SELECTIVE.
 
-        But it CANNOT use the index for:
-        - (b) alone
-        - (c) alone
-        - (b, c) together
+    Served:
+        An existing index - the primary key and unique keys included, any
+        name - serves a requirement when either:
+        - its LEADING columns are exactly the requirement's equality set, in
+          any order; or
+        - its leading columns are all in the equality set and include at least
+          one selective column. A selective column already narrows the read to
+          a few rows, which the remaining conditions filter cheaply: one
+          client's rows all sit in one site, so (client_id) serves
+          {site_id, client_id}.
+        Whatever follows the matched columns (the range or sort column, or
+        nothing) is optional. A requirement with no equality column is served
+        by an index leading with its range column.
 
-    Optimization Strategy:
-        The system uses covering index logic to reduce redundant indexes:
+        Requirement {site_id, client_id} is served by (site_id, client_id), by
+        (client_id, site_id, name) and by (client_id); not by (site_id) alone.
+        Requirement {site_id, status_id, client_id} is not served by
+        (status_id) alone: an enum narrows by a fraction.
 
-        Requirements: (status), (status, created_at), (status, role)
+    Recommended shape:
+        equality columns (site_id first, then alphabetical), then the range
+        column, or the sort columns when there is no range column.
 
-        Analysis:
-        - (status, created_at) covers (status) via left-prefix
-        - (status, role) covers (status) via left-prefix
-        - Neither covers the other (different second columns)
+    Aggregation:
+        Identical requirements from different call sites are one
+        recommendation, reported with how many distinct call sites need it.
+        A recommendation also absorbs every other requirement whose equality
+        set is its leading columns, so one index carries several call sites.
 
-        Result: Create both (status, created_at) and (status, role)
-                Drop standalone (status) - it's covered
+    Low value:
+        A requirement whose only columns besides site_id are equality on
+        low-cardinality columns narrows a read by a constant fraction at best
+        (its sort columns are not considered). It is
+        listed separately and left out of the migration unless
+        --include-low-value. One that a normal recommendation also serves is
+        folded into it instead.
 
-    Reordering for Coverage:
-        If you need both (status) and (user_id, status), the system could
-        theoretically create (status, user_id) to cover both. However, this
-        would hurt performance for queries filtering on user_id alone.
+    Nearly served:
+        When an existing index's leading columns are all but one of a
+        recommendation's equality columns, the report names it and the
+        columns it leads with. Such an index holds only site_id and
+        low-cardinality columns (else it would serve), and the column it lacks
+        is the selective one. An index that is exactly those columns is
+        preferred and marked "extend it" - adding the column to it is often
+        better than adding another index:
+            nearly served by idx_x, which leads with (site_id, status_id): missing invoice_id - extend it
 
-        Current Implementation: Does not reorder. Preserves query patterns.
+    Auto-generated indexes:
+        An index named idx_auto_* that no analyzed requirement uses is listed
+        to drop. Indexes with any other name are never dropped.
 
-    The Primary Key:
-        InnoDB clusters every table on its primary key and appends the primary key
-        to every secondary index, so the primary key is taken out of a requirement
-        before anything is recommended:
-        - a requirement LEADING with it - (id, site_id) - is a primary-key lookup
-          and needs no index;
-        - a requirement ENDING with it - (site_id, id) - is exactly what an index
-          on (site_id) already is, and is reduced to that.
+    Quota:
+        At most 32 recommendations per table (fewer when the table already
+        has many hand-written indexes; MySQL allows 64). Past it, relationship
+        indexes are kept first, then multi-column query indexes, then
+        single-column ones; --show-all lists everything.
 
-    Existing Indexes:
-        A requirement is already met when ANY existing index - the primary key
-        included, whatever its name - begins with the required columns in order:
-        (thread_id) needs nothing on a table that has (thread_id, created_at).
-        Only a requirement no existing index serves is listed to create.
+OUTPUT
+    Database Index Analysis
+    ==================================================
 
-INDEX QUOTA MANAGEMENT
-    MySQL Limits:
-        MySQL InnoDB has a hard limit of 64 indexes per table.
+    Sources: 140 files scanned, excluded 9 dev, 1 seeder; 250 relationships
+    Framework tables: 35 requirements left out (--include-system to analyze them)
+    [WARNING] 1 relationship could not be introspected - their requirements
+    are unknown, not absent (--show-details lists them)
 
-    RSX Quota:
-        The system reserves 32 indexes per table for auto-generated indexes,
-        leaving 32 for user-defined custom indexes.
+    Found 1 indexes to create and 0 to drop
 
-    When Quota Exceeded:
-        If recommendations exceed available quota, the system prioritizes:
+    Table: invoices
+      + (site_id, client_id, status_id) - 3 call sites
+          rsx/app/frontend/invoices/invoices_controller.php:176
+          ... 2 more (--show-details)
+          nearly served by idx_invoices_site_status, which leads with (site_id, status_id): missing client_id - extend it
 
-        Priority Tier 1: Relationship indexes (never cut)
-        Priority Tier 2: Multi-column query indexes (2+ columns)
-        Priority Tier 3: Single-column query indexes (cut first)
-
-        The command displays a warning showing which indexes were cut and
-        suggests manual review for those that couldn't be auto-applied.
-
-    Example Warning:
-        !  WARNING: Table 'users' exceeds index quota
-
-        Recommended indexes: 45
-        Available quota: 12 (64 max - 52 existing user indexes)
-
-        The following 33 indexes cannot be auto-applied:
-          - idx_auto_status (single-column, cut)
-          - idx_auto_email (single-column, cut)
-          ...
-
-        Consider reviewing existing user-defined indexes for redundancy.
+    Low value: 1 - only boolean, enum or status columns besides site_id
+    (migrated only with --include-low-value)
+    Table: clients
+      ~ (site_id, status_id) - 1 call site
+          rsx/app/frontend/reports/reports_controller.php:26
 
 MIGRATION GENERATION
-    Generated Migration Format:
-        php artisan rsx:db:check_indexes --generate-migration
+    php artisan rsx:db:check_indexes --generate-migration
 
-        Creates: database/migrations/{timestamp}_auto_index_recommendations.php
+    Each file is created by make:migration:safe (so it is recorded in its
+    directory's .migration_whitelist) and then given one ALTER TABLE ... ADD
+    INDEX / DROP INDEX statement per change, each create preceded by the call
+    sites it serves:
 
-    Migration Content:
-        <?php
+    - application tables -> rsx/resource/migrations/
+    - framework tables (--include-system) -> system/database/migrations/,
+      on a framework-developer tree only. Elsewhere system/ is replaced by
+      every framework update, so the command prints an [ERROR] naming the
+      tables instead: send them to RSpade as a change request.
 
-        use Illuminate\Database\Migrations\Migration;
-        use Illuminate\Support\Facades\DB;
+    When both appear, two files are written. Index names are
+    idx_auto_<columns>, shortened with a hash suffix past MySQL's
+    64-character limit. Review the file, then run php artisan migrate.
 
-        return new class extends Migration
-        {
-            public function up()
-            {
-                // Table: users
-                // ============================================
+LIMITATIONS
+    Static analysis sees only what the source states literally. Not analyzed:
+    dynamic column names, whereRaw / whereHas / whereColumn / whereDate,
+    conditions inside where(function ...) groups, chains with orWhere, queries
+    built on a variable or a relation method, the relationship kinds other
+    than those above (hasManyThrough), and anything decided at run time.
 
-                // DROP: Obsolete auto-generated indexes
-
-                DB::statement('DROP INDEX IF EXISTS idx_auto_old_column ON users');
-
-                // CREATE: New recommended indexes
-
-                // Source: rsx/app/frontend/users_controller.php:45
-                // Priority: query (where)
-                DB::statement('
-                    CREATE INDEX idx_auto_status_created_at
-                    ON users (status, created_at)
-                ');
-
-                // Source: rsx/models/user_model.php:67 (#[Relationship])
-                // Priority: relationship (hasMany)
-                DB::statement('
-                    CREATE INDEX idx_auto_organization_id
-                    ON users (organization_id)
-                ');
-            }
-        };
-
-    Index Naming Convention:
-        Auto-generated indexes use pattern: idx_auto_{col1}_{col2}_{col3}
-
-        Examples:
-        - idx_auto_user_id
-        - idx_auto_status_created_at
-        - idx_auto_status_role_created_at
-
-    Source Attribution:
-        Each CREATE statement includes comments showing:
-        - Source file and line number where requirement detected
-        - Priority level (relationship or query)
-        - Relationship type or query pattern type
-
-    Applying Migration:
-        After reviewing the generated migration:
-
-        php artisan migrate
-
-        The migration creates new indexes and drops obsolete ones that
-        are no longer needed.
-
-AUTO-GENERATED INDEX MANAGEMENT
-    Identification:
-        The system identifies auto-generated indexes by the idx_auto_ prefix.
-
-    Lifecycle:
-        - System creates indexes with idx_auto_ prefix
-        - On subsequent runs, system checks which are still needed
-        - Obsolete auto-generated indexes are dropped
-        - User-defined indexes are NEVER touched
-
-    User-Defined Indexes:
-        Any index NOT starting with idx_auto_ is considered user-defined
-        and is completely ignored by the system. This allows developers
-        to manually create custom indexes without interference.
-
-    Idempotency:
-        Running the command multiple times without code changes produces
-        no recommendations. The system only suggests changes when:
-        - New relationships are added
-        - New query patterns are detected
-        - Existing relationships are removed
-        - Existing query patterns change
-
-OUTPUT EXAMPLES
-    Success Output:
-        Database Index Analysis
-        ==================================================
-
-        Found 12 indexes to create and 4 to drop
-
-        Table: users
-          + Create index on (status, created_at) - rsx/controllers/users.php:23
-          + Create index on (organization_id) - rsx/models/user_model.php:45
-          - Drop index idx_auto_old_status on (old_status)
-
-        Table: posts
-          + Create index on (user_id) - rsx/models/post_model.php:12
-
-        To generate migration:
-          php artisan rsx:db:check_indexes --generate-migration
-
-    All Indexes Up To Date:
-        Database Index Analysis
-        ==================================================
-
-        + All indexes are up to date
-
-    With Detailed Analysis:
-        Database Index Analysis
-        ==================================================
-
-        Analyzing model relationships...
-        Found 23 relationships
-        Analyzing query patterns...
-        Scanning 47 PHP files for query patterns
-        Query pattern analysis complete
-        Total requirements collected: 87
-        Optimizing index requirements...
-        Found 12 indexes to create and 4 to drop
-        ...
-
-LIMITATIONS WARNING
-    The command always displays limitations to set expectations:
-
-    !  LIMITATIONS
-
-    This analysis cannot detect:
-      - Dynamic column names: where($variable, ...)
-      - Join conditions (separate relationship analysis)
-      - Complex WHERE clauses (whereRaw, whereIn, etc.)
-      - Runtime-determined query patterns
-
-    Always benchmark critical queries and add custom indexes as needed.
-    Use EXPLAIN to verify query performance in production.
-
-    Why These Limitations:
-        Static analysis cannot predict runtime behavior. The system can
-        only analyze code patterns visible in source files.
-
-    Recommendations:
-        - Use EXPLAIN on critical queries in production
-        - Benchmark slow queries and add custom indexes
-        - Review query logs for patterns not detected by AST
-        - Run command periodically as codebase evolves
+    It also cannot see data: a requirement on a column holding three distinct
+    values is recommended unless it is recognisably a flag, status or enum.
+    Verify critical queries with EXPLAIN against production-sized data.
 
 WORKFLOW
-    Regular Development:
-        1. Write models with #[Relationship] methods
-        2. Write controllers with Model::where() queries
-        3. Run: php artisan rsx:db:check_indexes
-        4. Review recommendations
-        5. Run: php artisan rsx:db:check_indexes --generate-migration
-        6. Review generated migration file
-        7. Run: php artisan migrate
+    1. php artisan rsx:db:check_indexes
+    2. Read each recommendation and its call sites (--show-details)
+    3. php artisan rsx:db:check_indexes --generate-migration
+    4. Review the migration; delete what you do not want
+    5. php artisan migrate
 
-    Before Deployment:
-        Always run the index analysis before deploying to production to
-        ensure all required indexes exist. Missing indexes can cause
-        severe performance issues in production.
-
-    Periodic Audits:
-        Run the command periodically to catch missing indexes as your
-        codebase evolves. New features often introduce new relationships
-        and query patterns.
-
-EXAMPLES
-    Analyze All Tables:
-        php artisan rsx:db:check_indexes
-
-    Generate Migration:
-        php artisan rsx:db:check_indexes --generate-migration
-
-    Check Specific Table:
-        php artisan rsx:db:check_indexes --table=users
-
-    Relationships Only:
-        php artisan rsx:db:check_indexes --no-queries
-
-    Queries Only:
-        php artisan rsx:db:check_indexes --no-relationships
-
-    Verbose Output:
-        php artisan rsx:db:check_indexes --show-details
-
-TROUBLESHOOTING
-    No Indexes Detected:
-        - Verify models extend Rsx_Model_Abstract
-        - Check #[Relationship] attributes present on relationship methods
-        - Ensure PHP files in /rsx/ define classes
-        - Run with --show-details to see file count
-
-    Missing Query Pattern Detection:
-        - Verify Model::where() uses string literals, not variables
-        - Check model class names end with _Model suffix
-        - Ensure AST parser can parse file syntax
-        - Complex queries may not be detected (use custom indexes)
-
-    Quota Warnings:
-        - Review existing user-defined indexes for redundancy
-        - Consider if all existing indexes are still needed
-        - Manually select which auto-indexes to apply
-        - Some tables genuinely need many indexes
-
-    Migration Fails:
-        - Check MySQL version supports CREATE INDEX IF NOT EXISTS
-        - Verify table names are correct
-        - Ensure sufficient MySQL privileges
-        - Review migration file for syntax errors
-
-BEST PRACTICES
-    Relationship Indexes:
-        Always use #[Relationship] attribute on relationship methods.
-        This ensures the system can detect foreign key requirements.
-
-    Query Patterns:
-        Use string literals in where() clauses when possible:
-        - Good: where('status', 'active')
-        - Bad: where($column, 'active')
-
-    Column Order Matters:
-        Order your where() clauses by selectivity:
-        - Most selective columns first
-        - Example: where('user_id', $id)->where('status', 'active')
-        - Better than: where('status', 'active')->where('user_id', $id)
-
-    Custom Indexes:
-        For queries the system can't detect, create custom indexes:
-        - Use standard naming: idx_users_status_created_at
-        - Avoid idx_auto_ prefix (reserved for system)
-        - Document why the index is needed
-
-    Regular Audits:
-        Run index analysis as part of deployment checklist.
-        Missing indexes are easier to add before production.
-
-    Migration Review:
-        Always review generated migrations before applying.
-        Verify recommendations make sense for your data patterns.
+    Hand-written indexes: name them idx_<table>_<purpose>; never use the
+    idx_auto_ prefix, which marks indexes the advisor may propose dropping.
 
 SEE ALSO
-    model - RSX model system with relationships
-    model_normalization - Schema normalization command
-    migrations - Database migration system
-    coding_standards - Code quality and standards
+    rsx:man model - RSX model system with relationships
+    rsx:man migrations - Database migration system
+    rsx:man model_normalization - Schema normalization command

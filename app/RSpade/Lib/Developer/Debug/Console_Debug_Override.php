@@ -96,7 +96,7 @@ class Console_Debug_Override
      */
     public static function stored(): ?array
     {
-        $value = Session::get_value(self::SESSION_KEY, null, self::SESSION_REALM);
+        $value = Session::get_value(self::SESSION_KEY, realm: self::SESSION_REALM);
 
         if ($value === null) {
             return null;
@@ -119,7 +119,7 @@ class Console_Debug_Override
     {
         $normalized = static::normalize($override);
 
-        Session::put_value(self::SESSION_KEY, $normalized, null, self::SESSION_REALM);
+        Session::put_value(self::SESSION_KEY, $normalized, realm: self::SESSION_REALM);
 
         return $normalized;
     }

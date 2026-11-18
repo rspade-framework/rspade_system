@@ -32,6 +32,7 @@ use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Lib\Portal\Portal_Authorizable;
 use App\RSpade\Lib\Portal\Portal_Session;
 use App\RSpade\Lib\Portal\Rsx_Portal;
+use App\RSpade\Lib\Support\UrlFetch\Rsx_Url_Fetch;
 /**
  * File_Attachment_Model_Abstract - Logical file upload record
  *
@@ -350,17 +351,6 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     public function file_storage()
     {
         return $this->belongsTo(File_Storage_Model::class, 'file_storage_id');
-    }
-
-    /**
-     * Get the site this file belongs to
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
-     */
-    #[Relationship]
-    public function site()
-    {
-        return $this->belongsTo(Site::class, 'site_id');
     }
 
     /**
@@ -1761,15 +1751,22 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     /**
      * Create file attachment from URL
      *
-     * Downloads file from URL and creates attachment. Useful for importing
-     * files from external sources.
+     * Downloads the URL through Rsx_Url_Fetch::to_temp_file() - http/https only, every
+     * redirect hop's destination checked, loopback / private / link-local / reserved
+     * addresses refused, the body streamed to a temp file under a byte cap - and files the
+     * result like an upload. Safe for a URL a user supplied. rsx:man url_fetch.
      *
      * @param string $url URL to download file from
      * @param array $params Same as create_from_upload() plus:
-     *   - filename: Filename to use (defaults to basename of URL)
-     *   - timeout: Download timeout in seconds (default: 30)
+     *   - filename: Filename to use (default: the server's Content-Disposition name, else
+     *     the last segment of the final URL's path)
+     *   - max_bytes: The most bytes the file may have (default 1 GB, deliberately liberal -
+     *     pass what the feature needs)
+     *   - allow_private: true skips the destination policy - ONLY for a URL built in code
+     *     that legitimately points inward, never one a user supplied
      * @return static
-     * @throws Exception
+     * @throws \App\RSpade\Lib\Support\UrlFetch\Rsx_Url_Fetch_Exception A refused
+     *   destination, an HTTP error status, a file over max_bytes, no connection
      */
     public static function create_from_url($url, array $params = [])
     {
@@ -1777,28 +1774,24 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             throw new Exception('site_id is required in params');
         }
 
-        $timeout = $params['timeout'] ?? 30;
+        $fetched = Rsx_Url_Fetch::to_temp_file(
+            $url,
+            (int) ($params['max_bytes'] ?? Rsx_Url_Fetch::DEFAULT_MAX_BYTES),
+            (bool) ($params['allow_private'] ?? false)
+        );
 
         try {
-            // Download file using Laravel HTTP client
-            $response = \Illuminate\Support\Facades\Http::timeout($timeout)->get($url);
+            $uploaded_file = new \Illuminate\Http\UploadedFile(
+                $fetched->path,
+                $params['filename'] ?? $fetched->filename,
+                mime_content_type($fetched->path) ?: null,
+                null,
+                true // A file this process wrote, not a PHP upload
+            );
 
-            if (!$response->successful()) {
-                throw new Exception("Failed to download file from URL: HTTP {$response->status()}");
-            }
-
-            $content = $response->body();
-
-            // Determine filename from URL or params
-            $filename = $params['filename'] ?? basename(parse_url($url, PHP_URL_PATH));
-            if (empty($filename) || $filename === '/') {
-                $filename = 'downloaded_file_' . uniqid();
-            }
-
-            // Use create_from_string to handle the rest
-            return static::create_from_string($content, $filename, $params);
-        } catch (Exception $e) {
-            throw new Exception('Error downloading file from URL: ' . $e->getMessage());
+            return static::create_from_upload($uploaded_file, $params);
+        } finally {
+            $fetched->delete();
         }
     }
 

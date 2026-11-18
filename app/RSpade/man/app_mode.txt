@@ -481,11 +481,14 @@ DETERMINISM CONTRACT
        a development boot that loads an index recorded under another mode
        discards it and rebuilds in full.
 
-    4. Generated-file keys in the manifest index are LOGICAL, not absolute.
-       A generated stub is recorded as tmp/js-stubs/<name>.js whatever
-       RSX_TMP_PATH resolves to on the building box, so two boxes with
-       different tmp roots produce identical indexes and identical build
-       keys.
+    4. Every path the manifest stores is project-relative, never absolute:
+       file keys, class records, and the `file` a reflected trait method
+       carries (vendor/laravel/..., app/RSpade/..., rsx/...). A generated
+       stub is recorded by its LOGICAL key, tmp/js-stubs/<name>.js, whatever
+       RSX_TMP_PATH resolves to on the building box. So neither cache file
+       (manifest_index.php, manifest_files.php) names the checkout's
+       location, and two boxes at different paths or with different tmp
+       roots produce identical build keys.
 
     5. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
        hash8 derives from the same relative-path + content inputs (plus the

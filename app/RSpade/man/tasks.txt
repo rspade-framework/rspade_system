@@ -190,6 +190,14 @@ REPORTING (Task_Instance)
     (THE SILENCE LIMIT). Every call in the list above except flush() and run_again_in()
     counts as a report.
 
+    A REPORT ALSO RENEWS THE TASK'S LOCKS' PROGRESS. Every report call (heartbeat()
+    included) calls RsxLocks::still_working(), so a process waiting behind a cluster lock
+    or semaphore slot this task holds - an approved named lock, a Site_Lock::write()
+    section around one slow item - keeps waiting instead of failing with
+    Lock_Stalled_Exception after rsx.locks.stall_seconds (rsx:man locks, PROGRESS AND
+    STALLS). A task that reports needs nothing more; one that holds a lock through a long
+    silent step reports (heartbeat()) at least once per stall window.
+
     ECHO IS STDOUT. Everything the task prints (echo, print, var_dump) is captured line by
     line as stdout, wherever the run executes - a worker, an inline run, a console run -
     and passed through unchanged, so a console runner still shows it. Output the task

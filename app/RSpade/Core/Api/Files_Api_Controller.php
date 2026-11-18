@@ -250,7 +250,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
     {
         // The bytes' CONTENT is what this returns, so it clears the download gate as well as
         // the thumbnail one - the same pair /_download runs.
-        $attachment = static::__readable_attachment($params['key'], true);
+        $attachment = static::__readable_attachment($params['key'], need_bytes: true);
         if ($attachment === null) {
             return Rsx_Api::not_found('File not found');
         }

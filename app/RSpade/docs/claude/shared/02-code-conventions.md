@@ -8,11 +8,13 @@
 
 **No field aliasing** — field names are identical across ALL layers, database -> PHP -> JSON -> JavaScript. Return `['type_id__label' => ...]`, never `['type_label' => ...]`. One string everywhere, so **grep finds all usages**.
 
+**Optional arguments are NAMED**: PHP required arguments positional, an optional setting a defaulted parameter the caller passes BY NAME (`RsxLocks::system_lock($name, db_scoped: false)`) - never a positional `null` placeholder or bare `true`/`false`/`null` into an optional slot (`PHP-NAMED-OPTIONAL-01`), and no options array in a new PHP function; JS takes ONE options object, and a framework function throws on an unknown key. `rsx:man coding_standards`, OPTIONAL PARAMETERS.
+
 **Static-first**: classes are namespacing tools. Use static unless instances are genuinely needed (models, resources, service connectors); **avoid dependency injection**.
 
 **NEVER define attribute classes** — attributes work via reflection, and the linter removing their `use` statements is CORRECT. An attribute may repeat with DIFFERENT arguments (`#[Exclusive('a')] #[Exclusive('b')]`); the same attribute with IDENTICAL arguments twice on one declaration is a manifest-build FATAL. **NEVER put a class constant in an attribute argument** (`#[Api_Param('x', default: Model::FOO)]`) — reflection resolves it before the autoloader is ready and the scan dies; literals only. **NEVER manually update namespaces** — the manifest regenerates them.
 
-Attribute markers (metadata only): `#[Instantiatable]` whitelists abstract-class children for instantiation; `#[Replaceable]` on a PARENT method lets overriders skip the `parent::` call; `#[Sealed]` on a PROPERTY forbids redeclaration by any descendant. **Parent-call chaining (`PHP-PARENT-CHAIN-01`)**: an override MUST call `parent::<same-method>()` unless the nearest declaring ancestor is abstract, `#[Replaceable]`, or a vendor class. Both are manifest-build FATALs.
+Attribute markers (metadata only): `#[Instantiatable]` whitelists abstract-class children for instantiation; `#[Replaceable]` on a PARENT method lets overriders skip the `parent::` call; `#[Sealed]` on a PROPERTY forbids redeclaration by any descendant. **Parent-call chaining (`PHP-PARENT-CHAIN-01`, `JS-PARENT-CHAIN-01`)**: an override MUST call `parent::<same-method>()` / `super.<same-method>()` unless the nearest declaring ancestor is abstract, `#[Replaceable]` (JS: the `@Replaceable` decorator), or outside the manifest (vendor, npm, jqhtml's `Component`). All are manifest-build FATALs.
 
 **JS non-class files** hold only functions, `const` with STATIC values, and decorators (`const RANDOM = Math.random()` and `let variable = 42` are forbidden); **a decorator requires the `/** @decorator */` marker** on its definition.
 

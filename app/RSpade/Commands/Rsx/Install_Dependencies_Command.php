@@ -136,7 +136,7 @@ class Install_Dependencies_Command extends Command
         try {
             // Install dependencies
             $this->line('');
-            $result = shell_exec_pretty('npm install', true, false);
+            $result = shell_exec_pretty('npm install', throw_on_error: false);
             
             if ($result['exit_code'] !== 0) {
                 $this->error('Failed to install npm dependencies');

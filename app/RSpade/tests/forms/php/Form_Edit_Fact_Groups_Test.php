@@ -129,7 +129,7 @@ class Form_Edit_Fact_Groups_Test extends Rsx_Test_Abstract
             $record->save();
 
             return ['id' => $record->id];
-        }, null, fields: $fields);
+        }, fields: $fields);
     }
 
     private static function __question($result): array
@@ -265,7 +265,7 @@ class Form_Edit_Fact_Groups_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(
             RuntimeException::class,
-            fn () => Form_Edit::run($record, $params, fn (Form_Edit $edit) => $edit->set('stamp_day', 'x'), null, fields: ['stamp' => ['stamp_day', 'stamp_hour']]),
+            fn () => Form_Edit::run($record, $params, fn (Form_Edit $edit) => $edit->set('stamp_day', 'x'), fields: ['stamp' => ['stamp_day', 'stamp_hour']]),
             'changed'
         );
     }
@@ -291,7 +291,7 @@ class Form_Edit_Fact_Groups_Test extends Rsx_Test_Abstract
             $activity->save();
 
             return [];
-        }, null, coupled: [[$activity, ['starts_at' => 'activity_time']]]);
+        }, coupled: [[$activity, ['starts_at' => 'activity_time']]]);
 
         $row = static::__question($result)['fields'][0];
         static::__assert_equals('activity_time', $row['field']);

@@ -155,11 +155,12 @@ DECLARING ENDPOINTS
     #[Api_Param(name, type, required, default, description, example, column)]  (repeatable)
         name         The parameter name; matches a :token or a query/body key.
                      Names must be unique within an endpoint.
-        type         'string' | 'int' | 'float' | 'bool' | 'file' | 'money'.
-                     Scalars, 'file' for a multipart upload part and 'money'
-                     for an amount (DECLARED MONEY COLUMNS, below). A 'file' param is
-                     POST-only, can never be a :token, and can never carry a
-                     default. See FILE ENDPOINTS.
+        type         'string' | 'int' | 'float' | 'bool' | 'file' | 'money' |
+                     'json'. Scalars, 'file' for a multipart upload part,
+                     'money' for an amount (DECLARED MONEY COLUMNS, below) and
+                     'json' for any JSON value (JSON PARAMS, below). A
+                     'file' param is POST-only, can never be a :token, and can
+                     never carry a default. See FILE ENDPOINTS.
         required     bool. A required param with no value -> 422.
         default      Value applied when an OPTIONAL param is absent. Declaring
                      BOTH required:true AND a default is a contradiction and
@@ -193,7 +194,8 @@ DECLARING ENDPOINTS
         - a :token with no matching #[Api_Param]
         - duplicate #[Api_Param] names
         - required:true combined with a default
-        - a type outside {string, int, float, bool, file, money}
+        - a type outside {string, int, float, bool, file, money, json}
+        - a 'json' param whose default is a string that is not valid JSON
         - type 'file' on an endpoint that declares GET
         - type 'file' on a :route token
         - type 'file' carrying a default
@@ -253,6 +255,8 @@ PARAMETERS AND VALIDATION
         string passthrough: the string exactly as sent (DECLARED TEXT
                COLUMNS, below)
         money  an Rsx_Money or null (DECLARED MONEY COLUMNS, below)
+        json   the decoded JSON value (JSON PARAMS, below); "Expected valid
+               JSON" otherwise
 
     DECLARED TEXT COLUMNS. A model column declared 'text_type' in $columns
     (Rich_Text and the like) is written from an ordinary 'string' param, and
@@ -309,6 +313,31 @@ PARAMETERS AND VALIDATION
       range is the only bound and an over-large amount throws when assigned.
       Worked example, a stored budget beside computed totals:
         system/app/RSpade/resource/reference_app/app/api/v1/projects_api_controller.php
+
+    JSON PARAMS. A 'json' param carries any JSON value - a filter, a
+    settings blob, a list of ids - and the API checks only that it PARSES;
+    there is no nested schema, so the endpoint validates the shape it needs:
+
+        #[Api_Param('filters', type: 'json', required: false, default: [])]
+
+      A STRING is JSON text and is decoded (json_decode with
+      JSON_THROW_ON_ERROR, objects as associative arrays): a form field, a
+      query parameter (?filters=%7B%22status%22%3A1%7D), a route segment, or
+      a string inside a JSON body. Any other value - an object, list, number,
+      bool or null already parsed out of an application/json body - is taken
+      as it is, so a JSON body may carry the value structured:
+
+        {"filters": {"status": 1, "tags": ["a", "b"]}}
+        {"filters": "{\"status\": 1}"}               the same value, as text
+
+      A JSON SCALAR IS ACCEPTED: 5, true, null and "x" are valid JSON and
+      reach the endpoint as they are; an endpoint that needs an object or a
+      list checks is_array() itself. A string scalar sent as text is quoted
+      ("\"x\""): an unquoted string is not JSON. {} and [] both decode to the
+      empty PHP array. A string that does not parse is a 422 whose field
+      message is "Expected valid JSON". A default is a literal array, or a
+      string of JSON text, which must parse (a manifest build failure
+      otherwise), and reaches the endpoint decoded.
 
     INPUT PRECEDENCE (highest wins): route params > GET query > body.
     The body is parsed as JSON when Content-Type is application/json,
@@ -734,9 +763,8 @@ API KEYS
     key is shown exactly ONCE at creation:
 
         ['key' => $plaintext, 'model' => $model] = Api_Key_Model::generate(
-            $user_id, 'My integration', 'live', $user_role_id = null,
-            $expires_at = null, $scopes = null, $read_only = false,
-            $is_temporary = false
+            $user_id, 'My integration', 'live', $expires_at = null,
+            $scopes = null, $read_only = false, $is_temporary = false
         );  // returns ['key' => 'rsx_live_...', 'model' => Api_Key_Model]
 
         Api_Key_Model::find_by_key($plaintext)   // sha256 lookup, non-revoked,
@@ -750,7 +778,7 @@ API KEYS
     browser refuses an Api_Key_Model record (there is no JS model for it).
 
     Columns: user_id, name, key_hash, key_prefix ({prefix}{env}_ + first chars,
-    for display), user_role_id (RESERVED - see below), scopes (TEXT NULL, the
+    for display), scopes (TEXT NULL, the
     key's own scope set - see KEY SCOPES), read_only (TINYINT(1) NOT NULL
     DEFAULT 0 - GET requests only; see READ-ONLY KEYS), is_temporary (TINYINT(1)
     NOT NULL DEFAULT 0 - minted by rsx:api:key:temp; see KEY EVENTS),
@@ -1031,20 +1059,10 @@ API KEYS
     bearer-only, no browser involved, no notice (they are minted by somebody
     with a shell).
 
-    ROLE OVERRIDE - RESERVED, NOT ENFORCED. user_role_id is intended to let a
-    key run at a REDUCED role. It is NOT honored: a key always runs at the
-    user's actual role. Enforcement is invasive (the permission resolver reads
-    role_id off the User_Model directly), so it is backlogged; the column is
-    kept in place. Do NOT rely on it to restrict a key.
-
-    NARROWING A KEY IS WHAT scopes IS FOR, and that one IS enforced - see KEY
-    SCOPES below. The two are the same request from two angles, and they
-    COMPOSE: were the role clamp ever built, effective authority would read
-
-        (the user's permissions, clamped to user_role_id) INTERSECT the scopes
-
-    because the intersection invariant already sits between the permissions and
-    the rules. Nothing in the scope engine would move.
+    NARROWING A KEY. A key runs as its holder, at the holder's live role and
+    permissions; it never carries a role of its own. A narrower key is made at
+    mint with path-pattern scopes (KEY SCOPES, below) and/or the read_only flag
+    (READ-ONLY KEYS, below) - the two compose, and both only subtract.
 
 KEY SCOPES
     A key otherwise carries its holder's ENTIRE authority: an integration that
@@ -1423,8 +1441,8 @@ READ-ONLY KEYS
 
     WHERE IT SHOWS.
 
-        Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes,
-                                $read_only = true)
+        Api_Key_Model::generate($user_id, $name, scopes: $scopes,
+                                read_only: true)
         $key->read_only                          bool (cast)
         GET /api/v1/me                           key.read_only
         rsx:api:key:create --read-only           mint one
@@ -1869,6 +1887,11 @@ DOCS AND TESTER PAGE
         a 'money' param     type:string with the decimal pattern
                             ^-?\d+(\.\d{1,2})?$ and examples ["7708.80"] - an
                             amount is a string on the API, never a JSON number.
+        a 'json' param      any JSON value, no fixed shape: the empty schema {}
+                            (plus the decoded default, when declared) as a body
+                            property; a query or path parameter is described
+                            by content: {application/json: {schema: {}}}
+                            instead of a schema, because its text IS JSON.
         a *_html param      a 'string' param whose name ends _html carries
                             contentMediaType: text/html (JSON Schema 2020-12,
                             the dialect OpenAPI 3.1 uses): the field is
@@ -2245,7 +2268,7 @@ SEE ALSO
     rsx:man session          API KEY SESSIONS, audit sessions, Session accessors
     rsx:man event_hooks      api_key.created / api_key.revoked (API Key Events)
     rsx:man email            the SECURITY category a key notice is sent in
-    rsx:man acls             Permission:: checks, role_id, the reserved override
+    rsx:man acls             Permission:: checks, role_id, GRANT/DENY overrides
     rsx:man model_fetch      redacting toArray(), enum magic properties
     rsx:man text_types       declared text columns: the endpoint's write door
     rsx:man money            the money param type; amounts as decimal strings

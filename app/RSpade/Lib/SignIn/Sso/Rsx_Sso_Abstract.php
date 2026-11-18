@@ -398,7 +398,7 @@ abstract class Rsx_Sso_Abstract
 
         $provider = self::provider($key);
 
-        $parked = Session::get_value(static::STATE_KEY, null, static::SESSION_REALM);
+        $parked = Session::get_value(static::STATE_KEY, realm: static::SESSION_REALM);
         Session::forget_value(static::STATE_KEY, static::SESSION_REALM);
 
         if (!static::__realm_enabled()) {
@@ -469,7 +469,7 @@ abstract class Rsx_Sso_Abstract
      */
     public static function pending(): ?array
     {
-        $pending = Session::get_value(static::PENDING_KEY, null, static::SESSION_REALM);
+        $pending = Session::get_value(static::PENDING_KEY, realm: static::SESSION_REALM);
 
         if (!is_array($pending) || !isset($pending['provider_key'], $pending['provider_user_key'])) {
             return null;
@@ -726,7 +726,7 @@ abstract class Rsx_Sso_Abstract
         // A provider proving who somebody is does not make them admissible, so the realm's
         // refusal is spelled exactly the way the authorize gate spells a denial.
         if (!static::__sign_in($identity)) {
-            static::__record_failure($email, 'realm refused the identity', $identity_id, true);
+            static::__record_failure($email, 'realm refused the identity', $identity_id, refused: true);
 
             throw new Sso_Failed_Exception('That account cannot be signed in to right now.');
         }
@@ -760,7 +760,7 @@ abstract class Rsx_Sso_Abstract
             // NOT RECORDED AGAIN. _complete_login() already recorded the failure for the
             // denial, and that record feeds Login_Throttle - recording here as well would
             // count one refusal twice and halve the real budget.
-            return static::_fail((string) $identity->email, $e->getMessage(), null, false);
+            return static::_fail((string) $identity->email, $e->getMessage(), record: false);
         }
 
         return new RedirectResponse($destination);

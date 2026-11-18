@@ -88,12 +88,7 @@ class HardcodedUrlInRedirect_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Initialize manifest to ensure routes are available
-        try {
-            Manifest::init();
-        } catch (\Exception $e) {
-            // If manifest fails to initialize, we can't check routes
-            return;
-        }
+        Manifest::init();
 
         $lines = explode("\n", $contents);
 

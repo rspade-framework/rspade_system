@@ -11,6 +11,14 @@ Type: php / cli / asset / http / playwright. Last updated: 2026-10-05.
 | ACL-CACHE-02 | deny() is visible on an instance that already cached | role having P, has_permission, deny P | false on the same instance | implemented |
 | ACL-CACHE-03 | remove() is visible on an instance that already cached | granted P, has_permission, remove P | false on the same instance | implemented |
 
+## Null_Role_Membership_Test (php, default isolation) - a membership with no role
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| ACL-NULLROLE-01 | a role_id NULL member fails has_role() and can_admin_role() for every declared role, and resolves no permissions | user saved with role_id null | false for every role; [] | implemented |
+| ACL-NULLROLE-02 | the Permission facade answers false for that member signed in; require_role() throws | __acting_as_user(member) | false; AjaxUnauthorizedException | implemented |
+| ACL-NULLROLE-03 | the JS mirror (Core/Js/Permission.js, evaluated in node) answers false for that member | toArray() as rsxapp.user | false for every role | implemented |
+
 ## Acl_Administration_Api_Test (php, default isolation) - the administration API
 
 Each read is checked against has_permission() for every catalogue permission, never against a

@@ -24,7 +24,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *      the literal `false`; `false` declares no kind.
  *   4. At most one of EXCLUSIVE_KEYS per column, an answer counting only when `true`.
  *   5. Value shapes: `enum` is a non-empty map of integer value => array, whose `constant`
- *      and `label`, when present, are non-empty strings; `text_type` is a non-empty string
+ *      and `label`, when present, are non-empty strings and whose `order`, when present, is
+ *      an int; `text_type` is a non-empty string
  *      (that it names a real Rsx_Text_Abstract with a JS twin is TEXT-TYPE-01's check);
  *      `blank_distinct` never sits beside `enum`, `type_ref` or `money => true` (such a
  *      column never holds '', so the flag would declare nothing); `revision_include` is a
@@ -150,7 +151,7 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        $models = Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false);
+        $models = Manifest::php_get_subclasses_of('Rsx_Model_Abstract', concrete_only: false);
         sort($models);
         array_unshift($models, 'Rsx_Model_Abstract');
 
@@ -606,6 +607,16 @@ class ModelColumns_CodeQualityRule extends CodeQualityRule_Abstract
                     $this->report($abs_file, $contents, $line,
                         "{$where}['enum'][{$value}]['{$name}'] must be a non-empty string.");
                 }
+            }
+
+            if (array_key_exists('order', $properties) && !is_int($properties['order'])) {
+                $this->report($abs_file, $contents, $line,
+                    "{$where}['enum'][{$value}]['order'] is " . var_export($properties['order'], true)
+                    . ': an enum value\'s order is a whole number - the sort key of enum_select() and'
+                    . ' every list of the values built from it. A fraction or a numeric string is'
+                    . ' not one.',
+                    "Write the order as an integer literal ('order' => 2). To fit a value between"
+                    . " two others, renumber them (10, 20, 30 leaves room).");
             }
         }
     }

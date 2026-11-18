@@ -73,7 +73,7 @@ class JqhtmlComponentImplementation_CodeQualityRule extends CodeQualityRule_Abst
 
         // Check cache to avoid redundant validation
         $cache_key = $metadata['hash'] ?? md5($contents);
-        if (RsxCache::get_persistent($cache_key, false) === true) {
+        if (RsxCache::get_persistent($cache_key, default: false) === true) {
             // Already validated
             return;
         }

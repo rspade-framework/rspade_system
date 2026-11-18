@@ -39,7 +39,7 @@ class Project_Model extends Rsx_Model_Abstract {
 
 | Property | Default | Purpose |
 |----------|---------|---------|
-| `order` | 0 | Sort position in dropdowns (lower first) |
+| `order` | 0 | Sort position in dropdowns (lower first); an int, anything else fails the build (`MODEL-COLUMNS-01`) |
 | `selectable` | true | Include in dropdown options |
 
 Non-selectable items are excluded from `field__enum_select()` but still display correctly when they're the current value.

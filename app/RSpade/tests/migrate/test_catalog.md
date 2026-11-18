@@ -342,7 +342,7 @@ with its output captured verbatim. Fixtures are the derived_columns concern's.
 | REDERIVE-ENQUEUE-IDEMPOTENT | a table is queued once however often it is enqueued | php | plain x2, chain | two rows | implemented | 2026-11-13 |
 | REDERIVE-ENQUEUE-TABLE-NAME | a model class name is refused | php | 'Task_Model' | InvalidArgumentException | implemented | 2026-11-13 |
 | REDERIVE-DRAIN-EMPTY | an empty queue prints nothing | php | no rows | '' | implemented | 2026-11-13 |
-| REDERIVE-DRAIN-SKIP | no model, no derived columns, a missing table and a missing column are dropped silently | php | four cases | '', queue empty | implemented | 2026-11-13 |
+| REDERIVE-DRAIN-SKIP | no model and no derived columns are dropped silently; a missing table and a missing column are dropped with one "Skipped" line naming the table and the error | php | four cases | '' or the one line, queue empty | implemented | 2026-11-18 |
 | REDERIVE-DRAIN-OUTPUT | heading, one dot per batch of 100, newline; a second pass after changes; the Done line; updated_at held | php | 150 rows, 3 stale | exact text; stale fixed; updated_at unchanged | implemented | 2026-11-13 |
 | REDERIVE-DRAIN-STALE-ONLY | only stale records are saved, on every site, updated_at untouched (raw SQL), caller's site restored | php | 4 rows on 2 sites, 2 stale | 2 after_update; labels fixed | implemented | 2026-11-13 |
 | REDERIVE-DRAIN-NO-REALTIME | the drain queues no realtime frame | php | realtime enabled | no pending frame | implemented | 2026-11-13 |
@@ -359,3 +359,41 @@ with its output captured verbatim. Fixtures are the derived_columns concern's.
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | MIG-REMOVE-DOWN-BRACES | down() is removed and up() kept whole when down() holds blocks closed right after `"{$a}"`, an interpolation longer than ten tokens, or `"${name}"`; a control without interpolation | php | scratch migration file per shape | true; file = class with up() only; parses | implemented | 2026-11-14 |
+
+## Sql_Query_Transformer_Test (php, no DB)
+
+The migration DDL rewrite, against `rsx:man model_normalization`: `SqlQueryTransformer::transform()`
+switched on per call, pure strings.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| SQT-01 | a disabled transformer passes everything through | php | `CREATE TABLE` with INT and ENUM, transformer off | unchanged, no throw | implemented | 2026-11-17 |
+| SQT-02 | only CREATE TABLE / ALTER TABLE are rewritten | php | SELECT with `CAST(x AS INT)`, INSERT, DROP TABLE, UPDATE | unchanged | implemented | 2026-11-17 |
+| SQT-03 | the manual's integer example is reproduced exactly | php | `posts` with INT, INT UNSIGNED, TINYINT(1), a FOREIGN KEY | the manual's rewritten statement | implemented | 2026-11-17 |
+| SQT-04 | INT(11) / SMALLINT / MEDIUMINT / INTEGER / TINYINT(4) / BIGINT UNSIGNED become signed BIGINT; TINYINT(1) kept; ALTER TABLE too | php | one statement of each | BIGINT each, TINYINT(1) kept | implemented | 2026-11-17 |
+| SQT-05 | FLOAT / FLOAT(10,2) / REAL become DOUBLE; DECIMAL kept | php | one statement | DOUBLE, DECIMAL(10,2) | implemented | 2026-11-17 |
+| SQT-06 | an identifier beginning `real` is not a type (`realm_id` once became `DOUBLEm_id`) | php | `realm_id`, `realtime_flag`, `real_name` | untouched | implemented | 2026-11-17 |
+| SQT-07 | TEXT / MEDIUMTEXT / TINYTEXT become LONGTEXT, CHAR(n) becomes VARCHAR(n), every string column utf8mb4 / utf8mb4_unicode_ci | php | one statement | as stated | implemented | 2026-11-17 |
+| SQT-08 | TIMESTAMP / DATETIME / CURRENT_TIMESTAMP gain (3); a stated precision and DATE are kept | php | one statement | as stated | implemented | 2026-11-17 |
+| SQT-09 | a declared latin1 charset / collation / DEFAULT CHARSET becomes utf8mb4 | php | one statement | as stated | implemented | 2026-11-17 |
+| SQT-10 | ENUM is refused in CREATE and ALTER, the message advising a BIGINT enum declared in `$columns` and `rsx:man enums`, quoting the query | php | two statements | RuntimeException "ENUM column type is forbidden" | implemented | 2026-11-17 |
+| SQT-11 | SET, YEAR and TIME are refused; TIME beside DATETIME too | php | four statements | RuntimeException naming each type | implemented | 2026-11-17 |
+| SQT-12 | a forbidden word in a quoted COMMENT is not a type | php | `COMMENT 'TIME of day, YEAR, ENUM(x)'` | rewritten, no throw | implemented | 2026-11-17 |
+| SQT-13 | a backtick-quoted COLUMN or INDEX NAMED `year` or `time` is not a type; a quoted name followed by a YEAR or TIME type is still refused | php | `` `year` BIGINT ``, `` `time` DATETIME ``, `` KEY `year` ``, ``ADD COLUMN `time` BIGINT``, `` `year` YEAR ``, `` `t` TIME `` | rewritten, no throw; the last two refused naming the type | implemented | 2026-11-17 |
+
+## Migration_Validator_Schema_Builder_Test (php, no DB)
+
+`MigrationValidator::validate_migration_file()` over scratch migration files.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MVS-01 | Schema::create aborts with the remediation report | php | `Schema::create(..., function (Blueprint $table) {...})` | RuntimeException "Migration validation failed: Schema builder usage detected"; report names the file, the construct, "Remediation:", raw SQL | implemented | 2026-11-17 |
+| MVS-02 | Schema::table / drop / dropIfExists / rename abort | php | one migration each | as MVS-01, naming each | implemented | 2026-11-17 |
+| MVS-03 | a Blueprint alone aborts | php | `new Blueprint(...)` | as MVS-01 | implemented | 2026-11-17 |
+| MVS-04 | a `$table->` column chain aborts | php | `$table->string('name')` | as MVS-01 | implemented | 2026-11-17 |
+| MVS-05 | the report carries a line and previews the statement | php | a Schema call after a DB::statement | `Line:` present, the call in the preview | implemented | 2026-11-17 |
+| MVS-06 | the reported line number is the Schema call's line | php | a Schema call on line 15 after a DB::statement and a multi-line comment | `Line: 15` | implemented | 2026-11-17 |
+| MVS-07 | raw SQL through DB::statement() passes silently | php | CREATE + ALTER via DB::statement | no throw, nothing printed | implemented | 2026-11-17 |
+| MVS-08 | read-only Schema::hasTable / hasColumn / getColumnListing pass | php | one migration | no throw | implemented | 2026-11-17 |
+| MVS-09 | a missing file is refused | php | a path never written | RuntimeException "Migration file not found" | implemented | 2026-11-17 |
+

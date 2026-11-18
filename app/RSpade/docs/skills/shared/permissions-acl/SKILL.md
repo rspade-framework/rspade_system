@@ -34,9 +34,15 @@ Lower id = higher privilege. IDs are 100-based to leave room for insertion.
 
 **A developer is not a role.** Whether somebody builds this installation is `login_users.is_developer`, read with `Session::is_developer()` (JS: `window.rsxapp.is_developer`, present only when true) and set only by hand in the database - `rsx:man session`.
 
-`has_role()` is an **"at least" test** - same or higher privilege (lower id). `can_admin_role()` reads the "can admin roles" list and is what **prevents privilege escalation**: a Site Admin cannot create a Site Owner. The list is **equal-or-lower**: a role names itself and the roles below it, so a Site Admin may manage another Site Admin, and an administration endpoint asks `can_admin_role()` of BOTH the target's CURRENT role and any NEW role it assigns.
+**The ranking contract** (authoritative text: `rsx:man auth`, ROLES):
 
-Roles are declared as an ordinary model enum on `User_Model`, with two custom properties the ACL layer reads:
+- **Lower id = more privilege.** `has_role(X)` is "this role or higher" (`role_id <= X`) - a ranking floor.
+- **"May this user manage that user" is ONLY `can_admin_role($target_role_id)`**, which reads the acting role's `can_admin_roles` list - a whitelist, never derived from the ids. **Equals included**: a Site Admin manages another Site Admin because its list contains 400; a Site Admin cannot create a Site Owner because 300 is absent. An administration endpoint asks it of BOTH the target's CURRENT role and any NEW role it assigns.
+- **Only the application names a role.** Framework code never names a `ROLE_*` constant and never compares role ids; it passes through ids its caller supplied or reads the enum.
+- **Roles are per site** (`users`); identities are cross-site (`login_users`). Cross-site or installation-wide authority is `is_sysadmin`, never a role.
+- **A numeric comparison is legitimate only for a ranking rule that is not "may manage"** - the template's user-management save refuses a user lowering their OWN role (`new role_id > current`), so nobody demotes themselves out of the access that would undo it.
+
+Roles are declared as an ordinary model enum on `User_Model_Abstract` (an app overriding `User_Model` redeclares the whole `role_id` entry - a child's entry replaces the parent's), with two custom properties the ACL layer reads:
 
 ```php
 public static $columns = ['role_id' => ['enum' => [

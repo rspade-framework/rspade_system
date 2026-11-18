@@ -46,10 +46,12 @@ DESCRIPTION
         This provides type safety, IDE autocompletion, and works with
         the RSX enum system for magic properties.
 
-    Hierarchical Roles
-        Roles are hierarchical. Higher roles inherit all permissions
-        from lower roles. Role IDs are ordered by privilege level
-        (lower ID = more privilege).
+    Ranked Roles
+        Lower role id = more privilege; has_role(X) means "this role or
+        higher"; who may manage whom is each role's can_admin_roles list
+        and nothing else. The ranking contract is stated once, in
+        rsx:man auth, ROLES. Each role's default permission set is its own
+        explicit list - nothing is inherited from the roles below it.
 
     Supplementary Permissions
         Individual users can have permissions granted or denied beyond
@@ -87,13 +89,11 @@ ARCHITECTURE
         600  ROLE_USER           User            (none)
         700  ROLE_VIEWER         Viewer          (none)
 
-        IDs are 100-based for future expansion. Lower ID = higher privilege.
-        "Can Admin Roles" is EQUAL-OR-LOWER administration: every role that
-        administers users names itself and the roles below it, and never a
-        role above it (a Site Admin can't create, edit or promote a Site
-        Owner, but may manage another Site Admin). An administration endpoint
-        asks can_admin_role() of BOTH the target's current role and any new
-        role it assigns. Root Admin is system-assigned only.
+        "Can Admin Roles" is each role's can_admin_roles list - the template
+        lists the role itself and the roles below it. What the ordering and
+        the list mean (ranking, equals included, both the current and the
+        new role asked) is rsx:man auth, ROLES. Root Admin is
+        system-assigned only ('selectable' => false).
 
         There is no "disabled" role. Switching a member off is
         users.is_enabled = 0, which sign-in refuses and every request
@@ -238,16 +238,18 @@ PERMISSION CLASS API
             }
 
         Permission::has_role(int $role_id): bool
-            Check if current user has at least the specified role.
-            "At least" means same or higher privilege (lower role_id).
+            Check if current user has the specified role or a higher one
+            (role_id <= $role_id; rsx:man auth, ROLES).
 
             if (Permission::has_role(User_Model::ROLE_SITE_ADMIN)) {
                 // User is Site Admin or higher (Owner, Root)
             }
 
         Permission::can_admin_role(int $role_id): bool
-            Check if current user can administer users with the given role.
-            Prevents privilege escalation. Returns false if not logged in.
+            Check if current user can administer users with the given role:
+            true exactly when the user's role lists it in can_admin_roles
+            (equals included). The sole "may manage" test (rsx:man auth,
+            ROLES). Returns false if not logged in.
 
         Permission::get_user(): ?User_Model
             Get current user's site membership record.
@@ -276,7 +278,8 @@ PERMISSION CLASS API
 
         Permission::require_role(int $role_id, string $message = ''): void
             Fail-loud variant of has_role(). Throws AjaxUnauthorizedException
-            (HTTP 403) when the current user is below the given role level.
+            (HTTP 403) when the current user's role is lower than the given
+            one.
 
         Contrast the two calling styles:
 
@@ -298,7 +301,8 @@ PERMISSION CLASS API
             Applies role defaults + grants - denies.
 
         $user->can_admin_role(int $role_id): bool
-            Check if user can create/edit users with given role.
+            Check if user can create/edit users with given role (its role's
+            can_admin_roles list; rsx:man auth, ROLES).
 
         $user->has_supplementary_grant(int $permission): bool
             Check if user has explicit GRANT for permission.
@@ -370,15 +374,15 @@ JAVASCRIPT PERMISSION CLASS
             }
 
         Permission.has_role(role_id): boolean
-            Check if user has at least the specified role level.
-            Lower role_id = higher privilege.
+            Mirror of Permission::has_role(): the specified role or higher.
 
             if (Permission.has_role(User_Model.ROLE_MANAGER)) {
                 // User is Manager or higher (Admin, Owner, etc.)
             }
 
         Permission.can_admin_role(role_id): boolean
-            Check if user can administer users with given role.
+            Mirror of Permission::can_admin_role(): the user's role lists it
+            in can_admin_roles.
 
             if (Permission.can_admin_role(User_Model.ROLE_USER)) {
                 // Show role assignment dropdown including User role
@@ -907,7 +911,8 @@ MIGRATION FROM LEGACY
 SEE ALSO
     auth_gates  - The declarative gate layer over this system (#[Auth],
                   #[Auth_Check], can_access, closed-by-default enforcement)
-    auth        - Authentication system (login, sessions, invitations)
+    auth        - Authentication system (login, sessions, invitations);
+                  ROLES is the authoritative ranking contract
     enums       - Enum system for role/permission metadata
     routing     - Route declaration and type-safe URL generation
     session     - Session management and user context

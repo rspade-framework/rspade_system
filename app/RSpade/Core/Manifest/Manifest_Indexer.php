@@ -217,6 +217,8 @@ class Manifest_Indexer
     *
     *     php_classes['Client_Model'] = ['file' => ..., 'fqcn' => ..., 'extends' => ...,
     *                                    'abstract' => false]
+    *     php_classes['Some_Contract'] = ['file' => ..., 'fqcn' => ..., 'abstract' => false,
+    *                                     'interface' => true]
     *     js_classes['Clients_Index_Action'] = ['file' => ..., 'extends' => ...]
     *
     * It used to be `class => path`, which forced php_is_subclass_of(), php_is_abstract(),
@@ -264,6 +266,12 @@ class Manifest_Indexer
                 if ($ext === 'php') {
                     $record['fqcn'] = $filedata['fqcn'] ?? null;
                     $record['abstract'] = (bool) ($filedata['abstract'] ?? false);
+
+                    // An interface is in the map so it autoloads; it has no `extends`, so it
+                    // is no class's parent and never answers an inheritance question.
+                    if (!empty($filedata['is_interface'])) {
+                        $record['interface'] = true;
+                    }
                 }
 
                 if (!empty($filedata['extends'])) {

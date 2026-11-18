@@ -288,17 +288,6 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     }
 
     /**
-     * Get all sessions for this login user
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany
-     */
-    #[Relationship]
-    public function sessions()
-    {
-        return $this->hasMany(Session_Model::class, 'login_user_id');
-    }
-
-    /**
      * Check if the user is active
      *
      * @return bool

@@ -26,7 +26,7 @@ One row per test worth having (implemented AND not). Status is one of
 | MHN-01 | build key blind to mtime mutation | php | fixture with mtime changed | equal hash | implemented | 2026-07-14 |
 | MHN-02 | build key blind to size mutation | php | fixture with size changed | equal hash | implemented | 2026-07-14 |
 | MHN-03 | build key reacts to a per-file sha1 change | php | fixture with hash changed | different hash | implemented | 2026-07-14 |
-| MHN-04 | absolute paths stripped from embedded metadata | php | method 'file' under base_path() | project-relative | implemented | 2026-07-14 |
+| MHN-04 | a method record inside a file record does not reach the key (a file contributes its path and sha1 only; no path in the manifest is absolute - MLI-01/02) | php | method `line` changed | equal hash | implemented | 2026-11-17 |
 | MHN-05 | normalization drops mtime/size, keeps sha1+semantics | php | fixture | mtime/size gone, hash/class kept | implemented | 2026-07-14 |
 | MHN-06 | normalization does not mutate the live input | php | fixture | mtime/size retained on input | implemented | 2026-07-14 |
 | MHN-07 | build key stable regardless of file key order | php | reversed files array | equal hash | implemented | 2026-07-14 |

@@ -70,14 +70,14 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
 
         $b = static::__activate($browser, 890002);
         static::__point($browser, $b);
-        Session::_sign_out_user_sessions([$a], Session::SIGN_OUT_REPLACED, false);
+        Session::_sign_out_user_sessions([$a], Session::SIGN_OUT_REPLACED, push: false);
 
         static::__assert_not_equals($a, $b, 'another account is another user session');
         static::__assert_equals(Session::SIGN_OUT_REPLACED, (int) static::__user_session($a)->sign_out_reason_id);
 
         $a_again = static::__activate($browser, 890001);
         static::__point($browser, $a_again);
-        Session::_sign_out_user_sessions([$b], Session::SIGN_OUT_REPLACED, false);
+        Session::_sign_out_user_sessions([$b], Session::SIGN_OUT_REPLACED, push: false);
 
         static::__assert_equals($a, $a_again, 'the same account on the same browser and site reuses its user session');
 
@@ -185,12 +185,12 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
 
         $realms_left = fn () => DB::table('_session_values')->where('session_id', $fixture['id'])->orderBy('realm_id')->pluck('realm_id')->map(fn ($id) => (int) $id)->all();
 
-        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, false);
+        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, push: false);
 
         static::__assert_null(static::__pointer($fixture['id']), 'the staff pointer is cleared');
         static::__assert_equals([Session::REALM_PORTAL, Session::REALM_GUEST], $realms_left(), 'the staff sign-out took the staff value only');
 
-        Session::_sign_out_user_sessions([$fixture['portal_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, false);
+        Session::_sign_out_user_sessions([$fixture['portal_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, push: false);
 
         static::__assert_null(static::__pointer($fixture['id'], 'portal_user_session_id'));
         static::__assert_equals([Session::REALM_GUEST], $realms_left(), 'the portal sign-out took the portal value; the guest value survives both');
@@ -216,14 +216,14 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
         // The pointer moves to the second user session first (as __sign_in() does), then the
         // first is signed out - SITE_SWITCHED keeps the values, REPLACED clears them.
         DB::table('_sessions')->where('id', $fixture['id'])->update(['staff_user_session_id' => $fixture['staff_own_user_session_id']]);
-        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SITE_SWITCHED, false);
+        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SITE_SWITCHED, push: false);
 
         static::__assert_equals(1, $staff_values(), 'a site switch keeps the realm\'s values');
 
         $replacement = static::__insert_session_fixture(['staff' => ['login_user_id' => 890008, 'site_id' => self::SITE_ID]]);
         DB::table('_user_sessions')->where('id', $replacement['staff_user_session_id'])->update(['session_id' => $fixture['id']]);
         DB::table('_sessions')->where('id', $fixture['id'])->update(['staff_user_session_id' => $replacement['staff_user_session_id']]);
-        Session::_sign_out_user_sessions([$fixture['staff_own_user_session_id']], Session::SIGN_OUT_REPLACED, false);
+        Session::_sign_out_user_sessions([$fixture['staff_own_user_session_id']], Session::SIGN_OUT_REPLACED, push: false);
 
         static::__assert_equals(0, $staff_values(), 'another account signing in clears the realm\'s values');
     }
@@ -239,7 +239,7 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
             'staff' => ['login_user_id' => 890007, 'site_id' => self::SITE_ID, 'impersonator_login_user_id' => 890006],
         ]);
 
-        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_IMPERSONATION_ENDED, false);
+        Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_IMPERSONATION_ENDED, push: false);
 
         static::__assert_equals($fixture['staff_own_user_session_id'], static::__pointer($fixture['id']), 'back on the impersonator\'s own sign-in');
         static::__assert_null(static::__user_session($fixture['staff_own_user_session_id'])->signed_out_at, 'which is still signed in');
@@ -256,7 +256,7 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
             'staff' => ['login_user_id' => 890009, 'site_id' => self::SITE_ID, 'impersonator_login_user_id' => 890008],
         ]);
 
-        $ended = Session::_sign_out_user_sessions([$fixture['staff_own_user_session_id']], Session::SIGN_OUT_ENDED_BY_ADMIN, false);
+        $ended = Session::_sign_out_user_sessions([$fixture['staff_own_user_session_id']], Session::SIGN_OUT_ENDED_BY_ADMIN, push: false);
 
         static::__assert_count(2, $ended, 'both user sessions ended');
         static::__assert_not_null(static::__user_session($fixture['staff_user_session_id'])->signed_out_at, 'the impersonation is signed out');
@@ -270,10 +270,10 @@ class Session_User_Sessions_Test extends Rsx_Test_Abstract
     {
         $fixture = static::__insert_session_fixture(['staff' => ['login_user_id' => 890010, 'site_id' => self::SITE_ID]]);
 
-        static::__assert_count(1, Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, false));
+        static::__assert_count(1, Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_SIGNED_OUT, push: false));
         $stamp = static::__user_session($fixture['staff_user_session_id'])->signed_out_at;
 
-        static::__assert_count(0, Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_ENDED_BY_ADMIN, false));
+        static::__assert_count(0, Session::_sign_out_user_sessions([$fixture['staff_user_session_id']], Session::SIGN_OUT_ENDED_BY_ADMIN, push: false));
         static::__assert_equals($stamp, static::__user_session($fixture['staff_user_session_id'])->signed_out_at, 'the first stamp stands');
         static::__assert_equals(Session::SIGN_OUT_SIGNED_OUT, (int) static::__user_session($fixture['staff_user_session_id'])->sign_out_reason_id);
     }

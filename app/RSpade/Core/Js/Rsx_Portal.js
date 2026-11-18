@@ -383,7 +383,7 @@ class Rsx_Portal {
             if (!pattern) {
                 throw new Error(
                     `Portal route not found for ${action}. ` +
-                    `Ensure the class has a @portal_route decorator.`
+                    `Ensure the class has a #[Portal_Route] method or a @portal_spa action route.`
                 );
             }
         }

@@ -106,8 +106,7 @@ class Forced_Password_Change
                 'email' => (string) $identity->email,
                 'credential' => static::__credential_fingerprint($identity),
             ],
-            null,
-            $realm
+            realm: $realm
         );
     }
 
@@ -210,7 +209,7 @@ class Forced_Password_Change
      */
     private static function __live_pending(string $realm): ?array
     {
-        $value = Session::get_value(self::PENDING_KEY, null, $realm);
+        $value = Session::get_value(self::PENDING_KEY, realm: $realm);
 
         if (!is_array($value) || !isset($value['identity_id'], $value['email'], $value['credential'])) {
             return null;

@@ -303,8 +303,8 @@ class Php_Parser
                 $namespace = self::__extract_namespace_from_tokens($tokens, $i);
             }
 
-            // Extract class name and extends (also detect traits)
-            if (is_array($tokens[$i]) && ($tokens[$i][0] === T_CLASS || $tokens[$i][0] === T_TRAIT)) {
+            // Extract class name and extends (also detect traits and interfaces)
+            if (is_array($tokens[$i]) && ($tokens[$i][0] === T_CLASS || $tokens[$i][0] === T_TRAIT || $tokens[$i][0] === T_INTERFACE)) {
                 // Skip if this is a ::class constant reference
                 if ($i > 0 && is_array($tokens[$i - 1]) && $tokens[$i - 1][0] === T_DOUBLE_COLON) {
                     continue;
@@ -312,13 +312,15 @@ class Php_Parser
 
                 $in_class = true;
                 $is_trait = ($tokens[$i][0] === T_TRAIT);
-                $class_info = self::__extract_class_info($tokens, $i, $is_trait);
+                $is_interface = ($tokens[$i][0] === T_INTERFACE);
+                $class_info = self::__extract_class_info($tokens, $i, $is_trait, $is_interface);
 
                 if ($class_info && !$class_info['is_anonymous']) {
                     $classes_found[] = [
                         'name' => $class_info['name'],
                         'extends' => $class_info['extends'],
                         'is_trait' => $is_trait,
+                        'is_interface' => $is_interface,
                     ];
 
                     // Store first named class/trait as primary
@@ -402,9 +404,12 @@ class Php_Parser
     }
 
     /**
-     * Extract class/trait information (name, extends, whether anonymous)
+     * Extract class/trait/interface information (name, extends, whether anonymous)
+     *
+     * An interface's `extends` names the interfaces it builds on - never a parent class - so
+     * it is not recorded: the manifest's `extends` is the class lineage alone.
      */
-    private static function __extract_class_info(array $tokens, int $i, bool $is_trait = false): ?array
+    private static function __extract_class_info(array $tokens, int $i, bool $is_trait = false, bool $is_interface = false): ?array
     {
         $current_class = null;
         $current_extends = null;
@@ -437,8 +442,8 @@ class Php_Parser
             return null;
         }
 
-        // Look for extends (only for named classes/traits)
-        if ($current_class) {
+        // Look for extends (only for named classes)
+        if ($current_class && !$is_interface) {
             for ($j = $i + 1; $j < count($tokens); $j++) {
                 if ($tokens[$j] === '{') {
                     break;
@@ -461,12 +466,15 @@ class Php_Parser
                     break;
                 }
             }
+        }
 
+        if ($current_class) {
             return [
                 'name' => $current_class,
                 'extends' => $current_extends,
                 'is_anonymous' => false,
                 'is_trait' => $is_trait,
+                'is_interface' => $is_interface,
             ];
         }
 
@@ -1027,11 +1035,14 @@ class Php_Parser
                 $data['extends'] = $structure['extends_class'];
             }
 
-            // Add is_trait flag if this is a trait
+            // Add the is_trait / is_interface flag if the declaration is not a class
             if (!empty($structure['classes_found'])) {
                 $first_class = $structure['classes_found'][0];
                 if (isset($first_class['is_trait']) && $first_class['is_trait']) {
                     $data['is_trait'] = true;
+                }
+                if (isset($first_class['is_interface']) && $first_class['is_interface']) {
+                    $data['is_interface'] = true;
                 }
             }
         }

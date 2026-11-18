@@ -1,6 +1,6 @@
 ---
 name: models
-description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), blank_distinct_columns(), derived_columns()), the column equivalence rule (Model::same_value() / Model.same_value(), blank_distinct, the dirty check that ignores equal values in other shapes), recorded_dirty() / recorded_changes(), revision_include, derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, or on MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-TEXT-HTML-01, MODEL-REVISION-NOISE-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
+description: "Writing a model class and declaring its columns - public static $columns with its kinds (enum, text_type, type_ref, money, never_export, revision_exclude, derived + from), the accessors (columns(), enum_columns(), enum_values(), text_type_columns(), type_ref_columns(), money_columns(), is_money_column(), never_exported_columns(), revision_excluded_columns(), blank_distinct_columns(), derived_columns()), the column equivalence rule (Model::same_value() / Model.same_value(), blank_distinct, the dirty check that ignores equal values in other shapes), recorded_dirty() / recorded_changes(), revision_include, derived columns and $record->rederive(), the generated _AUTO_GENERATED_ header, explicit assignment (MassAssignmentException), no eager loading, $fact_groups, appended properties via $appends + a delegating accessor, Model::field_length(), bulk ->update() vs ->raw_bulk() vs DB::table(), refresh(). Use when writing or changing a model, adding a column, choosing whether a column is an enum / text type / type ref / money / secret / derived, storing a token or password, reading a model property that may be absent, or on 'has no property', 'was not loaded on this record', MODEL-COLUMNS-01, MODEL-COLUMNS-02, MODEL-DERIVED-01, MODEL-DECIMAL-01, MODEL-TEXT-HTML-01, MODEL-REVISION-NOISE-01, MODEL-ENUM-01, MODEL-NEVER-EXPORT-01, 'is a derived column', 'is not an enum column', 'rederive() refused', 'declares derived columns that depend on each other in a cycle', 'MASS ASSIGNMENT PROHIBITED' or 'Eager loading via with() is not allowed'."
 ---
 
 # Writing a model
@@ -230,6 +230,15 @@ $user->save();
 ```
 
 Blocked: `fill()`, `forceFill()`, `create()`, `firstOrCreate()`, `firstOrNew()`, `updateOrCreate()`, `update([...])` on an instance. A record edit from a form saves through `Form_Edit::run()` (`rspade:form-engine`).
+
+## Reading a missing property THROWS
+
+```php
+$record->role_id_can_admin_roles;   // [NO] THROWS "X_Model has no property 'role_id_can_admin_roles' ... Did you mean 'role_id__can_admin_roles'?"
+isset($record->maybe_key);          // [OK] presence tests never throw: isset(), ??, data_get()
+```
+
+A read that no column, cast, accessor, relationship, enum property, static enum lookup or detail accessor answers throws `LogicException` naming the model, the key and the closest real name - never a silent null. **A loaded record also throws for a column its query did not select** (`"... was not loaded on this record"` - select what you read). A record not loaded from the database (new, or created by this process) reads an unassigned COLUMN as null, and throws for any other key. An enum property the current value does not define reads as null. "Was this column loaded, even as null" is `array_key_exists('col', $record->getAttributes())`. Contract: `rsx:man model`, READING PROPERTIES.
 
 ## Never eager load - `->with()` THROWS
 

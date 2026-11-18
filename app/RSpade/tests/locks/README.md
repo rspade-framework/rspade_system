@@ -3,9 +3,11 @@
 ## Domain
 
 `App\RSpade\Core\Locks\RsxLocks` - advisory locking. A lock is held from the moment it is
-granted until it is released or **the holder dies**. There is no lease, no TTL, no renewal and
-no heartbeat; the only clock anywhere is the optional per-waiter timeout a caller explicitly
-asks for, and `?int $timeout = null` (the default everywhere) means wait forever.
+granted until it is released or **the holder dies**. There is no lease, no TTL and no renewal;
+every clock is on a WAITER - its own optional `$timeout`, and the progress watchdog
+(`rsx.locks.stall_seconds`), which fails a waiter whose holder has shown no progress for the
+window and never touches the holder. `?int $timeout = null` (the default everywhere) means
+wait for as long as the holder is working.
 
 **Two kinds of lock, and the choice is not a tuning knob:**
 
@@ -70,6 +72,14 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
 - `system/app/RSpade/resource/docker/rsx-lockd/lib/locktable.js` - holders, queues, grants, semaphores, deadlock
 - `system/app/RSpade/resource/docker/rsx-lockd/lib/server.js`, `lib/client.js`, `lib/config.js`
 - `system/app/RSpade/resource/docker/rsx-lockd/lockd.js` - CLI (`run`/`start`/`stop`/`dump`/`exec`)
+
+- `system/app/RSpade/Core/Locks/Lock_Status.php` - the operator view (`rsx:locks:status`, the
+  /_sys Locks screen): the snapshot named for the application, and `kill_holder()`'s identity
+  checks (this host, not self, pid + start time) - `Lock_Watchdog_Test`
+- The progress watchdog: `lib/locktable.js` (`stall` / `notice` / `progress`, protocol 2), the
+  PHP client's `RsxLocks::still_working()`, `Lock_Stalled_Exception`, the web wait notice, and
+  `Task_Instance` reports calling `still_working()` - `lockd_stall.sh` (fake clock + scratch
+  daemon) and `Lock_Watchdog_Test` (PHP holder processes on a scratch daemon)
 
 ## Man pages
 

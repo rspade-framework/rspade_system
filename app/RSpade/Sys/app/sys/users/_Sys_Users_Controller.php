@@ -157,7 +157,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return response_not_found('No login identity with that id.');
         }
 
-        return ['sessions' => static::__present_sessions(Session::get_sessions_for_user((int) $login_user->id, null, true))];
+        return ['sessions' => static::__present_sessions(Session::get_sessions_for_user((int) $login_user->id, include_impersonations: true))];
     }
 
     /**
@@ -584,7 +584,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             ]);
         }
 
-        Session::put_value(_Sys_Impersonation_Controller::RETURN_SITE_KEY, Session::get_site_id(), null, 'staff');
+        Session::put_value(_Sys_Impersonation_Controller::RETURN_SITE_KEY, Session::get_site_id(), realm: 'staff');
         RsxAuth::enter_site($site_id);
         Session::begin_impersonation((int) $login_user->id);
 
@@ -694,7 +694,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return null;
         }
 
-        foreach (Session::get_sessions_for_user((int) $login_user->id, null, true) as $session) {
+        foreach (Session::get_sessions_for_user((int) $login_user->id, include_impersonations: true) as $session) {
             if ($session['id'] === $user_session_id) {
                 return $session;
             }

@@ -141,7 +141,7 @@ class Attachment_Fileable_Test extends Rsx_Test_Abstract
         $query = File_Attachment_Model::query();
         $before = $query->toSql();
 
-        $returned = File_Attachment_Model::scope_can_view($query, null);
+        $returned = File_Attachment_Model::scope_can_view($query, user: null);
 
         static::__assert_true($returned === $query, 'the same builder comes back');
         static::__assert_equals($before, $returned->toSql(), 'with no clause added to it');

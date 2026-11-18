@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "Making pages live over WebSocket - $realtime models and Model_Changed_Topic, #[Realtime_Touch], this.subscribe() in on_create(), refresh() vs reload(), topic classes with can_subscribe(), #[Emitter], realtime_emit(), Realtime::bulk_changed() after a raw_bulk() / DB::table() write. Use when a screen must update when data changes elsewhere, adding a topic or emitter, a page that does not update or updates too much, an emitter value stale after a bulk update, or a REALTIME-AUTH-01 / REALTIME-BULK-01 finding."
+description: "Making pages live over WebSocket - $realtime models and Model_Changed_Topic, #[Realtime_Touch], this.subscribe() in on_create(), refresh() vs reload(), topic classes with can_subscribe(), #[Emitter], realtime_emit(), Realtime::bulk_changed() after a raw_bulk() / DB::table() write. Use when a screen must update when data changes elsewhere, adding a topic or emitter, a page that does not update or updates too much, inspecting what refreshes what with rsx:realtime:map, an emitter value stale after a bulk update, or a REALTIME-AUTH-01 / REALTIME-BULK-01 finding."
 ---
 
 # Realtime
@@ -107,6 +107,8 @@ public function realtime_touch(): array {
 ```
 
 The cascade is **cycle-guarded and never writes the parent** - it emits on the parent's behalf, it does not touch a timestamp.
+
+**`php artisan rsx:realtime:map`** prints the whole graph from the manifest, resolved the way the cascade resolves it: `$realtime` models, the touch tree (parent, then every model whose write notifies it, with method and FK), `realtime_touch()` overrides, `#[Emitter]`s. `--model=X` narrows to what notifies or is notified by X, `--edges` is a flat list, `--json` machine output; an unresolvable `#[Realtime_Touch]` is an `[ERROR]` row, exit 1.
 
 ---
 
@@ -231,6 +233,7 @@ Separate from topics: a session mutation (login/logout/identity/tenant change) o
 
 `rsx:debug /path --user=1 --console` renders the page headlessly with realtime live (the harness page uses `ws://`), so a subscription that throws or a callback that loops shows up in the console output. Drive a change from a second process (`rsx:ajax`, `rsx:task:run`) and re-render.
 
+- **A parent page does not update when a child changes.** The child has no edge to it - `rsx:realtime:map --model=<Parent>` shows every model that notifies it; add `#[Realtime_Touch]` on the child's belongsTo.
 - **Page never updates.** The model is not `$realtime`; or the write went through `raw_bulk()`/`DB::table()` (a record watcher needs `realtime_emit()`, an emitter value `Realtime::bulk_changed()`); or the value is time-derived (gap 3).
 - **Subscribing throws.** The target model is not `$realtime` - that is the fail-loud contract, not a bug.
 - **The page strobes / flashes on every change.** A callback calling `reload()` instead of `refresh()`.

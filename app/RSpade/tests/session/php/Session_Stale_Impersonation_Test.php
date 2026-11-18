@@ -83,7 +83,7 @@ class Session_Stale_Impersonation_Test extends Rsx_Test_Abstract
         static::__assert_null(static::__user_session($young['staff_user_session_id'])->signed_out_at, 'a younger impersonation is left running');
         static::__assert_null(static::__user_session($own['staff_user_session_id'])->signed_out_at, 'the user\'s own sign-in is untouched');
 
-        $listed = array_filter(Session::get_sessions_for_user(881001, null, true), fn ($session) => $session['is_signed_in']);
+        $listed = array_filter(Session::get_sessions_for_user(881001, include_impersonations: true), fn ($session) => $session['is_signed_in']);
         static::__assert_count(2, $listed, 'the administrator\'s listing shows the ended one as signed out');
     }
 

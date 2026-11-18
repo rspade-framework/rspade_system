@@ -1,6 +1,6 @@
 ---
 name: js-decorators
-description: "Using and writing JavaScript decorators - @route, @spa, @layout, @auth, @mutex, @debounce, and custom decorators marked /** @decorator */ with the TC39 2023-11 (value, context) signature. Use when decorating an SPA action, serializing a method with @mutex, writing a decorator, or on 'FATAL: Decorator not whitelisted', 'FATAL: Class decorator not whitelisted', 'FATAL: Global function cannot use decorator', '@mutex can only be applied to methods' or a decorator failing on descriptor.value."
+description: "Using and writing JavaScript decorators - @route, @spa, @layout, @auth, @mutex, @debounce, @Replaceable (the JS-PARENT-CHAIN-01 opt-out), and custom decorators marked /** @decorator */ with the TC39 2023-11 (value, context) signature. Use when decorating an SPA action, serializing a method with @mutex, writing a decorator, or on 'FATAL: Decorator not whitelisted', 'FATAL: Class decorator not whitelisted', 'FATAL: Global function cannot use decorator', '@mutex can only be applied to methods', a JS-PARENT-CHAIN-01 'but never calls super' finding, or a decorator failing on descriptor.value."
 ---
 
 # RSX JavaScript Decorators
@@ -92,6 +92,19 @@ class Contact_Search extends Component {
     async search(term) { }
 }
 ```
+
+### @Replaceable - Overriders Owe No Super Call
+
+An override of a method an ancestor class in the manifest declares must call `super.<same name>()` (JS-PARENT-CHAIN-01, a manifest-build fatal). `@Replaceable` on the PARENT's method is the opt-out - for a hook overriders replace outright (an empty default, a stub that throws "must implement"):
+
+```javascript
+class Spa_Layout extends Component {
+    @Replaceable
+    async on_action(url, action_name, args) {}   // subclasses replace it
+}
+```
+
+A no-op marker (`Core/Js/replaceable.js`): it returns the method unchanged, on an instance or static method, and throws on any other kind. Written in a docblock it is a comment and exempts nothing. The anchor is the NEAREST declaring ancestor - a class that re-declares the method without it makes it chain-mandatory again below it. Contract: `rsx:man coding_standards`, OVERRIDES CALL THEIR PARENT.
 
 ---
 

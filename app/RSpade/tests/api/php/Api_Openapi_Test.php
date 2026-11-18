@@ -283,6 +283,10 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
 
         foreach (static::__operations($doc) as $entry) {
             foreach ($entry['op']['parameters'] ?? [] as $param) {
+                // A 'json' param is described by its media type (content), not a schema.
+                if (isset($param['content'])) {
+                    continue;
+                }
                 static::__assert_true(
                     in_array($param['schema']['type'], $allowed, true),
                     "{$entry['url']} param {$param['name']} has a JSON Schema type"
@@ -309,6 +313,40 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
         static::__assert_equals('^-?\d+(\.\d{1,2})?$', $amount['pattern']);
         static::__assert_equals(['7708.80'], $amount['examples']);
         static::__assert_equals(1, preg_match('/' . $amount['pattern'] . '/', '1234.5'), 'the pattern admits what the param accepts');
+    }
+
+    /**
+     * A 'json' param carries any JSON value. As a query parameter its text IS JSON, so it is
+     * described by content application/json with the empty schema, never by a schema of its
+     * own; as a JSON body property it is the empty schema, plus the default when declared
+     * (Api_Json_Param_Fixture_Api_Controller). The empty schema encodes as {}, never [].
+     */
+    public static function test_a_json_param_is_any_json_value()
+    {
+        $doc = Api_Openapi::document();
+
+        $echo = $doc['paths']['/api/v1/test-probe/json/echo']['get'] ?? null;
+        static::__assert_not_null($echo, 'the json echo fixture is in the document');
+
+        $filters = null;
+        foreach ($echo['parameters'] as $parameter) {
+            if ($parameter['name'] === 'filters') {
+                $filters = $parameter;
+            }
+        }
+        static::__assert_not_null($filters, 'filters is a parameter');
+        static::__assert_equals('query', $filters['in']);
+        static::__assert_false(array_key_exists('schema', $filters), 'a content-described parameter carries no schema');
+        static::__assert_equals(['application/json'], array_keys($filters['content']));
+        static::__assert_equals('{}', json_encode($filters['content']['application/json']['schema']), 'the empty schema');
+
+        $submit = $doc['paths']['/api/v1/test-probe/json/submit']['post'] ?? null;
+        static::__assert_not_null($submit, 'the json submit fixture is in the document');
+
+        $body = $submit['requestBody']['content']['application/json']['schema'];
+        static::__assert_equals('{}', json_encode($body['properties']['payload']), 'a required json property is the empty schema');
+        static::__assert_equals(['default' => ['mode' => 'fast']], $body['properties']['options'], 'a defaulted one carries the default');
+        static::__assert_equals(['payload'], $body['required']);
     }
 
     /**
@@ -414,7 +452,7 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
         $doc = Api_Openapi::document();
 
         $published = 0;
-        foreach (Api_Catalog::get_endpoint_list(false) as $ep) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $ep) {
             $published += count($ep['methods']);
         }
 
@@ -433,7 +471,7 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
     {
         $allowed = ['openapi', 'info', 'jsonSchemaDialect', 'servers', 'paths', 'webhooks', 'components', 'security', 'tags', 'externalDocs'];
 
-        foreach ([Api_Openapi::document(), Api_Openapi::document(null, Api_Catalog::get_versions()[0])] as $doc) {
+        foreach ([Api_Openapi::document(), Api_Openapi::document(version: Api_Catalog::get_versions()[0])] as $doc) {
             foreach (array_keys($doc) as $key) {
                 static::__assert_true(
                     in_array($key, $allowed, true) || str_starts_with($key, 'x-'),
@@ -466,7 +504,7 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
 
         // operationId -> is it a writer, from the same surface index the dispatcher reads.
         $writers = [];
-        foreach (Api_Catalog::get_endpoint_list(false) as $ep) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $ep) {
             $mode = Site_Lock::_surface_mode($ep['class'] . '::' . $ep['method']);
             foreach ($ep['methods'] as $verb) {
                 $id = strtolower($verb) . '_v' . $ep['version'] . '_' . $ep['class'] . '_' . $ep['method'];

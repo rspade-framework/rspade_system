@@ -23,10 +23,16 @@ use App\RSpade\Core\Session\Session;
  * - get_user(): current User_Model or null
  * - is_logged_in(): whether a user is authenticated
  * - has_permission(int): check a permission constant (User_Model::PERM_*)
- * - has_role(int): "at least" role check (User_Model::ROLE_*)
- * - can_admin_role(int): privilege-escalation guard
+ * - has_role(int): "this role or higher" (role_id <= the given id)
+ * - can_admin_role(int): "may manage that role" - the acting role's can_admin_roles list
  * - require_permission(int, string): throw AjaxUnauthorizedException if missing
  * - require_role(int, string): throw AjaxUnauthorizedException if missing
+ *
+ * ROLES. Lower role id = more privilege; can_admin_roles is the sole authority for "may
+ * this user manage that user", equals included; roles are per site and cross-site authority
+ * is is_sysadmin, never a role. The contract is rsx:man auth, ROLES. This class names no
+ * ROLE_* constant: role ids reach these primitives from the application (the examples below
+ * are an application's calls).
  *
  * Use these helpers in your controller auth checks:
  *
@@ -182,11 +188,10 @@ abstract class Permission_Abstract
      * Check if current logged-in user has a specific permission
      *
      * Resolution order:
-     * 1. DISABLED role = deny all
-     * 2. Supplementary DENY = deny
-     * 3. Supplementary GRANT = grant
-     * 4. Role default permissions = grant if included
-     * 5. Deny
+     * 1. Supplementary DENY = deny
+     * 2. Supplementary GRANT = grant
+     * 3. Role default permissions = grant if included
+     * 4. Deny
      *
      * @param int $permission Permission constant (User_Model::PERM_*)
      * @return bool True if user has permission, false otherwise
@@ -201,12 +206,13 @@ abstract class Permission_Abstract
     }
 
     /**
-     * Check if current logged-in user has at least the specified role level
+     * Check if current logged-in user holds the specified role or a higher one
      *
-     * "At least" means same or higher privilege (lower role_id number).
-     * Example: has_role(ROLE_MANAGER) returns true for Site Admins and above.
+     * Lower role id = more privilege, so this is the user's role_id <= $role_id. A ranking
+     * floor ("a Manager or above"), never a "may manage that user" decision - that is
+     * can_admin_role(). Contract: rsx:man auth, ROLES.
      *
-     * @param int $role_id Role constant (User_Model::ROLE_*)
+     * @param int $role_id A role id from the application's role_id enum
      * @return bool True if user has role or higher, false otherwise
      */
     public static function has_role(int $role_id): bool
@@ -221,10 +227,13 @@ abstract class Permission_Abstract
     /**
      * Check if current user can administer users with the given role
      *
-     * Prevents privilege escalation - users can only assign roles
-     * at or below their own permission level.
+     * The SOLE answer to "may this user manage that user": true exactly when the acting
+     * user's role lists $role_id in its can_admin_roles (User_Model's role_id enum), equals
+     * included - a role that lists itself lets peers manage each other. Never derived from
+     * comparing role ids. An administration endpoint asks it of the target's CURRENT role
+     * and of any NEW role it assigns. Contract: rsx:man auth, ROLES.
      *
-     * @param int $role_id Role constant (User_Model::ROLE_*)
+     * @param int $role_id The target's role id
      * @return bool True if user can admin this role, false otherwise
      */
     public static function can_admin_role(int $role_id): bool
@@ -255,12 +264,12 @@ abstract class Permission_Abstract
     }
 
     /**
-     * Require at least the specified role, throwing if the current user lacks it
+     * Require the specified role or a higher one, throwing if the current user lacks it
      *
-     * Fail-loud guard for Ajax endpoints. Throws AjaxUnauthorizedException
-     * (403) when the check fails; returns void when it passes.
+     * Fail-loud form of has_role() - the same ranking floor (rsx:man auth, ROLES). Throws
+     * AjaxUnauthorizedException (403) when the check fails; returns void when it passes.
      *
-     * @param int $role_id Role constant (User_Model::ROLE_*)
+     * @param int $role_id A role id from the application's role_id enum
      * @param string $message The reason, shown to the caller (an Ajax error, a 403 page);
      *                        empty for the framework's own sentence
      * @throws \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException

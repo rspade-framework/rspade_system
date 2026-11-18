@@ -872,8 +872,8 @@ retires the verdicts recorded against the old one.
 
 ### Current Manifest-Time Rules
 
-**54 of the 156 rules** return `true` from `is_called_during_manifest_scan()` (verified
-2026-11-12). This list drifts; regenerate it from the source of truth:
+**59 of the 158 rules** return `true` from `is_called_during_manifest_scan()` (verified
+2026-11-17). This list drifts; regenerate it from the source of truth:
 
 ```bash
 cd system/app/RSpade/CodeQuality
@@ -884,9 +884,9 @@ Approved for manifest-time execution, by rule directory:
 
 - `Blade/` - BLADE-EVENT-01, BLADE-LAYOUT-ASSETS-01, BLADE-SCRIPT-01
 - `Common/` - FILE-CASE-DUP-01, FILE-SPACE-01, ROUTE-SYNTAX-01
-- `Convention/` - CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02, PATH-OWNER-01
+- `Convention/` - BUNDLE-CDN-01, CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02, PATH-OWNER-01
 - `JavaScript/` - JQHTML-EVENT-01, JQHTML-IMPL-01, JS-CATCH-FALLBACK-01, JS-DECORATOR-01,
-  JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01, SPA-VIA-01
+  JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-ON-CREATE-01, JS-PARENT-CHAIN-01, JS-READY-01, SPA-VIA-01
   (also judges `#[Route]`/`#[Portal_Route]` patterns in PHP; its JS half is an AST pass in the
   node service, `quality.analyze_via`, run only for a file whose bytes mention `_via`),
   JS-NAVIGATE-01 and JS-NEW-TAB-01 (application code only; `.js` by AST in the node service,
@@ -900,11 +900,14 @@ Approved for manifest-time execution, by rule directory:
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,
   TASK-ON-BUILD-01, TASK-RUN-AS-01
-- `Scss/` - SCSS-SID-01
+- `Scss/` - SCSS-IMPORT-01 (shares `Scss_BundleProcessor::forbidden_imports()` with the
+  compiler's refusal), SCSS-SID-01
 
 The heaviest of these deserves its own note:
 
 - **PHP-PARENT-CHAIN-01** (ParentCallChain_CodeQualityRule): Default parent-call chaining. A method override MUST call `parent::<same-method>()` unless the nearest manifest-visible ancestor that declares the method is abstract or marked `#[Replaceable]`. Covers static + instance methods including `__construct` and magic methods. Vendor parents are excluded (the manifest never scans `vendor/`, so overriding a vendor method is not flagged). Cross-file rule (`kind() = KIND_CROSS_FILE`); AST-based detection (nikic/php-parser), never regex, so a comment/string mention of `parent::method()` cannot spoof it.
+
+- **JS-PARENT-CHAIN-01** (JsParentCallChain_CodeQualityRule, `Rules/JavaScript/`): the JavaScript twin of PHP-PARENT-CHAIN-01. An override (instance or static; not the constructor, which the language already forces to call `super()`, nor getters, setters or `#private` methods) of a method an in-manifest ancestor declares must call `super.<same name>()` somewhere in its body (arrow functions and branches count; nested functions, object methods and other names do not), unless the nearest declaring ancestor carries the `@Replaceable` DECORATOR (`Core/Js/replaceable.js`, a whitelisted no-op marker - a docblock `@Replaceable` is a comment and exempts nothing). An ancestor outside the manifest (npm, jqhtml's own base) imposes nothing, so jqhtml hooks are not special-cased. Cross-file; the subjects come from `js_classes` / `js_subclass_index` - with a changed set, the classes of the changed files plus every descendant; with none, every class. `super_calls` is recorded by `parser-service.js` and read from `Js_Parser::parse()` (the cached parse) only for a class with a standing obligation, so a manifest record carried forward from an older parser is never trusted for it; `@Replaceable` is read from the manifest record's method `decorators`. Honors a child-side `@JS-PARENT-CHAIN-01-EXCEPTION <rationale>`. Test `Js_Parent_Call_Chain_Rule_Test`.
 
 - **POLY-01** (MorphStringPattern_CodeQualityRule): a polymorphic relation whose `*_type` discriminator is not declared as a type ref. RSpade stores the discriminator as a BIGINT type-ref id; with the declaration in place, STOCK Eloquent morph relations work over it unchanged (`Type_Ref_Registry::register_morph_map()` registers each integer id as a morph-map alias next to the class name). Without it you get Laravel's VARCHAR class-name morph, which half-works - it reads plausibly and silently matches nothing the moment anything else in the framework treats the column as a type ref, which is why it is fatal rather than advisory. Cross-file (`kind() = KIND_CROSS_FILE`), AST-based, and deliberately silent on any call whose owning model cannot be resolved statically. Migrations are NOT covered (the manifest does not scan them, and column definitions live inside raw SQL strings), so a VARCHAR `*_type` column is caught at the model that relates over it. Full contract: `rsx:man polymorphic`.
 
@@ -923,6 +926,8 @@ in development AND can abort the build (see the poison-flag mechanism below).
 `#[Replaceable]` is a marker-only attribute (NEVER define the attribute class — the rule reads it by name from the AST, per framework convention). Placed on a PARENT method, it declares that method a genuine template/hook: overriders may fully replace it WITHOUT calling `parent::`. It is the explicit, annotated inverse of `final`, and the sanctioned way to clear a `PHP-PARENT-CHAIN-01` violation when an override is meant to replace rather than extend. The anchor is the NEAREST ancestor that declares the method; an intermediate class that re-declares the method concretely (without `#[Replaceable]`) re-establishes the chain obligation for its own descendants.
 
 Do NOT mark chain-mandatory methods `#[Replaceable]`. The archetype is `Rsx_Site_Model_Abstract::booted()`: it installs the cross-tenant isolation controls, so an override that forgot `parent::booted()` would silently drop them — exactly the fail-open leak this rule exists to catch — so it stays plain (chain-mandatory), not `#[Replaceable]`.
+
+**JavaScript has the same opt-out as a DECORATOR**: `@Replaceable` on the parent method (JS-PARENT-CHAIN-01). It is a real, whitelisted, no-op decorator - not a JSDoc marker - so it reaches the manifest through the method's `decorators` and survives into the bundle as a call that returns the method unchanged.
 
 ### `#[Sealed]` — the property counterpart to `final`
 

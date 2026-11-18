@@ -4,6 +4,7 @@ namespace App\RSpade\Lib\Portal;
 
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Dispatch\Route_ManifestSupport;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -141,6 +142,8 @@ class Portal_Spa_ManifestSupport extends Full_ManifestSupport_Abstract
             if ($route_pattern[0] !== '/') {
                 $route_pattern = '/' . $route_pattern;
             }
+
+            Route_ManifestSupport::assert_route_pattern($route_pattern, "Portal Spa action {$class_name} in {$action_metadata['file']}");
 
             // Check for duplicate portal route definition
             if (isset($manifest_data['data']['portal_routes'][$route_pattern])) {

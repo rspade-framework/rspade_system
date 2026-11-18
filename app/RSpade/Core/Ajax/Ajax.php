@@ -539,7 +539,10 @@ class Ajax
             return static::_handle_special_response($result);
         }
 
-        return json_decode(json_encode($result), true);
+        // The browser's JSON round trip, run here so an in-process caller gets exactly the
+        // plain data a browser would. A value JSON cannot carry (a resource, invalid UTF-8,
+        // INF/NAN) throws JsonException rather than arriving as null.
+        return json_decode(json_encode($result, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -1087,7 +1090,7 @@ class Ajax
      */
     public static function request_refusal(Request $request, array $envelope): \Illuminate\Http\JsonResponse
     {
-        $envelope = static::__side_channels($envelope + ['metadata' => []], 0, false);
+        $envelope = static::__side_channels($envelope + ['metadata' => []], 0, with_flash: false);
 
         // Timed from the start of the request: no call began.
         $started_at = (float) $request->server('REQUEST_TIME_FLOAT', microtime(true));
@@ -1204,7 +1207,7 @@ class Ajax
                 'error_code' => self::ERROR_SESSION_EXPIRED,
                 'reason' => 'This session has changed. Reload the page to continue.',
                 'metadata' => ['cause' => 'rotated'],
-            ], $console_mark, false);
+            ], $console_mark, with_flash: false);
         }
 
         $reason = Rsx_Portal::is_portal_request()
@@ -1220,7 +1223,7 @@ class Ajax
             'error_code' => self::ERROR_SESSION_EXPIRED,
             'reason' => Session::timeout_message($reason),
             'metadata' => ['cause' => $reason],
-        ], $console_mark, false);
+        ], $console_mark, with_flash: false);
     }
 
     /**

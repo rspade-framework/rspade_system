@@ -61,7 +61,7 @@ cost 90 MB more than a no-change one (ACTOR-01, MANIFEST-MONO-01, TEXT-TYPE-01 a
 MODEL-FETCH-SYSTEM-01 all did it). `Manifest_Memory_Gate_Test`'s incremental budget catches it.
 
 ```php
-foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false) as $class_name) {
+foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', concrete_only: false) as $class_name) {
     $record = Manifest::php_class_metadata($class_name);   // ['file','fqcn','extends','abstract']
     if (!class_exists($record['fqcn'])) { continue; }      // loads ONE subject
     // ... judge it

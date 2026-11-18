@@ -281,3 +281,33 @@ on demand), counting the rows it "wrote". The server half is `Request_History_Te
 | forms-ref-08 | with no resubmit handler the refusal renders and the next submit is new | handlers cleared | `<Form_Errors />` says already submitted; ref replaced; next submit writes | implemented |
 | forms-ref-09 | dialog and duplicate identities are instance-bound | two live forms of one identity; one inside `role="dialog"` | only the first page form's ref is on the entry | implemented |
 | forms-ref-10 | `Ajax.action()` | lost answer then retry; success; another endpoint | retry resends the ref and is `replayed`; success replaces it; each endpoint its own | implemented |
+
+## form_input_value_contract.js (playwright) - the input value contract
+
+Part A drives a fixture input registered in the browser (`jqhtml.register_component`): a
+subclass of `_Sys_Text_Input` whose `on_render()` does not call `_mark_ready()`, so the
+not-ready window is real. Parts B and C mount the framework's own inputs at run time on
+`/_sys`; user edits are real keystrokes and clicks. The template application's inputs
+(`rsx/theme`) are not the framework's and are not covered here.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-value-01 | a value set before ready is the getter's answer, faithfully | `val(v)` for `'text'`, `null`, `0`, `false`, `''` on the not-ready fixture | `val()` answers each exactly | implemented |
+| forms-value-02 | nothing is written or announced while pending | `val('buffered')` | the control still `''`; no `input`/`val` | implemented |
+| forms-value-03 | `_mark_ready()` applies the pending value | `_mark_ready()` | control and `val()` `'buffered'`; one `val` event with it; unchanged | implemented |
+| forms-value-04 | readiness alone announces nothing | `_mark_ready()` with nothing pending | no event | implemented |
+| forms-value-05 | a programmatic write after ready | `val('programmatic')` | `val` only, never `input`; unchanged | implemented |
+| forms-value-06 | a user edit | typing `!` | `input` then `val` with `'programmatic!'`; changed | implemented |
+| forms-value-07 | `Password_Input` round trip and edit | `'s3cret'`, `null`, `42`, `''`; typing `pw` | `'s3cret'`, `''`, `'42'`, `''`; `input`/`val` per keystroke; changed | implemented |
+| forms-value-08 | `_Sys_Text_Input` round trip and edit | `'hello'`, `null`, `undefined`, `''`; typing | `'hello'`, `''`, `''`, `''`; `input` then `val`; changed | implemented |
+| forms-value-09 | `_Sys_Textarea_Input` keeps newlines | `'line 1\nline 2'`, `null`; typing `x` + Enter | round trip; Enter is the user's newline | implemented |
+| forms-value-10 | `_Sys_Select_Input` values are strings | untouched; `1`, `'1'`, `'two'`, `null`, an unknown value, `'three'`; choosing `two` | `''`; `'1'`, `'1'`, `'two'`, `''`, `''`, `'three'`; `input` then `val`; changed | implemented |
+| forms-value-11 | `_Sys_Checkbox_Input` truthy spellings | `true`, `false`, `1`, `0`, `'1'`, `'0'`, `null` | `'1'`/`'0'` accordingly | implemented |
+| forms-value-12 | `_Sys_Checkbox_Input` own values | `$checked_value="yes"`, `$unchecked_value="no"`: `'yes'`, `'no'`, `true` | `'yes'`, `'no'`, `'yes'` | implemented |
+| forms-value-13 | `_Sys_Checkbox_Input` user click | clicking its label | `input` then `val` with `'1'`; changed | implemented |
+| forms-value-14 | `_Sys_Checkbox_List_Input` values | `['C','A']`, `[]`, `['Z']`, `['B','Z']`, `null` | option order, strings: `['A','C']`, `[]`, `[]`, `['B']`, `[]` | implemented |
+| forms-value-15 | `_Sys_Checkbox_List_Input` user edits | checking a box; All; None | `input` then `val` with the list each time; changed | implemented |
+| forms-value-16 | `vals()` collects by name | a runtime `<Rsx_Form>` holding five framework inputs and a plain text `<input>` | each input under its `$name`, in its vocabulary; the plain input absent | implemented |
+| forms-value-17 | `vals(object)` applies by name | an object naming every input plus an unknown key; then one naming one input | returns `null`; named inputs written, unknown key ignored, unnamed inputs left alone; form still clean | implemented |
+| forms-value-18 | `form.input(name)` | a present and an absent name | the component; `null` | implemented |
+| forms-value-19 | a user edit in the form | clicking a checkbox-list box | `dirty()` true; `vals()` reports it | implemented |

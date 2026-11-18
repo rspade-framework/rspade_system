@@ -208,7 +208,7 @@ class RefactorPhpClass_Command extends Command
             $new_class,
             $extension,
             $is_rspade,
-            false  // Not a Jqhtml component
+            is_jqhtml_component: false  // Not a Jqhtml component
         );
 
         $current_filename = basename($source_path);

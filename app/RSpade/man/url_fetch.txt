@@ -1,0 +1,167 @@
+URL_FETCH(1)                     RSpade Manual                     URL_FETCH(1)
+
+NAME
+    url_fetch - download a URL a user supplied without exposing the server's own
+    network (SSRF protection)
+
+TAGS
+    security, files, stdlib
+
+SYNOPSIS
+    use App\RSpade\Lib\Support\UrlFetch\Rsx_Url_Fetch;
+    use App\RSpade\Lib\Support\UrlFetch\Rsx_Url_Fetch_Exception;
+
+    try {
+        $fetched = Rsx_Url_Fetch::to_temp_file($url, max_bytes: 10 * 1024 * 1024);
+    } catch (Rsx_Url_Fetch_Exception $e) {
+        return response_form_error($e->getMessage());
+    }
+    // $fetched->path, ->content_type, ->filename, ->final_url, ->size
+    // move it, read it, or $fetched->delete()
+
+    File_Attachment_Model::create_from_url($url, ['site_id' => $site_id]);  // uses it
+
+DESCRIPTION
+    A request this server makes is made from INSIDE its network. When the URL
+    comes from a user - an import link, a "fetch from URL" field, a webhook
+    tester, an avatar by URL - the user chooses where the server connects:
+
+        http://127.0.0.1:6379/            the local Redis
+        http://127.0.0.1:3306/            MySQL
+        http://169.254.169.254/latest/    a cloud provider's metadata service,
+                                          and the machine's credentials
+        http://10.0.0.5/                  a neighbour no outsider can reach
+
+    That is server-side request forgery (SSRF). Nothing fails: the request
+    succeeds against the wrong target. Rsx_Url_Fetch::to_temp_file() is the
+    framework's fetch for such a URL, and the one create_from_url() uses.
+
+THE RULES
+    Schemes
+        http and https only. Anything else throws (reason invalid_url).
+
+    Destinations
+        The host is resolved (A and AAAA; an IP literal is its own answer) and
+        EVERY address is classified. Refused when any address is:
+
+            loopback            127.0.0.0/8, ::1
+            unspecified         0.0.0.0/8, ::
+            private             10/8, 172.16/12, 192.168/16, fc00::/7, fec0::/10
+            link-local          169.254/16 (cloud metadata), fe80::/10
+            carrier-grade NAT   100.64/10
+            multicast           224/4, ff00::/8
+            broadcast           255.255.255.255
+            reserved            240/4, documentation and benchmarking ranges,
+                                192.0.0/24, 100::/64, Teredo 2001::/32
+
+        An IPv6 address that embeds an IPv4 one - IPv4-mapped ::ffff:a.b.c.d,
+        NAT64 64:ff9b::/96, 6to4 2002::/16 - answers for the address it embeds.
+        Rsx_Url_Fetch::address_class($ip) is the classifier (null = public);
+        check_destination($url) runs the whole check for one URL.
+
+    The connection goes to the checked address
+        The connection is made to the address that was checked and to nothing
+        else, so a DNS answer that changes between the check and the connect
+        (DNS rebinding) cannot move it, and a URL spelled so that two parsers
+        disagree about its host still reaches only the checked address. The
+        Host header, TLS SNI and certificate verification use the URL's own
+        host name. Proxies named in the environment are not used.
+
+    Redirects
+        Followed by Rsx_Url_Fetch itself, one hop at a time, each hop checked
+        exactly as the first - the classic bypass is a public URL answering 302
+        to a private one. At most Rsx_Url_Fetch::MAX_REDIRECTS (5) hops; a
+        longer chain throws (too_many_redirects). That is a loop bound, not a
+        timeout: A -> B -> A would otherwise never end.
+
+    Size
+        The body streams to a temp file in constant memory. max_bytes is
+        checked against Content-Length before reading (too_large, "the server
+        declares N bytes") and again while the body arrives, because a server
+        may send no length or a false one; passing it stops the transfer,
+        deletes the file and throws (too_large, "the body passed N bytes").
+        A body of exactly max_bytes is accepted.
+
+    Time
+        One limit: rsx.url_fetch.connect_timeout_seconds (30), how long the
+        other side has to ACCEPT A CONNECTION. Expiry throws (connect) naming
+        the URL and the setting. There is no limit on the transfer itself - a
+        slow server sending a large file is not a fault - and max_bytes is the
+        safety net against a hostile one.
+
+    Failures
+        Every refusal and failure is an Rsx_Url_Fetch_Exception whose message
+        names the URL and the reason and can be shown to the person who typed
+        the URL. ->reason is one of the class constants (invalid_url,
+        unresolved_host, refused_destination, http_status, too_many_redirects,
+        too_large, connect, transfer); ->http_status is set for a non-2xx
+        answer. Catch it where the URL is user input; let anything else bubble.
+
+MAX_BYTES
+    The default is 1 GB (Rsx_Url_Fetch::DEFAULT_MAX_BYTES), DELIBERATELY
+    LIBERAL so that no legitimate file is refused out of the box. It is not a
+    recommendation: pass the size the feature actually needs - a few MB for an
+    avatar or a logo, what the format can sensibly reach for an import - so a
+    hostile URL costs the disk no more than the feature can use.
+
+ALLOW_PRIVATE
+    to_temp_file($url, $max_bytes, allow_private: true) skips the destination
+    policy (still http/https, still streamed and capped). It is for a URL BUILT
+    IN CODE that legitimately points inward - an internal service, a test
+    fixture server. Never pass it for a URL a user typed or could influence.
+    create_from_url() takes the same as $params['allow_private'].
+
+THE TEMP FILE
+    The result's path is a scratch file under tmp/url_fetch/ that the caller
+    now owns: move it, read it, or $fetched->delete(). Whatever is still at
+    its path when the process ends is deleted then (one shutdown hook), and a
+    failed fetch deletes its file before throwing. A long-running process (a
+    task worker) deletes the file itself rather than wait for its exit.
+
+    ->content_type and ->filename are the SERVER's claims (the Content-Type
+    header; the Content-Disposition name, else the last segment of the final
+    URL's path, passed through Rsx_File_Name::safe()). Neither says what the
+    bytes are - sniff the file when that matters.
+
+OTHER OUTBOUND HTTP
+    A request to a FIXED, trusted destination (a payment provider's API, a
+    service the application integrates with) needs no destination check and
+    keeps whatever client suits it. rsx:check rule PHP-OUTBOUND-HTTP-01 flags
+    outbound HTTP in rsx/ - the Http facade, new GuzzleHttp\Client,
+    curl_init()/curl_exec(), get_headers(), and file_get_contents() / fopen()
+    / copy() / readfile() whose first argument is not provably local - and
+    is answered either by using Rsx_Url_Fetch or by marking the call:
+
+        // @PHP-OUTBOUND-HTTP-01-EXCEPTION payment provider API, fixed host
+        $response = Http::withToken($key)->post('https://api.example.com/charges', $body);
+
+    The marker sits on the call's line or in the comment directly above it,
+    and a marker with no reason exempts nothing.
+
+RSX VS LARAVEL
+    Laravel's Http facade follows redirects and connects wherever DNS says, so
+    Http::get($user_url) is an SSRF hole. It remains the right client for a
+    fixed destination; a user's URL goes through Rsx_Url_Fetch.
+
+TROUBLESHOOTING
+    "Refused to fetch <url>: the host <h> resolves to <ip>, a loopback address"
+        The URL (or a redirect it answered) points at this machine or a
+        private network. Correct for a user's URL. For a URL built in code
+        that must reach an internal service, pass allow_private: true.
+
+    "... did not accept a connection within 30 seconds
+    (rsx.url_fetch.connect_timeout_seconds)"
+        The host is unreachable or drops connections. Raise the setting in
+        rsx/resource/config/rsx.php only for a box on a degraded link.
+
+    "Stopped fetching <url>: the body passed the N bytes allowed"
+        The file is larger than max_bytes. Raise max_bytes for that call if
+        the feature genuinely needs the size.
+
+SEE ALSO
+    file_upload - create_from_url() and the attachment factories
+    temp_files - output a pipeline keeps for a user to download
+    config_rsx - rsx.url_fetch
+    skill rspade:file-attachments - creating attachments from code
+
+RSpade                              2026                           URL_FETCH(1)

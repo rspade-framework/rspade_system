@@ -42,7 +42,7 @@ class MassAssignmentException extends Exception
         $var_name = '$' . strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $short_class));
         $fields_list = implode(', ', $this->attempted_fields);
         
-        $message = "🚫 MASS ASSIGNMENT PROHIBITED IN RSPADE FRAMEWORK\n\n";
+        $message = "[ERROR] MASS ASSIGNMENT PROHIBITED IN RSPADE FRAMEWORK\n\n";
         $message .= "Model: {$this->model_class}\n";
         $message .= "Method: {$this->method_name}()\n";
         
@@ -54,7 +54,7 @@ class MassAssignmentException extends Exception
         $message .= "The RSpade framework prohibits mass assignment for security and code clarity.\n";
         $message .= "All model fields must be explicitly assigned one by one.\n\n";
         
-        $message .= "❌ INCORRECT (mass assignment):\n";
+        $message .= "[NO] INCORRECT (mass assignment):\n";
         
         if ($is_static) {
             if ($this->method_name === 'create') {
@@ -75,7 +75,7 @@ class MassAssignmentException extends Exception
             }
         }
         
-        $message .= "\n✅ CORRECT (explicit field assignment):\n";
+        $message .= "\n[OK] CORRECT (explicit field assignment):\n";
         
         // Generate example based on attempted fields
         if (!empty($this->attempted_fields)) {
@@ -112,11 +112,11 @@ class MassAssignmentException extends Exception
         
         $message .= "\n";
         $message .= "Benefits of explicit assignment:\n";
-        $message .= "• Clear visibility of what fields are being set\n";
-        $message .= "• Protection against unexpected field injection\n";
-        $message .= "• Easier to debug and maintain\n";
-        $message .= "• Type safety with IDE autocompletion\n";
-        $message .= "• No need for \$fillable or \$guarded arrays\n";
+        $message .= "- Clear visibility of what fields are being set\n";
+        $message .= "- Protection against unexpected field injection\n";
+        $message .= "- Easier to debug and maintain\n";
+        $message .= "- Type safety with IDE autocompletion\n";
+        $message .= "- No need for \$fillable or \$guarded arrays\n";
         
         $message .= "\n";
         $message .= "Note: The \$fillable property is not needed in RSpade models.\n";

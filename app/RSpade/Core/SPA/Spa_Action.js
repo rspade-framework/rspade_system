@@ -40,6 +40,7 @@ class Spa_Action extends Component {
      * Called during load phase to fetch data from server
      * Set this.data properties here
      */
+    @Replaceable
     async on_load() {
         // Override in subclass
     }
@@ -109,6 +110,7 @@ class Spa_Action extends Component {
      *
      * @returns {Promise<string>} The page title
      */
+    @Replaceable
     async page_title() {
         return this.constructor._spa_title ?? '(title not set)';
     }
@@ -156,6 +158,7 @@ class Spa_Action extends Component {
      *
      * @returns {Promise<string>} The breadcrumb label
      */
+    @Replaceable
     async breadcrumb_label() {
         return await this.page_title();
     }
@@ -175,6 +178,7 @@ class Spa_Action extends Component {
      *
      * @returns {Promise<string>} The active breadcrumb label
      */
+    @Replaceable
     async breadcrumb_label_active() {
         return await this.breadcrumb_label();
     }
@@ -192,6 +196,7 @@ class Spa_Action extends Component {
      *
      * @returns {Promise<string|null>} Parent URL or null if root
      */
+    @Replaceable
     async breadcrumb_parent() {
         return null;
     }

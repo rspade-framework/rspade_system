@@ -137,7 +137,7 @@ class Form_Edit_Coupled_Test extends Rsx_Test_Abstract
             $other->save();
 
             return ['id' => $record->id];
-        }, null, coupled: [[$other, self::MAP]]);
+        }, coupled: [[$other, self::MAP]]);
     }
 
     private static function __question($result): array
@@ -284,7 +284,7 @@ class Form_Edit_Coupled_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(
             \RuntimeException::class,
-            fn () => Form_Edit::run($record, [], fn () => null, null, coupled: [[new Form_Edit_Plain_Fixture_Model(), ['name' => 'name']]]),
+            fn () => Form_Edit::run($record, [], fn () => null, coupled: [[new Form_Edit_Plain_Fixture_Model(), ['name' => 'name']]]),
             'Form_Edit_Plain_Fixture_Model'
         );
     }

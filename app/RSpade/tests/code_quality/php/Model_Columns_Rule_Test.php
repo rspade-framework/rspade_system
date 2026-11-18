@@ -214,6 +214,24 @@ class Model_Columns_Rule_Test extends Rsx_Test_Abstract
         static::__assert_contains("['blank_id']['enum'][1]['constant'] must be a non-empty string", $messages);
     }
 
+    public static function test_an_enum_order_that_is_not_an_int_is_fatal()
+    {
+        $violations = static::__evaluate_columns('Columns_Rule_Fixture_Enum_Order_Model', "[\n"
+            . "        'fraction_id' => ['enum' => [1 => ['label' => 'A', 'order' => 1.5], 2 => ['label' => 'B', 'order' => 2]]],\n"
+            . "        'string_id' => ['enum' => [1 => ['label' => 'A', 'order' => '3']]],\n"
+            . "        'null_id' => ['enum' => [1 => ['label' => 'A', 'order' => null]]],\n"
+            . "        'whole_id' => ['enum' => [1 => ['label' => 'A', 'order' => -1], 2 => ['label' => 'B', 'order' => 0], 3 => ['label' => 'C']]],\n"
+            . "    ]");
+
+        $messages = static::__messages($violations);
+
+        static::__assert_count(3, $violations, 'one finding per non-int order, none for a whole number or an omitted order: ' . $messages);
+        static::__assert_contains("\$columns['fraction_id']['enum'][1]['order'] is 1.5", $messages);
+        static::__assert_contains("\$columns['string_id']['enum'][1]['order'] is '3'", $messages);
+        static::__assert_contains("\$columns['null_id']['enum'][1]['order'] is NULL", $messages);
+        static::__assert_contains('whole number', $messages);
+    }
+
     public static function test_a_text_type_that_is_not_a_class_name_is_fatal()
     {
         $violations = static::__evaluate_columns('Columns_Rule_Fixture_Bad_Text_Type_Model', "['body' => ['text_type' => true]]");

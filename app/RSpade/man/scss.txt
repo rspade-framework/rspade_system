@@ -555,6 +555,20 @@ NO EXEMPTIONS
 
 VALIDATION
 
+    NO @import IN AN AUTHORED STYLESHEET (SCSS-IMPORT-01). A stylesheet
+    reaches a bundle by being INCLUDED in it - the bundle owns compile order
+    and dependencies - never by being imported from another stylesheet. A
+    quoted @import "..." in a .scss / .sass file fails the manifest build
+    when the file is saved, and the bundle compiler refuses the same file
+    before Sass runs (for a stylesheet included from a path the manifest
+    does not index). Exempt: a file under a vendor/ directory (third-party
+    source such as Bootstrap's, which manages its own imports - include only
+    its entry file), an import inside a comment, and a CSS
+    @import url(https://...) of a remote stylesheet, which the compiler
+    mirrors (rsx:man bundle_api, CDN ASSETS). Fix: delete the @import and
+    add the imported file to the bundle's include list; the framework text
+    resets are already in every compilation (FRAMEWORK TEXT RESETS).
+
     The scoping rule is enforced at manifest build time. Violations
     produce errors like:
 

@@ -113,7 +113,7 @@ class ModelNeverExport_CodeQualityRule extends CodeQualityRule_Abstract
     {
         try {
             $tables = Rsx_Schema::tables();
-        } catch (\Throwable $no_database) {
+        } catch (\Illuminate\Database\QueryException | \PDOException $no_database) {
             // No database to read columns from: nothing to judge (see the class docblock).
             return;
         }

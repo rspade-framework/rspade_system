@@ -4,7 +4,9 @@
  * Newline-delimited JSON, strict request/response. The server NEVER sends an
  * unsolicited frame: every frame it writes is the answer to exactly one request the
  * client sent. That is what lets a client park on a blocking acquire and treat the next
- * inbound byte as "my answer arrived".
+ * inbound byte as "my answer arrived". The one frame that is not an answer is a
+ * `waiting` NOTICE, and it is solicited: a parked request that carried a `notice` key gets
+ * one, echoing that request's id, and is still answered later by its final frame.
  *
  * Everything in this file is PURE - no sockets, no timers, no process state. It is
  * require()-able from a test without binding a port.
@@ -21,7 +23,11 @@ const MAX_FRAME_BYTES = 1024 * 1024;
 // a captured hello to a one-minute window without demanding tight clock sync.
 const HELLO_WINDOW_SECONDS = 60;
 
-const PROTOCOL_VERSION = 1;
+// 2 added the progress watchdog: the `progress` op, the `stall` / `notice` request keys,
+// the `stalled` status and `waiting` notice, and the hello's `start`. A client reads the
+// version from the hello answer (or ping) and sends `progress` only to a daemon that has it -
+// the container image that runs the daemon can lag the checkout that runs the client.
+const PROTOCOL_VERSION = 2;
 
 // Every op the server answers. Exported so the CLI and the tests share one list.
 const OPS = [
@@ -37,6 +43,7 @@ const OPS = [
     'force_clear',
     'ping',
     'log',
+    'progress',
     // Worker pool accounting (lib/pool.js).
     'pool.lock',
     'pool.unlock',
@@ -55,6 +62,18 @@ const STATUS_GRANTED = 'granted';
 const STATUS_TIMEOUT = 'timeout';
 const STATUS_DEADLOCK = 'deadlock';
 const STATUS_ERROR = 'error';
+
+// A parked waiter whose holders have shown no progress for its stall window (the `stall`
+// key of its request) is answered `stalled` - a FINAL answer, distinct from a caller's own
+// `timeout`, because it says something different: not "I chose to stop waiting" but "the
+// holder ahead of me has gone silent". See README, PROGRESS AND STALLS.
+const STATUS_STALLED = 'stalled';
+
+// A NOTICE, never an answer: the one frame the daemon sends about a request without
+// ending it. A waiter that asked for one (the `notice` key) receives exactly one
+// `waiting` frame once it has waited that long, then keeps waiting; its request is still
+// answered later by exactly one final frame. A client that never asks never receives one.
+const STATUS_WAITING = 'waiting';
 
 const MODE_READ = 'read';
 const MODE_WRITE = 'write';
@@ -216,11 +235,34 @@ function verify_hello(frame, key, now_seconds) {
         return { ok: false, error: 'hello signature rejected' };
     }
 
-    return { ok: true, meta: { host, pid, ts, group_id: group.value } };
+    const start = normalize_start(frame.start);
+    if (!start.ok) {
+        return { ok: false, error: start.error };
+    }
+
+    return { ok: true, meta: { host, pid, ts, group_id: group.value, start: start.value } };
+}
+
+/**
+ * The process START TIME a hello may carry: the kernel's start time of the connecting
+ * process (field 22 of /proc/<pid>/stat, clock ticks since boot). With the pid it names one
+ * process on its host - a pid alone can be reused - and it is what lets an operator's
+ * kill-holder prove the pid it is about to signal is still the process that took the lock.
+ * Optional: absent, the connection simply cannot be signalled by identity. Like group_id it
+ * is not signed - the HMAC key is the trust boundary.
+ */
+function normalize_start(start) {
+    if (start === undefined || start === null) {
+        return { ok: true, value: null };
+    }
+    if (!Number.isSafeInteger(start) || start < 0) {
+        return { ok: false, error: 'hello start must be a non-negative integer (process start time in clock ticks)' };
+    }
+    return { ok: true, value: start };
 }
 
 /** Build a signed hello frame. Used by the CLI client; exported for parity tests. */
-function build_hello(host, pid, ts, key, group_id) {
+function build_hello(host, pid, ts, key, group_id, start) {
     const frame = {
         op: 'hello',
         host: host,
@@ -232,6 +274,10 @@ function build_hello(host, pid, ts, key, group_id) {
 
     if (group_id !== undefined && group_id !== null && group_id !== '') {
         frame.group_id = group_id;
+    }
+
+    if (start !== undefined && start !== null) {
+        frame.start = start;
     }
 
     return frame;
@@ -285,6 +331,8 @@ module.exports = {
     STATUS_TIMEOUT,
     STATUS_DEADLOCK,
     STATUS_ERROR,
+    STATUS_STALLED,
+    STATUS_WAITING,
     MODE_READ,
     MODE_WRITE,
     encode_frame,
@@ -295,6 +343,7 @@ module.exports = {
     verify_hello,
     build_hello,
     normalize_group_id,
+    normalize_start,
     normalize_mode,
     normalize_timeout,
     timeout_message,

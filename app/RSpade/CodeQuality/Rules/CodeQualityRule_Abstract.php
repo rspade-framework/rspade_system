@@ -452,7 +452,8 @@ abstract class CodeQualityRule_Abstract
                 if ($method !== null) {
                     return [
                         'class' => $current,
-                        'file' => $method['file'] ?? rsx_project_file_path($record['file']),
+                        // A trait method carries its own `file` key; both resolve the same way.
+                        'file' => rsx_project_file_path($method['file'] ?? $record['file']),
                         'line' => (int) ($method['line'] ?? 1),
                         'method' => $method,
                     ];

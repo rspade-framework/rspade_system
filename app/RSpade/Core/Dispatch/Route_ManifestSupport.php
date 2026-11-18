@@ -145,6 +145,7 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
                 "{$fqcn}::{$method_name} in {$file}"
             );
 
+            static::assert_route_pattern($pattern, "{$fqcn}::{$method_name} in {$file}");
             static::assert_route_verbs($pattern, (array) $methods, $fqcn, $method_name, $file);
             static::assert_error_route_shape($pattern, (array) $methods, $gates, $fqcn, $method_name, $file);
 
@@ -223,6 +224,62 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
                 "  ROUTE-VERB-01: '{$pattern}' declares " . ($declared === [] ? 'no method' : implode(', ', $declared))
                 . "; a route accepts GET and POST only.\n" .
                 "  Declare methods: ['GET'], ['POST'] or ['GET', 'POST'] (omitted means ['GET']).\n" .
+                '  See: php artisan rsx:man routing'
+            );
+        }
+    }
+
+    /**
+     * ROUTE-PATH-01 and ROUTE-PARAM-01: the grammar of a route pattern, for every kind of
+     * route - #[Route], #[Portal_Route], #[Api_Endpoint], @route and @portal_route - since
+     * every one is matched by RouteResolver.
+     *
+     * ROUTE-PATH-01: a pattern is a PATH. The query string is split off the URL before
+     * matching, so a pattern carrying '?key=...' can never match anything. The one '?' a
+     * pattern may hold is the optional-parameter marker, directly after a parameter name and
+     * ending its segment (':page?').
+     *
+     * ROUTE-PARAM-01: a parameter name is letters, digits and underscores, and ends at a
+     * '/', a '.' (the documented '/files/:id.:ext' form), the optional marker '?' or the end
+     * of the pattern. The matcher reads a name as the longest run of those characters, so
+     * ':user-id' compiled silently to the parameter 'user' followed by the literal text
+     * '-id' - a route that matched only URLs ending in '-id' and handed the handler a
+     * 'user' value it never asked for.
+     *
+     * Called by this module, Portal_Route_ManifestSupport, Spa_ManifestSupport,
+     * Portal_Spa_ManifestSupport and Api_Endpoint_ManifestSupport.
+     *
+     * @param string $pattern The route pattern, leading slash included
+     * @param string $location Who declares it ("Class::method in file", "SPA action X in file")
+     * @return void
+     */
+    public static function assert_route_pattern(string $pattern, string $location): void
+    {
+        // Every well-formed parameter token removed, any '?' left is a query part.
+        $without_params = preg_replace('#:[A-Za-z0-9_]+(?:\?(?=/|$)|(?=[/.]|$))#', '', $pattern);
+
+        if (str_contains($without_params, '?')) {
+            throw new \RuntimeException(
+                "Invalid route pattern: {$location}\n" .
+                "  ROUTE-PATH-01: '{$pattern}' carries a query part. A route pattern is a path: the\n" .
+                "  query string is split off the URL before matching, so this pattern matches no URL.\n" .
+                "  The only '?' a pattern may hold marks an optional parameter (':page?').\n" .
+                "  Declare the path alone; query values arrive in \$params (PHP) and this.args (SPA).\n" .
+                '  See: php artisan rsx:man routing'
+            );
+        }
+
+        if (str_contains($without_params, ':')) {
+            $bad = preg_match('#:[^/.]*#', $without_params, $m) ? $m[0] : ':';
+            $suggested = ':' . (trim(preg_replace('#[^A-Za-z0-9_]+#', '_', substr($bad, 1)), '_') ?: 'name');
+
+            throw new \RuntimeException(
+                "Invalid route pattern: {$location}\n" .
+                "  ROUTE-PARAM-01: '{$pattern}' declares the parameter '{$bad}'. A parameter name is\n" .
+                "  letters, digits and underscores ([A-Za-z0-9_]) and ends at '/', '.', the optional\n" .
+                "  marker '?' or the end of the pattern; anything else would be read as a shorter\n" .
+                "  name followed by literal text.\n" .
+                "  Rename it: '{$suggested}' (and read \$params['" . substr($suggested, 1) . "']).\n" .
                 '  See: php artisan rsx:man routing'
             );
         }

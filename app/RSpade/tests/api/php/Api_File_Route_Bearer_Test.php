@@ -107,7 +107,7 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
         $user->save();
         static::grant_every_permission(1);
 
-        return Api_Key_Model::generate(1, 'File route scoped probe (test)', 'live', null, null, $scope)['key'];
+        return Api_Key_Model::generate(1, 'File route scoped probe (test)', 'live', scopes: $scope)['key'];
     }
 
     /**

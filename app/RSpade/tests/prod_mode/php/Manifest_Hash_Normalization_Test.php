@@ -14,10 +14,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Determinism units for the manifest build key (Manifest_Store::_compute_hash).
  *
  * The build key must be identical for two byte-identical checkouts at different absolute
- * paths. A file contributes its PATH and its sha1 and NOTHING ELSE, so mtime, size and any
- * absolute path embedded in a reflected method record cannot reach the key by construction -
- * where the predecessor had to strip them out of a deep copy of the whole manifest body.
- * The per-file lines are sorted, so readdir order cannot reach it either.
+ * paths. Every path the manifest stores is project-relative (Manifest_Location_Independence_Test
+ * holds the cache files to that), and a file contributes its PATH and its sha1 and NOTHING
+ * ELSE, so mtime and size cannot reach the key by construction. The per-file lines are
+ * sorted, so readdir order cannot reach it either.
  *
  * These build a small fake manifest body and drive the hash directly. Pure logic, no DB.
  */
@@ -27,10 +27,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
 
     /**
      * A minimal but representative manifest body: two file entries carrying
-     * mtime/size/sha1 plus class metadata, and a class map. The 'file' entries
-     * under public_static_methods deliberately embed an absolute path (as PHP
-     * reflection does for inherited trait methods) to exercise absolute-path
-     * stripping.
+     * mtime/size/sha1 plus class metadata (one with a trait-supplied method and
+     * its trait's `file` key), and a class map.
      */
     private static function _fixture(): array
     {
@@ -45,7 +43,7 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
                     'class' => 'Alpha_Model',
                     'public_static_methods' => [
                         'fetch' => [
-                            'file' => base_path() . '/vendor/some/trait/SoftDeletes.php',
+                            'file' => 'vendor/some/trait/SoftDeletes.php',
                             'line' => 46,
                         ],
                     ],
@@ -115,41 +113,21 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Absolute paths inside a file record cannot reach the key
+    // A file record reaches the key only through its path and sha1
     // -------------------------------------------------------------------------
 
-    public static function test_absolute_paths_in_a_file_record_do_not_reach_the_key()
+    public static function test_a_method_record_inside_a_file_record_does_not_reach_the_key()
     {
         $a = self::_fixture();
         $b = self::_fixture();
 
-        // Reflection reports an ABSOLUTE path for an inherited trait method, and that path
-        // differs between checkouts. A file contributes only its own sha1 now, so the value
-        // is structurally unable to move the key.
-        $b['files']['rsx/models/alpha_model.php']['public_static_methods']['fetch']['file']
-            = '/somewhere/else/entirely/vendor/some/trait/SoftDeletes.php';
+        // The method map is a function of the file's content, which its sha1 already carries.
+        $b['files']['rsx/models/alpha_model.php']['public_static_methods']['fetch']['line'] = 99;
 
         static::__assert_equals(
             Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION, ''),
             Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION, ''),
-            'an absolute path inside a file record must not change the build key'
-        );
-    }
-
-    public static function test_absolute_paths_in_a_derived_section_are_relativized()
-    {
-        $a = self::_fixture();
-        $b = self::_fixture();
-
-        // A DERIVED section does reach the key - reduced to project-relative form first, so
-        // the same checkout at a different absolute path still keys the same.
-        $a['models'] = ['Alpha_Model' => ['file' => base_path() . '/rsx/models/alpha_model.php']];
-        $b['models'] = ['Alpha_Model' => ['file' => 'rsx/models/alpha_model.php']];
-
-        static::__assert_equals(
-            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION, ''),
-            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION, ''),
-            'an absolute base_path() prefix in a derived section is reduced before hashing'
+            'a method record inside a file record must not change the build key'
         );
     }
 

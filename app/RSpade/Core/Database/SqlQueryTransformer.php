@@ -18,7 +18,7 @@ namespace App\RSpade\Core\Database;
  * - All VARCHAR/TEXT → utf8mb4 charset + utf8mb4_unicode_ci collation
  *
  * Forbidden types (throws exception):
- * - ENUM - Use VARCHAR with validation instead
+ * - ENUM - Use a BIGINT column declared as an enum in the model's $columns
  * - SET - Use JSON or separate table
  * - YEAR - Use INT or DATE
  * - TIME - Use DATETIME
@@ -200,15 +200,18 @@ class SqlQueryTransformer
      */
     private static function __validate_forbidden_types(string $query): void
     {
-        // Strip comments and quoted strings before validation to avoid false positives
-        // (e.g., "TIME" in a COMMENT won't trigger the TIME type check)
-        $query_without_strings = self::__strip_comments_and_strings($query);
+        // Only a column TYPE is judged: comments, quoted strings and backtick-quoted
+        // identifiers are removed first, so "TIME" in a COMMENT and a column, index or
+        // constraint NAMED `year` or `time` never read as a forbidden type
+        $query_without_strings = self::__strip_comments_strings_and_identifiers($query);
 
         // Check for ENUM
         if (preg_match('/\bENUM\s*\(/i', $query_without_strings)) {
             throw new \RuntimeException(
-                "ENUM column type is forbidden in RSpade. Use VARCHAR with validation instead.\n" .
-                "ENUMs cannot be modified without table locks and cause deployment issues.\n" .
+                "ENUM column type is forbidden in RSpade. An enumerated column is a BIGINT whose\n" .
+                "values are declared in the model: 'status_id' => ['enum' => [1 => ['constant' =>\n" .
+                "'STATUS_ACTIVE', 'label' => 'Active'], ...]] in public static \$columns.\n" .
+                "A MySQL ENUM cannot be changed without a table lock. See: php artisan rsx:man enums\n" .
                 "Query: " . substr($query, 0, 200)
             );
         }
@@ -225,6 +228,7 @@ class SqlQueryTransformer
         if (preg_match('/\bYEAR\b/i', $query_without_strings)) {
             throw new \RuntimeException(
                 "YEAR column type is forbidden in RSpade. Use INT or DATE instead.\n" .
+                "A column NAMED year is allowed when the name is backtick-quoted: `year` INT.\n" .
                 "Query: " . substr($query, 0, 200)
             );
         }
@@ -236,6 +240,7 @@ class SqlQueryTransformer
                 preg_match('/[,\s]\s*TIME\s+/i', $query_without_strings)) {
                 throw new \RuntimeException(
                     "TIME column type is forbidden in RSpade. Use DATETIME instead.\n" .
+                    "A column NAMED time is allowed when the name is backtick-quoted: `time` DATETIME.\n" .
                     "Query: " . substr($query, 0, 200)
                 );
             }
@@ -243,19 +248,22 @@ class SqlQueryTransformer
     }
 
     /**
-     * Strip comments and quoted strings from SQL query
+     * Strip comments, quoted strings and quoted identifiers from SQL query
      *
      * Removes:
      * - Single-quoted strings
      * - Double-quoted strings
      * - SQL comments (both single-line and multi-line)
+     * - Backtick-quoted identifiers, each replaced by the neutral word `_identifier_`
+     *   so the token structure around it is kept
      *
-     * This prevents false positives in validation (e.g., 'TIME' in a comment)
+     * This prevents false positives in validation (e.g., 'TIME' in a comment, or a
+     * column named `year`)
      *
      * @param string $query The SQL query
-     * @return string Query with comments and strings removed
+     * @return string Query with comments, strings and quoted identifiers removed
      */
-    private static function __strip_comments_and_strings(string $query): string
+    private static function __strip_comments_strings_and_identifiers(string $query): string
     {
         $result = '';
         $len = strlen($query);
@@ -315,6 +323,25 @@ class SqlQueryTransformer
                         $i++;
                     }
                 }
+                continue;
+            }
+
+            // Check for backtick-quoted identifier (`` escapes a backtick inside one)
+            if ($query[$i] === '`') {
+                $i++; // Skip opening backtick
+                while ($i < $len) {
+                    if ($query[$i] === '`') {
+                        if ($i + 1 < $len && $query[$i + 1] === '`') {
+                            $i += 2; // Skip escaped backtick
+                        } else {
+                            $i++; // Skip closing backtick
+                            break;
+                        }
+                    } else {
+                        $i++;
+                    }
+                }
+                $result .= ' _identifier_ ';
                 continue;
             }
 

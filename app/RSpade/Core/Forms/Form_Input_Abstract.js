@@ -301,6 +301,7 @@ class Form_Input_Abstract extends Component {
      * How THIS input takes focus. The default suits an input whose editable control is the
      * first focusable element in its markup; an input that wraps a library overrides it.
      */
+    @Replaceable
     _focus() {
         const element = this.$
             .find('input, select, textarea, [contenteditable="true"], [tabindex]')
@@ -448,6 +449,7 @@ class Form_Input_Abstract extends Component {
      * Read the current value from the DOM/library. REQUIRED.
      * @returns {*}
      */
+    @Replaceable
     _get_value() {
         throw new Error(`${this.constructor.name} must implement _get_value()`);
     }
@@ -456,6 +458,7 @@ class Form_Input_Abstract extends Component {
      * Write a value to the DOM/library. REQUIRED.
      * @param {*} value
      */
+    @Replaceable
     _set_value(value) {
         throw new Error(`${this.constructor.name} must implement _set_value()`);
     }

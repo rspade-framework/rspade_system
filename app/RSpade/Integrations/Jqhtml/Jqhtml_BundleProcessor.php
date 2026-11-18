@@ -109,7 +109,7 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
             $temp_file = File_Content_Cache::path(JqhtmlWebpackCompiler::CACHE_NAMESPACE, $path, $variant, 'js');
 
             // Check if we need to compile
-            $needs_compile = File_Content_Cache::get(JqhtmlWebpackCompiler::CACHE_NAMESPACE, $path, $variant, 'js', true) === null;
+            $needs_compile = File_Content_Cache::get(JqhtmlWebpackCompiler::CACHE_NAMESPACE, $path, $variant, 'js', guard_source_mtime: true) === null;
 
             if ($needs_compile) {
                 console_debug('JQHTML', "Compiling: {$path}");

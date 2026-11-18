@@ -67,9 +67,8 @@ class Derived_Column_Form_Edit_Test extends Rsx_Test_Abstract
                 $record,
                 ['_changed' => []],
                 fn (Form_Edit $edit) => $edit->set('shown_label', 'HAND'),
-                null,
-                [],
-                ['label' => 'shown_label']
+                coupled: [],
+                fields: ['label' => 'shown_label']
             ),
             "Form_Edit::set('shown_label'): Derived_Site_Fixture_Model::label is a derived column"
         );

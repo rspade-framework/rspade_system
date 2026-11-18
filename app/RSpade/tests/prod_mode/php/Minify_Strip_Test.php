@@ -73,7 +73,7 @@ class Minify_Strip_Test extends Rsx_Test_Abstract
 
     public static function test_strip_flag_removes_console_debug_call_site()
     {
-        $out = Minifier::minify_js(self::SAMPLE_JS, 'strip_on.js', true);
+        $out = Minifier::minify_js(self::SAMPLE_JS, 'strip_on.js', strip_console_debug: true);
 
         static::__assert_false(
             str_contains($out, 'console_debug'),
@@ -85,7 +85,7 @@ class Minify_Strip_Test extends Rsx_Test_Abstract
 
     public static function test_no_strip_flag_keeps_console_debug_call_site()
     {
-        $out = Minifier::minify_js(self::SAMPLE_JS, 'strip_off.js', false);
+        $out = Minifier::minify_js(self::SAMPLE_JS, 'strip_off.js', strip_console_debug: false);
 
         static::__assert_contains(
             'console_debug',
@@ -96,7 +96,7 @@ class Minify_Strip_Test extends Rsx_Test_Abstract
 
     public static function test_strip_console_log_drops_log_and_keeps_error_warn_and_side_effects()
     {
-        $out = Minifier::minify_js(self::CONSOLE_JS, 'log_strip_on.js', true, true);
+        $out = Minifier::minify_js(self::CONSOLE_JS, 'log_strip_on.js', strip_console_debug: true, strip_console_log: true);
 
         static::__assert_false(
             str_contains($out, 'console.log'),
@@ -115,7 +115,7 @@ class Minify_Strip_Test extends Rsx_Test_Abstract
 
     public static function test_no_strip_console_log_keeps_log_as_the_vendor_output_does()
     {
-        $out = Minifier::minify_js(self::CONSOLE_JS, 'log_strip_off.js', true, false);
+        $out = Minifier::minify_js(self::CONSOLE_JS, 'log_strip_off.js', strip_console_debug: true, strip_console_log: false);
 
         static::__assert_contains('console.log', $out, 'without strip_console_log (the vendor output), console.log( must be retained');
         static::__assert_contains('dropped-log-marker', $out, 'the retained console.log keeps its arguments');

@@ -41,13 +41,15 @@ class Manifest_Scanner
     * treated as a miss and overwritten under the same key (the file's hash), so the fix is
     * self-healing and leaves no orphan directory behind. v2 added `extends_fqcn`, which v1
     * omitted. v3: `public_instance_methods` carries the instance methods of the class's
-    * non-vendor traits.
+    * non-vendor traits. v4: a trait method's `file` is the manifest key form
+    * (`Rsx_Paths::relative()`), never the absolute path reflection reports. v5 carries
+    * `is_interface`.
     *
     * Bump it, too, when what an existing key HOLDS changes: the cache is keyed on the source
     * file's content, never on this extractor, so an entry written by an older extractor is
     * restored for an unchanged file until the version moves.
     */
-    public const REFLECTION_CACHE_VERSION = 3;
+    public const REFLECTION_CACHE_VERSION = 5;
 
     public const REFLECTION_CACHED_KEYS = [
         'abstract',
@@ -59,6 +61,7 @@ class Manifest_Scanner
         'implements',
         'traits',
         'is_trait',
+        'is_interface',
     ];
 
     // Static properties are defined on Manifest class and accessed via Manifest::$property
@@ -539,6 +542,9 @@ class Manifest_Scanner
      * no index records. Arguments are compared exactly as PHP reports them, so a positional
      * and a named spelling of the same value (`'g'` / `group: 'g'`) count as different.
      *
+     * It is also the first evaluation of every attribute's arguments, so an argument that
+     * cannot be evaluated is refused here, naming the attribute, the declaration and the file.
+     *
      * @throws \RuntimeException naming the attribute, the declaration and the file
      */
     public static function _refuse_repeated_attributes(\ReflectionClass $reflection, string $file_path): void
@@ -570,7 +576,27 @@ class Manifest_Scanner
             $seen = [];
             foreach ($target->getAttributes() as $attribute) {
                 $name = substr(strrchr($attribute->getName(), '\\'), 1) ?: $attribute->getName();
-                $arguments = $attribute->getArguments();
+
+                // The first place a scanned attribute's arguments are evaluated. One that
+                // cannot be (an undefined constant, a class that does not load) throws an
+                // Error naming only this file; the build failure names the source instead.
+                try {
+                    $arguments = $attribute->getArguments();
+                } catch (\Error $e) {
+                    $where = $file_path . ($line !== null ? ":{$line}" : '');
+
+                    throw new \RuntimeException(
+                        "Fatal: an argument of #[{$name}] on {$what} cannot be evaluated.\n\n"
+                        . "  File: {$where}\n"
+                        . "  Error: {$e->getMessage()}\n\n"
+                        . "An attribute argument is evaluated while the manifest is built, before every\n"
+                        . "class can load. Write it as a literal value, never a class constant or a\n"
+                        . "constant that is not defined.",
+                        0,
+                        $e
+                    );
+                }
+
                 $key = $name . "\0" . serialize($arguments);
 
                 if (isset($seen[$key])) {
@@ -597,6 +623,26 @@ class Manifest_Scanner
     }
 
     /**
+     * The manifest key form of the file a trait method is written in.
+     *
+     * Reflection reports an ABSOLUTE path; the manifest stores every path project-relative
+     * (`vendor/laravel/...`, `app/RSpade/...`, `rsx/...`, `tmp/...`), so the cache files are
+     * the same bytes in every checkout and a consumer resolves the key with
+     * `Rsx_Paths::absolute()`. A trait file that reduces to no key is outside the project,
+     * which the autoloader cannot produce.
+     */
+    private static function __trait_method_file(string|false $method_file, string $class, string $method): string
+    {
+        $key = $method_file === false ? '' : Rsx_Paths::relative($method_file);
+
+        if ($key === '' || str_starts_with($key, '/')) {
+            shouldnt_happen("Trait method {$class}::{$method}() is declared in a file outside the project: " . var_export($method_file, true));
+        }
+
+        return $key;
+    }
+
+    /**
     * Extract public static methods and their attributes using PHP reflection
     * Note: This is called in Phase 4 after all PHP files have been loaded
     */
@@ -609,6 +655,19 @@ class Manifest_Scanner
             if (trait_exists($full_class_name)) {
                 self::_refuse_repeated_attributes(new \ReflectionClass($full_class_name), $file_path);
             }
+
+            return;
+        }
+
+        // An interface declares no implementation to index: it is recorded so it autoloads,
+        // and a class that implements it lists it under `implements`. Its own declarations
+        // are checked for repeated attributes like a trait's.
+        if (!empty($data['is_interface'])) {
+            if (!interface_exists($full_class_name)) {
+                shouldnt_happen("Interface {$full_class_name} from manifest cannot be loaded. File: {$file_path}");
+            }
+
+            self::_refuse_repeated_attributes(new \ReflectionClass($full_class_name), $file_path);
 
             return;
         }
@@ -695,10 +754,10 @@ class Manifest_Scanner
                 'line' => $method->getStartLine(),
             ];
 
-            // For trait methods, store the file path (only if different from class file)
+            // For trait methods, store the trait's file (only if different from class file)
             // This enables IDE helpers to locate trait methods correctly
             if ($is_from_trait) {
-                $method_data['file'] = $method_file;
+                $method_data['file'] = self::__trait_method_file($method_file, $full_class_name, $method->getName());
             }
 
             // Extract method attributes (using simple names, not FQCNs)
@@ -807,9 +866,9 @@ class Manifest_Scanner
                 'line' => $method->getStartLine(),
             ];
 
-            // For trait methods, store the file path (only if different from class file)
+            // For trait methods, store the trait's file (only if different from class file)
             if ($is_from_trait) {
-                $method_data['file'] = $method_file;
+                $method_data['file'] = self::__trait_method_file($method_file, $full_class_name, $method->getName());
             }
 
             // Extract method attributes (using simple names, not FQCNs)
@@ -1064,9 +1123,9 @@ class Manifest_Scanner
                 continue;
             }
 
-            // A trait's methods are indexed on the classes that use it; reflection returns
-            // before writing `abstract` for one.
-            if (!empty($metadata['is_trait'])) {
+            // A trait's methods are indexed on the classes that use it, and an interface has
+            // none; reflection returns before writing `abstract` for either.
+            if (!empty($metadata['is_trait']) || !empty($metadata['is_interface'])) {
                 continue;
             }
 
@@ -1128,9 +1187,9 @@ class Manifest_Scanner
             if (isset(Manifest::$data['data']['files'][$file]['extension']) &&
             Manifest::$data['data']['files'][$file]['extension'] === 'php' &&
             isset(Manifest::$data['data']['files'][$file]['fqcn'])) {
-                // Separate traits from classes - traits must be loaded first
-                if (isset(Manifest::$data['data']['files'][$file]['is_trait']) &&
-                    Manifest::$data['data']['files'][$file]['is_trait']) {
+                // Separate traits and interfaces from classes - they must be loaded first
+                if (!empty(Manifest::$data['data']['files'][$file]['is_trait']) ||
+                    !empty(Manifest::$data['data']['files'][$file]['is_interface'])) {
                     $trait_files[] = $file;
                 } else {
                     $class_files[] = $file;
@@ -1138,7 +1197,7 @@ class Manifest_Scanner
             }
         }
 
-        // Load traits first (they have no dependencies and are used by classes)
+        // Load traits and interfaces first (classes use and implement them)
         foreach ($trait_files as $file) {
             $fqcn = Manifest::$data['data']['files'][$file]['fqcn'];
             Manifest::_load_class_hierarchy($fqcn, Manifest::$data);

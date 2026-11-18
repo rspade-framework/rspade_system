@@ -547,13 +547,8 @@ class Type_Ref_Registry
             return null;
         }
 
-        try {
-            // Create a reflection to get the table name without instantiating
-            $instance = new $fqcn();
-            return $instance->getTable();
-        } catch (\Throwable $e) {
-            return null;
-        }
+        $instance = new $fqcn();
+        return $instance->getTable();
     }
 
     /**

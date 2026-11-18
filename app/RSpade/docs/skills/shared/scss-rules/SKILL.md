@@ -1,6 +1,6 @@
 ---
 name: scss-rules
-description: "The SCSS rules RSpade enforces - one wrapping class per component file, BEM children prefixed with the exact PascalCase component name (never kebab-case), no <style> tags, rsx/lib non-visual, bundle include order. Use when writing or splitting a stylesheet, a component renders unstyled or an edit changes nothing, or on SCSS-SCOPE-01, SCSS-SID-01, SCSS-ANIM-01 or SCSS-PHANTOM-TOKEN-01."
+description: "The SCSS rules RSpade enforces - one wrapping class per component file, BEM children prefixed with the exact PascalCase component name (never kebab-case), no <style> tags, rsx/lib non-visual, bundle include order. Use when writing or splitting a stylesheet, a component renders unstyled or an edit changes nothing, or on SCSS-SCOPE-01, SCSS-SID-01, SCSS-ANIM-01, SCSS-PHANTOM-TOKEN-01, SCSS-IMPORT-01 or 'contains @import directives, which are not allowed in non-vendor files'."
 ---
 
 # SCSS rules the framework enforces
@@ -90,7 +90,7 @@ Child classes use the **exact PascalCase component name** as prefix:
 element simply renders unstyled with nothing to report it. This is the single most common
 cause of "my component has no styles".
 
-## Three more lint rules
+## More lint rules
 
 - **SCSS-SID-01** - never write a selector against `$sid` / `data-sid`. `$sid` is the
   component's own JS handle, not a styling hook; give the element a BEM class.
@@ -102,6 +102,11 @@ cause of "my component has no styles".
   existed looks right in one theme and silently ignores every other theme and dark mode.
   Any default that is not itself a `var()` read is reported; a chain `var(--x, var(--y))` is
   fine. A missing token is declared in the theme, with its dark value. `vendor/` is skipped.
+- **SCSS-IMPORT-01** (manifest-build FATAL, and the bundle compiler refuses the same file) -
+  no quoted `@import "..."` in an authored `.scss` / `.sass`: a stylesheet reaches a bundle by
+  its include list, so delete the import and include the file. A `vendor/` stylesheet, a
+  commented-out import and a CSS `@import url(https://...)` (mirrored by the compiler) are not
+  refused.
 
 **Granting an exception is `@<RULE-ID>-EXCEPTION` in a comment, and that spelling only** -
 e.g. `// @SCSS-ANIM-01-EXCEPTION the approve-flash is a colour-only pulse, no movement`.

@@ -725,6 +725,10 @@ class Maint_Migrate extends Command
             return 1;
         }
 
+        // Each step boundary is a lock progress signal for the waiters queued behind the run
+        // lock; the migration loop and the rederive drain signal within their steps.
+        RsxLocks::still_working();
+
         // Step 2: Run migrations
         $this->info('');
         $this->info('[2/4] Running migrations...');
@@ -747,6 +751,8 @@ class Maint_Migrate extends Command
 
             return 1;
         }
+
+        RsxLocks::still_working();
 
         // Step 3: Run schema quality check
         $this->info('');
@@ -783,6 +789,8 @@ class Maint_Migrate extends Command
 
         $this->info('[OK] Schema quality check passed.');
 
+        RsxLocks::still_working();
+
         // Step 4: Commit.
         $this->info('');
         $this->info('[4/4] Committing changes...');
@@ -802,7 +810,9 @@ class Maint_Migrate extends Command
             Rsx_Schema::reset();
 
             // Regenerate model constants and docblocks
+            RsxLocks::still_working();
             $this->call('rsx:constants:regenerate');
+            RsxLocks::still_working();
 
             // Recompile bundles now rather than on the next page load: the regeneration
             // above may have rewritten model source files.
@@ -1103,8 +1113,11 @@ class Maint_Migrate extends Command
     protected function drain_rederive_queue(): bool
     {
         try {
+            // Every progress write is also a lock progress signal: the drain can run long on
+            // a large table, under the snapshot run lock.
             Rsx_Rederive::drain(function (string $text): void {
                 $this->write_raw($text);
+                RsxLocks::still_working();
             });
         } catch (\Throwable $e) {
             $this->newLine();
@@ -2199,6 +2212,12 @@ class Maint_Migrate extends Command
         $currentMigration = 1;
 
         foreach ($pending as $file) {
+            // A snapshot-protected run holds SNAPSHOT_RUN_LOCK for the whole migrate; one
+            // progress signal per migration file keeps a waiter queued behind it from being
+            // failed as stalled (rsx:man locks, PROGRESS AND STALLS). A no-op when no cluster
+            // lock is held.
+            RsxLocks::still_working();
+
             $migrationName = $migrator->getMigrationName($file);
 
             $this->info("\n[$currentMigration/$totalMigrations] Running: $migrationName");
@@ -2234,6 +2253,8 @@ class Maint_Migrate extends Command
                 // hook runs when the pass SUCCEEDED, and a non-zero exit has already
                 // thrown.
                 $this->fire_post_normalize_hook();
+
+                RsxLocks::still_working();
             }
 
             $currentMigration++;

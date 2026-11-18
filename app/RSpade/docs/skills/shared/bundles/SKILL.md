@@ -1,6 +1,6 @@
 ---
 name: bundles
-description: "Defining module bundles (Rsx_Bundle_Abstract) - the include list, SCSS order, npm packages, JIT compile, and the public-page rule (a bundle served before sign-in cherry-picks files by name). Use when a component's JS or SCSS never reaches the browser, a page renders unstyled with a clean console, a component vanishes only in a sealed build (the 'keep' list), or on 'Bundle include pattern matches no files'."
+description: "Defining module bundles (Rsx_Bundle_Abstract) - the include list, SCSS order, npm packages, JIT compile, and the public-page rule (a bundle served before sign-in cherry-picks files by name). Use when a component's JS or SCSS never reaches the browser, a page renders unstyled with a clean console, a component vanishes only in a sealed build (the 'keep' list), or on 'Bundle include pattern matches no files' or BUNDLE-CDN-01."
 ---
 
 # Bundle System
@@ -181,7 +181,7 @@ class Bootstrap_Icons_Bundle extends Rsx_Asset_Bundle_Abstract
 }
 ```
 
-**Every mode mirrors it.** The asset is downloaded into `rsx/resource/.cdn-cache/` (git-tracked - commit what a compile adds) on first compile and the tag points at `/_vendor/<md5(url)>_<name>.<ext>` - a development box exactly like a sealed build, so a `cdn_asset` contributes nothing to the CSP policy anywhere. A declared `integrity` hash is verified at download and a mismatch fails the compile; an unreachable URL fails it too. In a prod mode only the build may download (a miss on a sealed web request throws naming `rsx:build --force`); a development miss is a 404 naming `rsx:cdn_externals:refresh`.
+**Every URL is `https://`** - an `http://`, protocol-relative or schemeless `url`, or an entry with no `url`, fails the manifest build (`BUNDLE-CDN-01`): the bytes are committed and served as first-party code. **Every mode mirrors it.** The asset is downloaded into `rsx/resource/.cdn-cache/` (git-tracked - commit what a compile adds) on first compile and the tag points at `/_vendor/<md5(url)>_<name>.<ext>` - a development box exactly like a sealed build, so a `cdn_asset` contributes nothing to the CSP policy anywhere. A declared `integrity` hash is verified at download and a mismatch fails the compile; an unreachable URL fails it too. In a prod mode only the build may download (a miss on a sealed web request throws naming `rsx:build --force`); a development miss is a 404 naming `rsx:cdn_externals:refresh`.
 
 The same localization applies to compiled CSS: a `@import url(https://fonts.googleapis.com/...)` in application SCSS, and the `@font-face` woff2 files the downloaded stylesheet names, are all mirrored and rewritten to `/_vendor/`. A webfont CDN therefore needs nothing whitelisted.
 

@@ -6,6 +6,15 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.243] - 2026-11-18
+
+### Added
+- **`@Replaceable` is highlighted and explained.** The JavaScript opt-out from
+  JS-PARENT-CHAIN-01 - an override of a method marked `@Replaceable` owes no `super` call -
+  is coloured like the other framework decorators and has its own hover.
+- **Every attribute and decorator hover shows a short example** of the declaration as it is
+  written in source, as a highlighted PHP or JavaScript block.
+
 ## [0.1.242] - 2026-11-12
 
 ### Added

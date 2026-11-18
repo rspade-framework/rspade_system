@@ -655,9 +655,17 @@ UPLOAD METHODS
         );
 
     create_from_url($url, array $params): static
-        Download a URL and ingest it.
-            $params: site_id (required), plus optional filename, timeout
-                     (default 30s), fileable_*.
+        Download a URL and ingest it, through Rsx_Url_Fetch (rsx:man
+        url_fetch): http/https only, every redirect hop's destination
+        checked, loopback / private / link-local / reserved addresses
+        refused, the body streamed under a byte cap. Safe for a URL a user
+        supplied; failures throw Rsx_Url_Fetch_Exception.
+            $params: site_id (required), plus optional filename (default:
+                     the server's Content-Disposition name, else the last
+                     segment of the final URL's path), max_bytes (default
+                     1 GB, deliberately liberal - pass what the feature
+                     needs), allow_private (true skips the destination check;
+                     only for a URL built in code, never a user's), fileable_*.
 
     create_external($handler_class, array $handler_ref, array $attributes)
         Register an externally-sourced attachment (no upload, no local blob
@@ -1464,6 +1472,8 @@ MULTI-FILE ZIP DOWNLOAD
     in 512KB, its CRC-32 accumulated and its bytes deflated incrementally). The
     writer is a hand-rolled streaming container (App\RSpade\Core\Files\
     Zip_Stream) - pure PHP zlib + crc32b, no composer or apt dependency.
+    Every archive is ZIP64, whatever its size, so there is no limit on the
+    archive size, a member's size or the number of members (see Limits).
 
     Two-step flow (a database-backed request, then a plain GET):
 
@@ -1512,8 +1522,10 @@ MULTI-FILE ZIP DOWNLOAD
         file.thumbnail.authorize AND file.download.authorize gates - the exact
         cascade GET /_download/:key uses - against the DOWNLOADING session. If
         ANY key is unknown or ANY gate denies, the whole request fails with one
-        opaque message and NO archive bytes are emitted (the message never says
-        which file failed or whether it exists).
+        opaque user-facing sentence (Rsx_User_Facing_Exception, rsx:man
+        error_handling) and NO archive bytes are emitted:
+            Access to one or more of the requested files was denied. Please log in.
+        The sentence never says which file failed or whether it exists.
 
     Per-file bytes ALWAYS materialize through resolve_storage(), so external
     residency works. Handler serve-takeover (a 302 or proxied response) is
@@ -1539,12 +1551,24 @@ MULTI-FILE ZIP DOWNLOAD
     config('rsx.attachments.zip_request_retention_hours') (default 24); it is
     NOT consumed on use (a browser may retry) and dies only by expiry, enforced
     at serve time (Zip_Download_Request_Model::is_expired()) and by the
-    Zip_Download_Cleanup_Service task (every 6 hours). An unknown/expired key
-    throws one opaque message before any bytes stream.
+    Zip_Download_Cleanup_Service task (every 6 hours). An unknown or expired key
+    is refused before any bytes stream with one user-facing sentence that does
+    not say which of the two it was:
+        This download link is invalid or has expired.
 
-    Limits (NO ZIP64 in v1 - rejected up front): total <= 4,000,000,000 bytes;
-    no single file at/above 0xFFFFFFFF bytes; at most 65,000 entries. Exceeding
-    any of these throws before streaming. (ZIP64 is backlogged.)
+    Limits: none on size or count. Every archive is ZIP64-framed (version 4.5,
+    ZIP64 extra fields on every local and central header, 64-bit sizes in the
+    data descriptors, the ZIP64 end-of-central-directory record and locator),
+    so archives past 4GB, members past 4GB and sets past 65,535 members stream
+    like any other. The central directory is held as one small record per
+    member until the archive ends; every member's bytes stream in constant
+    memory.
+
+    Extractor compatibility: Windows 11 File Explorer, macOS (Archive Utility,
+    ditto), 7-Zip, and the Linux tools (Info-ZIP unzip, bsdtar / libarchive,
+    Python zipfile, file managers built on them) all read these archives. The
+    Windows 10 built-in Explorer extractor does not read ZIP64 and is not
+    supported; a Windows 10 user opens the archive with 7-Zip.
 
     Restartable, not resumable
         The response is streamed with no Content-Length (the archive is

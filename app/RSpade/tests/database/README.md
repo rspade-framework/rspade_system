@@ -23,11 +23,15 @@ Nothing in this concern is application-facing except through the model surface.
   - a compiled bundle's field-length script: the column lengths of the models the bundle
   carries, each the model's own `field_length()` answer, served per bundle and read by the one
   `Rsx_Js_Model.field_length()` (a model stub carries no lengths)
+- `system/app/RSpade/Commands/Database/Index_Advisor.php` - the rules `rsx:db:check_indexes`
+  applies (which sources count, what a query chain requires, whether an index serves it, what
+  to recommend), as pure functions over a context the command gathers
 
 ## Behavior defined by
 
 - `php artisan rsx:man model` (RESULT SETS, `$unbounded`, the automatic casts)
 - `php artisan rsx:man enums` (the BEM magic properties and the static lookups)
+- `php artisan rsx:man model_indexes` (the index advisor)
 - The "Do The Whole Job - Bounded Result Sets" section of `CLAUDE.md`
 - `docs.dev/audits/framework_internal_audit_checklist.md` (the recurring audit)
 
@@ -50,6 +54,8 @@ Nothing in this concern is application-facing except through the model surface.
 | A `_`-prefixed system column reads back through the slow path and stays out of `toArray()` | php | implemented (`Model_Attribute_Read_Test`, own fixture table) |
 | The `$columns` declaration: base-first overlay, a child entry replacing the parent's wholesale, each kind view, `enum_values()` refusing a non-enum column, the audit type refs on every model, the per-class memo | php | implemented (`Model_Columns_Test`) |
 | `refresh()` re-reads a row in place and drops the relations it had read; an empty relation list is not a load, a named relation is still refused | php | implemented (`Model_Refresh_Test`) |
+| Mass assignment refused at every door (fill, forceFill, the constructor, static and builder create, firstOrCreate / firstOrNew / updateOrCreate, instance update); explicit assignment writes | php | implemented (`Model_Mass_Assignment_Test`) |
+| Eager loading refused at the static and builder doors (with, withCount and every with*() aggregate) and on a result collection; an empty builder list is not a load | php | implemented (`Model_Static_Eager_Load_Test`) |
 
 ## Fixture models
 

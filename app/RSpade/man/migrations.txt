@@ -1025,8 +1025,10 @@ POST-MIGRATE STEPS
           one dot per batch; silent when nothing is queued. While a pass changes any
           record every queued table gets another pass, up to N + 2 for N queued
           tables, then a [WARNING] names the tables still changing and the run
-          continues. A queued table with no model, no derived columns, or a declared
-          column missing from the database leaves the queue silently. A derive
+          continues. A queued table with no model or no derived columns leaves the
+          queue silently; one whose declared table or column is missing from the
+          database leaves it with one "Skipped rederiving cached values for <table>:
+          <error>" line. A derive
           method that throws fails the run - "Rederiving cached values failed: ..."
           - and rolls it back where protection is engaged; unfinished tables stay
           queued. rsx:man derived_columns.

@@ -279,8 +279,8 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
     /** The memory-cap row: OK when applied, WARN with the daemon's words when refused, never FAIL. */
     public static function test_the_memory_cap_row_warns_when_refused()
     {
-        $applied = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', true, '');
-        $refused = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', false, 'cannot enter cgroupv2');
+        $applied = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', memory_cap: true, memory_cap_refusal: '');
+        $refused = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', memory_cap: false, memory_cap_refusal: 'cannot enter cgroupv2');
 
         $row_of = static function (array $rows): array {
             foreach ($rows as $row) {
@@ -346,7 +346,7 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
     // the exit code is what gates a deploy, which is the point of wiring this to rsx:health.
     public static function test_the_docker_rows_are_ok_only_when_the_whole_chain_is_proved()
     {
-        $ok = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', true);
+        $ok = Document_Sandbox::_docker_rows('example/image:tag', true, true, true, true, '', memory_cap: true);
         static::__assert_count(5, $ok, 'client, daemon, image, run, memory cap');
         foreach ($ok as $row) {
             static::__assert_equals('OK', $row['status'], $row['label'] . ' is OK when its probe succeeded');

@@ -73,11 +73,10 @@ class Api_Key_Temp_Command extends Command
             $user->id,
             static::KEY_NAME,
             $environment,
-            null,
             $expires_at,
             $scopes,
             (bool) $this->option('read-only'),
-            true
+            is_temporary: true
         );
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 

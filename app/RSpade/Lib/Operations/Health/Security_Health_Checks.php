@@ -119,7 +119,12 @@ class Security_Health_Checks
                     ->timeout(self::PROBE_TIMEOUT)
                     ->get($url);
             } catch (\Throwable $e) {
-                continue;
+                return [
+                    'label' => 'php-fpm status exposure',
+                    'status' => 'WARN',
+                    'detail' => "probe of {$url} failed: " . $e->getMessage(),
+                    'remediation' => 'retry; if it persists, verify manually that the path is not served',
+                ];
             }
             if ($response->status() === 200 && str_contains($response->body(), 'accepted conn')) {
                 return [
@@ -409,7 +414,12 @@ class Security_Health_Checks
                         ->timeout(self::PROBE_TIMEOUT)
                         ->get($url);
                 } catch (\Throwable $e) {
-                    continue;
+                    return [
+                        'label' => 'IDE bridge dir exposure',
+                        'status' => 'WARN',
+                        'detail' => "probe of {$url} failed: " . $e->getMessage(),
+                        'remediation' => 'retry; if it persists, verify manually that the path is not served',
+                    ];
                 }
                 if ($response->status() === 200 && str_contains($response->body(), $marker_body)) {
                     return [

@@ -1952,6 +1952,39 @@ return [
         'warn_write_hold_seconds' => 2,
         // A read lock held by one request or one Site_Lock::read() section.
         'warn_read_hold_seconds' => 2,
+
+        // THE PROGRESS WATCHDOG (owner-requested, 2026-11-18). A process waiting for a
+        // cluster lock or semaphore slot fails with Lock_Stalled_Exception once the
+        // holder ahead of it has shown NO PROGRESS for this many seconds - progress
+        // being the grant itself or RsxLocks::still_working(), which every task report
+        // calls. A holder that keeps signalling keeps its waiters waiting indefinitely.
+        //
+        // This bounds a wait on ANOTHER PARTY'S PROGRESS - the one shape of deadline
+        // the no-timeout mandate sanctions - and never the holder's own work: no hold
+        // is ever shortened, taken away or signalled by it. Expiry is a loud error
+        // naming the lock, the holder's host:pid, how long it has held and when it
+        // last showed progress; never a silent fallback. A caller's own shorter
+        // $timeout keeps its own semantics.
+        //
+        // Why 600: a working holder reports far more often than once in ten minutes
+        // (a task worker that reports nothing for rsx.tasks.silent_timeout is killed),
+        // so a silent ten minutes is a hung or forgotten holder, not a slow one - and a
+        // wait on one would otherwise last for as long as that process lives. Ten
+        // minutes is also long enough that no ordinary request or per-item write
+        // section comes near it. 0 turns the watchdog off.
+        'stall_seconds' => 600,
+
+        // WAIT ATTRIBUTION. A WEB REQUEST that has waited this many seconds for a
+        // cluster lock or semaphore logs ONE warning (Laravel log) naming the lock,
+        // the holder's host:pid and how long it has held - and keeps waiting. It
+        // fails nothing: it exists so a request held up behind a lock is named while
+        // it is still waiting instead of presenting as "the site is slow".
+        //
+        // Why 30: no healthy page waits anywhere near half a minute for a lock (site
+        // lock holds are warned about at warn_*_hold_seconds above), so a 30-second
+        // wait is always worth a line, and a shorter one would log ordinary queueing
+        // behind a slow writer. CLI and task waits never log it. 0 turns it off.
+        'wait_notice_seconds' => 30,
     ],
 
     /*
@@ -2090,6 +2123,34 @@ return [
         // .env. nginx applies the same rule, so its log and REMOTE_ADDR name the same client
         // (rsx:man config_rsx). Read when the configuration is, like every env() here.
         'trusted_proxies' => rsx_trusted_proxy_list(env('TRUSTED_PROXIES'), env('RSPADE_TRUSTED_PROXIES')),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Outbound URL Fetch
+    |--------------------------------------------------------------------------
+    |
+    | Rsx_Url_Fetch::to_temp_file() - the destination-checked download for a URL
+    | a user can supply (File_Attachment_Model::create_from_url() included).
+    | See: php artisan rsx:man url_fetch
+    |
+    */
+    'url_fetch' => [
+        // How long the remote server has to ACCEPT A CONNECTION, in seconds.
+        //
+        // This bounds a wait on an EXTERNAL party - a host that may never answer (a
+        // dropped SYN, a firewall that discards rather than refuses) - and expiry is a
+        // loud error naming the URL, the shape of deadline the no-timeout mandate
+        // sanctions. It is NOT a cap on the download: once connected, the transfer runs
+        // as long as the data takes, with no total or read deadline, and the caller's
+        // max_bytes cap is what bounds a hostile server.
+        //
+        // 30 s is the owner-approved figure: a reachable host on any working network
+        // completes a TCP and TLS handshake in well under a second, so a host silent for
+        // 30 s is not going to answer, while a slow, distant or overloaded one still
+        // connects. Raise it for a box on a degraded link; never lower it to hurry a
+        // request along.
+        'connect_timeout_seconds' => 30,
     ],
 
     /*

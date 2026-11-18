@@ -34,12 +34,21 @@ SYNOPSIS
     $state = RsxLocks::set_lock_logging(true);     // daemon event log, live
     $state = RsxLocks::lock_logging_status();
 
+    // A long holder's keep-alive for the stall watchdog (every task report calls it)
+    RsxLocks::still_working();
+
+    // Operators
+    php artisan rsx:locks:status [--json]          // holders, waiters, pools
+    php artisan rsx:locks:status --kill-holder=<lock>
+
 DESCRIPTION
     A lock is held from the moment it is granted until it is released or until
-    the holder dies. There is NO lease, NO TTL, NO renewal and NO heartbeat
-    anywhere in this system. A critical section may run for a second or for a
-    day and it keeps its lock throughout; a holder that is SIGKILLed releases
-    instantly.
+    the holder dies. There is NO lease, NO TTL and NO renewal anywhere in this
+    system: nothing ever takes a lock away from a live holder. A critical
+    section may run for a second or for a day and it keeps its lock throughout;
+    a holder that is SIGKILLed releases instantly. (The progress watchdog below
+    fails a WAITER behind a holder that has gone silent; it never touches the
+    holder.)
 
     That is the whole design. Every clock-based lock (a Redis key with an
     expiry, an advisory row with a TTL) has the same defect: pick a duration and
@@ -66,6 +75,42 @@ SITE LOCKS
     process, never inside a foreign transaction). The whole contract - modes,
     defaults, the request boundary, enforcement windows, exemptions - is
     rsx:man site_locks.
+
+THE NAMED-LOCK MANDATE
+    Application code - and any LLM writing it - ALWAYS uses the existing
+    facilities and NEVER acquires a named lock or semaphore of its own:
+
+        site data                 #[Reader] / #[Writer] on the endpoint, or
+                                  Site_Lock::write() / read() sections
+                                  (rsx:man site_locks)
+        "one at a time" work      #[Exclusive] on the task
+        several tasks, one lane   #[Exclusive('group')]
+        "not again so soon"       #[Debounce(seconds)]
+
+    The ONE exception is a specific reason those facilities cannot work - and
+    then only after the reason is explained and justified to the human
+    operator and the operator approves it. named_write_lock(), named_read_lock()
+    and acquire_semaphore() exist for that approved case and for the framework.
+
+    WHY. A process holds ONE site lock at a time (rsx:man site_locks, the
+    one-site rule), and there is no ordering between site locks to get wrong,
+    so the site locks cannot deadlock. A deadlock needs several INDEPENDENT
+    named locks taken in DIFFERENT ORDERS by different code paths - exactly
+    what an application acquiring its own named locks produces. The daemon
+    refuses such a cycle when it would form (FIFO AND DEADLOCK REFUSAL), but
+    the refusal is an error in production, and the code that took the locks in
+    the wrong order is the defect.
+
+    Two rules travel with it:
+
+      - A site WRITE lock is NEVER held for long-running work. Split it per
+        item and release between items (rsx:man site_locks, HOLDING A LOCK
+        WELL).
+      - A process that legitimately holds a lock for a long time - an approved
+        named lock or semaphore around a daily multi-hour export, say - calls
+        RsxLocks::still_working() periodically while it works (a task does it
+        on every report, heartbeat() included). Otherwise every waiter behind it
+        fails once the stall window passes (PROGRESS AND STALLS).
 
 TWO KINDS OF LOCK
     The choice between them is not a tuning knob. They are different things.
@@ -148,7 +193,91 @@ WAITING AND TIMEOUTS
     that type - never a message - and treats it as "held elsewhere". An
     unreachable lock daemon is never contention: it is an outage (THE RSX
     LOCKD DAEMON, below), which is not a RuntimeException at all, so a catch
-    written for a timeout never receives it.
+    written for a timeout never receives it. A wait ended by the progress
+    watchdog is a third answer, Lock_Stalled_Exception (PROGRESS AND STALLS).
+
+PROGRESS AND STALLS
+    "Wait forever" means wait for as long as the holder is WORKING. A cluster
+    lock or semaphore waiter whose holder has shown NO PROGRESS for
+    rsx.locks.stall_seconds (600 by default) fails:
+
+        Lock_Stalled_Exception: Lock stalled: this process waited 600.0s for
+        WRITE lock cluster:nightly_export, and its holder showed no progress
+        for 600s (rsx.locks.stall_seconds) - held by web-1:29063 (connection
+        c8) WRITE for 4211.6s, last progress 600.0s ago. A holder that is still
+        working calls RsxLocks::still_working() at least once per window (a
+        task does it on every report, heartbeat() included); a hung holder is
+        ended with php artisan rsx:locks:status --kill-holder=cluster:nightly_export
+
+    PROGRESS is either of:
+
+        - the grant itself: a fresh holder is progressing, so a queue that keeps
+          moving never stalls the waiter at its back, however long it waits;
+        - RsxLocks::still_working(): a keep-alive covering every cluster lock
+          and semaphore slot the calling process holds. Every Task_Instance
+          report calls it (heartbeat(), status(), progress(), a log line), so a
+          task that reports needs nothing. The framework's own long holders
+          signal at their loop points: a snapshot-protected migrate (per
+          migration file, per step, through the rederive drain) and
+          rsx:storage:cleanup under FILE_WRITE (per item swept).
+
+    The window restarts from the latest progress: a holder that signals once
+    per window keeps its waiters waiting indefinitely. The HOLDER is never
+    touched - the watchdog fails the waiter that would otherwise wait on a
+    silent holder for as long as that process lives, by name, and the holder
+    keeps its lock.
+
+    The rule, precisely:
+
+        lock       the waiter needs every conflicting holder gone, so the
+                   LEAST-recently progressing holder decides: one silent reader
+                   stalls a writer however busy the other readers are
+        semaphore  any freed slot will do, so the MOST-recently progressing slot
+                   holder decides: a pool of working holders keeps the queue
+                   waiting
+        chain      a holder that is itself parked waiting cannot signal; it
+                   counts as progressing while what IT waits on is
+
+    Scope:
+
+        - Every cluster lock and semaphore wait, site locks included.
+        - A caller's own $timeout keeps its own semantics: a wait whose $timeout
+          ends first is a Lock_Timeout_Exception (or null for a semaphore), as
+          ever; a probe ($timeout = 0) never parks.
+        - NOT system (flock) locks: their wait is a kernel flock() the daemon
+          never sees.
+        - NOT the task worker pools' pool lock: its holder only reads and writes
+          the task tables (rsx:man tasks), never long work, and it holds it on a
+          separate connection still_working() does not cover.
+        - Not a Lock_Timeout_Exception (whose message is load-bearing) and not
+          an outage: the daemon is answering. Nothing catches it to carry on.
+
+    still_working() opens no connection (a process holding no cluster lock or
+    slot sends nothing), sends at most one frame per second however often it
+    is called, and does nothing under maintenance mode. A daemon older than its
+    client (protocol 1 - an image not yet rebuilt, a daemon not yet restarted)
+    has no watchdog; still_working() sends it nothing and rsx:health's "Lock
+    Server" row warns until it is replaced.
+
+    rsx.locks.stall_seconds = 0 turns the watchdog off. The number is an owner-
+    sanctioned bound on a wait on ANOTHER PARTY'S progress, never on anybody's
+    work; its reasoning is written beside it in system/config/rsx.php.
+
+WAIT ATTRIBUTION (THE 30-SECOND NOTICE)
+    A WEB REQUEST that has waited rsx.locks.wait_notice_seconds (30) for a
+    cluster lock or semaphore logs ONE warning to the Laravel log and keeps
+    waiting:
+
+        RsxLocks: this web request has waited 30.0s for WRITE lock
+        cluster:SITE_1 and is still waiting - held by web-1:3140 (connection
+        c7) WRITE for 45.2s, last progress 45.2s ago
+
+    It fails nothing. It exists so a request held up behind a lock is named
+    while it is still waiting, instead of presenting as "the site is slow".
+    CLI and task waits never log it; a wait whose own $timeout is shorter never
+    reaches it. The daemon sends the waiter one `waiting` notice frame at that
+    moment - a blocking read cannot time itself, and the client arms no timer.
+    0 turns it off.
 
 FIFO AND DEADLOCK REFUSAL
     One ordered queue per lock name; grants come off the head only.
@@ -495,7 +624,9 @@ THE RSX LOCKD DAEMON
     exception is maintenance mode, above. rsx:health reports it as
     "Lock Server" - OK when listening, FAIL when not (with the supervisor
     program named in the remediation), INFO while the maintenance flag is up
-    because it is stopped on purpose then.
+    because it is stopped on purpose then, and WARN when the daemon answering
+    speaks a protocol older than the framework's (the progress watchdog is
+    inactive until it is restarted from the current image or checkout).
 
     "supervisorctl status" is NOT evidence that it serves: supervisor's process
     is the retry runner, which shows RUNNING while lockd exits on every attempt.
@@ -658,6 +789,44 @@ RSX VS LARAVEL
     RSpade uses it, and a critical section guarded by both is guarded by
     neither.
 
+STATUS AND CLEARING
+    What the daemon holds right now, named the way the application names it:
+
+        php artisan rsx:locks:status
+
+        LOCKS
+          cluster:SITE_1
+            HELD     WRITE   by c7 web-1:3140   for 912.3s   last progress 611.0s ago
+            WAITING  WRITE   by c9 web-1:3150   for 45.0s   (no timeout, stall watch 600s)
+
+    Every held lock and semaphore with each holder (connection, host:pid), how
+    long it has held and when it last showed progress; every waiter with how
+    long it has waited and the bounds it waits under; the worker pools. A lock
+    of another environment sharing the daemon (a test database) keeps its wire
+    name and is marked. --json prints the snapshot (Lock_Status::snapshot()).
+    The /_sys panel's Locks screen shows the same, refreshed on demand.
+
+    ENDING A HUNG HOLDER
+
+        php artisan rsx:locks:status --kill-holder=cluster:SITE_1
+
+    sends SIGTERM to the process holding that lock; the lock is freed when it
+    exits and its connection closes. A pid is never proof on its own, so it is
+    REFUSED - nothing signalled - unless EVERY holder of the lock:
+
+        - is on THIS host (a pid names a process only on its own host; run the
+          command there),
+        - is not the process asking,
+        - reported its process start time at hello (every current client does),
+        - and still IS that process: its pid's start time matches
+          (Process_Identity).
+
+    The Locks screen's "End holder" button is the same call
+    (Lock_Status::kill_holder()), behind a confirm. Each signal is logged as a
+    warning. force_clear_lock() is the other tool: it drops the holder from the
+    daemon WITHOUT ending the process, which then runs on believing it holds
+    the lock - prefer ending the process.
+
 EVENT LOGGING
     The daemon can record what happens to locks, and the switch is LIVE: it is
     turned on and off in the running daemon. Restarting rsx-lockd to change its
@@ -669,7 +838,7 @@ EVENT LOGGING
         use App\RSpade\Core\Locks\RsxLocks;
 
         RsxLocks::set_lock_logging(true);               // contention only
-        RsxLocks::set_lock_logging(true, null, true);   // + every acquire
+        RsxLocks::set_lock_logging(true, verbose: true);   // + every acquire
         RsxLocks::set_lock_logging(false);
         RsxLocks::lock_logging_status();                // pure query
 
@@ -700,6 +869,7 @@ EVENT LOGGING
         WAIT         a request parked behind a holder (who, how long held)
         GRANT        a parked request was granted, with how long it waited
         TIMEOUT      a wait gave up, naming who still held the lock
+        STALLED      a wait failed by the progress watchdog, naming the holder
         DEADLOCK     a request refused because it would close a cycle
         DROP         a connection died or closed while holding or waiting
         FORCE_CLEAR  a lock was broken by somebody other than its holder
@@ -779,6 +949,17 @@ TROUBLESHOOTING
         the holder with its host and pid, or says "still held by nobody". No
         WAIT line at all means the lock was never contended.
 
+    "Lock stalled: this process waited ..."
+        The progress watchdog: the holder named in the message showed no
+        progress for rsx.locks.stall_seconds. If it is legitimately working, it
+        must call RsxLocks::still_working() at least once per window (a task:
+        any report). If it is hung, end it: rsx:locks:status --kill-holder=<lock>.
+        Retrying the waiter changes nothing while the holder is silent.
+
+    A web request was slow and the log says "has waited ... for ... lock"
+        The wait attribution warning (WAIT ATTRIBUTION) names the lock and its
+        holder; rsx:locks:status shows what that holder is doing now.
+
     "System locks are exclusive only"
         Something asked for RsxLocks::READ_LOCK on the SYSTEM domain. Readers-
         writer semantics are a cluster-lock feature; use named_read_lock().
@@ -796,14 +977,16 @@ NOTES
       application locks with something that identifies them.
     - Do not build a "renew" or "extend" helper on top of this API. There is
       nothing to renew, and adding one would reintroduce the exact defect the
-      design removes.
+      design removes. still_working() is not one: it renews no hold (none
+      expires) - it tells the WAITERS the holder is alive and working.
 
 SEE ALSO
     rsx:man site_locks        The per-site reader/writer locks every request takes
     rsx:man error_handling    How an infrastructure outage is answered per channel
     rsx:man maintenance_mode  The no-op grant and why the daemon stops
-    rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock)
-                              and the worker pools the daemon accounts
+    rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock),
+                              the worker pools the daemon accounts, and reports
+                              (each one renews held locks' progress)
     rsx:man libreoffice       Document rendering (one #[Exclusive] worker)
     rsx:man health            The Lock Server and Task Worker Pools checks
     rsx:man config_rsx        The rsx.locks config block

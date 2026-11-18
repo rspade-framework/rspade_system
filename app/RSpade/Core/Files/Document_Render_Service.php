@@ -934,7 +934,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 // first - that is the row rsx:search:reindex --failed and the audit read - then
                 // throw so the render state settles FAILED too.
                 if ($needs_extract) {
-                    Search_Index_Service::extract_storage($storage, null);
+                    Search_Index_Service::extract_storage($storage, rendition_path: null);
                 }
 
                 throw new Exception('source blob missing on disk: ' . $source_path);
@@ -988,7 +988,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
             // that can be read - or fails extraction too, and that failure is then RECORDED
             // where reindex --failed can see it.
             if ((int) $storage->is_indexed === 0) {
-                Search_Index_Service::extract_storage($storage, null);
+                Search_Index_Service::extract_storage($storage, rendition_path: null);
             }
 
             static::notify_attachments($storage);

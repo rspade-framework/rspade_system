@@ -43,7 +43,10 @@ DATABASE AND MODELS
                         makes every write auditable by reading the method.
         Implementation  Rsx_Model_Abstract overrides each method (FATAL). The
                         guard fires only when an attributes array is actually
-                        passed, so a no-argument call is not an error.
+                        passed, so a no-argument call is not an error. The one
+                        array accepted is forceFill() of the timestamp columns
+                        alone, which Eloquent's query-builder update() uses to
+                        cast updated_at; fill() refuses even that.
         Correct form
                             $user = new User_Model();
                             $user->name  = $params['name'];
@@ -77,6 +80,31 @@ DATABASE AND MODELS
                         creates, the sanctioned bulk loader is
                         Model::preload_details($collection) - see
                         rsx:man detail_tables.
+
+    Reading a Missing Model Property Throws
+        Change          Reading a property an RSpade model does not have throws
+                        LogicException instead of returning null.
+        Affected        $record->key and getAttribute('key') on every model
+                        extending Rsx_Model_Abstract, when no column, cast,
+                        accessor, relationship, enum property or detail
+                        accessor answers the key. A record loaded from the
+                        database also throws for a column its query did not
+                        select. A record NOT loaded (new, or created by this
+                        process) reads an unassigned column of its table as
+                        null and throws for any other key. Presence tests -
+                        isset(), ??, isset($record['key']), data_get() - never
+                        throw. Writes are unaffected.
+        Reason          A misspelled property (role_id_can_admin_roles for the
+                        enum property role_id__can_admin_roles) read as null
+                        and flowed silently into an authorization guard. Fail
+                        loud: the typo surfaces the first time the line runs.
+        Implementation  Rsx_Model_Abstract overrides
+                        throwMissingAttributeExceptionIfApplicable() (FATAL; the
+                        message names the model, the key and the closest real
+                        name) and offsetExists() (presence tests). Laravel's
+                        global Model::preventAccessingMissingAttributes() switch
+                        is NOT used: it would reach non-RSpade models and exempts
+                        new records entirely.
 
     Restricted Database Commands
         Change          Destructive schema commands are overridden.

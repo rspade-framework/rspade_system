@@ -31,6 +31,6 @@ return new class extends Migration
      */
     public function up()
     {
-        File_Mime_Repair::run(false);
+        File_Mime_Repair::run(dry_run: false);
     }
 };

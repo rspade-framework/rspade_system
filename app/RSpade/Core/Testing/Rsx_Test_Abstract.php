@@ -883,7 +883,7 @@ abstract class Rsx_Test_Abstract
         $context = Session::_snapshot_context();
 
         try {
-            $outcome = \App\RSpade\Core\Task\Task_Runner::execute($instance, false, true);
+            $outcome = \App\RSpade\Core\Task\Task_Runner::execute($instance, false, own_context: true);
         } finally {
             Session::_restore_context($context);
         }

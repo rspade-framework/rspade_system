@@ -477,6 +477,22 @@ check('vocabulary: markdown names the attribute and its docs',
 check('vocabulary: markdown for a decorator',
     (vocabulary_markdown('js_decorator', 'route') || '').split('\n\n')[0],
     '**@route** - RSpade decorator');
+check('js dec: Replaceable on a method', js('class A {\n    @Replaceable\n    _config() { return {}; }\n}'), ['Replaceable']);
+check('js dec: Replaceable in a docblock is a comment', js('/**\n * @Replaceable\n */\n_config() {}'), []);
+check('vocabulary: Replaceable hover names the JS opt-out',
+    (vocabulary_markdown('js_decorator', 'Replaceable') || '').split('\n\n').slice(0, 2).join(' | ').includes('JS-PARENT-CHAIN-01'),
+    true);
+check('vocabulary: PHP hover shows its example as a php block',
+    (vocabulary_markdown('php_attribute', 'Writer') || '').includes("```php\n#[Ajax_Endpoint]\n#[Writer]\n"),
+    true);
+check('vocabulary: JS hover shows its example as a javascript block',
+    (vocabulary_markdown('js_decorator', 'spinner_until_ready') || '').includes("```javascript\n@spinner_until_ready('always')\n"),
+    true);
+for (const name of ['Task', 'Schedule', 'Site_Lock_Exempt', 'Health_Heal', 'Monoprogenic']) {
+    check(`vocabulary: ${name} hover has summary, applies, arguments, example and docs`,
+        (vocabulary_markdown('php_attribute', name) || '').split('\n\n').length,
+        6);
+}
 check('vocabulary: unknown name has no markdown', vocabulary_markdown('php_attribute', 'Task_Attribute'), undefined);
 check('vocabulary: object prototype names are not vocabulary', vocabulary_markdown('js_decorator', 'constructor'), undefined);
 
@@ -489,6 +505,10 @@ for (const [kind, table] of [['php_attribute', PHP_ATTRIBUTES], ['js_decorator',
     for (const [name, entry] of Object.entries(table)) {
         if (entry.docs.length === 0) {
             doc_failures.push(`${kind} ${name}: no docs`);
+        }
+        const written = kind === 'php_attribute' ? `#[${name}` : `@${name}`;
+        if (!entry.example.includes(written)) {
+            doc_failures.push(`${kind} ${name}: the example does not show ${written}`);
         }
         for (const reference of entry.docs) {
             const man = /^rsx:man ([a-z][a-z0-9_]*)$/.exec(reference);
@@ -509,7 +529,7 @@ for (const [kind, table] of [['php_attribute', PHP_ATTRIBUTES], ['js_decorator',
         }
     }
 }
-check('vocabulary: every docs reference resolves to a shipped man page or skill', doc_failures, []);
+check('vocabulary: every example shows its name and every docs reference resolves to a shipped man page or skill', doc_failures, []);
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures > 0) {

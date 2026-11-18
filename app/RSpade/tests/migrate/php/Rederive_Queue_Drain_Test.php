@@ -26,7 +26,9 @@ use App\RSpade\Tests\Migrate\Php\Hook_Counting_Migrate;
  * Rsx_Rederive::enqueue('<table>') queues a table once; Maint_Migrate::drain_rederive_queue()
  * - the real method, driven through Hook_Counting_Migrate with its output captured verbatim -
  * rederives every record of each queued table and removes the table's row only when the
- * table completes. The drain prints nothing for an empty queue or a table it skips, saves
+ * table completes. The drain prints nothing for an empty queue or a table with no model or
+ * no derived columns, one "Skipped" line for a table whose declared table or column is not
+ * in the database, saves
  * only stale records (derived-only saves, so updated_at holds), sends no realtime frame,
  * walks every site and soft-deleted rows with each record's site declared, and stops after
  * N + 2 passes with a [WARNING] when values never settle. Its position as the last step of
@@ -115,18 +117,32 @@ class Rederive_Queue_Drain_Test extends Rsx_Test_Abstract
         static::__assert_equals('', $output, 'nothing queued, nothing printed');
     }
 
-    // REDERIVE-DRAIN-SKIP: no model, no derived columns, a missing table, a missing column.
-    public static function test_tables_it_cannot_rederive_are_dropped_silently()
+    // REDERIVE-DRAIN-SKIP: no model and no derived columns are dropped silently; a missing
+    // table and a missing column are dropped with one line naming the table and the error.
+    public static function test_tables_it_cannot_rederive_are_dropped()
     {
-        foreach (['no_such_rederive_table', 'derived_category_fixtures', 'derived_missing_fixtures'] as $table) {
+        foreach (['no_such_rederive_table', 'derived_category_fixtures'] as $table) {
             Rsx_Rederive::enqueue($table);
         }
 
         [$ok, $output] = static::__drain();
 
         static::__assert_true($ok);
-        static::__assert_equals('', $output, 'no model, no derived columns and no table are all silent');
+        static::__assert_equals('', $output, 'no model and no derived columns are silent');
         static::__assert_equals([], static::__queued(), 'and each queue row is removed');
+
+        // The model's table is not in the database.
+        Rsx_Rederive::enqueue('derived_missing_fixtures');
+
+        [$ok, $output] = static::__drain();
+
+        static::__assert_true($ok, 'a missing table is not fatal');
+        static::__assert_equals(
+            "Skipped rederiving cached values for derived_missing_fixtures: Derived_Missing_Column_Fixture_Model::\$columns cannot be checked: the model's table is not in the connected database.\n",
+            $output,
+            'a missing table prints one line naming the table and the error'
+        );
+        static::__assert_equals([], static::__queued(), 'and its queue row is removed');
 
         // The table exists but lacks a column its model declares.
         Derived_Column_Fixture_Tables::create_missing_column_table();
@@ -134,8 +150,13 @@ class Rederive_Queue_Drain_Test extends Rsx_Test_Abstract
 
         [$ok, $output] = static::__drain();
 
-        static::__assert_true($ok);
-        static::__assert_equals('', $output, 'a missing declared column is silent too');
+        static::__assert_true($ok, 'a missing column is not fatal');
+        static::__assert_true(
+            str_starts_with($output, 'Skipped rederiving cached values for derived_missing_fixtures: Derived_Missing_Column_Fixture_Model::$columns ')
+                && str_ends_with($output, "which is not a column of the model's table. Add the column with a migration, or correct the declaration. See: php artisan rsx:man model\n")
+                && substr_count($output, "\n") === 1,
+            'a missing column prints one line naming the table and the error: ' . $output
+        );
         static::__assert_equals([], static::__queued());
     }
 

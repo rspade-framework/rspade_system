@@ -10,7 +10,7 @@ Every file in this directory is compiled into EVERY bundle, so `Rsx`, `Ajax`, `M
 `Rsx_Storage`, `Permission` and the rest exist on every page. **Never write a defensive
 existence check** (`if (typeof Rsx_Storage !== 'undefined')`): the build guarantees them, and a
 check would only hide a broken bundle. Non-class files (`functions.js`, `async.js`,
-`error.js`, `browser.js`, `hash.js`, `datetime.js`, `decorator.js`) define globals and follow
+`error.js`, `browser.js`, `hash.js`, `datetime.js`, `decorator.js`, `replaceable.js`) define globals and follow
 the non-class-file rule (functions, static `const`s and decorators only).
 
 ## The boot, in order
@@ -77,7 +77,8 @@ components - because the first SPA page draws before `app_ready`.
   reads each column's descriptor from the field-length script.
 - `Rsx_Realtime.js` — websocket subscriptions (`this.subscribe()` on components).
 - `Mutex.js` (`@mutex`), `ReadWriteLock.js` (`rwlock`), `decorator.js` (the `@decorator`
-  marker) — decorator and locking primitives.
+  marker), `replaceable.js` (`@Replaceable`, the JS-PARENT-CHAIN-01 opt-out: a no-op marker
+  read off the parse) — decorator and locking primitives.
 - `Rsx_External_Resources.js` — `Rsx.load_external()`'s registry, baked from `*.externals.php`.
 - `Rsx_Jq_Helpers.js`, `Width_Group.js`, `Rsx_Droppable.js`, `Rsx_Behaviors.js`,
   `Responsive.js`, `Rsx_View_Transitions.js`, `Rsx_Dark_Mode.js`, `Rsx_Portal.js`,

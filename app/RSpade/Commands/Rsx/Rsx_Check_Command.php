@@ -68,7 +68,7 @@ class Rsx_Check_Command extends Command
         // nested acquire is counted here and never reaches the backend.
         // Box-physical resource (the build dir), shared across every database on this box:
         // unscoped so it excludes a holder regardless of connected database.
-        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, null, false);
+        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, db_scoped: false);
 
         try {
             // Clean up any existing code quality remediation report

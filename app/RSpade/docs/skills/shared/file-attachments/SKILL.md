@@ -351,8 +351,10 @@ File_Attachment_Model::create_from_disk('/tmp/import/report.pdf', [
 
 File_Attachment_Model::create_from_string($csv, 'export.csv', ['site_id' => $site_id]);
 
-File_Attachment_Model::create_from_url('https://example.com/logo.png', ['site_id' => $site_id]);
+File_Attachment_Model::create_from_url($user_url, ['site_id' => $site_id, 'max_bytes' => 5 * 1024 * 1024]);
 ```
+
+**`create_from_url()` is safe for a URL a user typed**: it downloads through `Rsx_Url_Fetch::to_temp_file()` (http/https only; every resolved address and every redirect hop checked, loopback / private / link-local / cloud-metadata / reserved refused; the connection pinned to the checked address; streamed under `max_bytes`, default 1 GB - deliberately liberal, pass what the feature needs). A refusal or failure throws `Rsx_Url_Fetch_Exception` with a message for the person who supplied the URL - catch it as a field error. `allow_private: true` is only for a URL built in code that points inward. Any other download of a user's URL uses `Rsx_Url_Fetch` directly, never `Http::get()` (rsx:check `PHP-OUTBOUND-HTTP-01`). `rsx:man url_fetch`.
 
 They return an UNATTACHED attachment — attach it yourself with `attach_to()`/`add_to()` (trusted server code, so the claim guard is not in your way for handler-backed rows).
 
@@ -430,7 +432,7 @@ public static function download_all(Request $request, array $params = [])
 }
 ```
 
-`create_request()` validates the STRUCTURE fail-loud (array of `{key, name?}`, no other keys, at least one entry) and **authorizes nothing** — every member is re-gated per file at download time. Unresolvable members become `~ERROR~<name>.inf` markers inside the archive rather than failing the whole download. The stream is constant-memory (hand-rolled `Zip_Stream`, no dependency) and there is **no ZIP64**: over 4GB or 65k entries is rejected. The request is valid 24h, is **not consumed on use**, and is pruned every 6h.
+`create_request()` validates the STRUCTURE fail-loud (array of `{key, name?}`, no other keys, at least one entry) and **authorizes nothing** — every member is re-gated per file at download time. Unresolvable members become `~ERROR~<name>.inf` markers inside the archive rather than failing the whole download. The stream is constant-memory (hand-rolled `Zip_Stream`, no dependency) and **every archive is ZIP64**, so there is no size or member-count limit (Windows 11, macOS, 7-Zip and the Linux tools read it; the Windows 10 built-in extractor does not). A refusal (unknown/expired link, any member unknown or gate-denied) is a user-facing sentence thrown before a byte streams, never naming which file failed. The request is valid 24h, is **not consumed on use**, and is pruned every 6h.
 
 ---
 

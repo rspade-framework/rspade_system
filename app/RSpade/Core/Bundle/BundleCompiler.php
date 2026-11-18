@@ -299,7 +299,7 @@ class BundleCompiler
             // forever - a full compile runs for minutes and is held for its whole duration,
             // released by compile() when the compile ends.
             // Box-physical resource (the bundle build dir), unscoped across databases.
-            $this->bundle_build_lock = RsxLocks::system_lock(RsxLocks::LOCK_BUNDLE_BUILD, null, false);
+            $this->bundle_build_lock = RsxLocks::system_lock(RsxLocks::LOCK_BUNDLE_BUILD, db_scoped: false);
 
             console_debug('BUNDLE', 'Bundle build lock acquired, double-checking cache');
 
@@ -2433,8 +2433,8 @@ class BundleCompiler
         }
 
         // Check instance methods for decorators
-        if (!empty($file_data['methods'])) {
-            foreach ($file_data['methods'] as $method) {
+        if (!empty($file_data['public_instance_methods'])) {
+            foreach ($file_data['public_instance_methods'] as $method) {
                 if (!empty($method['decorators'])) {
                     foreach ($method['decorators'] as $decorator) {
                         $decorators[] = $decorator;
@@ -2634,7 +2634,8 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             // 3. Method decorator dependencies: decorators on methods/properties
             if (!empty($class_info[$file]['method_decorators'])) {
                 foreach ($class_info[$file]['method_decorators'] as $decorator) {
-                    $decorator_class = $extract_decorator_class($decorator['name']);
+                    // Compact format: [name, args]
+                    $decorator_class = $extract_decorator_class($decorator[0] ?? '');
 
                     if ($decorator_class && isset($class_to_file[$decorator_class])) {
                         $decorator_file = $class_to_file[$decorator_class];

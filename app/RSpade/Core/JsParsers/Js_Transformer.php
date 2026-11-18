@@ -77,7 +77,7 @@ class Js_Transformer
 
         // The mtime guard is kept from the pre-consolidation scheme: a cache never gets
         // weaker in a move.
-        $cached = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, $variant, 'js', true);
+        $cached = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, $variant, 'js', guard_source_mtime: true);
 
         if ($cached !== null) {
             return File_Content_Cache::path(self::CACHE_NAMESPACE, $file_path, $variant, 'js');

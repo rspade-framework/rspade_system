@@ -71,7 +71,6 @@ class Api_Key_Command extends Command
             $user->id,
             $name,
             $environment,
-            null,
             $expires_at,
             $scopes,
             (bool) $this->option('read-only')

@@ -14,19 +14,41 @@ use App\RSpade\Core\Files\Exif_Gps;
  * apt dependency is used - pure PHP zlib + hashing.
  *
  * Every member is written in "data descriptor" mode (general-purpose flag bit 3): the
- * local file header carries zero CRC/sizes and the true CRC-32 + compressed +
- * uncompressed sizes are appended AFTER the bytes. This is what lets us stream a source
- * whose length is not known up front. Filenames are UTF-8 (flag bit 11) with forward
- * slashes.
+ * true CRC-32 + compressed + uncompressed sizes are appended AFTER the bytes. This is what
+ * lets us stream a source whose length is not known up front. Filenames are UTF-8 (flag
+ * bit 11) with forward slashes.
  *
- * ZIP64 is NOT supported: the archive is limited to a 4GB running offset and 65535
- * entries. The caller (the /_download_zip endpoint) validates the request against those
- * limits BEFORE streaming; the defensive shouldnt_happen() guards here only fire if that
- * upfront check was skipped.
+ * EVERY archive is ZIP64-framed, whatever its size - one layout, no per-member decision,
+ * so there is no archive size, member size or entry count the writer cannot encode. The
+ * framing follows PKWARE APPNOTE 6.3.x:
+ *
+ *   - Local file header (4.3.7): version needed 4.5 (4.4.3.2, ZIP64), CRC-32 zero and both
+ *     32-bit sizes 0xFFFFFFFF, followed by a ZIP64 extended information extra field
+ *     (header 0x0001, 4.5.3) holding the original then the compressed size, both ZERO.
+ *     4.5.3 requires the local ZIP64 field to carry BOTH sizes, and allows a field to
+ *     appear only when its 32-bit counterpart is 0xFFFFFFFF - hence the 0xFFFFFFFF
+ *     markers; the zero values are the bit-3 "not known here" sizes of 4.4.4.
+ *   - Data descriptor (4.3.9): signature, CRC-32, then the compressed and uncompressed
+ *     sizes as 8-byte values, which 4.3.9.2 prescribes for an entry whose local header
+ *     carries the ZIP64 field.
+ *   - Central directory header (4.3.12): version needed 4.5, both sizes and the local
+ *     header offset 0xFFFFFFFF, with a ZIP64 extra field carrying all three as 8-byte
+ *     values in the fixed order original size, compressed size, local header offset.
+ *   - ZIP64 end of central directory record (4.3.14) + locator (4.3.15), then the classic
+ *     end of central directory record (4.3.16) with its counts 0xFFFF and its size and
+ *     offset 0xFFFFFFFF, directing the reader to the ZIP64 record (4.4.1.4).
+ *
+ * Readers: Windows 11 Explorer, macOS, 7-Zip, Info-ZIP unzip, libarchive (bsdtar) and
+ * Python's zipfile all read this layout. The Windows 10 built-in Explorer extractor, which
+ * does not read ZIP64, is not a target.
+ *
+ * Memory: each member streams in constant memory; the central directory is held as one
+ * small record per member until finish() writes it.
  *
  * Byte layout produced (per member):
- *   local file header -> [compressed data chunks] -> data descriptor
- * Then once at finish(): central directory records -> end-of-central-directory record.
+ *   local file header (+ ZIP64 extra) -> [compressed data chunks] -> data descriptor
+ * Then once at finish(): central directory records -> ZIP64 end-of-central-directory
+ * record -> ZIP64 end-of-central-directory locator -> end-of-central-directory record.
  *
  * Usage:
  *   $zip = new Zip_Stream();
@@ -45,7 +67,16 @@ class Zip_Stream
     private const SIG_LOCAL = 0x04034b50;
     private const SIG_DATA_DESCRIPTOR = 0x08074b50;
     private const SIG_CENTRAL = 0x02014b50;
+    private const SIG_ZIP64_EOCD = 0x06064b50;
+    private const SIG_ZIP64_LOCATOR = 0x07064b50;
     private const SIG_EOCD = 0x06054b50;
+
+    // ZIP64 extended information extra field header id (APPNOTE 4.5.3).
+    private const EXTRA_ZIP64 = 0x0001;
+
+    // The 32-bit / 16-bit "value is in the ZIP64 record" markers (APPNOTE 4.4.1.4).
+    private const MARK_32 = 0xFFFFFFFF;
+    private const MARK_16 = 0xFFFF;
 
     // Compression methods.
     private const METHOD_STORE = 0;
@@ -54,12 +85,9 @@ class Zip_Stream
     // General-purpose flag: bit 3 (data descriptor) + bit 11 (UTF-8 filename).
     private const GP_FLAG = 0x0808;
 
-    // Version needed to extract: 2.0 (deflate + data descriptor).
-    private const VERSION = 20;
-
-    // ZIP64 boundaries - the archive must stay under these (endpoint validates upfront).
-    private const MAX_OFFSET = 0xFFFFFFFF;
-    private const MAX_ENTRIES = 0xFFFF;
+    // Version made by / needed to extract: 4.5 (ZIP64, APPNOTE 4.4.3.2). Made by host 0
+    // (MS-DOS attribute compatibility; external attributes are zero).
+    private const VERSION = 45;
 
     // Read size for streaming a source file: 512KB.
     private const CHUNK_SIZE = 524288;
@@ -271,17 +299,18 @@ class Zip_Stream
     {
         $this->__assert_writable();
 
-        if (count($this->central) > self::MAX_ENTRIES) {
-            shouldnt_happen(
-                'Zip_Stream exceeded ' . self::MAX_ENTRIES . ' entries (ZIP64 required); the endpoint guard should have rejected this'
-            );
-        }
-
         $central_offset = $this->offset;
         $central_size = 0;
 
         foreach ($this->central as $record) {
             $name = $record['name'];
+            // ZIP64 extra (APPNOTE 4.5.3): original size, compressed size, local header
+            // offset - the fixed order, each present because its 32-bit field is 0xFFFFFFFF.
+            $extra = pack('v', self::EXTRA_ZIP64)
+                . pack('v', 24)
+                . pack('P', $record['uncomp'])
+                . pack('P', $record['comp'])
+                . pack('P', $record['offset']);
             $bytes = pack('V', self::SIG_CENTRAL)
                 . pack('v', self::VERSION)         // version made by
                 . pack('v', self::VERSION)         // version needed to extract
@@ -290,29 +319,57 @@ class Zip_Stream
                 . pack('v', $this->dos_time)
                 . pack('v', $this->dos_date)
                 . pack('V', $record['crc'])
-                . pack('V', $record['comp'])
-                . pack('V', $record['uncomp'])
+                . pack('V', self::MARK_32)         // compressed size (in the ZIP64 extra)
+                . pack('V', self::MARK_32)         // uncompressed size (in the ZIP64 extra)
                 . pack('v', strlen($name))
-                . pack('v', 0)                     // extra field length
+                . pack('v', strlen($extra))        // extra field length
                 . pack('v', 0)                     // file comment length
                 . pack('v', 0)                     // disk number start
                 . pack('v', 0)                     // internal file attributes
                 . pack('V', 0)                     // external file attributes
-                . pack('V', $record['offset'])
-                . $name;
+                . pack('V', self::MARK_32)         // local header offset (in the ZIP64 extra)
+                . $name
+                . $extra;
 
             $central_size += strlen($bytes);
             $this->__emit($bytes);
         }
 
         $entry_count = count($this->central);
+
+        // ZIP64 end of central directory record (APPNOTE 4.3.14). The size field counts
+        // the bytes after itself: 44 for a record with no extensible data sector.
+        $zip64_eocd_offset = $this->offset;
+        $zip64_eocd = pack('V', self::SIG_ZIP64_EOCD)
+            . pack('P', 44)                // size of the remaining record
+            . pack('v', self::VERSION)     // version made by
+            . pack('v', self::VERSION)     // version needed to extract
+            . pack('V', 0)                 // number of this disk
+            . pack('V', 0)                 // disk with start of central directory
+            . pack('P', $entry_count)      // entries on this disk
+            . pack('P', $entry_count)      // total entries
+            . pack('P', $central_size)
+            . pack('P', $central_offset);
+
+        $this->__emit($zip64_eocd);
+
+        // ZIP64 end of central directory locator (APPNOTE 4.3.15).
+        $locator = pack('V', self::SIG_ZIP64_LOCATOR)
+            . pack('V', 0)                 // disk with the ZIP64 end of central directory
+            . pack('P', $zip64_eocd_offset)
+            . pack('V', 1);                // total number of disks
+
+        $this->__emit($locator);
+
+        // Classic end of central directory record (APPNOTE 4.3.16), every count, size and
+        // offset marked so the reader takes them from the ZIP64 record (4.4.1.4).
         $eocd = pack('V', self::SIG_EOCD)
             . pack('v', 0)                 // number of this disk
             . pack('v', 0)                 // disk with start of central directory
-            . pack('v', $entry_count)      // entries on this disk
-            . pack('v', $entry_count)      // total entries
-            . pack('V', $central_size)
-            . pack('V', $central_offset)
+            . pack('v', self::MARK_16)     // entries on this disk
+            . pack('v', self::MARK_16)     // total entries
+            . pack('V', self::MARK_32)     // central directory size
+            . pack('V', self::MARK_32)     // central directory offset
             . pack('v', 0);                // zip file comment length
 
         $this->__emit($eocd);
@@ -331,13 +388,14 @@ class Zip_Stream
      */
     private function __write_local_header(string $zip_path, int $method): void
     {
-        if ($this->offset > self::MAX_OFFSET) {
-            shouldnt_happen(
-                'Zip_Stream running offset exceeded 4GB (ZIP64 required); the endpoint guard should have rejected this'
-            );
-        }
-
         $header_offset = $this->offset;
+
+        // ZIP64 extra (APPNOTE 4.5.3): the local field MUST carry both sizes, original then
+        // compressed; both are zero here because the real values follow in the descriptor.
+        $extra = pack('v', self::EXTRA_ZIP64)
+            . pack('v', 16)
+            . pack('P', 0)
+            . pack('P', 0);
 
         $header = pack('V', self::SIG_LOCAL)
             . pack('v', self::VERSION)
@@ -346,11 +404,12 @@ class Zip_Stream
             . pack('v', $this->dos_time)
             . pack('v', $this->dos_date)
             . pack('V', 0)                 // crc-32 (in data descriptor)
-            . pack('V', 0)                 // compressed size (in data descriptor)
-            . pack('V', 0)                 // uncompressed size (in data descriptor)
+            . pack('V', self::MARK_32)     // compressed size (ZIP64 extra; real value in descriptor)
+            . pack('V', self::MARK_32)     // uncompressed size (ZIP64 extra; real value in descriptor)
             . pack('v', strlen($zip_path))
-            . pack('v', 0)                 // extra field length
-            . $zip_path;
+            . pack('v', strlen($extra))    // extra field length
+            . $zip_path
+            . $extra;
 
         $this->__emit($header);
 
@@ -366,8 +425,9 @@ class Zip_Stream
     }
 
     /**
-     * Emit the data descriptor closing a member and backfill the member's
-     * central-directory record with the real crc/sizes.
+     * Emit the data descriptor closing a member (APPNOTE 4.3.9: 8-byte sizes, because the
+     * local header carried the ZIP64 extra) and backfill the member's central-directory
+     * record with the real crc/sizes.
      *
      * @param string $zip_path
      * @param int    $method
@@ -380,8 +440,8 @@ class Zip_Stream
     {
         $descriptor = pack('V', self::SIG_DATA_DESCRIPTOR)
             . pack('V', $crc)
-            . pack('V', $compressed)
-            . pack('V', $uncompressed);
+            . pack('P', $compressed)
+            . pack('P', $uncompressed);
 
         $this->__emit($descriptor);
 

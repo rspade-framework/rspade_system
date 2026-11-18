@@ -3,11 +3,12 @@
 A lock server whose **connection is the lock**.
 
 A lock is held from the moment it is granted until the holder releases it or its
-connection goes away. There is no lease, no TTL, no renewal and no heartbeat anywhere in
-this daemon. A holder that crashes, is `kill -9`'d, or falls off the network releases
-*immediately*; a holder that is alive keeps its lock for as long as it needs it - a
-minute, an hour, a day. The only clock in the entire program is the optional per-waiter
-timeout a caller explicitly asks for.
+connection goes away. There is no lease, no TTL and no renewal anywhere in this daemon.
+A holder that crashes, is `kill -9`'d, or falls off the network releases *immediately*;
+a holder that is alive keeps its lock for as long as it needs it - a minute, an hour, a
+day. Every clock in the program is on a WAITER and was asked for by that waiter's own
+request: its `timeout`, its `stall` watch (fail if the holder shows no progress for that
+long - see PROGRESS AND STALLS), its `notice`. Nothing ever takes a lock from a holder.
 
 It is a single Node process, zero npm dependencies (node core only), speaking
 newline-delimited JSON over a unix socket and/or TCP.
@@ -104,11 +105,19 @@ The daemon also reads a `.env` file three directories above `lockd.js` if one ex
 ## Protocol
 
 Newline-delimited JSON over the socket. Strict request/response: **the server never sends
-an unsolicited frame.** Every frame it writes answers exactly one request. Include an
+an unsolicited frame.** Every request is answered by exactly one final frame. Include an
 `id` on a request and it is echoed on the response - required, because responses can
-arrive out of order (a blocking `acquire` parks while a later `ping` answers at once).
+arrive out of order (a blocking `acquire` parks while a later `ping` answers at once). The
+one non-final frame is a `waiting` NOTICE, and only a parked request that asked for one
+(its `notice` key) ever receives it - echoing that request's id, before its final answer.
 
-Statuses: `ok`, `granted`, `timeout`, `deadlock`, `error`.
+Statuses: `ok`, `granted`, `timeout`, `stalled`, `deadlock`, `error` (final), and `waiting`
+(a notice, never final).
+
+Protocol version: **2** (the hello answer's and the ping answer's `protocol`). Version 2
+added the `progress` op, the `stall` / `notice` request keys, the `stalled` status, the
+`waiting` notice and the hello's `start`. A version-1 daemon ignores the keys and refuses
+the op, so a client sends `progress` only to a daemon that announced 2.
 
 Every op except `hello` and `ping` requires a completed `hello`.
 
@@ -134,6 +143,12 @@ trust boundary.
      "group_id":"g-4242-a91c3f","id":"r1"}
 ```
 
+An optional `start` is the connecting process's kernel start time (field 22 of
+`/proc/<pid>/stat`, clock ticks since boot; a non-negative integer, else the hello is
+refused). With host and pid it names ONE process - a pid alone can be reused - so an
+operator can prove a pid `dump` reports is still the process that took a lock before
+signalling it. Unsigned, like `group_id`. The node client and the PHP client both send it.
+
 ### acquire
 
 ```json
@@ -143,10 +158,14 @@ trust boundary.
 
 - `mode` is `read` or `write`; absent means `write`.
 - `timeout` is seconds, or `null` (the default) to wait forever.
+- `stall` is seconds, or `null` (the default) for no watch: the progress watchdog (PROGRESS
+  AND STALLS). A positive number; `0` or a non-number is `error`.
+- `notice` is seconds, or `null` (the default): after that long parked, ONE `waiting`
+  notice frame is sent and the wait continues. A positive number.
 - **Waiting is silence.** If the lock is not available the request parks and *no frame is
-  sent* until it is granted, times out, or is refused. `timeout: null` arms no timer at
-  all - there is no polling and no upper bound anywhere.
-- Possible answers: `granted`, `timeout`, `deadlock`, `error`.
+  sent* until it is granted, times out, stalls, or is refused - save the one notice it
+  asked for. A request with none of `timeout` / `stall` / `notice` arms no timer at all.
+- Possible answers: `granted`, `timeout`, `stalled`, `deadlock`, `error`.
 
 ```json
 <-- {"id":"r2","status":"timeout","name":"SITE_1","mode":"write",
@@ -155,6 +174,30 @@ trust boundary.
 
 Acquiring a lock this connection already holds is a client bug (reentrancy belongs in the
 client) and is answered `error` rather than corrupting the holder set.
+
+```json
+<-- {"id":"r2","status":"waiting","name":"SITE_1","mode":"write","waited_ms":30000,
+     "holders":[{"conn_id":"c7","host":"web-01","pid":4242,"mode":"write",
+                 "held_ms":45210,"progress_ms":45210}]}
+<-- {"id":"r2","status":"stalled","name":"SITE_1","mode":"write","stall":600,"waited_ms":600000,
+     "holders":[{"conn_id":"c7","host":"web-01","pid":4242,"mode":"write",
+                 "held_ms":912300,"progress_ms":611000}],
+     "message":"Stalled: waited 600.0s for WRITE lock SITE_1 while its holder showed no progress for 600s - held by c7 [web-01:4242] WRITE for 912.3s"}
+```
+
+A semaphore's `holders` carry `slot` instead of `mode`. `held_ms` is how long the holder has
+held; `progress_ms` how long since it last showed progress (its grant or a `progress` frame).
+
+### progress
+
+The holder says it is still working: a keep-alive covering every lock and semaphore slot
+this connection holds. It changes nothing about any hold - it restarts the stall window of
+every waiter behind them. Answered at once, holding something or not.
+
+```json
+--> {"op":"progress","id":"r20"}
+<-- {"id":"r20","status":"ok","holds":2}
+```
 
 ### release
 
@@ -197,6 +240,8 @@ a lock already held WRITE is a no-op that returns the same token with `upgraded:
 
 ### sem_acquire / sem_release
 
+`sem_acquire` takes `timeout`, `stall` and `notice` exactly as `acquire` does.
+
 A counting semaphore: at most `max_slots` holders at once. Slots are small integers, and
 a granted slot is held until released or the connection dies, exactly like a lock.
 `max_slots <= 0` means unlimited and is granted immediately with `slot: null`.
@@ -223,7 +268,10 @@ a granted slot is held until released or the connection dies, exactly like a loc
 
 Full machine state: every connection with what it holds and waits for, every lock with
 its holder set and queue, every semaphore with its slots. This is what `lockd.js dump`
-renders.
+renders. A connection carries `host`, `pid`, `start` (from its hello, or null) and
+`progress_ms` (since its last `progress` frame, or null); every hold and slot carries
+`held_ms` and `progress_ms`; every queued wait carries `timeout`, `stall` and `notice`. The
+counters include `stalled`. `php artisan rsx:locks:status` is the PHP-side reader.
 
 ### force_clear
 
@@ -379,7 +427,7 @@ answering without holding the key.
 
 ```json
 --> {"op":"ping","id":"r10"}
-<-- {"id":"r10","status":"ok","pong":true}
+<-- {"id":"r10","status":"ok","pong":true,"protocol":2}
 ```
 
 ### log
@@ -439,7 +487,7 @@ them. The switch is the `log` op, reached through the `lockd.js log` command or
 
 | Level | Records | Volume |
 |---|---|---|
-| default | `WAIT`, `GRANT` (after a wait, with its duration), `TIMEOUT`, a refused `DEADLOCK`, `FORCE_CLEAR`, and a `DROP` that released a hold or cancelled a wait | Contention only - almost nothing on a healthy box, so it is meant to be left on |
+| default | `WAIT`, `GRANT` (after a wait, with its duration), `TIMEOUT`, `STALLED`, a refused `DEADLOCK`, `FORCE_CLEAR`, and a `DROP` that released a hold or cancelled a wait | Contention only - almost nothing on a healthy box, so it is meant to be left on |
 | `--verbose` | adds every `ACQUIRE`, `RELEASE` and `RELEASE_ALL` | A line or two per operation - trace one sequence, do not leave it running |
 
 Locks and semaphores produce the same events.
@@ -492,8 +540,27 @@ joined, every pool lock it held passes to that pool's next waiter, and its queue
 vanished without a FIN is eventually reaped rather than parked forever, and
 `setNoDelay(true)` because these are tiny request/response frames.
 
-**Waiting is silence.** A blocking acquire produces no traffic at all while it waits.
-`timeout: null` creates no timer; a numeric timeout arms exactly one.
+**Waiting is silence.** A blocking acquire produces no traffic at all while it waits,
+save the one `waiting` notice its own `notice` key asked for. A request with no `timeout`,
+`stall` or `notice` creates no timer; each of those arms exactly one.
+
+**Progress and stalls.** A parked request carrying `stall: N` is answered `stalled` once
+the holders it waits on have shown no PROGRESS for N seconds. Progress is a grant (a fresh
+holder is progressing, so a moving queue never stalls the waiter at its back) or a
+`progress` frame from the holder's connection. The window restarts from the latest
+progress, so a holder that signals once per window keeps its waiters waiting forever; the
+check re-arms for exactly the remaining time rather than polling. Rules:
+
+- a LOCK waiter is judged on its LEAST-recently progressing holder (it needs them all gone);
+- a SEMAPHORE waiter on its MOST-recently progressing slot holder (any freed slot will do);
+- a holder that is itself parked counts as progressing while what it waits on is;
+- a `timeout` shorter than the window answers first and the watch never fires;
+- pool waits (`pool.lock`) have no watch.
+
+The holders are never touched: the waiter is answered `stalled`, naming each holder, and
+leaves the queue; the holder keeps its lock. `stalled` is deliberately not `timeout` - the
+waiter did not choose to stop, its holder went silent - and its message is not the
+load-bearing timeout wording.
 
 **FIFO.** One ordered queue per lock name, grants come off the head:
 
@@ -573,14 +640,14 @@ response frame.
 ```
 rsx-lockd state
   connections: 3   locks: 2   semaphores: 0   pools: 1   pool generation: 6120548213388411
-  granted: 19   released: 17   timed_out: 1   deadlocked: 2   dropped_connections: 16
+  granted: 19   released: 17   timed_out: 1   stalled: 0   deadlocked: 2   dropped_connections: 16
 
-c17  web-01:2346918  via 127.0.0.1:48398  up 1.4s
-    HELD     WRITE SITE_1   for 1.4s
+c17  web-01:2346918  via 127.0.0.1:48398  up 1.4s  start 79749138
+    HELD     WRITE SITE_1   for 1.4s   last progress 1.4s ago
     MEMBER   POOL  tasks:on_demand:9f2c...   as wid 4812077
 
-c18  web-01:2346926  via 127.0.0.1:48406  up 0.7s
-    WAITING  WRITE SITE_1   for 0.7s   (no timeout)
+c18  web-01:2346926  via 127.0.0.1:48406  up 0.7s  start 79749202
+    WAITING  WRITE SITE_1   for 0.7s   (no timeout, stall watch 600s)
 
 locks
   SITE_1

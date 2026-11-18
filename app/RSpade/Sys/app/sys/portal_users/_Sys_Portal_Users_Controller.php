@@ -141,7 +141,7 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return response_not_found('No portal user with that id.');
         }
 
-        return ['sessions' => static::__present_sessions(Portal_Session::get_sessions_for_user((int) $portal_user->id, true))];
+        return ['sessions' => static::__present_sessions(Portal_Session::get_sessions_for_user((int) $portal_user->id, include_impersonations: true))];
     }
 
     /**
@@ -275,7 +275,7 @@ class _Sys_Portal_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return null;
         }
 
-        foreach (Portal_Session::get_sessions_for_user((int) $portal_user->id, true) as $session) {
+        foreach (Portal_Session::get_sessions_for_user((int) $portal_user->id, include_impersonations: true) as $session) {
             if ($session['id'] === (int) $user_session_id) {
                 return $session;
             }

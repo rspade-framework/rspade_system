@@ -1423,9 +1423,11 @@ class Rsx {
                 continue;
             }
 
-            const [key, value] = pair.split('=');
+            // Split at the FIRST '=': a value may itself contain one.
+            const eq = pair.indexOf('=');
+            const key = pair.substring(0, eq);
             if (key) {
-                params[decodeURIComponent(key)] = value ? decodeURIComponent(value) : '';
+                params[decodeURIComponent(key)] = decodeURIComponent(pair.substring(eq + 1));
             }
         }
 

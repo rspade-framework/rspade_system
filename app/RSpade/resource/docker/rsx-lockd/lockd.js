@@ -712,6 +712,7 @@ function print_dump(dump, own_conn_id) {
     console.log('  granted: ' + dump.counters.granted
         + '   released: ' + dump.counters.released
         + '   timed_out: ' + dump.counters.timed_out
+        + '   stalled: ' + dump.counters.stalled
         + '   deadlocked: ' + dump.counters.deadlocked
         + '   dropped_connections: ' + dump.counters.dropped_connections);
     console.log('');
@@ -727,8 +728,11 @@ function print_dump(dump, own_conn_id) {
         // Only printed when the connection joined someone else's group - two connections
         // showing the same one is a parent and the subprocess it is blocked waiting on.
         const group = conn.group_id ? '  group ' + conn.group_id : '';
+        const started = conn.start === null || conn.start === undefined ? '' : '  start ' + conn.start;
+        const progress = conn.progress_ms === null || conn.progress_ms === undefined
+            ? '' : '  progress ' + seconds(conn.progress_ms) + ' ago';
         console.log(conn.conn_id + '  ' + who + '  via ' + (conn.remote || '?')
-            + '  up ' + seconds(conn.connected_ms) + group + self);
+            + '  up ' + seconds(conn.connected_ms) + started + progress + group + self);
 
         if (conn.holds.length === 0 && conn.semaphores.length === 0 && conn.waiting.length === 0
             && conn.pools.length === 0) {
@@ -736,15 +740,18 @@ function print_dump(dump, own_conn_id) {
         }
         for (const hold of conn.holds) {
             console.log('    HELD     ' + hold.mode.toUpperCase().padEnd(5) + ' '
-                + hold.name + '   for ' + seconds(hold.held_ms));
+                + hold.name + '   for ' + seconds(hold.held_ms)
+                + '   last progress ' + seconds(hold.progress_ms) + ' ago');
         }
         for (const slot of conn.semaphores) {
             console.log('    HELD     SEM   ' + slot.name + ' slot ' + slot.slot
-                + '   for ' + seconds(slot.held_ms));
+                + '   for ' + seconds(slot.held_ms)
+                + '   last progress ' + seconds(slot.progress_ms) + ' ago');
         }
         for (const wait of conn.waiting) {
             const kind = wait.kind === 'lock' ? String(wait.mode).toUpperCase().padEnd(5) : 'SEM  ';
-            const bound = wait.timeout === null ? 'no timeout' : 'timeout ' + wait.timeout + 's';
+            const bound = (wait.timeout === null ? 'no timeout' : 'timeout ' + wait.timeout + 's')
+                + (wait.stall === null || wait.stall === undefined ? '' : ', stall watch ' + wait.stall + 's');
             console.log('    WAITING  ' + kind + ' ' + wait.name
                 + '   for ' + seconds(wait.waiting_ms) + '   (' + bound + ')');
         }

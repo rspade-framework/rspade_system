@@ -996,7 +996,10 @@ COMPONENT LIFECYCLE
     1. on_create() (synchronous, runs BEFORE first render)
        - Setup default state BEFORE template executes
        - Initialize this.data properties so template can reference them
-       - Must be synchronous (no async/await)
+       - Must be synchronous (no async/await): the component does not wait
+         for a Promise it returns. `async on_create()` on any Component
+         (Spa_Action and Spa_Layout included) fails the manifest build
+         (JS-ON-CREATE-01) - asynchronous loading belongs in on_load()
        - Perfect for abstract component base classes
        - Example: this.data.rows = this.data.rows || [];
 
@@ -3128,6 +3131,11 @@ CONTENT AND SLOTS
         - If ANY named slots present, ALL content must be in slots
         - Child template syntax: <%= content('slotname') %>
         - Parent template syntax: <Slot:slotname>content</Slot:slotname>
+        - A slot name is a JavaScript identifier ([A-Za-z_][A-Za-z0-9_]*,
+          not a reserved word) and is CASE-SENSITIVE: <Slot:Header> fills
+          content('Header') only, and content('header') answers '' for it
+          with no error. The closing tag repeats the name exactly
+          (</Slot:Header>); a name in another case is a compile error.
 
     Decision Guide:
         Use content() when the component has a single content region:

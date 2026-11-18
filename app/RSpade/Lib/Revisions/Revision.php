@@ -680,7 +680,9 @@ class Revision
      */
     private static function _record_site_id(Rsx_Model_Abstract $record): ?int
     {
-        $site_id = $record->getAttribute('site_id');
+        // A record of a table with no site_id column has no site of its own: a presence
+        // test, because reading a property the model does not have throws.
+        $site_id = $record->getAttributes()['site_id'] ?? null;
 
         if ($site_id !== null) {
             return (int) $site_id;

@@ -11,6 +11,10 @@
 | SM-07 | a save refuses a domain that is not a hostname | php | 'not a host' | throws | implemented | 2026-10-22 |
 | SM-08 | a domain addresses one site (uk_sites_portal_domain, after normalisation) | php | two sites, two spellings | QueryException | implemented | 2026-10-22 |
 | SM-09 | is_portal_enabled is on by default and cast to a boolean | php | new site, then off | true / false | implemented | 2026-10-22 |
+| SM-10 | Assigning another site's id and saving from the record's own site is refused; the row stays | php | portal user in site A, `site_id = B`, save as A | RuntimeException naming site_id; stored site A | implemented (`Site_Id_Immutability_Test`) | 2026-11-17 |
+| SM-11 | Switching the acting site to the target first does not help: the saving hook compares with the stored site_id | php | same record, act as B, `site_id = B`, save | RuntimeException "Changing site_id is not allowed"; stored site A | implemented (`Site_Id_Immutability_Test`) | 2026-11-17 |
+| SM-12 | `update(['site_id' => B])` is refused before writing | php | same record | RuntimeException "Changing site_id is never allowed"; stored site A | implemented (`Site_Id_Immutability_Test`) | 2026-11-17 |
+| SM-13 | Reassigning the record's own site is not a move | php | `site_id = A`, another field changed, save | saves; stored site A | implemented (`Site_Id_Immutability_Test`) | 2026-11-17 |
 
 Note: the parent-call chaining rule that catches a `booted()` override missing
 `parent::booted()` is `PHP-PARENT-CHAIN-01`; its detection tests live in the

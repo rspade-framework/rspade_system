@@ -304,7 +304,7 @@ class Revision_Dictionary
     {
         $labels = [];
 
-        foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false) as $class_name) {
+        foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', concrete_only: false) as $class_name) {
             $fqcn = Manifest::php_get_metadata_by_class($class_name)['fqcn'];
 
             foreach ($fqcn::enum_columns() as $definitions) {

@@ -184,7 +184,7 @@ class Api_Tester_Key_Binding_Test extends Rsx_Test_Abstract
     public static function test_a_cli_temporary_key_still_works_bearer_only()
     {
         $user = static::__holder();
-        $minted = Api_Key_Model::generate((int) $user->id, 'Temporary (CLI)', 'live', null, now()->addHour(), null, false, true);
+        $minted = Api_Key_Model::generate((int) $user->id, 'Temporary (CLI)', 'live', now()->addHour(), is_temporary: true);
 
         static::__assert_false($minted['model']->is_tester_key());
         static::__assert_null(static::__present($minted['key'], null), 'no cookie needed');

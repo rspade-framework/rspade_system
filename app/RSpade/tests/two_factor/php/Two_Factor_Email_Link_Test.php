@@ -165,7 +165,7 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::issued_link(self::RETURN_URL), 'expired');
 
-        Rsx_Two_Factor::begin_challenge($login_user, null);
+        Rsx_Two_Factor::begin_challenge($login_user, accepts: null);
         static::__assert_throws(\RuntimeException::class, fn () => Rsx_Two_Factor::issued_link(self::RETURN_URL), 'does not accept an issued code');
 
         Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);

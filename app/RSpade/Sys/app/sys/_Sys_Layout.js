@@ -21,6 +21,8 @@
  */
 class _Sys_Layout extends Spa_Layout {
     on_create() {
+        super.on_create();
+
         this.state = {
             nav_sections: [
                 {
@@ -55,6 +57,12 @@ class _Sys_Layout extends Spa_Layout {
                             icon: 'bi-cpu',
                             route: '_Sys_Task_Workers_Action',
                             href: Rsx.Route('_Sys_Task_Workers_Action'),
+                        },
+                        {
+                            label: 'Locks',
+                            icon: 'bi-lock',
+                            route: '_Sys_Locks_Action',
+                            href: Rsx.Route('_Sys_Locks_Action'),
                         },
                         {
                             label: 'Companions',
@@ -118,6 +126,8 @@ class _Sys_Layout extends Spa_Layout {
     }
 
     on_ready() {
+        super.on_ready();
+
         const that = this;
 
         // The sidebar's id is the instance-scoped $sid id, so the toggle's reference to it

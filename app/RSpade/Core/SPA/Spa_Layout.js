@@ -146,6 +146,7 @@ class Spa_Layout extends Component {
      * @param {string} action_name - Name of the action class
      * @param {object} args - URL parameters and query params
      */
+    @Replaceable
     async on_action(url, action_name, args) {
         // Empty by default - override in subclass
     }
@@ -167,6 +168,7 @@ class Spa_Layout extends Component {
      * @param {Array<{url, label, is_active}>} chain - The resolved trail, root first
      * @param {{grafted: boolean, root_url: string, decider: string|null}} meta
      */
+    @Replaceable
     on_breadcrumb_complete(chain, meta) {
         // Empty by default - override in subclass
     }

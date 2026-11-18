@@ -1,0 +1,152 @@
+A JAVASCRIPT OVERRIDE CALLS super, OR ITS PARENT METHOD IS @Replaceable (JS-PARENT-CHAIN-01)
+Date: 2026-11-18
+
+IF YOU DO NOTHING: the manifest build fails with JS-PARENT-CHAIN-01 for every method in your
+    rsx/ JavaScript that overrides a method an ancestor class declares without calling
+    super.<method>() - including your copies of the template's layouts, inputs and datagrid -
+    and every page answers that fatal until each one is fixed.
+
+SUMMARY
+    Category 1 (template diffs), with a new manifest-build fatal behind it.
+
+    JS-PARENT-CHAIN-01 is the JavaScript twin of PHP-PARENT-CHAIN-01. A class method -
+    instance or static - that overrides a same-named method declared by an ANCESTOR class in
+    the manifest must call super.<same name>(...) somewhere in its body, unless the NEAREST
+    ancestor declaring the method carries the new @Replaceable decorator. A parent outside
+    the manifest (npm, vendor, jqhtml's own Component base) imposes nothing, so a component's
+    own on_ready() over Component is free; a sub-component's on_ready() over YOUR component's
+    on_ready() is not. Not covered: the constructor (the language already requires super()),
+    getters, setters and #private methods.
+
+    Every finding is fixed one of two ways, whichever is true of the PARENT:
+    - its method does work every subclass needs -> the child calls super.<method>()
+    - its method is a hook overriders are meant to replace entirely (an empty default, a
+      stub that throws "must implement") -> decorate the parent method @Replaceable
+
+    Contract: php artisan rsx:man coding_standards (OVERRIDES CALL THEIR PARENT),
+    rsx:man js_decorators. Skills: rspade:js-decorators, rspade:jqhtml. Reference:
+    system/app/RSpade/resource/reference_app/ (the template with every fix below applied).
+
+AFFECTED FILES
+    /rsx/app/frontend/Frontend_Spa_Layout.js
+    /rsx/app/frontend/settings/Settings_Layout.js
+    /rsx/portal/workspaces/Portal_Workspace_Layout.js
+    /rsx/app/dev/Dev_Spa_Layout.js
+    /rsx/theme/components/datagrid/datagrid_abstract.js
+    /rsx/theme/components/inputs/text/text_input.js
+    /rsx/theme/components/inputs/select/Select_Ajax_Input.js
+    /rsx/theme/components/inputs/select/select_input.js
+    /rsx/app/frontend/tasks/edit/form/ajax_entity_select_input.js
+    plus any class of your own the build names (see YOUR OWN CLASSES below)
+
+THE CHANGE
+    JavaScript never requires an override to reach the method it shadows, and jqhtml calls
+    only the most-derived lifecycle hook, so a sub-component whose on_create() / on_ready() /
+    on_stop() forgot super silently skipped what its parent does there: the layout region
+    wiring, an input's value buffering and data-name, a widget's teardown. The manifest build
+    now refuses it.
+
+    The framework's own classes are already marked: Spa_Action (on_load, page_title,
+    breadcrumb_label, breadcrumb_label_active, breadcrumb_parent), Spa_Layout (on_action,
+    on_breadcrumb_complete), Form_Input_Abstract (_get_value, _set_value, _focus),
+    Task_Output (_check_args, _stream_list, _read_page, _subscribe_output, _write_notices)
+    and Rsx_Text_Abstract (_local_is_empty, sanitize_encoded) are @Replaceable. Spa_Layout's
+    on_create() and on_ready() are NOT: they wire the layout, and an override calls them.
+
+CHANGES REQUIRED - THE TEMPLATE FILES YOUR APPLICATION KEPT
+    Apply each change to your copy where it still has the template's shape. A file you
+    deleted or rewrote is judged by the rule like any other code - see the next section.
+
+    1. Every layout extending Spa_Layout that defines on_create() or on_ready()
+       (rsx/app/frontend/Frontend_Spa_Layout.js, rsx/app/frontend/settings/Settings_Layout.js,
+       rsx/portal/workspaces/Portal_Workspace_Layout.js, and any layout of your own):
+       make super the first statement.
+
+           on_create() {
+               super.on_create();
+               ...
+           }
+
+           on_ready() {
+               super.on_ready();
+               ...
+           }
+
+    2. rsx/app/dev/Dev_Spa_Layout.js: delete its on_create(), which only logged
+       "[Dev_Spa_Layout] Layout created" (or add super.on_create() as its first line).
+
+    3. rsx/theme/components/datagrid/datagrid_abstract.js: on_footer_action() is a stub
+       subclasses replace - decorate it.
+
+           @Replaceable
+           on_footer_action(action, selection) {
+
+    4. rsx/theme/components/inputs/text/text_input.js: decorate _get_value() and
+       _set_value() @Replaceable (a subclass that formats or parses the text replaces them).
+
+    5. rsx/theme/components/inputs/select/Select_Ajax_Input.js: decorate on_load()
+       @Replaceable (a subclass that knows its own endpoint replaces it).
+
+    6. rsx/theme/components/inputs/select/select_input.js: decorate _get_value() and
+       _set_value() @Replaceable, and move the Tom Select options out of on_ready() into a
+       replaceable seam:
+
+           on_ready() {
+               if (this.tom_select) {
+                   this.tom_select.destroy();
+                   this.tom_select = null;
+               }
+
+               this.tom_select = new TomSelect(this.$sid('input').get(0), this._tom_select_config());
+
+               this._mark_ready();
+           }
+
+           @Replaceable
+           _tom_select_config() {
+               const that = this;
+
+               return {
+                   // the object on_ready() used to build inline, unchanged
+               };
+           }
+
+    7. rsx/app/frontend/tasks/edit/form/ajax_entity_select_input.js (extends Select_Input):
+       delete its on_ready() and on_stop(), and rename what on_ready() passed to
+       new TomSelect(...) into _tom_select_config(), returning the options object. The
+       parent's on_ready() now builds the widget and marks the input ready, and its
+       on_stop() destroys it.
+
+           _tom_select_config() {
+               const that = this;
+
+               return {
+                   valueField: 'id',
+                   // ... the rest of the options it passed to new TomSelect(), unchanged
+               };
+           }
+
+       Any other input of yours that extends Select_Input and replaced on_ready() to build
+       its own Tom Select converts the same way.
+
+CHANGES REQUIRED - YOUR OWN CLASSES
+    The first build after the pull names every remaining finding, one at a time:
+
+        JS-PARENT-CHAIN-01 ... <Child>.<method>() overrides <Parent>.<method>() but never
+        calls super.<method>()
+
+    For each, open the PARENT's method and decide:
+    - it does work the child also needs: add super.<method>(...) to the child (await it when
+      it is async). It may sit anywhere in the body - a branch, a loop, an arrow function -
+      and must name the same method.
+    - it is a default the child is meant to replace: put @Replaceable on the line above the
+      parent's method. Written inside a docblock it is a comment and exempts nothing.
+    An override of a FRAMEWORK method that is neither (rare) takes
+    `// @JS-PARENT-CHAIN-01-EXCEPTION <the reason>` on the line above the override; a marker
+    with no reason excuses nothing.
+
+VERIFICATION
+    php artisan rsx:debug / --user=1      - the page renders; no JS-PARENT-CHAIN-01 fatal
+    php artisan rsx:check                 - no JS-PARENT-CHAIN-01 finding
+    A page using each layout, and a form with a select input and the task parent picker,
+    still render and save as before.

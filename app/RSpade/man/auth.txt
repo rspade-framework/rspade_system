@@ -76,7 +76,7 @@ IDENTITY MODEL
             site_id             FK to sites
             email               Invited email (before login_user is linked)
             first_name / last_name / phone   Display + contact
-            role_id             Site role (enum 200-700, see PERMISSIONS below)
+            role_id             Site role (enum 200-700, see ROLES below)
             is_enabled          Membership flag. FRAMEWORK-OWNED and
                                 framework-enforced at login and at every request,
                                 together with sites.is_enabled (see Site
@@ -344,11 +344,14 @@ AUTHORIZATION (DECLARATIVE GATES)
     membership scoping, record state. A gate answers "may this USER use this
     surface"; the body answers "which RECORDS may they touch".
 
-PERMISSIONS (ACL)
-    Role- and permission-based access on top of authentication. Full treatment:
-    php artisan rsx:man acls. Overview only here.
+ROLES
+    This section is the authoritative statement of how roles rank and what
+    they decide. rsx:man acls, the skills and the docblocks of the role
+    primitives point here rather than restating it.
 
-    Roles (users.role_id, lower id = higher privilege):
+    A role is users.role_id, a member of the role_id enum declared in
+    User_Model_Abstract's $columns. The template's roles:
+
         ROLE_ROOT_ADMIN  200
         ROLE_SITE_OWNER  300
         ROLE_SITE_ADMIN  400
@@ -356,12 +359,66 @@ PERMISSIONS (ACL)
         ROLE_USER        600
         ROLE_VIEWER      700
 
+    THE CONTRACT
+
+    1. Lower role id = more privilege. Ids are 100-based so a role can be
+       inserted between two others.
+
+    2. has_role(X) means "this role or higher": the user's role_id <= X.
+       Permission::has_role(), require_role() and $user->has_role() all
+       answer it, and the JS mirror Permission.has_role() likewise. A
+       membership with no role (role_id NULL) fails every has_role() floor
+       and every can_admin_role() question.
+
+    3. "May this user manage that user" is answered ONLY by the acting role's
+       can_admin_roles list, read through can_admin_role($target_role_id)
+       (Permission::can_admin_role(), $user->can_admin_role(), the JS
+       mirror). The list is a whitelist, not a range derived from the id:
+       a role manages exactly the roles it names, EQUALS INCLUDED - a Site
+       Admin manages another Site Admin because its list contains 400, and a
+       role that names nothing (User, Viewer) manages nobody. An
+       administration endpoint asks it of BOTH the target's current role and
+       any new role it assigns, so a superior is refused by construction.
+
+    4. The list lives on the role_id enum entry (keys 'permissions',
+       'can_admin_roles', 'selectable'). An application that overrides
+       User_Model and changes the roles redeclares the role_id entry in its
+       own $columns; a child's entry REPLACES the parent's whole entry.
+
+    5. Only the APPLICATION names a role. Framework code never names a
+       ROLE_* constant and never compares role ids; it asks has_role() /
+       can_admin_role() with an id its caller supplied, or reads the enum
+       (Session's administrative termination asks can_admin_role() of the
+       target's role; the test harness derives "most privileged" from the
+       can_admin_roles lists).
+
+    6. Roles are PER SITE: a role lives on a users row (one site
+       membership), while an identity (login_users) is cross-site and holds
+       no role. Authority across sites, or over the installation, is
+       is_sysadmin (the developer flag, Session::is_developer()) - never a
+       role, and never a permission a tenant's founder holds.
+
+    7. A numeric comparison of role ids is legitimate only for a RANKING rule
+       that is not a "may manage" decision. The template's user-management
+       save is the worked example: nobody lowers their own role (a new
+       role_id greater than the user's current one is refused on their own
+       record), so an administrator cannot demote themselves out of the
+       access that would let them undo it. Every "may manage" question is
+       rule 3.
+
+    There is no "disabled" role: switching a member off is users.is_enabled
+    (rsx:man session). A developer is not a role either:
+    login_users.is_developer.
+
+PERMISSIONS (ACL)
+    Role- and permission-based access on top of authentication. Full treatment:
+    php artisan rsx:man acls. Overview only here; how roles rank and who may
+    manage whom is ROLES above.
+
     A role grants a default permission set (User_Model::PERM_* constants). The
     _user_permissions table layers per-user GRANT/DENY exceptions on top.
     Resolution order: DENY override -> GRANT override -> role default ->
-    deny. DENY always wins. A role administers users of its own role and
-    below (can_admin_role). Switching a member off is users.is_enabled,
-    never a role.
+    deny. DENY always wins.
 
     Permission facade:
         Every app's `Rsx\Permission` extends
@@ -369,7 +426,7 @@ PERMISSIONS (ACL)
             Permission::is_logged_in(): bool
             Permission::get_user(): ?User_Model
             Permission::has_permission(int $perm): bool
-            Permission::has_role(int $role_id): bool    (>= privilege)
+            Permission::has_role(int $role_id): bool    (this role or higher)
             Permission::can_admin_role(int $role_id): bool
             Permission::require_permission(int, string): void  (throws 403)
             Permission::require_role(int, string): void        (throws 403)
@@ -562,11 +619,12 @@ PITFALLS
     - New accounts are is_verified = 0. Do not treat an accepted invitation as
       a verified email until verification is actually wired.
 
-    - users.role_id is the ONLY role column (the ACL enum, 200-700). The
-      pre-ACL user_role_id column was dropped 2026-08-13. It is nullable, so a
-      membership created without one has no role and no permissions - always
-      assign an explicit User_Model::ROLE_* constant when creating one, never a
-      bare integer.
+    - users.role_id is the ONLY role column (the ACL enum, 200-700), and an
+      API key carries no role of its own: it runs as its holder, narrowed only
+      by its scopes and read_only flag (rsx:man external_api, NARROWING A
+      KEY). role_id is nullable, so a membership created without one has no
+      role and no permissions - always assign an explicit User_Model::ROLE_*
+      constant when creating one, never a bare integer.
 
     - Config keys are under rsx.auth.* (require_two_factor,
       invite_expiration_days) - not top-level rsx.*.

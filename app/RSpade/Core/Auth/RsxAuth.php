@@ -158,8 +158,7 @@ class RsxAuth
                 Login_History::record_failure(
                     $email,
                     Login_History::STATUS_FAILED_PASSWORD,
-                    null,
-                    $login_user->id
+                    identity_id: $login_user->id
                 );
             }
 
@@ -174,8 +173,7 @@ class RsxAuth
                 Login_History::record_failure(
                     $email,
                     Login_History::STATUS_FAILED_DISABLED,
-                    null,
-                    $login_user->id
+                    identity_id: $login_user->id
                 );
             }
 

@@ -51,6 +51,7 @@ Both trees are always present, and nothing about a class depends on which one it
 | `Developer/Conformance` | `Conformance_Audits` (`rsx:conformance:*`) |
 | `Support/Process` | `Process_Identity` |
 | `Support/Fingerprint` | `Rsx_Fingerprint` |
+| `Support/UrlFetch` | `Rsx_Url_Fetch` - the SSRF-checked download of a URL a user supplied (`rsx:man url_fetch`) |
 
 What stays in `Core/` (the engine) is listed in `Core/CLAUDE.md`; files, previews and search,
 time, the external API and companion applications are engine subsystems.

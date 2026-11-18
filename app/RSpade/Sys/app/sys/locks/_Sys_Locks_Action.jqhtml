@@ -1,0 +1,108 @@
+<%--
+_Sys_Locks_Action - every cluster lock and semaphore rsx-lockd holds right now: each holder
+(connection, host:pid), how long it has held and since when it last showed progress, and each
+waiter with how long it has waited and the bounds it waits under; then the worker pools. The
+same snapshot as `php artisan rsx:locks:status` (Lock_Status::snapshot()).
+
+A holder silent for longer than the stall window (rsx.locks.stall_seconds) while somebody
+waits is drawn in the warn tone - its waiters are failing as stalled. "End holder" ends the
+process holding a lock after Lock_Status::kill_holder() proves its identity. Refreshed on
+demand.
+--%>
+<Define:_Sys_Locks_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Page_Header $title="Locks" $icon="bi-lock" $subtitle="What rsx-lockd holds right now, who holds it, and who is waiting">
+            <Slot:actions>
+                <button type="button" class="btn btn-sm btn-secondary" data-action="refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            </Slot:actions>
+        </_Sys_Page_Header>
+        <% if (this.data.error_data) { %>
+            <_Sys_Error $error_data=this.data.error_data />
+        <% } else if (!this.data.snapshot) { %>
+            <Spinner class="_Sys_Locks_Action__loading" />
+        <% } else if (!this.data.snapshot.available) { %>
+            <_Sys_Empty_State $icon="bi-pause-circle" $title="No lock daemon" $body=this.data.snapshot.reason />
+        <% } else { %>
+            <% const _s = this.data.snapshot; %>
+            <% const _waiting = _s.locks.concat(_s.semaphores).reduce((n, e) => n + e.waiters.length, 0); %>
+            <_Sys_Stat_Grid>
+                <_Sys_Stat_Tile $label="Locks" $value=_s.locks.length $sub="held or waited for" />
+                <_Sys_Stat_Tile $label="Semaphores" $value=_s.semaphores.length $sub="held or waited for" />
+                <_Sys_Stat_Tile $label="Waiting" $value=_waiting $sub="parked requests" $tone=(_waiting ? 'warn' : 'ok') />
+                <_Sys_Stat_Tile $label="Stall window" $value=(_s.stall_seconds ? _s.stall_seconds + 's' : 'off') $sub=('stalled since start: ' + (_s.counters.stalled || 0)) />
+            </_Sys_Stat_Grid>
+
+            <% for (const _group of [{title: 'Locks', icon: 'bi-lock', entries: _s.locks}, {title: 'Semaphores', icon: 'bi-stoplights', entries: _s.semaphores}]) { %>
+                <_Sys_Section $title=_group.title $icon=_group.icon $count=_group.entries.length $flush=true>
+                    <Slot:body>
+                        <% if (!_group.entries.length) { %>
+                            <_Sys_Empty_State $icon="bi-unlock" $title=('No ' + _group.title.toLowerCase()) $body="Nothing is held or waited for." />
+                        <% } else { %>
+                            <div class="table-responsive">
+                                <table class="table mb-0">
+                                    <thead><tr><th>Name</th><th>State</th><th>Connection</th><th>Mode</th><th>For</th><th>Last progress</th><th></th></tr></thead>
+                                    <tbody>
+                                        <% for (const _e of _group.entries) { %>
+                                            <% for (const _h of _e.holders) { %>
+                                                <tr class="<%= _Sys_Locks_Action.is_silent(_e, _h, _s.stall_seconds) ? '_Sys_Locks_Action__row--silent' : '' %>">
+                                                    <td class="_Sys_Locks_Action__mono"><%= _e.name %><% if (_e.foreign) { %> <span class="_Sys_Locks_Action__dim">(another environment)</span><% } %></td>
+                                                    <td><_Sys_Status_Badge $status="ok" $label="held" /></td>
+                                                    <td class="_Sys_Locks_Action__mono"><%= _Sys_Locks_Action.who(_h) %><% if (_h.is_self) { %> <span class="_Sys_Locks_Action__dim">(this request)</span><% } %></td>
+                                                    <td><%= _h.mode ? _h.mode.toUpperCase() : 'slot ' + _h.slot %></td>
+                                                    <td><%= _Sys_Locks_Action.duration(_h.held_ms) %></td>
+                                                    <td><%= _Sys_Locks_Action.duration(_h.progress_ms) %> ago</td>
+                                                    <td class="text-end">
+                                                        <% if (_h === _e.holders[0] && _h.is_local && !_h.is_self) { %>
+                                                            <button type="button" class="btn btn-sm btn-danger" data-action="kill_holder" data-name="<%= _e.name %>" data-holders="<%= _e.holders.map((h) => (h.host || '?') + ':' + (h.pid || '?')).join(', ') %>">End holder</button>
+                                                        <% } %>
+                                                    </td>
+                                                </tr>
+                                            <% } %>
+                                            <% for (const _w of _e.waiters) { %>
+                                                <tr>
+                                                    <td class="_Sys_Locks_Action__mono"><%= _e.name %></td>
+                                                    <td><_Sys_Status_Badge $status="warn" $label="waiting" /></td>
+                                                    <td class="_Sys_Locks_Action__mono"><%= _Sys_Locks_Action.who(_w) %></td>
+                                                    <td><%= _w.mode ? _w.mode.toUpperCase() : 'slot' %></td>
+                                                    <td><%= _Sys_Locks_Action.duration(_w.waiting_ms) %></td>
+                                                    <td class="_Sys_Locks_Action__dim"><%= _Sys_Locks_Action.bounds(_w) %></td>
+                                                    <td></td>
+                                                </tr>
+                                            <% } %>
+                                        <% } %>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <% } %>
+                    </Slot:body>
+                </_Sys_Section>
+            <% } %>
+
+            <_Sys_Section $title="Worker pools" $icon="bi-cpu" $count=_s.pools.length $flush=true>
+                <Slot:body>
+                    <% if (!_s.pools.length) { %>
+                        <_Sys_Empty_State $icon="bi-moon" $title="No pools" $body="No task worker has joined a pool on this daemon." />
+                    <% } else { %>
+                        <div class="table-responsive">
+                            <table class="table mb-0">
+                                <thead><tr><th>Pool</th><th>Members</th><th>Pool lock</th><th>Waiting</th></tr></thead>
+                                <tbody>
+                                    <% for (const _p of _s.pools) { %>
+                                        <tr>
+                                            <td class="_Sys_Locks_Action__mono"><%= _p.pool %></td>
+                                            <td><%= _p.members %></td>
+                                            <td class="_Sys_Locks_Action__mono"><%= _p.holder ? _Sys_Locks_Action.who(_p.holder) + ' for ' + _Sys_Locks_Action.duration(_p.held_ms) : 'free' %></td>
+                                            <td><%= _p.waiting %></td>
+                                        </tr>
+                                    <% } %>
+                                </tbody>
+                            </table>
+                        </div>
+                    <% } %>
+                </Slot:body>
+            </_Sys_Section>
+        <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Locks_Action>

@@ -942,6 +942,19 @@ function try_resolve_php_class($identifier, $method_name, $find_php_class) {
 
     $file_path = $class_data['file'];
     $line_number = 1;
+
+    // A method a trait supplies is written in the trait's file: its record carries that
+    // file's manifest key, and its line number counts in that file.
+    $trait_file = $method_name
+        ? ($class_data['public_static_methods'][$method_name]['file']
+            ?? $class_data['public_instance_methods'][$method_name]['file']
+            ?? null)
+        : null;
+
+    if ($trait_file !== null) {
+        $file_path = $trait_file;
+    }
+
     $absolute_path = ide_absolute_path($file_path);
 
     if (file_exists($absolute_path)) {

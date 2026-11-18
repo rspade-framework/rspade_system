@@ -1,0 +1,81 @@
+A LOCK WAITER NOW FAILS WHEN ITS HOLDER SHOWS NO PROGRESS FOR 10 MINUTES (rsx.locks.stall_seconds)
+Date: 2026-11-18
+
+IF YOU DO NOTHING: code of yours that holds a cluster lock or semaphore slot (RsxLocks::named_write_lock(), named_read_lock(), acquire_semaphore(), or a Site_Lock section) for longer than 10 minutes WITHOUT reporting progress now makes every process waiting for that lock fail with Lock_Stalled_Exception ("Lock stalled: this process waited 600.0s for ... - held by <host>:<pid> ...") once 600 seconds pass with no progress - where it used to wait until the holder released. A #[Task] that reports (heartbeat(), status(), progress(), ...) at least once per 10 minutes is unaffected; code outside a task, or a task silent for 10 minutes while holding a lock, is.
+
+SUMMARY
+    Category 2: a framework default changed behaviour. A wait for a cluster
+    lock or semaphore used to last for as long as the holder held; it now
+    lasts for as long as the holder is WORKING. Owner-requested: an
+    indefinite, unattributed wait behind a hung holder presented as "the
+    site is slow" with no error and no name.
+
+THE CHANGE
+    - rsx-lockd's progress watchdog (protocol 2): a waiter whose holder has
+      shown no progress for rsx.locks.stall_seconds (600) fails with
+      Lock_Stalled_Exception naming the lock, the holder's host:pid, how
+      long it has held and when it last showed progress. The HOLDER is never
+      touched and keeps its lock.
+    - Progress = the grant itself, or RsxLocks::still_working(). Every
+      Task_Instance report calls still_working(), so a task that reports
+      needs nothing.
+    - A web request that has waited rsx.locks.wait_notice_seconds (30) for a
+      lock logs one warning naming the holder, and keeps waiting.
+    - A caller's own shorter $timeout keeps its own semantics; system (flock)
+      locks are unaffected.
+    - php artisan rsx:locks:status (and /_sys/locks) show every holder and
+      waiter; --kill-holder=<lock> ends a hung holder after proving its
+      identity.
+    - The watchdog is live once rsx-lockd runs protocol 2: rebuild the
+      container image (or restart a daemon that runs from the checkout).
+      Until then rsx:health's Lock Server row warns and nothing changes.
+
+THE FIX
+    Informational - arrives with the framework: RsxLocks::still_working(),
+    Lock_Stalled_Exception, Lock_Status, rsx:locks:status, the config keys
+    rsx.locks.stall_seconds and rsx.locks.wait_notice_seconds, the daemon.
+
+ACTION REQUIRED
+    1. Find your own lock calls:
+
+           grep -rn -e "named_write_lock" -e "named_read_lock" -e "acquire_semaphore" -e "RsxLocks::get_lock" rsx/
+
+       No match: nothing to do (site locks taken by #[Writer] and per-item
+       Site_Lock::write() sections are short by design).
+
+    2. For each match, prefer the standard facility, which needs no lock of
+       your own at all (rsx:man locks, THE NAMED-LOCK MANDATE):
+
+           a site's data          #[Writer] / Site_Lock::write() per item
+           one run at a time      #[Exclusive] on the #[Task]
+           tasks sharing a lane   #[Exclusive('group')]
+           not again so soon      #[Debounce(seconds)]
+
+    3. A lock you keep, held for longer than 10 minutes: signal progress
+       while you hold it, at least once per window.
+
+           $token = RsxLocks::named_write_lock('nightly_export');
+           try {
+               foreach ($batches as $batch) {
+                   export_batch($batch);
+                   RsxLocks::still_working();      // or $task->heartbeat() in a task
+               }
+           } finally {
+               RsxLocks::release_lock($token);
+           }
+
+       In a #[Task], any report already does it - call $task->heartbeat()
+       on every item.
+
+    4. Code that catches lock failures: a Lock_Stalled_Exception is NOT a
+       Lock_Timeout_Exception and is not caught by a catch for one. Let it
+       propagate - it names a silent holder to fix, not contention to retry.
+
+    5. Optional: a different window in rsx/resource/config/rsx.php -
+
+           'locks' => ['stall_seconds' => 600],    // 0 turns the watchdog off
+
+VERIFICATION
+    php artisan rsx:health shows "Lock Server ... (protocol 2)" OK.
+    php artisan rsx:locks:status while your long holder runs shows its
+    "last progress" staying under the stall window.

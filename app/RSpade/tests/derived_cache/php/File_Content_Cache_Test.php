@@ -263,7 +263,7 @@ class File_Content_Cache_Test extends Rsx_Test_Abstract
             );
 
             static::__assert_null(
-                File_Content_Cache::get(self::$namespace, $source, '', 'js', true),
+                File_Content_Cache::get(self::$namespace, $source, '', 'js', guard_source_mtime: true),
                 'with the guard an entry older than its source is refused'
             );
         } finally {

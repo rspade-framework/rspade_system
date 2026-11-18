@@ -46,7 +46,9 @@ use App\RSpade\Core\Session\Session;
  *     Done rederiving cached values
  *
  * one heading per table per pass (no newline), one dot per batch examined, a newline when
- * the table's pass ends, and the closing line after the last pass.
+ * the table's pass ends, and the closing line after the last pass. drain() also prints one
+ * "Skipped rederiving cached values for <table>: <error>" line for a queued table whose
+ * declared table or columns are not in the database.
  */
 class Rsx_Rederive
 {
@@ -92,8 +94,9 @@ class Rsx_Rederive
      * and remove each queue row when its table completes - a run that fails part way leaves
      * the rest queued for the next `migrate`. Prints nothing at all when nothing is queued.
      *
-     * A queued table with no model, a model with no derived columns, or a table or column the
-     * model declares that is not in the database is removed from the queue silently.
+     * A queued table with no model, or a model with no derived columns, is removed from the
+     * queue silently. A table or column the model declares that is not in the database also
+     * removes it from the queue, and prints one line naming the table and the schema error.
      *
      * FRAMEWORK INTERNAL - the last step of Maint_Migrate::execute_migrations().
      *
@@ -114,7 +117,7 @@ class Rsx_Rederive
         foreach ($queued as $table) {
             $fqcn = static::model_for($table);
 
-            if ($fqcn === null || !static::__columns_exist($fqcn)) {
+            if ($fqcn === null || !static::__columns_exist($fqcn, $table, $write)) {
                 static::__dequeue($table);
 
                 continue;
@@ -427,14 +430,19 @@ class Rsx_Rederive
 
     /**
      * Whether every column $fqcn declares is in the database (its first-use schema check).
-     * The drain's one sanctioned quiet path: a historical replay must never break because a
-     * table or a declared column is not there yet.
+     * A historical replay must never break because a table or a declared column is not there
+     * yet, so a missing one is not fatal: it answers false and prints one line through $write
+     * naming $table and the schema error, so the skipped rederive shows in `migrate`'s output.
+     *
+     * @param callable(string): void $write Writes text verbatim (no newline added)
      */
-    private static function __columns_exist(string $fqcn): bool
+    private static function __columns_exist(string $fqcn, string $table, callable $write): bool
     {
         try {
             $fqcn::_assert_columns_exist();
         } catch (LogicException $e) {
+            $write("Skipped rederiving cached values for {$table}: {$e->getMessage()}\n");
+
             return false;
         }
 

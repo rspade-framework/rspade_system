@@ -778,6 +778,21 @@ HOLD-TIME WARNINGS
     0 disables a warning. Nothing is killed or capped: a long hold is a design
     problem to fix (THE ARCHITECTURE PRINCIPLE), never a timeout.
 
+    Two more signals come from the lock daemon itself, for site locks as for
+    every cluster lock (rsx:man locks, PROGRESS AND STALLS and WAIT
+    ATTRIBUTION): a web request that has WAITED rsx.locks.wait_notice_seconds
+    (30) for its site lock logs one warning naming the holder and keeps
+    waiting; and any waiter fails with Lock_Stalled_Exception once the holder
+    has shown no progress for rsx.locks.stall_seconds (600). A task holding a
+    write section renews its progress on every report; anything else holding a
+    site lock that long is breaking THE ARCHITECTURE PRINCIPLE. Who holds what
+    right now: php artisan rsx:locks:status (or /_sys/locks), which can also
+    end a hung holder after proving its identity.
+
+    These locks are also why an application never needs a named lock of its
+    own: a process holds one site lock at a time, with no ordering between
+    them, so they cannot deadlock (rsx:man locks, THE NAMED-LOCK MANDATE).
+
 LIMITS
     A raw DB::table() / DB::statement() / raw SQL write, and ->raw_bulk(), are
     never seen by the enforcement - the documented limit, not a hole to close.
@@ -911,7 +926,8 @@ TROUBLESHOOTING
         the holder now (rsx:man locks, THE RSX LOCKD CLI).
 
 SEE ALSO
-    rsx:man locks - RsxLocks, rsx-lockd, lock groups, reentrancy
+    rsx:man locks - RsxLocks, rsx-lockd, lock groups, reentrancy, the stall
+        watchdog, rsx:locks:status and the named-lock mandate
     rsx:man request_history - _request_ref replay on writer requests
     rsx:man tasks - per-item write sections in a task body
     rsx:man realtime - Realtime::bulk_changed() after a set-based write

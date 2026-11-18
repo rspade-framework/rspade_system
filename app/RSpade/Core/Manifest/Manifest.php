@@ -744,7 +744,7 @@ class Manifest
     public static function php_get_extending(string $parentclass): array
     {
         // Get concrete subclasses only (abstract filtered out by default)
-        $subclasses = self::php_get_subclasses_of($parentclass, true);
+        $subclasses = self::php_get_subclasses_of($parentclass, concrete_only: true);
 
         $classpile = [];
         foreach ($subclasses as $classname) {
@@ -1514,7 +1514,7 @@ class Manifest
         // concurrent build on another server is not a conflict. Waits forever - a build can
         // legitimately take minutes and the process behind it has nothing to do but wait.
         // Box-physical resource (the build dir), unscoped across databases.
-        self::$_manifest_compile_lock = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, null, false);
+        self::$_manifest_compile_lock = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, db_scoped: false);
 
         console_debug('MANIFEST', 'Manifest build lock acquired, checking to see if manifest cache was updated');
 
@@ -2556,7 +2556,7 @@ class Manifest
             $lock = \App\RSpade\Core\Locks\RsxLocks::system_lock(
                 \App\RSpade\Core\Locks\RsxLocks::LOCK_BUNDLE_BUILD,
                 0,
-                false
+                db_scoped: false
             );
         } catch (\App\RSpade\Core\Locks\Lock_Timeout_Exception $e) {
             console_debug('MANIFEST', 'Derived cache sweep stood down: another process holds the bundle build lock');

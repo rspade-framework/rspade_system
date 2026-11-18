@@ -17,6 +17,30 @@ PHP-PARENT-CHAIN-01 (ParentCallChain_CodeQualityRule), via `Parent_Call_Chain_Ru
 | PCC-WRONG-NAME | `parent::other()` does NOT satisfy a requirement to call `parent::this()` | php | fixture calling a different parent method | 1 violation | implemented | 2026-08-03 |
 | PCC-EXCEPTION-MARKER | `@PHP-PARENT-CHAIN-01-EXCEPTION` suppresses a flagged edge case | php | fixture with the exception marker | 0 violations | implemented | 2026-08-03 |
 
+JS-PARENT-CHAIN-01 (JsParentCallChain_CodeQualityRule), via `Js_Parent_Call_Chain_Rule_Test`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| JPC-MISSING | an override of an in-manifest parent method with no `super.<method>()` call is flagged | php | fixture parent + child, no super | 1 critical violation naming child, method, declarer | implemented | 2026-11-18 |
+| JPC-SUPER | an override calling `super.<method>()` is clean | php | child calls super | 0 | implemented | 2026-11-18 |
+| JPC-NESTED | `super.<m>.apply()` inside an arrow function counts | php | arrow + apply | 0 | implemented | 2026-11-18 |
+| JPC-CONDITIONAL | a super call inside an `if` and a loop counts | php | branch + loop | 0 | implemented | 2026-11-18 |
+| JPC-COMMENT-STRING | a super call only in comments / strings / a template literal is no call | php | comments, strings | 1 | implemented | 2026-11-18 |
+| JPC-OTHER-SCOPE | `super.other()` or a super call inside an object method does not satisfy | php | wrong name, object method | 1 | implemented | 2026-11-18 |
+| JPC-REPLACEABLE | the `@Replaceable` decorator on the parent exempts instance and static overrides | php | decorated parent | 0 | implemented | 2026-11-18 |
+| JPC-DOCBLOCK-MARKER | `@Replaceable` written in a docblock is a comment and exempts nothing | php | docblock marker | 1 | implemented | 2026-11-18 |
+| JPC-CTOR-ACCESSORS | constructor and getters carry no obligation | php | constructor + getter overrides | 0 | implemented | 2026-11-18 |
+| JPC-VENDOR-BASE | a class directly over jqhtml's `Component` defines hooks freely | php | child of Component | 0 | implemented | 2026-11-18 |
+| JPC-JQHTML-CHAIN | a sub-component's `on_ready()` over its parent component's is enforced; `await super.on_ready()` satisfies it | php | Pcc_Component / Pcc_Sub_Component over Component | 0 / 1 / 0 | implemented | 2026-11-18 |
+| JPC-FRAMEWORK-LINEAGE | Spa_Layout.on_create() chains, on_action() is @Replaceable | php | child of Spa_Layout | 1 | implemented | 2026-11-18 |
+| JPC-STATIC | static overrides are enforced; an instance method does not override a static one | php | static fixtures | 1 / 0 / 0 | implemented | 2026-11-18 |
+| JPC-GRANDPARENT | an obligation set by a grandparent is enforced | php | 3-level chain | 1 | implemented | 2026-11-18 |
+| JPC-NEAREST | a re-declaration without @Replaceable re-establishes the chain below it | php | root @Replaceable, middle plain | 1 / 0 | implemented | 2026-11-18 |
+| JPC-EXCEPTION | `@JS-PARENT-CHAIN-01-EXCEPTION` needs a rationale | php | marker with / without reason | 0 / 1 | implemented | 2026-11-18 |
+| JPC-INCR-CHILD | a changed leaf class is the only class re-judged | php | subjects([_Sys_Layout file]) | [_Sys_Layout] | implemented | 2026-11-18 |
+| JPC-INCR-PARENT | a changed parent re-judges itself and every descendant, nothing else | php | subjects([Spa_Layout file]) | Spa_Layout + js_subclass_index | implemented | 2026-11-18 |
+| JPC-INCR-FULL | no changed set judges every class | php | subjects([]) | all js_classes | implemented | 2026-11-18 |
+
 PATH-OWNER-01 (PathOwner_CodeQualityRule), via `Path_Owner_Rule_Test`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -133,6 +157,20 @@ needs the fixture-file harness the rsx:check runner does not have yet (same bloc
 `db-lint-01`). Both branches were demonstrated manually against a temporary probe model
 during implementation, and the runtime half of check 1 is covered permanently by
 `Actor_Model_Test::test_every_stamp_target_extends_the_actor_layer`.
+
+
+PHP-OUTBOUND-HTTP-01 (OutboundHttp_CodeQualityRule), via `Outbound_Http_Rule_Test`. Outbound
+HTTP in application code either goes through `Rsx_Url_Fetch` (a URL a user can supply) or is
+marked as a fixed trusted destination. Banned spellings are assembled from string pieces.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| OUTBOUND-01 | The Http facade is flagged - bare, chained, fully qualified | php | `Http::get($url)`, `Http::timeout(5)->post(...)`, `\Illuminate\...\Http::get()` | 1 violation each | implemented | 2026-11-18 |
+| OUTBOUND-02 | Guzzle construction, curl_init/curl_exec and get_headers are flagged | php | `new \GuzzleHttp\Client()`, curl pair, `get_headers('/local')` | 1, 2, 1 | implemented | 2026-11-18 |
+| OUTBOUND-03 | File functions on a URL literal, a variable or an unknown concatenation are flagged | php | `file_get_contents('https://...')`, `($url)`, `readfile($url)` | 1 violation each | implemented | 2026-11-18 |
+| OUTBOUND-04 | Provably local first arguments, a method named copy, comments and strings are not | php | local literal, `php://memory`, `__DIR__ .`, `base_path()`, `->getPathname()` | 0 violations | implemented | 2026-11-18 |
+| OUTBOUND-05 | A marker with a reason exempts (same line or comment above); a bare one, or one separated by code, does not | php | four marker placements | 0, 0, 1, 1 | implemented | 2026-11-18 |
+| OUTBOUND-06 | Framework code is not judged | php | `Http::get($url)` under `app/RSpade/` | 0 violations | implemented | 2026-11-18 |
 
 
 ARTISAN-SPAWN-01 (ArtisanSubprocessSpawn_CodeQualityRule), via
@@ -539,6 +577,7 @@ loaded from temp files, outside the manifest. MODEL-COLUMNS-02 is a per-file tok
 | MC-10 | a non-string text_type is fatal | php | `text_type => true` | 1 violation | implemented | 2026-11-13 |
 | MC-11 | an entry replacing an inherited never_export entry without it is fatal; restating it passes, and un-kinding an inherited enum is legal | php | parent with `api_secret` never_export; child entries | 1 / 0 violations | implemented | 2026-11-13 |
 | MC-12 | an entry for an audit type column without type_ref is fatal; keeping it passes | php | `created_by_type => []`, `deleted_by_type => [type_ref, revision_exclude]` | 1 / 0 violations | implemented | 2026-11-13 |
+| MC-13 | an enum value's `order` that is not an int is fatal; a whole number (negative and zero included) or an omitted order passes | php | `1.5`, `'3'`, `null`; `-1`, `0`, omitted | 3 violations naming the value | implemented | 2026-11-17 |
 | MC-READ-01 | `X::$columns` and `$fqcn :: $columns[...]` are each a MODEL-COLUMNS-02 finding on their line | php | two reads | 2 violations, line 6 first | implemented | 2026-11-13 |
 | MC-READ-02 | a declaration, an accessor call, `$this->columns` and a mention in a string or comment are not reads | php | one fixture | 0 violations | implemented | 2026-11-13 |
 | MC-READ-03 | Rsx_Model_Abstract.php, which implements the accessors, may read the property | php | a read in a file of that name | 0 violations | implemented | 2026-11-13 |
@@ -805,3 +844,56 @@ written to temp files, never loaded, whose receivers name the indexed `Money_Fix
 | DEC-CLASS-STACK | a stack with one unknown decorator names that one, on its line | php | four stacked decorators | throws naming `@probe_spa`, line 3 | implemented | 2026-11-14 |
 | DEC-CLASS-MEMBER | a member-expression class decorator is refused, as on a method | php | `@Probe_Decorators.probe_mark` | throws | implemented | 2026-11-14 |
 | DEC-METHOD | a whitelisted method decorator passes; an unknown one is FATAL | php | fixtures | no throw / throws `FATAL: Decorator not whitelisted` | implemented | 2026-11-14 |
+
+## JS-ON-CREATE-01 - a component's on_create() is synchronous (`Async_On_Create_Rule_Test`)
+
+Manifest-time FATAL, per file over the Component lineage (Spa_Action, Spa_Layout included);
+`check()` driven over fixture source with a REAL class name as its metadata `class`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| ONC-01 | `async on_create()` on a component is a critical violation at its line, naming on_load() / on_ready() as the fix | php | Spa_Action fixture | 1 violation, line 2 | implemented | 2026-11-17 |
+| ONC-02 | a layout is in scope | php | Spa_Layout fixture | 1 violation | implemented | 2026-11-17 |
+| ONC-03 | a synchronous on_create(), an async on_load(), a longer method name, a static method of the name, and a commented-out declaration pass | php | five fixtures | 0 violations each | implemented | 2026-11-17 |
+| ONC-04 | a class outside the Component lineage is not judged | php | metadata class Rsx | 0 violations | implemented | 2026-11-17 |
+
+## SCSS-IMPORT-01 - an authored stylesheet does not @import (`Scss_Import_Rule_Test`)
+
+Manifest-time FATAL sharing `Scss_BundleProcessor::forbidden_imports()` with the bundle
+compiler's refusal (bundles `SCSS-IMPORT-01`, `Scss_Import_Refusal_Test`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| SIMP-01 | each quoted import is one critical violation at its line, the fix naming the include list | php | two imports on lines 4 and 5 | 2 violations | implemented | 2026-11-17 |
+| SIMP-02 | a .sass file is judged | php | one import | 1 violation | implemented | 2026-11-17 |
+| SIMP-03 | commented-out imports, a `/vendor/` stylesheet, a CSS `@import url(...)` and the word in a selector or string pass | php | four fixtures | 0 violations each | implemented | 2026-11-17 |
+
+## BUNDLE-CDN-01 - cdn_assets are https URLs (`Bundle_Cdn_Https_Rule_Test`)
+
+Manifest-time FATAL, per file over concrete Rsx_Bundle_Abstract classes; the
+`evaluate_definition()` seam takes synthetic definitions.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CDN-01 | https entries pass; a definition with no cdn_assets declares nothing | php | js + css https entries | 0 violations | implemented | 2026-11-17 |
+| CDN-02 | http, protocol-relative, schemeless, ftp, file and an upper-case scheme are each refused | php | six urls | 1 critical violation each | implemented | 2026-11-17 |
+| CDN-03 | an entry with no url (a map without one, a bare string) is refused | php | two entries | 2 violations | implemented | 2026-11-17 |
+| CDN-04 | the shipped CDN bundles pass check() | php | Jquery_Bundle, Bootstrap5_Bundle | 0 violations | implemented | 2026-11-17 |
+
+## PHP-NAMED-OPTIONAL-01 - optional parameters are passed by name (`Named_Optional_Argument_Rule_Test`)
+
+rsx:check, high, per file. A literal null/true/false passed positionally into a defaulted
+parameter of a manifest-resolved static method or a framework/application function; the
+callee is read by reflection, so the fixtures call real framework symbols.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| NOA-01 | a null placeholder then a bare flag is one high finding per call, naming the first slot reached | php | `system_lock('X', null, false)` qualified + simple | 2 violations, `$timeout` | implemented | 2026-11-18 |
+| NOA-02 | a bare flag into a framework helper function is flagged | php | `rmdir_recursive($dir, false)` | 1 violation, `$delete_self` | implemented | 2026-11-18 |
+| NOA-03 | named optional arguments are clean | php | `db_scoped: false`, `delete_self: false` | 0 violations | implemented | 2026-11-18 |
+| NOA-04 | a literal into a REQUIRED parameter is not judged | php | `Task_Runner::execute($instance, false)` | 0 violations | implemented | 2026-11-18 |
+| NOA-05 | a non-literal into a defaulted parameter is not judged | php | variable / integer argument | 0 violations | implemented | 2026-11-18 |
+| NOA-06 | unresolvable, vendor-declared and builtin callees are skipped | php | unknown class, `$object::`, unknown function, `\Illuminate\...`, `preventLazyLoading()`, `in_array()` | 0 violations | implemented | 2026-11-18 |
+| NOA-07 | a call spelled in a string or a comment is not a call | php | string + comment | 0 violations | implemented | 2026-11-18 |
+| NOA-08 | the marker with a rationale excuses only the call beneath it | php | marker above one of two calls | 1 violation, the second call | implemented | 2026-11-18 |
+| NOA-09 | a bare marker excuses nothing | php | marker with no rationale | 1 violation | implemented | 2026-11-18 |

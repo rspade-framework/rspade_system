@@ -22,7 +22,9 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   `portal_not_served()` - the last two answered by the front controller before dispatch.
 - `app/Http/Kernel.php` - `dispatchToRouter()`: Laravel's router is never consulted.
 - `app/RSpade/Core/Dispatch/Route_ManifestSupport.php` - ROUTE-VERB-01: a `#[Route]` /
-  `#[Portal_Route]` may declare GET and/or POST only.
+  `#[Portal_Route]` may declare GET and/or POST only; `assert_route_pattern()` -
+  ROUTE-PATH-01 (no query part) and ROUTE-PARAM-01 (parameter names `[A-Za-z0-9_]`), for
+  every route-pattern source (`Route_Pattern_Rule_Test`).
 - `app/RSpade/Core/Dispatch/Dispatcher.php`
   - `__call_main_pre_dispatch()` - the realm's Main::pre_dispatch; `__call_action()` - the controller or non-controller static `pre_dispatch`, then the action
     (B4.4: a throwing hook must NOT be swallowed).
@@ -119,6 +121,9 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   `Ajax_Transport_Parity_Test`, recording each `pre_dispatch` call or halting it.
 - `php/Dispatch_Abort_Fixture_Controller.php` - `/_test/dispatch/*` routes whose actions
   only `abort()`, for the status-code seam.
+- `php/Route_Params_Fixture_Controller.php` - `/_test/params/:id` (GET+POST) and
+  `/_test/params/:id/optional/:extra?`, each answering the `$params` array it was handed (and
+  the body field `name` read off the Request), for `Route_Params_Test`.
 - `php/Dispatch_Page_Fixture_Controller.php` - `/test-dispatch/page`, a routable GET page
   with NO leading underscore. The full-page rejection tests assert the intended URL is
   threaded back as `?redirect=`, and `Login_Redirect` drops an underscore-led target, so
@@ -135,6 +140,11 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   and the ajax-channel pin. Plus the `abort()` matrix, dispatched through
   real fixture routes (`Dispatch_Abort_Fixture_Controller`, `/_test/dispatch/*`)
   because the behavior only exists at the dispatch seam.
+- **php** (pure): inbound route matching - `RouteResolver::match()`, `match_with_query()`,
+  `compile_pattern()`, `sort_by_priority()` / `get_pattern_priority()` - against rsx:man dispatch
+  ROUTE MATCHING and rsx:man routing (`Route_Resolver_Match_Test`).
+- **php** (in-process dispatch of a fixture route): `$params` assembly and precedence, the POST
+  body kept out, the synthetic keys (`Route_Params_Test`).
 - **http** (curl / live rsx:debug run): the dev-auth fragment regression, and the
   wire-level channel split - a logged-out full-page
   GET 302s to `/login?redirect=...`; the same rejection via an ajax endpoint returns

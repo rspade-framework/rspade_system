@@ -484,21 +484,55 @@ class Spa {
         const path = parsed_url.pathname;
         const search = parsed_url.search;
 
-        // Parse query string
-        const query_params = {};
-        if (search && search !== '?') {
-            const query = search.startsWith('?') ? search.substring(1) : search;
-            const pairs = query.split('&');
+        const query_params = Spa.parse_query(search);
 
-            for (const pair of pairs) {
-                const [key, value] = pair.split('=');
-                if (key) {
-                    query_params[decodeURIComponent(key)] = value ? decodeURIComponent(value) : '';
-                }
+        return { host: parsed_url.host, path, search, query_params, hash: parsed_url.hash };
+    }
+
+    /**
+     * Parse a query string into {key: value} the way the server reads the same URL ($_GET):
+     * each pair splits at its FIRST '=' ('q=a=b' is q => 'a=b'), a pair with no '=' is the
+     * empty string, a repeated key keeps its last value, and keys and values decode as
+     * application/x-www-form-urlencoded ('+' is a space, see decode_query_component()).
+     *
+     * @param {string} query - With or without its leading '?'
+     * @returns {Object<string, string>}
+     */
+    static parse_query(query) {
+        const params = {};
+        const text = String(query).startsWith('?') ? String(query).substring(1) : String(query);
+
+        if (text === '') {
+            return params;
+        }
+
+        for (const pair of text.split('&')) {
+            const eq = pair.indexOf('=');
+            const key = Spa.decode_query_component(eq === -1 ? pair : pair.substring(0, eq));
+            if (key !== '') {
+                params[key] = eq === -1 ? '' : Spa.decode_query_component(pair.substring(eq + 1));
             }
         }
 
-        return { host: parsed_url.host, path, search, query_params, hash: parsed_url.hash };
+        return params;
+    }
+
+    /**
+     * Decode one query-string key or value as application/x-www-form-urlencoded, the server's
+     * reading: '+' is a space and '%XX' is a byte. A malformed escape (a stray '%') leaves the
+     * text as written instead of throwing - a URL is user input. Query strings only: a path
+     * segment keeps '+' as a plus (decodeURIComponent()).
+     *
+     * @param {string} text
+     * @returns {string}
+     */
+    static decode_query_component(text) {
+        const spaced = text.replace(/\+/g, ' ');
+        try {
+            return decodeURIComponent(spaced);
+        } catch (e) {
+            return spaced;
+        }
     }
 
     /**

@@ -74,7 +74,7 @@ class Rsx_Temp_Files_Test extends Rsx_Test_Abstract
             @unlink($source);
         }
 
-        static::__assert_throws(\InvalidArgumentException::class, fn () => Rsx_Temp_Files::store_bytes('x', 'x.txt', null, 0), 'at least 1 day');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Rsx_Temp_Files::store_bytes('x', 'x.txt', retention_days: 0), 'at least 1 day');
     }
 
     public static function test_find_and_delete()

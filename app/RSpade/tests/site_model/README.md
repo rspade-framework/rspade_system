@@ -44,3 +44,4 @@ The concern also covers the `sites` table's own per-site client portal columns:
 | A subclass overriding `booted()` + chaining `parent::booted()` gets the `site` scope, and its own body still runs | php | implemented |
 | Cross-tenant `find()` of a foreign-site row returns null (visible unscoped) | php | implemented |
 | `sites.portal_domain` normalisation, refusal and uniqueness; `is_portal_enabled` default and cast | php | implemented |
+| Changing `site_id` on a saved record is fatal by every route (save from its own site, save after switching to the target, `update(['site_id' => ...])`); the row keeps its site; reassigning the same site saves | php | implemented (`Site_Id_Immutability_Test`) |

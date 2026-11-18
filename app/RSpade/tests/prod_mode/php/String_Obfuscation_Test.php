@@ -300,7 +300,7 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
     public static function test_obfuscated_and_minified_bundle_evaluates_to_the_original_values()
     {
         $run = static::__pipeline(static::__files());
-        $minified_js = Minifier::minify_js($run['obfuscated'], 'string_obfuscation_fixture.js', true);
+        $minified_js = Minifier::minify_js($run['obfuscated'], 'string_obfuscation_fixture.js', strip_console_debug: true);
 
         $original = static::__evaluate($run['original']);
 

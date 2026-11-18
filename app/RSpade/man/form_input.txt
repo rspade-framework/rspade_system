@@ -73,7 +73,12 @@ THE FOUR MEMBERS
         My_Custom_Input must implement _set_value()
 
     A concrete class that overrides on_create() MUST call super.on_create() -
-    that is where buffering state is initialized and data-name is stamped.
+    that is where buffering state is initialized and data-name is stamped. The
+    manifest build enforces it (JS-PARENT-CHAIN-01): every override of a method
+    an ancestor in the manifest declares calls super.<method>() unless that
+    ancestor decorates it @Replaceable. Form_Input_Abstract's _get_value(),
+    _set_value() and _focus() are @Replaceable - an input replaces them; on_create()
+    is not. rsx:man coding_standards, OVERRIDES CALL THEIR PARENT.
 
 BUFFERING: SETTABLE BEFORE READY, ALWAYS
 
@@ -465,7 +470,8 @@ COMMON MISTAKES
         Call _notify_input(value).
 
     Overriding on_create() without super.on_create()
-        Buffering state and data-name never initialize.
+        Buffering state and data-name never initialize. The manifest build
+        refuses it (JS-PARENT-CHAIN-01).
 
     Reading the value from this.data
         The value always arrives through val(). Only an input that fetches its

@@ -222,7 +222,7 @@ class Two_Factor_Trusted_Device_Test extends Rsx_Test_Abstract
         static::__verify_staff($login_user);
         Rsx_Two_Factor::trust_this_device($login_user);
 
-        static::__assert_equals(1, Rsx_Two_Factor::forget_trusted_devices($login_user, true));
+        static::__assert_equals(1, Rsx_Two_Factor::forget_trusted_devices($login_user, except_this_device: true));
         static::__assert_true(Rsx_Two_Factor::device_is_trusted($login_user), 'this browser is kept');
 
         Session::$_browser_session_id_for_tests = $first;

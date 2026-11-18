@@ -1,0 +1,73 @@
+READING A MODEL PROPERTY THE MODEL DOES NOT HAVE NOW THROWS
+Date: 2026-11-18
+
+IF YOU DO NOTHING: any code of yours that reads a property a model does not have - a misspelled column, a degraded enum property such as $user->role_id_can_admin_roles (one underscore where the enum property role_id__can_admin_roles has two), or a column the query that loaded the record did not select - now throws LogicException where it used to receive null. The read fails the request (or the task) the first time the line runs. Code that relied on the null was wrong already: a guard reading a misspelled property was always false.
+
+SUMMARY
+    Category 2: the read semantics of every model extending
+    Rsx_Model_Abstract changed. Affects application code that reads a
+    property no column, cast, accessor, relationship, enum property or
+    detail accessor answers.
+
+THE CHANGE
+    $record->key (and $record->getAttribute('key')) on an RSpade model
+    throws when nothing answers the key:
+
+        X_Model has no property 'role_id_can_admin_roles': it is not a
+        column of 'x', an enum property, an appended property, an accessor,
+        a relationship or a detail accessor. Did you mean
+        'role_id__can_admin_roles'? ...
+
+    A record loaded from the database also throws for a column its query
+    did not select:
+
+        X_Model::notes was not loaded on this record: it is a column of
+        'x', but the query that loaded the record did not select it. ...
+
+    Unchanged, and never throwing:
+        - a record not loaded from the database (new, or created by this
+          process) reads an unassigned column of its table as null;
+        - an enum property the current value does not define reads as null;
+        - presence tests: isset($record->key), $record->key ?? $default,
+          isset($record['key']), data_get($record, 'key');
+        - writes.
+
+    rsx:man model, READING PROPERTIES.
+
+THE FIX
+    Informational - arrives with the framework: Rsx_Model_Abstract
+    overrides throwMissingAttributeExceptionIfApplicable() (the refusal)
+    and offsetExists() (presence tests stay silent).
+
+ACTION REQUIRED
+    1. Run your test suite and click through your screens; every affected
+       read throws with the message above, naming the model and the key and,
+       when one is close, the name you meant.
+
+    2. To look for candidates ahead of time, search for partial selects and
+       read every property the loaded records are later asked for:
+
+           grep -rnE -- "->select\(|->get\(\[|->first\(\[|->find\([^)]*, *\[" rsx/
+
+    3. Fix each by what the read meant:
+
+           $user->role_id_can_admin_roles      // typo: use the real name
+           $user->role_id__can_admin_roles
+
+           Client_Model::select(['id', 'name'])->get()   // then reads ->status_id
+           Client_Model::select(['id', 'name', 'status_id'])->get()
+
+           $record->optional_thing             // absence is legitimately possible
+           $record->optional_thing ?? null     // or isset($record->optional_thing)
+
+       "Was this column loaded, even as NULL" is
+       array_key_exists('col', $record->getAttributes()).
+
+VERIFICATION
+    Your test suite passes and your main screens render with no
+    "has no property" or "was not loaded on this record" error in the log.
+
+SEE ALSO
+    rsx:man model - READING PROPERTIES
+    rsx:man framework_divergences - Reading a Missing Model Property Throws
+    skill rspade:models

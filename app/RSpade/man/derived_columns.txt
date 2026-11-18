@@ -261,10 +261,12 @@ MIGRATIONS
     record every queued table gets another pass, up to N + 2 passes for N
     queued tables; tables still changing on the last pass are named in a
     [WARNING] (a cycle among derived values, or a non-deterministic derive
-    method) and the run continues. A queued table with no model, a model
-    with no derived columns, or a declared column the database lacks, is
-    removed from the queue silently: a migration replays forever, long
-    after the model it was written for changed. A derive method that throws
+    method) and the run continues. A queued table with no model, or a model
+    with no derived columns, is removed from the queue silently; one whose
+    model declares a table or column the database lacks is removed too,
+    printing "Skipped rederiving cached values for <table>: <error>". Neither
+    is fatal: a migration replays forever, long after the model it was
+    written for changed. A derive method that throws
     fails the run ("Rederiving cached values failed: ...") and the
     migration's snapshot or dump rolls it back; a table that did not
     complete stays queued for the next migrate.

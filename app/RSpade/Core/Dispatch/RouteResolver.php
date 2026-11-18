@@ -396,8 +396,9 @@ class RouteResolver
         // Penalize optional parameters
         $score -= substr_count($pattern, '?') * 10;
 
-        // Penalize required parameters
-        $score -= preg_match_all('/:([\w]+)(?!\?)/', $pattern) * 5;
+        // Penalize required parameters. The name is matched possessively so it cannot give
+        // back a character to satisfy the lookahead: `:id?` is optional only, never also `:i`
+        $score -= preg_match_all('/:\w++(?!\?)/', $pattern) * 5;
 
         return $score;
     }

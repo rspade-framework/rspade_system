@@ -16,11 +16,13 @@ use App\RSpade\Tests\Session\Php\Never_Export_Fixture_Model;
 /**
  * never_export in $columns is the one export control, and its effective set is the overlay of the chain.
  *
- * Three promises are pinned here. A subclass declaring its own list ADDS to its parent's
+ * Four promises are pinned here. A subclass declaring its own list ADDS to its parent's
  * (the shape of a class override of a core model) rather than replacing it. Laravel's
  * makeVisible() cannot put a never-exported column back, because the strip runs after
  * Laravel has built the array. And the identity secrets - both password hashes, the staff
- * remember token, the portal user's open metadata bag - are on that list.
+ * remember token, the portal user's open metadata bag - are on that list. And a
+ * never-exported enum column takes its `col__*` extras (label, constant, custom properties)
+ * out of the payload with it.
  *
  * Models are built unsaved (attribute-only). The chain under test is the fixture pair
  * Never_Export_Fixture_Base_Model_Abstract -> Never_Export_Fixture_Model beside this file.
@@ -47,6 +49,33 @@ class Model_Never_Export_Union_Test extends Rsx_Test_Abstract
         static::__assert_false(array_key_exists('leaf_secret_column', $payload), 'the leaf column is stripped');
         static::__assert_false(array_key_exists('base_secret_column', $payload), 'the parent column is still stripped');
         static::__assert_true(array_key_exists('label', $payload), 'the rest of the record is serialized');
+    }
+
+    public static function test_a_never_exported_enum_column_exports_none_of_its_extras()
+    {
+        $record = new Never_Export_Fixture_Model();
+        $record->id = 1;
+        $record->leaf_secret_tier_id = 2;
+        $record->visible_tier_id = 1;
+
+        $payload = $record->toArray();
+
+        static::__assert_false(array_key_exists('leaf_secret_tier_id', $payload), 'the enum value is stripped');
+
+        foreach (array_keys($payload) as $key) {
+            static::__assert_false(str_starts_with((string) $key, 'leaf_secret_tier_id__'), "no extra of the secret column: {$key}");
+        }
+
+        $json = json_encode($payload);
+        static::__assert_false(str_contains($json, 'Probe Gold Tier'), 'its label is not in the JSON');
+        static::__assert_false(str_contains($json, 'probe-gold-badge'), 'its custom property is not in the JSON');
+
+        // An exported enum column keeps its extras.
+        static::__assert_equals('Probe Visible Tier', $payload['visible_tier_id__label'] ?? null, 'the exported column carries its label');
+        static::__assert_equals('probe-visible-badge', $payload['visible_tier_id__badge'] ?? null, 'and its custom property');
+
+        // Server code still reads the secret column's extras.
+        static::__assert_equals('Probe Gold Tier', $record->leaf_secret_tier_id__label, 'server code reads the label');
     }
 
     public static function test_a_parent_list_is_unaffected_by_a_subclass_list()

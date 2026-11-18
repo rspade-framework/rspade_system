@@ -729,7 +729,7 @@ class Portal_Session
         }
 
         // "Sign out everywhere else" also ends every other browser's two-factor trust.
-        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor::forget_trusted_devices((int) $portal_user_id, true);
+        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Portal_Two_Factor::forget_trusted_devices((int) $portal_user_id, except_this_device: true);
 
         $ids = Session::_signed_in_user_session_ids(Session::REALM_PORTAL, (int) $portal_user_id, null, true);
 

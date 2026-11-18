@@ -151,7 +151,7 @@ class Session_Values_Test extends Rsx_Test_Abstract
     {
         static::__session_id();
 
-        Session::put_value('forever', 'still here', null);
+        Session::put_value('forever', 'still here', expires_at: null);
 
         static::__assert_equals('still here', Session::get_value('forever'));
     }
@@ -229,20 +229,20 @@ class Session_Values_Test extends Rsx_Test_Abstract
     {
         $id = static::__session_id();
 
-        Session::put_value('shared_key', 'staff value', null, 'staff');
-        Session::put_value('shared_key', 'portal value', null, 'portal');
-        Session::put_value('shared_key', 'guest value', null, 'guest');
+        Session::put_value('shared_key', 'staff value', realm: 'staff');
+        Session::put_value('shared_key', 'portal value', realm: 'portal');
+        Session::put_value('shared_key', 'guest value', realm: 'guest');
 
-        static::__assert_equals('staff value', Session::get_value('shared_key', null, 'staff'));
-        static::__assert_equals('portal value', Session::get_value('shared_key', null, 'portal'));
-        static::__assert_equals('guest value', Session::get_value('shared_key', null, 'guest'));
+        static::__assert_equals('staff value', Session::get_value('shared_key', realm: 'staff'));
+        static::__assert_equals('portal value', Session::get_value('shared_key', realm: 'portal'));
+        static::__assert_equals('guest value', Session::get_value('shared_key', realm: 'guest'));
         static::__assert_equals(3, static::__row_count($id), 'three rows, one per realm');
 
         Session::forget_value('shared_key', 'portal');
 
-        static::__assert_null(Session::get_value('shared_key', null, 'portal'), 'forgotten in its realm');
-        static::__assert_equals('staff value', Session::get_value('shared_key', null, 'staff'), 'the others untouched');
-        static::__assert_equals('guest value', Session::get_value('shared_key', null, 'guest'));
+        static::__assert_null(Session::get_value('shared_key', realm: 'portal'), 'forgotten in its realm');
+        static::__assert_equals('staff value', Session::get_value('shared_key', realm: 'staff'), 'the others untouched');
+        static::__assert_equals('guest value', Session::get_value('shared_key', realm: 'guest'));
 
         $realms = DB::table('_session_values')->where('session_id', $id)->orderBy('realm_id')->pluck('realm_id')->map(fn ($r) => (int) $r)->all();
         static::__assert_equals([Session::REALM_STAFF, Session::REALM_GUEST], $realms, 'stored under the realm ids');
@@ -257,14 +257,14 @@ class Session_Values_Test extends Rsx_Test_Abstract
         static::__session_id();
 
         Session::put_value('experience', 'from staff');
-        static::__assert_equals('from staff', Session::get_value('experience', null, 'staff'), 'a staff request writes the staff realm');
+        static::__assert_equals('from staff', Session::get_value('experience', realm: 'staff'), 'a staff request writes the staff realm');
 
         try {
             Rsx_Portal::set_portal_request(true);
 
             static::__assert_null(Session::get_value('experience'), 'a portal request reads the portal realm');
             Session::put_value('experience', 'from portal');
-            static::__assert_equals('from portal', Session::get_value('experience', null, 'portal'));
+            static::__assert_equals('from portal', Session::get_value('experience', realm: 'portal'));
         } finally {
             Rsx_Portal::set_portal_request(false);
         }
@@ -281,21 +281,21 @@ class Session_Values_Test extends Rsx_Test_Abstract
 
         Portal_Session::put_value('portal_key', 42);
 
-        static::__assert_equals(42, Session::get_value('portal_key', null, 'portal'));
-        static::__assert_null(Session::get_value('portal_key', null, 'staff'), 'not the staff realm');
+        static::__assert_equals(42, Session::get_value('portal_key', realm: 'portal'));
+        static::__assert_null(Session::get_value('portal_key', realm: 'staff'), 'not the staff realm');
         static::__assert_equals(42, Portal_Session::get_value('portal_key'));
 
         Portal_Session::forget_value('portal_key');
 
-        static::__assert_null(Session::get_value('portal_key', null, 'portal'));
+        static::__assert_null(Session::get_value('portal_key', realm: 'portal'));
     }
 
     public static function test_an_unknown_realm_throws()
     {
         static::__session_id();
 
-        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::put_value('k', 1, null, 'api'));
-        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::get_value('k', null, 'Staff'));
+        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::put_value('k', 1, realm: 'api'));
+        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::get_value('k', realm: 'Staff'));
         static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::forget_value('k', 'nobody'));
     }
 }

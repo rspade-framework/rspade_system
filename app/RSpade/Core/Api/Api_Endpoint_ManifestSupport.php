@@ -2,7 +2,9 @@
 
 namespace App\RSpade\Core\Api;
 
+use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Dispatch\Route_ManifestSupport;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -34,8 +36,10 @@ use App\RSpade\Core\Manifest\Manifest;
  * - #[Api_Param] names are unique per method; required:true with a default is a contradiction.
  * - An #[Api_Param] name never starts with '_': that namespace is the system parameters'
  *   (_request_ref), which the dispatcher accepts undeclared.
- * - #[Api_Param] type is one of {string, int, float, bool, file, money} (default 'string');
- *   a money param reaches the endpoint as an Rsx_Money or null (Api_Param_Validator).
+ * - #[Api_Param] type is one of {string, int, float, bool, file, money, json} (default
+ *   'string'); a money param reaches the endpoint as an Rsx_Money or null, a json param as
+ *   the decoded JSON value (Api_Param_Validator).
+ * - a json param's default is a literal array or a string of valid JSON text.
  * - column: 'Model_Name.column' is accepted on a money param only, and names a concrete model
  *   and a column it declares ['money' => true]; the validator then refuses an amount beyond
  *   that column's money_limit().
@@ -98,7 +102,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
     // Allowed HTTP verbs and #[Api_Param] types for v1.
     private const ALLOWED_METHODS = ['GET', 'POST'];
-    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file', 'money'];
+    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file', 'money', 'json'];
 
     // Attributes forbidden on the same method as #[Api_Endpoint].
     private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint', 'Companion_Endpoint'];
@@ -277,6 +281,8 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
             if ($pattern[0] !== '/') {
                 $pattern = '/' . $pattern;
             }
+
+            Route_ManifestSupport::assert_route_pattern($pattern, $location);
 
             // Pattern must start with /api/vN/ and carry a segment after the version.
             if (!preg_match('#^/api/v[0-9]+/#', $pattern)) {
@@ -726,6 +732,19 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                     throw new \RuntimeException(
                         "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
                         "  type 'file' cannot carry a default."
+                    );
+                }
+            }
+
+            // A json default is read like a submitted value (Api_Param_Validator): a string is
+            // JSON text, so one that does not parse is a declaration that could never be served.
+            if ($type === 'json' && $has_default && is_string($args['default'])) {
+                try {
+                    Api_Param_Validator::_json_param_value($args['default']);
+                } catch (\JsonException $e) {
+                    throw new \RuntimeException(
+                        "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                        "  The default of a type 'json' param is a literal array or a string of valid JSON text; this string does not parse ({$e->getMessage()})."
                     );
                 }
             }

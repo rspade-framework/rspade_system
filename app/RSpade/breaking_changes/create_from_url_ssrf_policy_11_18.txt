@@ -1,0 +1,42 @@
+FILE_ATTACHMENT_MODEL::CREATE_FROM_URL() REFUSES PRIVATE DESTINATIONS AND HAS NO TIMEOUT OPTION
+Date: 2026-11-18
+
+IF YOU DO NOTHING: code of yours that calls File_Attachment_Model::create_from_url() with a URL that resolves to a loopback, private-network, link-local or other non-public address (an internal service, a container on the same network, http://localhost/...) now throws Rsx_Url_Fetch_Exception naming the host and the refused address class, and stores nothing. A 'timeout' key in its $params is no longer read; the download has no total time limit (only a connect limit, rsx.url_fetch.connect_timeout_seconds), and its size is capped by 'max_bytes' (default 1 GB).
+
+SUMMARY
+    Category 2: a public framework API now enforces a destination policy
+    (server-side request forgery protection) and changed its options.
+    Affects code that calls create_from_url(); code that never calls it is
+    unaffected.
+
+THE CHANGE
+    create_from_url() is now a thin wrapper over Rsx_Url_Fetch::to_temp_file()
+    (rsx:man url_fetch): http/https only, every resolved address checked and
+    the connection pinned to it, redirects re-checked hop by hop, the body
+    streamed to a temp file under max_bytes. A URL a user supplied can no
+    longer reach the services inside your deployment.
+
+THE FIX
+    Informational - arrives with the framework: create_from_url() wraps
+    Rsx_Url_Fetch::to_temp_file(), the new rsx.url_fetch.connect_timeout_seconds
+    config key (30) bounds only the wait for a server to answer, and rsx:check
+    gains PHP-OUTBOUND-HTTP-01.
+
+ACTION REQUIRED
+    - Find every call: grep -rn "create_from_url" rsx/
+    - A call that fetches an INTERNAL destination on purpose (a trusted
+      service you run) passes 'allow_private' => true in its $params. Never
+      pass it for a URL that came from a user.
+    - Remove any 'timeout' key from those $params; set 'max_bytes' to a
+      liberal but sensible ceiling for what that call downloads.
+    - Run php artisan rsx:check: PHP-OUTBOUND-HTTP-01 lists every outbound
+      HTTP call in rsx/. Route a user-supplied URL through
+      Rsx_Url_Fetch::to_temp_file(); mark a fixed, trusted destination
+      @PHP-OUTBOUND-HTTP-01-EXCEPTION <reason>.
+
+VERIFICATION
+    rsx:check reports no PHP-OUTBOUND-HTTP-01 finding, and each
+    create_from_url() call site fetches its expected file in development
+    (an internal-only one succeeds only with allow_private).
+
+    See: php artisan rsx:man url_fetch, php artisan rsx:man file_upload

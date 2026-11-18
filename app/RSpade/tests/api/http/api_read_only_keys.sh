@@ -78,10 +78,10 @@ $app = require '/var/www/html/system/bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 $read_only = App\RSpade\Core\Api\Api_Key_Model::generate(
-    1, 'HTTP read-only test key (temporary)', 'live', null, null, null, true
+    1, 'HTTP read-only test key (temporary)', 'live', null, null, true
 );
 $read_only_scoped = App\RSpade\Core\Api\Api_Key_Model::generate(
-    1, 'HTTP read-only scoped test key (temporary)', 'live', null, null, "/api/v1/files/*", true
+    1, 'HTTP read-only scoped test key (temporary)', 'live', null, "/api/v1/files/*", true
 );
 $read_write = App\RSpade\Core\Api\Api_Key_Model::generate(1, 'HTTP read-write test key (temporary)');
 echo implode('|', [

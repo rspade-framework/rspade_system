@@ -129,7 +129,7 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
         static::__assert_false(static::__refused(null, $ip), 'third - at the limit');
         static::__assert_true(static::__refused(null, $ip), 'the fourth is refused');
 
-        $retry = Login_Throttle::retry_after_seconds(null, $ip);
+        $retry = Login_Throttle::retry_after_seconds(ip: $ip);
         static::__assert_greater_than(0, $retry, 'a wait is reported');
         static::__assert_true($retry <= 60, "and it is inside the span (got {$retry})");
     }
@@ -142,9 +142,9 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
         static::__configure(attempts: 1);
         $ip = static::__fresh_ip();
 
-        Login_Throttle::record_failure(null, $ip);
+        Login_Throttle::record_failure(ip: $ip);
 
-        static::__assert_throws(Auth_Throttled_Exception::class, fn () => Login_Throttle::require_not_throttled(null, $ip), Auth_Throttled_Exception::MESSAGE);
+        static::__assert_throws(Auth_Throttled_Exception::class, fn () => Login_Throttle::require_not_throttled(ip: $ip), Auth_Throttled_Exception::MESSAGE);
     }
 
     /**
@@ -216,15 +216,15 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
         static::__configure(attempts: 1, seconds: 60);
         $ip = static::__fresh_ip();
 
-        Login_Throttle::record_failure(null, $ip);
-        $first_wait = Login_Throttle::retry_after_seconds(null, $ip);
+        Login_Throttle::record_failure(ip: $ip);
+        $first_wait = Login_Throttle::retry_after_seconds(ip: $ip);
 
         for ($i = 0; $i < 5; $i++) {
             static::__refused(null, $ip);
         }
 
         static::__assert_true(
-            Login_Throttle::retry_after_seconds(null, $ip) <= $first_wait,
+            Login_Throttle::retry_after_seconds(ip: $ip) <= $first_wait,
             'refused attempts did not extend the wait'
         );
     }
@@ -303,7 +303,7 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
             Login_Throttle::require_not_throttled(static::__fresh_account(), $ip);
         }
 
-        static::__assert_equals(0, Login_Throttle::retry_after_seconds(null, $ip), 'ten checked, none failed, nothing counted');
+        static::__assert_equals(0, Login_Throttle::retry_after_seconds(ip: $ip), 'ten checked, none failed, nothing counted');
     }
 
     public static function test_disabled_counts_and_enforces_nothing()
@@ -313,7 +313,7 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
 
         static::__assert_false(static::__refused(null, $ip), 'first');
         static::__assert_false(static::__refused(null, $ip), 'second');
-        static::__assert_equals(0, Login_Throttle::retry_after_seconds(null, $ip), 'nothing enforced');
+        static::__assert_equals(0, Login_Throttle::retry_after_seconds(ip: $ip), 'nothing enforced');
     }
 
     /**
@@ -347,10 +347,10 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
     public static function test_a_nonsensical_config_fails_loud()
     {
         static::__configure(attempts: 0);
-        static::__assert_throws(\Throwable::class, fn () => Login_Throttle::retry_after_seconds(null, static::__fresh_ip()), 'attempts');
+        static::__assert_throws(\Throwable::class, fn () => Login_Throttle::retry_after_seconds(ip: static::__fresh_ip()), 'attempts');
 
         static::__configure(seconds: 0);
-        static::__assert_throws(\Throwable::class, fn () => Login_Throttle::retry_after_seconds(null, static::__fresh_ip()), 'seconds');
+        static::__assert_throws(\Throwable::class, fn () => Login_Throttle::retry_after_seconds(ip: static::__fresh_ip()), 'seconds');
     }
 
     // -------------------------------------------------------------------------

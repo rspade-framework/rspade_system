@@ -208,7 +208,7 @@ RsxCache provides constants for common expiration times:
 EXAMPLES:
 
     RsxCache::remember($key, $callback);                    // Never expires
-    RsxCache::remember($key, $callback, null);              // Never expires
+    RsxCache::remember($key, $callback, seconds: null);     // Never expires
     RsxCache::remember($key, $callback, RsxCache::HOUR);    // 1 hour
     RsxCache::remember($key, $callback, RsxCache::DAY);     // 1 day
     RsxCache::remember($key, $callback, 300);               // 5 minutes

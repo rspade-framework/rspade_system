@@ -45,7 +45,7 @@ class Zip_Download_Request_Test extends Rsx_Test_Abstract
 
     public static function test_create_request_allows_null_zip_name()
     {
-        $request = Zip_Download_Request_Model::create_request([['key' => 'abc123']], null);
+        $request = Zip_Download_Request_Model::create_request([['key' => 'abc123']], zip_name: null);
 
         static::__assert_null($request->zip_name, 'zip_name is null when not provided');
     }

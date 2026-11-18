@@ -81,7 +81,7 @@ class Password_Confirmation_Test extends Rsx_Test_Abstract
         $user->is_enabled = 1;
         $user->save();
 
-        Session::set_login_user_id((int) $login_user->id, false);
+        Session::set_login_user_id((int) $login_user->id, touch_last_login: false);
 
         return $login_user;
     }

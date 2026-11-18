@@ -1,0 +1,83 @@
+API KEYS NO LONGER CARRY A ROLE OVERRIDE: _api_keys.user_role_id AND generate()'s $user_role_id ARE GONE
+Date: 2026-11-18
+
+IF YOU DO NOTHING: code of yours that passes a role to Api_Key_Model::generate() breaks. Passed by name (user_role_id: ...) it throws "Unknown named parameter $user_role_id". Passed positionally, every later argument shifts one place left, and the common call mints the WRONG KEY SILENTLY: generate($user_id, $name, 'live', null, null, $scopes) now puts $scopes into $read_only, minting an UNSCOPED read-only key where you meant a scoped read-write one; generate($user_id, $name, 'live', null, $expires_at) now hands the expiry to $scopes and throws Api_Scope_Validation_Exception. An application override of Api_Key_Model that redeclares generate() with the old signature fails the manifest build with PHP's "must be compatible" fatal. Code that reads or writes $api_key->user_role_id fails with "Unknown column 'user_role_id'".
+
+SUMMARY
+    Category 2: a public framework API changed its signature, and the
+    column behind the removed argument is dropped. Affects any code that
+    mints API keys through Api_Key_Model::generate() with a role argument,
+    reads $api_key->user_role_id, or overrides Api_Key_Model::generate().
+
+THE CHANGE
+    _api_keys.user_role_id was documented as a per-key reduced-role
+    override and was never enforced: a key always ran at its holder's
+    actual role, whatever the column held. It is removed rather than
+    enforced. A key runs as its holder; a key NARROWER than its holder is
+    made at mint with path-pattern scopes and/or the read_only flag, both
+    enforced on every request (rsx:man external_api, NARROWING A KEY, KEY
+    SCOPES, READ-ONLY KEYS).
+
+THE FIX
+    Informational - arrives with the framework:
+
+        - the framework migration
+          2026_11_18_041420_drop_user_role_id_from_api_keys drops the
+          column (php artisan migrate applies it);
+        - Api_Key_Model::generate() loses its fourth parameter. The
+          signature is now
+
+              Api_Key_Model::generate(
+                  int $user_id,
+                  string $name,
+                  string $environment = 'live',
+                  ?\Carbon\Carbon $expires_at = null,
+                  ?string $scopes = null,
+                  bool $read_only = false,
+                  bool $is_temporary = false
+              ): array
+
+        - Api_Key_Model no longer declares the property, and
+          rsx:api:key:create / rsx:api:key:temp pass the new signature.
+
+ACTION REQUIRED
+    1. Find your calls and uses:
+
+           grep -rn "generate(" rsx/ | grep -i api_key
+           grep -rn "user_role_id" rsx/
+
+       No match for a role argument and no user_role_id: nothing to do.
+
+    2. Drop the role argument from every Api_Key_Model::generate() call.
+
+       Positional - remove the fourth argument:
+
+           Api_Key_Model::generate($user_id, $name, 'live', null, $expires_at, $scopes);   // before
+           Api_Key_Model::generate($user_id, $name, 'live', $expires_at, $scopes);         // after
+
+       Named - remove the user_role_id: argument:
+
+           Api_Key_Model::generate(user_id: $id, name: $name, user_role_id: null, scopes: $s);   // before
+           Api_Key_Model::generate(user_id: $id, name: $name, scopes: $s);                       // after
+
+    3. If your application overrides Api_Key_Model and redeclares
+       generate(), give it the signature above and pass the same arguments
+       on to parent::generate().
+
+    4. If your code set user_role_id to narrow a key, narrow it the way the
+       framework enforces instead: scopes for which paths the key may reach,
+       read_only for a key that may only GET.
+
+           Api_Key_Model::generate($user_id, 'Reporting', 'live', null, "/api/v1/reports/*", true);
+
+    5. Remove any read or write of $api_key->user_role_id.
+
+VERIFICATION
+    grep -rn "user_role_id" rsx/ finds nothing about API keys; minting a
+    key from your screens and from php artisan rsx:api:key:create succeeds;
+    GET /api/v1/me with the new key reports the expiry, scopes and
+    read_only you asked for.
+
+SEE ALSO
+    rsx:man external_api - API KEYS, NARROWING A KEY, KEY SCOPES, READ-ONLY KEYS
+    skill rspade:external-api

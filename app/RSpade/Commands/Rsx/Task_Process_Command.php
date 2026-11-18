@@ -740,7 +740,7 @@ class Task_Process_Command extends Command
         $launch_context = Session::_snapshot_context();
 
         try {
-            $outcome = Task_Runner::execute($instance, false, true);
+            $outcome = Task_Runner::execute($instance, false, own_context: true);
         } finally {
             Session::_restore_context($launch_context);
         }

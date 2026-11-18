@@ -168,10 +168,10 @@ class Autoloader
                 $actual_fqcn = $metadata['fqcn'];
                 self::include_declaration($absolute_path, $actual_fqcn);
 
-                // If the requested FQCN still doesn't exist but the actual class does,
-                // create an alias
-                if (!class_exists($requested_class, false) &&
-                    class_exists($actual_fqcn, false) &&
+                // If the requested FQCN still doesn't exist but the actual class, interface
+                // or trait does, create an alias
+                if (!self::_is_declared($requested_class) &&
+                    self::_is_declared($actual_fqcn) &&
                     $requested_class !== $actual_fqcn) {
                     class_alias($actual_fqcn, $requested_class);
                 }

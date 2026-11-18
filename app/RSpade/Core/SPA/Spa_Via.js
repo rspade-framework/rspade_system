@@ -96,22 +96,9 @@ class Spa_Via {
      * @returns {string|null}
      */
     static raw(url) {
-        const query = Spa_Via._split(url).query;
-        if (query === '') {
-            return null;
-        }
+        const params = Spa.parse_query(Spa_Via._split(url).query);
 
-        let found = null;
-
-        for (const pair of query.split('&')) {
-            const eq = pair.indexOf('=');
-            const key = Spa_Via._decode(eq === -1 ? pair : pair.substring(0, eq));
-            if (key === Spa_Via.PARAM) {
-                found = eq === -1 ? '' : Spa_Via._decode(pair.substring(eq + 1));
-            }
-        }
-
-        return found;
+        return Object.prototype.hasOwnProperty.call(params, Spa_Via.PARAM) ? params[Spa_Via.PARAM] : null;
     }
 
     /**
@@ -126,7 +113,7 @@ class Spa_Via {
 
         const kept = parts.query === '' ? [] : parts.query.split('&').filter((pair) => {
             const eq = pair.indexOf('=');
-            return Spa_Via._decode(eq === -1 ? pair : pair.substring(0, eq)) !== Spa_Via.PARAM;
+            return Spa.decode_query_component(eq === -1 ? pair : pair.substring(0, eq)) !== Spa_Via.PARAM;
         });
 
         return parts.base + (kept.length ? '?' + kept.join('&') : '') + parts.hash;
@@ -186,17 +173,5 @@ class Spa_Via {
         }
 
         return { base: rest.substring(0, query_index), query: rest.substring(query_index + 1), hash: hash };
-    }
-
-    /**
-     * decodeURIComponent that reads '+' as a space and never throws: a URL is user input,
-     * and a stray '%' must not take the page down.
-     */
-    static _decode(text) {
-        try {
-            return decodeURIComponent(text.replace(/\+/g, ' '));
-        } catch (e) {
-            return text;
-        }
     }
 }

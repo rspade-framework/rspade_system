@@ -41,7 +41,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
     {
         $targets = [];
 
-        foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
             $targets[] = $endpoint['class'] . '::' . $endpoint['method'];
         }
 
@@ -95,9 +95,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key scoped',
             'live',
-            null,
-            null,
-            '/api/v1/contacts/*'
+            scopes: '/api/v1/contacts/*'
         )['model'];
 
         $key_targets = static::__allowed(Api_Tester_Key::accessible_targets_for_key($key));
@@ -127,15 +125,13 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key rules check',
             'live',
-            null,
-            null,
-            $scopes
+            scopes: $scopes
         )['model'];
 
         $gate_answers = Api_Tester_Key::accessible_targets_for_user(static::__user());
         $key_answers = Api_Tester_Key::accessible_targets_for_key($key);
 
-        foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
             $target = $endpoint['class'] . '::' . $endpoint['method'];
             $scopes_reach = Api_Scopes::reaches_route($scopes, (string) $endpoint['pattern']);
             $expected = !empty($gate_answers[$target]) && $scopes_reach;
@@ -158,10 +154,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key read only',
             'live',
-            null,
-            null,
-            null,
-            true
+            read_only: true
         )['model'];
 
         $gate_answers = Api_Tester_Key::accessible_targets_for_user(static::__user());
@@ -169,7 +162,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
 
         $reachable = 0;
 
-        foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
             $target = $endpoint['class'] . '::' . $endpoint['method'];
             $has_get = in_array('GET', (array) $endpoint['methods'], true);
             $expected = !empty($gate_answers[$target]) && $has_get;
@@ -196,16 +189,14 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key read only scoped',
             'live',
-            null,
-            null,
-            $scopes,
-            true
+            scopes: $scopes,
+            read_only: true
         )['model'];
 
         $gate_answers = Api_Tester_Key::accessible_targets_for_user(static::__user());
         $key_answers = Api_Tester_Key::accessible_targets_for_key($key);
 
-        foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
             $target = $endpoint['class'] . '::' . $endpoint['method'];
             $expected = !empty($gate_answers[$target])
                 && Api_Scopes::reaches_route($scopes, (string) $endpoint['pattern'])
@@ -229,7 +220,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
     public static function test_current_is_read_only_distinguishes_the_two_kinds_of_key()
     {
         $read_write = Api_Key_Model::generate(self::USER_ID, 'badge read write')['model'];
-        $read_only = Api_Key_Model::generate(self::USER_ID, 'badge read only', 'live', null, null, null, true)['model'];
+        $read_only = Api_Key_Model::generate(self::USER_ID, 'badge read only', 'live', read_only: true)['model'];
 
         Api_Tester_Key::adopt($read_write);
         static::__assert_false(Api_Tester_Key::current_is_read_only());
@@ -248,9 +239,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key empty scope',
             'live',
-            null,
-            null,
-            '/api/v1/no_such_resource/*'
+            scopes: '/api/v1/no_such_resource/*'
         )['model'];
 
         // Every key reaches the OpenAPI document whatever its scopes; nothing else.
@@ -268,9 +257,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'tester key coverage',
             'live',
-            null,
-            null,
-            '/api/v1/contacts/*'
+            scopes: '/api/v1/contacts/*'
         )['model'];
 
         $answers = Api_Tester_Key::accessible_targets_for_key($key);
@@ -301,9 +288,7 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
             self::USER_ID,
             'badge scoped',
             'live',
-            null,
-            null,
-            '/api/v1/contacts'
+            scopes: '/api/v1/contacts'
         )['model'];
         Api_Tester_Key::adopt($scoped);
         static::__assert_true(Api_Tester_Key::current_is_scoped(), 'a key carrying rules reads as scoped');

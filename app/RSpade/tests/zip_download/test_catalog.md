@@ -2,19 +2,30 @@
 
 Full catalog of tests worth having for the streamed multi-file ZIP download (implemented
 and deferred). Implemented php tests live in `php/Zip_Stream_Test.php` (writer),
+`php/Zip_Download_Refusal_Test.php` (the user-facing refusals),
 `php/Zip_Download_Naming_Test.php` (endpoint seams, no database),
 `php/Zip_Download_Request_Test.php` (the minted request model) and
 `php/Zip_Download_Cleanup_Test.php` (the retention task) - the latter two use the DB.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| ZS-01 | Two DEFLATE members: valid archive + readable | php | 2 text files | ZipArchive CHECKCONS ok, 2 entries | implemented | 2026-07-23 |
+| ZS-01 | Two DEFLATE members: valid archive + readable | php | 2 text files | unzip -t, python3 zipfile, libzip CHECKCONS accept, 2 entries | implemented | 2026-11-18 |
 | ZS-02 | Two DEFLATE members: content + CRC | php | 2 text files | content roundtrips, `unzip -t` ok | implemented | 2026-07-23 |
 | ZS-03 | Store-mime member is stored | php | image/jpeg 20k | CM_STORE, comp==size, roundtrip | implemented | 2026-07-23 |
 | ZS-04 | Empty marker entry is zero-byte | php | add_empty_entry | 1 entry, size 0, valid | implemented | 2026-07-23 |
 | ZS-05 | UTF-8 name + directory prefix | php | `proyecto/informe_espanol_n~.txt` | name preserved, roundtrip | implemented | 2026-07-23 |
 | ZS-06 | Large member constant memory | php | 3MB source | peak delta < 2MB, roundtrip, `unzip -t` ok | implemented | 2026-07-23 |
 | ZS-07 | Mixed archive end to end | php | deflate + store + marker | 3 entries, `unzip -t` ok | implemented | 2026-07-23 |
+| ZS-08 | Empty source file is a zero-byte member | php | empty file, deflate + store | sizes 0, all readers accept | implemented | 2026-11-18 |
+| ZS-09 | Every record is ZIP64-framed | php | 1 stored member + marker | v4.5, 0xFFFFFFFF + 0x0001 extra, 24-byte descriptor, ZIP64 EOCD + locator, marked EOCD | implemented | 2026-11-18 |
+| ZS-10 | More than 65,535 entries | php | 70,000 one-byte members | unzip -t ok, python3 + libzip count 70,000 | implemented | 2026-11-18 |
+| ZS-11 | Member and offset past 4GB | php | sparse 4GB+ stored member + a small member, sparse sink | unzip -t + testzip ok, size from ZIP64 extra, 2nd header offset > 0xFFFFFFFF | implemented | 2026-11-18 |
+| ZF-01 | Unknown key refused | php | 64 zeros | Rsx_User_Facing_Exception, invalid/expired sentence | implemented | 2026-11-18 |
+| ZF-02 | Expired request refused identically | php | created_at -25h | same sentence | implemented | 2026-11-18 |
+| ZF-03 | Unknown member refused opaquely | php | real key + unknown key | denial sentence, names neither key nor file | implemented | 2026-11-18 |
+| ZF-04 | Thumbnail gate refusal | php | thumbnail gate refuses | same denial sentence | implemented | 2026-11-18 |
+| ZF-05 | Download gate refusal | php | download gate refuses | same denial sentence | implemented | 2026-11-18 |
+| ZF-06 | Allowed set served | php | both gates allow | 200 | implemented | 2026-11-18 |
 | ZN-01 | Entry name null uses fallback | php | (null), `report.pdf` | `report.pdf` | implemented | 2026-07-23 |
 | ZN-02 | Custom directory prefix kept | php | `docs/renamed.pdf` | `docs/renamed.pdf` | implemented | 2026-07-23 |
 | ZN-03 | Leading slash stripped | php | `/a/b.txt` | `a/b.txt` | implemented | 2026-07-23 |
@@ -34,10 +45,6 @@ and deferred). Implemented php tests live in `php/Zip_Stream_Test.php` (writer),
 | ZN-17 | Zip filename suffix added | php | `myfiles` | `myfiles.zip` | implemented | 2026-07-23 |
 | ZN-18 | Zip filename path stripped | php | `/etc/foo.zip` | `foo.zip` | implemented | 2026-07-23 |
 | ZN-19 | Zip filename quote replaced by the file-name rule | php | `a"b.zip` | `a_b.zip` | implemented | 2026-10-29 |
-| ZN-20 | ZIP64 within limits -> null | php | `[100,200,300]` | null | implemented | 2026-07-23 |
-| ZN-21 | ZIP64 too many entries | php | 65001 entries | error message | implemented | 2026-07-23 |
-| ZN-22 | ZIP64 single file too large | php | `[0xFFFFFFFF]` | error message | implemented | 2026-07-23 |
-| ZN-23 | ZIP64 total over 4GB | php | `[2e9, 2e9+1]` | error message | implemented | 2026-07-23 |
 | ZR-01 | create_request persists row + hex key + files roundtrip | php | 2 entries + zip_name | id set, 64-hex key, zip_name stored, get_files() equals input | implemented | 2026-07-23 |
 | ZR-02 | create_request allows null zip_name | php | 1 entry, null | zip_name null | implemented | 2026-07-23 |
 | ZR-03 | create_request rejects empty array | php | `[]` | RuntimeException | implemented | 2026-07-23 |
@@ -56,9 +63,9 @@ and deferred). Implemented php tests live in `php/Zip_Stream_Test.php` (writer),
 | ZC-03 | Cleanup clears a backlog across chunks | php | 12 stale rows, chunk 5 | all deleted | implemented | 2026-07-23 |
 | ZH-01 | Authed round-trip streams a valid zip | http | mint via create_request + GET key + staff cookie | 200 application/zip, `unzip -t` ok, byte-identical | deferred (verified on dev box; needs a minted staff session) | 2026-07-23 |
 | ZH-02 | Custom path + dedup honored over the wire | http | request with a custom name + colliding names | archive names match | deferred (verified on dev box) | 2026-07-23 |
-| ZH-03 | Denied file -> 500, no partial bytes | http | one bogus key in the request | 500 error page, no zip magic | deferred (verified on dev box) | 2026-07-23 |
+| ZH-03 | Denied file -> 500 with the denial sentence, no partial bytes | http | one bogus key in the request | 500 error page, no zip magic | deferred (verified on dev box) | 2026-07-23 |
 | ZH-04 | Missing blob -> `~ERROR~` marker | http | attachment whose blob was moved aside | marker entry present, archive valid | deferred (verified on dev box) | 2026-07-23 |
-| ZH-05 | Unknown/expired key -> 500 invalid/expired, no zip | http | bogus key; backdated request | 500 error page, no zip magic | deferred (verified on dev box) | 2026-07-23 |
+| ZH-05 | Unknown/expired key -> 500 with the invalid/expired sentence, no zip | http | bogus key; backdated request | 500 error page, no zip magic | deferred (verified on dev box) | 2026-07-23 |
 
 ## Notes
 

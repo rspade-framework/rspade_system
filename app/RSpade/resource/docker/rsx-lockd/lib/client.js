@@ -6,6 +6,7 @@
  * straight away), so every request carries an id and the reply is matched on it.
  */
 
+const fs = require('fs');
 const net = require('net');
 const os = require('os');
 
@@ -38,6 +39,14 @@ class Lockd_Client {
 
             const frame = decoded.value;
             const waiter = this.pending.get(frame.id);
+
+            // A `waiting` NOTICE is not the answer: it goes to the request's on_notice (when
+            // it asked for one) and the request stays pending for its final frame.
+            if (waiter && frame.status === protocol.STATUS_WAITING) {
+                if (waiter.on_notice) waiter.on_notice(frame);
+                continue;
+            }
+
             if (waiter) {
                 this.pending.delete(frame.id);
                 waiter.resolve(frame);
@@ -62,8 +71,11 @@ class Lockd_Client {
      * Send one request and resolve with its response frame. There is NO client-side
      * deadline: an acquire that is waiting is supposed to wait, possibly forever. A caller
      * that wants a bound passes `timeout` in the frame and lets the SERVER answer.
+     *
+     * `on_notice(frame)` receives the `waiting` notice a request carrying a `notice` key
+     * may get before its answer; the promise still resolves with the final frame only.
      */
-    request(frame) {
+    request(frame, on_notice) {
         return new Promise((resolve, reject) => {
             if (this.closed) {
                 reject(new Error(this.close_reason || 'Connection closed'));
@@ -72,7 +84,7 @@ class Lockd_Client {
             this.seq++;
             const id = 'r' + this.seq;
             const out = Object.assign({}, frame, { id: id });
-            this.pending.set(id, { resolve: resolve, reject: reject });
+            this.pending.set(id, { resolve: resolve, reject: reject, on_notice: on_notice || null });
             this.socket.write(protocol.encode_frame(out));
         });
     }
@@ -107,6 +119,28 @@ function connect_once(target) {
             resolve(socket);
         });
     });
+}
+
+/**
+ * The kernel start time of a process (field 22 of /proc/<pid>/stat, clock ticks since
+ * boot), or null off Linux or when it cannot be read. Sent in the hello so an operator can
+ * prove a pid in `dump` is still the process that took the lock before signalling it.
+ */
+function process_start_time(pid) {
+    let stat;
+    try {
+        stat = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+    } catch (err) {
+        return null;
+    }
+    // Field 2 (comm) is parenthesised and may contain spaces: fields proper start after
+    // its LAST ')'. Index 0 there is the state (field 3), index 19 the start time (22).
+    const close = stat.lastIndexOf(')');
+    if (close === -1) return null;
+    const fields = stat.slice(close + 2).trim().split(' ');
+    if (fields.length <= 19) return null;
+    const value = parseInt(fields[19], 10);
+    return Number.isSafeInteger(value) ? value : null;
 }
 
 function sleep(ms) {
@@ -159,7 +193,8 @@ async function connect(config, options) {
                 process.pid,
                 Math.floor(Date.now() / 1000),
                 (options && options.hmac_key) || '',
-                (options && options.group_id) || null
+                (options && options.group_id) || null,
+                process_start_time(process.pid)
             );
             const response = await client.request(hello);
             if (response.status !== protocol.STATUS_OK) {
@@ -186,6 +221,7 @@ module.exports = {
     connect,
     connect_once,
     resolve_target,
+    process_start_time,
     DEFAULT_CONNECT_RETRIES,
     DEFAULT_CONNECT_RETRY_DELAY_MS,
 };

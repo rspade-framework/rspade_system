@@ -484,7 +484,9 @@ FRAMEWORK INVENTORY
                                  lockd-run.sh, 0 otherwise. A newer image is OK.
                                  INFO outside the container. rsx:man prod, IN THE
                                  RSPADE CONTAINER.
-        Lock Server              rsx-lockd listening (INFO under maintenance)
+        Lock Server              rsx-lockd listening and answering (INFO under
+                                 maintenance; WARN when it speaks an older protocol
+                                 than the framework - the stall watchdog is off)
         Mail delivery            which of the four modes rsx.mail.delivery is
                                  CONFIGURED to (aiosmtpd | live | suppressed |
                                  disabled). INFO, never FAIL, for suppressed and

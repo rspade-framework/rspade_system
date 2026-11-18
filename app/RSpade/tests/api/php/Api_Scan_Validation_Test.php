@@ -231,6 +231,35 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         );
     }
 
+    public static function test_a_json_param_bakes_with_an_array_or_json_text_default()
+    {
+        $manifest = static::__manifest([
+            'Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]],
+            'Api_Param' => [
+                ['filters', 'json', false, ['status' => 1]],
+                ['sort', 'json', false, '["name"]'],
+            ],
+        ]);
+
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
+
+        $params = $manifest['data']['api_endpoints']['/api/v1/contacts']['api_params'];
+        static::__assert_equals('json', $params[0]['type']);
+        static::__assert_equals(['status' => 1], $params[0]['default'], 'an array default is baked as written');
+        static::__assert_equals('["name"]', $params[1]['default'], 'a JSON-text default is baked as written, decoded when applied');
+    }
+
+    public static function test_a_json_param_whose_string_default_does_not_parse_throws()
+    {
+        static::__assert_scan_throws(
+            static::__manifest([
+                'Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]],
+                'Api_Param' => [['filters', 'json', false, '{status: 1}']],
+            ]),
+            "The default of a type 'json' param is a literal array or a string of valid JSON text"
+        );
+    }
+
     public static function test_unknown_named_param_arg_throws()
     {
         static::__assert_scan_throws(

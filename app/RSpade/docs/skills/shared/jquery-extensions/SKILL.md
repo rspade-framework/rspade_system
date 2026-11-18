@@ -183,7 +183,8 @@ $('form').requestSubmit();
 ## Other Helpers
 
 ```javascript
-// Get lowercase tag name
+// Get lowercase tag name (undefined for an empty set; .is_in_dom() and
+// .is_in_viewport() answer false for one)
 if ($element.tagname() === 'a') {
     // It's a link
 }
@@ -256,7 +257,7 @@ Details: `php artisan rsx:man width_group` (this family is NOT in `man/jquery.tx
 
 ## BLOCKED: `$.ajax()`
 
-**`$.ajax()` is overridden to throw** — use `Controller.method()` with `#[Ajax_Endpoint]` instead. The same applies to `$.get`/`$.post` habits: there is exactly one way to call the server from RSX, and it is the auto-mapped controller method.
+**`$.ajax()` to a local URL is overridden to throw** — use `Controller.method()` with `#[Ajax_Endpoint]` instead. `$.get`, `$.post`, `$.getJSON`, `$.getScript` and `.load()` throw the same way: there is exactly one way to call the server from RSX, and it is the auto-mapped controller method.
 
 ---
 

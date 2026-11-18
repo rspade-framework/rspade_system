@@ -20,7 +20,7 @@
                 <td class="_Apidocs_Params_Table__name">
                     <code><%= p.name %></code>
                     <% if (p.example !== null && p.example !== undefined) { %>
-                        <span class="_Apidocs_Params_Table__example">e.g. <%= str(p.example) %></span>
+                        <span class="_Apidocs_Params_Table__example">e.g. <%= api_param_text(p, p.example) %></span>
                     <% } %>
                 </td>
                 <td><span class="_Apidocs_Params_Table__type"><%= p.type %></span></td>
@@ -33,7 +33,7 @@
                     <% } %>
                 </td>
                 <td class="_Apidocs_Params_Table__default">
-                    <% if (p.default !== null && p.default !== undefined) { %><%= str(p.default) %><% } else { %>&mdash;<% } %>
+                    <% if (p.default !== null && p.default !== undefined) { %><%= api_param_text(p, p.default) %><% } else { %>&mdash;<% } %>
                 </td>
                 <td class="_Apidocs_Params_Table__desc"><%= p.description || '' %></td>
             </tr>

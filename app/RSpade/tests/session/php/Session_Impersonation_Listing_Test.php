@@ -75,7 +75,7 @@ class Session_Impersonation_Listing_Test extends Rsx_Test_Abstract
         $own = static::__staff($target);
         $impersonation = static::__staff($target, 880004);
 
-        $listed = Session::get_sessions_for_user($target, null, true);
+        $listed = Session::get_sessions_for_user($target, include_impersonations: true);
         $marks = array_column($listed, 'is_impersonation', 'id');
 
         static::__assert_count(2, $listed);
@@ -91,8 +91,8 @@ class Session_Impersonation_Listing_Test extends Rsx_Test_Abstract
         static::__staff($target, 880006);
 
         static::__assert_count(0, Session::get_sessions_for_user($target, self::SITE_ID));
-        static::__assert_count(1, Session::get_sessions_for_user($target, self::SITE_ID, true));
-        static::__assert_count(0, Session::get_sessions_for_user($target, self::SITE_ID + 1, true), 'another site lists nothing');
+        static::__assert_count(1, Session::get_sessions_for_user($target, self::SITE_ID, include_impersonations: true));
+        static::__assert_count(0, Session::get_sessions_for_user($target, self::SITE_ID + 1, include_impersonations: true), 'another site lists nothing');
     }
 
     /** SESSION-IMP-04 - the portal listing leaves a View as Client session out by default */
@@ -111,7 +111,7 @@ class Session_Impersonation_Listing_Test extends Rsx_Test_Abstract
         static::__assert_equals([$own], array_column($listed, 'id'));
         static::__assert_false($listed[0]['is_impersonation']);
 
-        $marks = array_column(Portal_Session::get_sessions_for_user($portal_user, true), 'is_impersonation', 'id');
+        $marks = array_column(Portal_Session::get_sessions_for_user($portal_user, include_impersonations: true), 'is_impersonation', 'id');
         static::__assert_count(2, $marks);
         static::__assert_true($marks[$viewed]);
         static::__assert_false($marks[$own]);

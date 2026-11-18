@@ -84,7 +84,7 @@ There is no 204. Error shape is always `{"error":{"code","message","fields"?, ..
 
 Keys are minted and revoked at **Settings > API Keys** (the plaintext key is shown once). `key_hash` is `never_export` on the model; a screen listing keys returns the fields it renders, never the record (a browser refuses an `Api_Key_Model` record - there is no JS model for it). **Every mint and every end of a live key is an EVENT** the model fires after commit - `api_key.created` / `api_key.revoked` (`how`: `revoked` | `deleted`), `{api_key, user, actor, audit_session_id, ip_address}` (`Api_Key_Event`) - so audit and notify from ONE handler, never from each controller (`rsx:man external_api`, KEY EVENTS). A rolled-back mint, ending an already-dead key and plain expiry fire nothing. Missing header -> 401, bad key -> 401, **both before route match** - so a bad key cannot be used to probe which paths exist.
 
-`_api_keys.scopes` narrows ONE key below its holder — see **Key scopes** below. `_api_keys.user_role_id` stays RESERVED and NOT enforced; do not restrict a key with it.
+A key runs as its holder and carries no role of its own; **a narrower key is made at mint with path-pattern scopes and/or `read_only`** — see **Key scopes** and **Read-only keys** below.
 
 ## The `rsx:api:*` CLI
 
@@ -140,6 +140,8 @@ Input precedence: **route params > GET query > JSON/form/multipart body.**
 The undeclared-param rejection is deliberate: a client sending `?limt=50` gets told, instead of silently receiving unfiltered data.
 
 Every param is validated AND coerced, except `file` — that one is validated only and reaches the endpoint as the raw `UploadedFile`. An `UploadedFile` offered for a scalar param is refused, so a temp path can never be smuggled into a string.
+
+**`type: 'json'` carries any JSON value, checked only for PARSING — no nested schema; the endpoint checks the shape it needs** (`is_array()`, the keys). A STRING is JSON text and is decoded (objects as associative arrays): a form field, a query parameter, or a string inside a JSON body. Anything else - an object, list, number, bool or null already parsed out of an `application/json` body - is taken as it is. **A JSON scalar is accepted** (`5`, `true`, `null`, `"\"x\""` - a string scalar sent as text is quoted). `{}` and `[]` both arrive as `[]`. A string that does not parse is the field's 422 `Expected valid JSON`. A default is a literal array or a string of JSON text (one that does not parse fails the build): `#[Api_Param('filters', type: 'json', required: false, default: [])]`. OpenAPI: an empty schema `{}` as a body property; a query/path parameter gets `content: {application/json: {schema: {}}}`.
 
 ## Files
 
@@ -258,7 +260,7 @@ Reaching it **is** the validation: a bad, revoked or expired key is a 401 from t
 
 ## Interactions
 
-Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session); FPC never applies; **`Main_Abstract::pre_dispatch` RUNS for API dispatch** (after bearer identity, scopes and gates; `$params['_handler']` is the controller) **and for a key on a file-serving route** (`/_download`, `/_inline`, `/_download_zip`, `/_thumbnail/*`, `/_preview/*` - the key's identity is set before the gates there), and any non-null return is a **403 `account_refused`** - the identity is headless, so a hook branches on `Session::is_api_request()` before any `Session::logout()`. `_api_keys.user_role_id` is RESERVED, NOT enforced (`scopes` IS — see above). A key whose login identity is soft-deleted is refused with the uniform 401. Every file read behind those routes needs the MANDATORY `file.thumbnail.authorize` / `file.download.authorize` handlers (a missing one is a 5xx naming it). The template additionally gates its API on `can_use_api` + `can_view_data` (writes `can_edit_data`) and refuses a key holder without `can_use_api` in `Main::pre_dispatch`.
+Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session); FPC never applies; **`Main_Abstract::pre_dispatch` RUNS for API dispatch** (after bearer identity, scopes and gates; `$params['_handler']` is the controller) **and for a key on a file-serving route** (`/_download`, `/_inline`, `/_download_zip`, `/_thumbnail/*`, `/_preview/*` - the key's identity is set before the gates there), and any non-null return is a **403 `account_refused`** - the identity is headless, so a hook branches on `Session::is_api_request()` before any `Session::logout()`. A key whose login identity is soft-deleted is refused with the uniform 401. Every file read behind those routes needs the MANDATORY `file.thumbnail.authorize` / `file.download.authorize` handlers (a missing one is a 5xx naming it). The template additionally gates its API on `can_use_api` + `can_view_data` (writes `can_edit_data`) and refuses a key holder without `can_use_api` in `Main::pre_dispatch`.
 
 **The API identity is scoped to the dispatch.** `Api_Dispatcher::dispatch()` clears it in a `finally`, so it never outlives the request it authenticated (an endpoint that throws included). Something that dispatches repeatedly in ONE process - a test harness, a CLI tool, a batch runner - needs no reset of its own between calls, and must not write one: the reset is a framework internal and an application reference to it is refused at manifest build (`NAME-RESERVED-02`).
 
@@ -302,7 +304,7 @@ try {
 **Presets are APP data.** The framework never names a scope. `config('rsx.api.scope_presets')` (`[['name','description','scopes'], …]`) is read by the app's key UI and by nothing in core — mirroring how `Auth_Gates` never names a permission.
 
 ```php
-Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes);
+Api_Key_Model::generate($user_id, $name, scopes: $scopes);   // optional, by name: environment, expires_at, scopes, read_only, is_temporary
 $key->is_unrestricted();  $key->get_scope_rules();  $key->set_scopes($text);
 $key->has_malformed_scopes();
 Api_Scopes::decide($scopes, '/api/v1/contacts', $key_id);  // the dispatcher's question
@@ -318,12 +320,12 @@ Api_Catalog::resolve_for_scopes(1, $scopes);                // pure: takes TEXT,
 
 - **Decided after the bearer key resolves and BEFORE the route is matched**, so a read-only key learns nothing about which write endpoints exist, and **before the scopes**, so each refusal names what the caller must change: `read_only_key` (this credential cannot write) vs `insufficient_scope` (mint a wider key) vs `forbidden` (ask for the permission).
 - **The two narrowings compose and neither implies the other**: `effective = the user's LIVE permissions ∩ the key's scopes ∩ (read_only ? GET : every verb)`. A read-only key may be unrestricted; a scoped key may write.
-- **Set at mint, never changed** — `generate(..., $read_only)` is the only writer and there is **no setter**, exactly as with the scopes: widening a credential already in service would change what it can do under the integration holding it.
+- **Set at mint, never changed** — `generate(..., read_only: true)` is the only writer and there is **no setter**, exactly as with the scopes: widening a credential already in service would change what it can do under the integration holding it.
 - **The console hides what the key cannot do**: `Api_Tester_Key::accessible_targets_for_key()` drops every endpoint declaring no GET, and `Api_Catalog::resolve_for_scopes($v, $scopes, $hidden, $read_only)` keeps GET verbs alone — so a listing or a preview panel never offers a call that comes back `read_only_key`.
 - The Bearer-accepting web routes (`/_download`, `/_thumbnail/*`, …) are all GET, so they need no clamp of their own.
 
 ```php
-Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes, $read_only = true);
+Api_Key_Model::generate($user_id, $name, scopes: $scopes, read_only: true);
 $key->read_only;                            // bool
 ```
 

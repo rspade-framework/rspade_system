@@ -80,11 +80,8 @@ class Browser_Log_Budget
      */
     public static function admit(string $sink, string $entry): bool
     {
-        try {
-            $seen = Rsx_Counter::increment("browser_log:seen:{$sink}:" . self::__address_hash() . ':' . hash('xxh128', $entry), self::DEDUP_WINDOW_SECONDS);
-        } catch (\Throwable $e) {
-            return false;
-        }
+        // 0 is the counter store answering nothing (redis down), which is not 1.
+        $seen = Rsx_Counter::increment("browser_log:seen:{$sink}:" . self::__address_hash() . ':' . hash('xxh128', $entry), self::DEDUP_WINDOW_SECONDS);
 
         return $seen === 1 && static::spend($sink);
     }
@@ -95,24 +92,20 @@ class Browser_Log_Budget
      */
     public static function spend(string $sink): bool
     {
-        try {
-            $signed_in = Session::is_logged_in() || Portal_Session::is_logged_in();
-            $limits = $signed_in ? self::SIGNED_IN_LIMITS : self::ANONYMOUS_LIMITS;
+        $signed_in = Session::is_logged_in() || Portal_Session::is_logged_in();
+        $limits = $signed_in ? self::SIGNED_IN_LIMITS : self::ANONYMOUS_LIMITS;
 
-            $within = true;
-            foreach ($limits as $window => $limit) {
-                $count = Rsx_Counter::increment(self::__key($sink, $signed_in, $window), $window);
+        $within = true;
+        foreach ($limits as $window => $limit) {
+            $count = Rsx_Counter::increment(self::__key($sink, $signed_in, $window), $window);
 
-                // 0 is the counter store answering nothing (redis down).
-                if ($count === 0 || $count > $limit) {
-                    $within = false;
-                }
+            // 0 is the counter store answering nothing (redis down).
+            if ($count === 0 || $count > $limit) {
+                $within = false;
             }
-
-            return $within;
-        } catch (\Throwable $e) {
-            return false;
         }
+
+        return $within;
     }
 
     /**

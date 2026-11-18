@@ -103,6 +103,45 @@ that only regroups data already in the manifest derives its section in full, eve
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| TRAIT-INST-01 | a trait's public instance method is in the class's `public_instance_methods`, with its attribute and its `file`; the class's own stays; a trait static stays in the static map only | php | fixture trait with `#[Relationship]` on an instance method + a static, used by a fixture class, through `_extract_reflection_data()` | present, attributed, `file` = the trait file | implemented | 2026-10-28 |
+| TRAIT-INST-01 | a trait's public instance method is in the class's `public_instance_methods`, with its attribute and its `file`; the class's own stays; a trait static stays in the static map only | php | fixture trait with `#[Relationship]` on an instance method + a static, used by a fixture class, through `_extract_reflection_data()` | present, attributed, `file` = the trait file's manifest key (`Rsx_Paths::relative()`, never absolute), the static's too | implemented | 2026-11-17 |
 | TRAIT-INST-02 | a vendor trait's instance methods are not recorded | php | the same class using `ValidatesRequests` | no `validate` | implemented | 2026-10-28 |
 
+`Manifest_Location_Independence_Test` - the cache files name nothing about where the checkout sits.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MLI-01 | the index stores no absolute path | php | every key and string in the live `manifest_index.php` | none begins with the project root, `base_path()` or a volatile-tree root and names a file on disk | implemented | 2026-11-17 |
+| MLI-02 | the cold file stores no absolute path | php | the same over `manifest_files.php` | none | implemented | 2026-11-17 |
+
+`Manifest_Query_Test` - the class-hierarchy queries over a fixture hierarchy of known shape (`Manifest_Query_Fixture_*`, indexed while the suite runs).
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MQ-01 | `php_is_subclass_of()` walks the whole chain; false for a sibling branch, the reverse, the class itself and an unknown class | php | Root_Abstract <- Mid_Abstract <- Leaf; Sibling <- Root | true / false as stated | implemented | 2026-11-17 |
+| MQ-02 | an FQCN, with or without the leading backslash, and a simple name are equivalent on either side | php | nine spellings of Leaf / Root | true each | implemented | 2026-11-17 |
+| MQ-03 | an implemented interface or a used trait is not a parent; the record names both by FQCN; a trait's public static is in the class's static map | php | Leaf implements `Manifest_Query_Fixture_Contract` (extending `JsonSerializable`), uses `Manifest_Query_Fixture_Behaviour` | false; `implements` (both interfaces) / `traits`; `fixture_behaviour` present | implemented | 2026-11-17 |
+| MQ-04 | `php_get_extending()` answers every CONCRETE descendant (grandchildren included, abstract ones out), keyed by simple name with its file record; an FQCN parent is normalized | php | Root, Mid, Leaf | {Leaf, Sibling}; {Leaf}; [] | implemented | 2026-11-17 |
+| MQ-05 | `php_get_subclasses_of()` / `php_class_records_extending()` include the abstract descendants only when asked; `php_is_abstract()` | php | Root with and without `concrete_only` | as stated | implemented | 2026-11-17 |
+| MQ-06 | `php_get_lineage()` runs parent to root, FQCN normalized | php | Leaf, Root | [Mid, Root]; [] | implemented | 2026-11-17 |
+| MQ-07 | `js_is_subclass_of()` walks the JS chain, reduces a namespaced spelling to its last segment, and knows nothing of PHP classes | php | Js_Root <- Js_Mid <- Js_Leaf | true / false as stated | implemented | 2026-11-17 |
+| MQ-08 | `js_get_extending()` answers every descendant (no abstract filter) with its file record; `js_get_lineage()` | php | Js_Root, Js_Mid, Js_Leaf | {Js_Leaf, Js_Mid}; {Js_Leaf}; []; [Js_Mid, Js_Root] | implemented | 2026-11-17 |
+| MQ-09 | an interface declared in a scanned file is usable | php | `interface Manifest_Query_Fixture_Contract extends \JsonSerializable` in the test tree, implemented by the leaf | in `php_classes` with `interface` and no `extends`; file record `is_interface`, no method map; autoloads; the leaf runs; no descendants; not a subclass of what it extends | implemented | 2026-11-17 |
+
+`Controller_Stub_Generation_Test` - the Ajax controller JS stub, over child builds of a fixture tree.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| CSG-01 | only `#[Ajax_Endpoint]` methods are stubbed, in a class named after the controller, each with its `/_ajax/<Controller>/<method>` path; the record names its stub and the stub is indexed with its source | php (child build) | controller with two endpoints, a route action and a plain static | exactly the two methods; `js_stub`; `is_stub` + `source_controller` | implemented | 2026-11-17 |
+| CSG-02 | a controller with no endpoint gets no stub | php (child build) | route action only | no file, no `js_stub` | implemented | 2026-11-17 |
+| CSG-03 | an endpoint that loses its attribute leaves the stub; the last one going takes the stub file and record away | php (child build) | three builds: two endpoints, one, none | stub methods follow; file and both records gone | implemented | 2026-11-17 |
+| CSG-04 | an endpoint is never inherited: extending a controller that declares one fails the build (ABSTRACT-ATTR-01); over an abstract base of plain methods, a controller is stubbed with its own endpoints only and the base gets no stub | php (child build) | concrete parent with an endpoint + a child; then an abstract base + a derived controller with one endpoint | non-zero exit naming ABSTRACT-ATTR-01; derived [own_call]; no base stub | implemented | 2026-11-17 |
+
+`Manifest_Malformed_Source_Test` - a broken file fails the build loudly and never half-indexes (child builds of a fixture tree under `resource/`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MAL-01 | a PHP parse error fails the build naming the file and "PHP syntax error"; no index is written | php (child build) | an unclosed parameter list | non-zero exit, file named, no `manifest_index.php` | implemented | 2026-11-17 |
+| MAL-02 | a syntactically malformed attribute fails the same way | php (child build) | `#[Probe_Marker('unclosed'` | as MAL-01 | implemented | 2026-11-17 |
+| MAL-03 | an attribute argument that cannot be evaluated fails the build loudly naming the constant; no index | php (child build) | `#[Probe_Marker(UNDEFINED_CONSTANT)]` | non-zero exit, the constant named | implemented | 2026-11-17 |
+| MAL-04 | MAL-03's failure names the file, the attribute and the declaration | php (child build) | same | the file name, `#[Probe_Marker]`, `method marked()` | implemented | 2026-11-17 |
+| MAL-05 | fixing the file lets the next build index it | php (child build) | broken, then fixed | exit 0; the class in `php_classes` at its file | implemented | 2026-11-17 |

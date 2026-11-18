@@ -1168,11 +1168,13 @@ SESSION MANAGEMENT
         bug the day it is written.
 
     SINGLE-TENANT ASSUMPTION. A sign-in belongs to a login identity, which is
-    cross-site; a role lives on a per-site users row. The guard resolves the
-    target's role on the actor's own site and ends sign-ins on any site. On a
-    one-site deployment that is exactly right; on a genuinely multi-tenant one
-    the target may hold a higher role elsewhere. The multi-tenant model is
-    BACKLOG B-92 and is deliberately not approximated here.
+    cross-site; a role lives on a per-site users row (rsx:man auth, ROLES).
+    The guard resolves the target's role on the actor's own site and ends
+    sign-ins on any site. On a one-site deployment (rsx.tenancy = single, the
+    default) that is exactly right; on a genuinely multi-tenant one the
+    target may hold a higher role elsewhere. Multi-tenant termination belongs
+    to the multi-tenant review, BACKLOG B-184, and is deliberately not
+    approximated here.
 
     What every ended user session triggers: the realtime refresh push to its
     browser (SIGN-OUT REASONS) and, for a staff user session ended by a
@@ -1210,7 +1212,7 @@ USER MANAGEMENT PAGES
         changes and account deletion belong to the ACCOUNT HOLDER, whose
         identity spans tenants your admin cannot see. Show membership, role
         within this site and last activity; nothing that reaches the identity
-        itself (and see SINGLE-TENANT ASSUMPTION, B-92).
+        itself (and see SINGLE-TENANT ASSUMPTION, B-184).
 
 CONTROLLER AUTHENTICATION
     Authorization is DECLARATIVE, and pre_dispatch() is not where it happens.

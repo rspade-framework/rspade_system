@@ -158,7 +158,7 @@ class Password_Change_Event_Test extends Rsx_Test_Abstract
         $administrator = static::__login_user('admin');
         $target = static::__login_user('target');
 
-        Session::set_login_user_id((int) $administrator->id, false);
+        Session::set_login_user_id((int) $administrator->id, touch_last_login: false);
 
         $target->set_password('set-by-somebody-else', Password_Change::CAUSE_ADMIN);
         $target->save();

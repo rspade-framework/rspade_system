@@ -202,7 +202,7 @@ A listing of "which sites may I use" therefore restates neither column: it filte
 ```php
 $sessions = Session::get_sessions_for_user();                              // current account
 $sessions = Session::get_sessions_for_user($login_user_id, $site_id);      // one site's view
-$sessions = Session::get_sessions_for_user($login_user_id, null, true);    // admin: impersonations too
+$sessions = Session::get_sessions_for_user($login_user_id, include_impersonations: true);    // admin: impersonations too
 $info     = Session::get_current_session_info();                           // this browser's staff sign-in, or null
 ```
 
@@ -253,13 +253,13 @@ Portal_Session::terminate_all_sessions_for_user($portal_user_id, $except_user_se
 **The authorization rule on the two cross-user functions - two ways to be authorized, only two:**
 
 1. **The target IS the actor** - managing your own sign-ins needs no role.
-2. **The actor's role may administer the target's** - `Permission::can_admin_role()` against the target's per-site `users.role_id`. That list is equal-or-lower ("my role and the roles below it"), so **a SUPERIOR is refused by construction and a PEER is permitted** - two Site Admins may sign each other out, as they may edit each other. A target with no `users` row on the acting site is refused too.
+2. **The actor's role may administer the target's** - `Permission::can_admin_role()` against the target's per-site `users.role_id`, the sole "may manage" test (`rsx:man auth`, ROLES). The template's `can_admin_roles` lists are equal-or-lower ("my role and the roles below it"), so **a SUPERIOR is refused by construction and a PEER is permitted** - two Site Admins may sign each other out, as they may edit each other. A target with no `users` row on the acting site is refused too.
 
 `developer_terminate_sessions()` consults no role: a caller that is not a developer is refused by the same throw, and it never ends a sign-in on the caller's own browser (0).
 
 **REFUSAL THROWS `AjaxUnauthorizedException` (403); ABSENCE returns false/0** ("no such signed-in user session of that account"). **Never conflate them** - that conflation is what hid a broken admin-terminate button for months: the endpoint read "false" as "nothing to do" and reported success while every call was actually being refused. Your endpoint still declares its own `#[Auth]` gate; the target rule is the framework's.
 
-The rule **assumes a single site** (a role is per-site, a sign-in identity is cross-site); multi-tenant termination is not supported yet (B-92).
+The rule **assumes a single site** (`rsx.tenancy` = `single`; a role is per-site, a sign-in identity is cross-site); multi-tenant termination belongs to the multi-tenant review (B-184).
 
 Each staff user session a terminate function ends fires an event:
 
@@ -391,7 +391,7 @@ Small values that belong to a **browser** rather than to a user or a record — 
 ```php
 Session::put_value('wizard.step', 3);                                    // the request's realm
 Session::put_value('draft', $data, Rsx_Time::add(Rsx_Time::now_iso(), 3600));
-Session::put_value('banner.dismissed', true, null, 'guest');             // survives every sign-out
+Session::put_value('banner.dismissed', true, realm: 'guest');             // survives every sign-out
 Session::get_value('wizard.step', $default_when_absent);
 Session::forget_value('wizard.step');
 ```

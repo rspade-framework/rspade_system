@@ -917,6 +917,14 @@ HIDDEN FIELDS OUTSIDE THE FORM
     (anything extending Form_Input_Abstract) belongs to the form it renders
     inside, always.
 
+    ONE NAME, ONE VALUE. vals() reads the input components first, then the
+    native hidden inputs, into one object keyed by name - so a native hidden
+    input sharing a name with an input component REPLACES that component's
+    value in what is submitted, and among several of either kind with one
+    name the last in document order wins. Nothing warns; give every field
+    its own name. A named hidden <input> inside a component's own markup is
+    a native hidden input too, and is collected the same way.
+
 VALUES AND INPUT ACCESS
 
     form.vals()             serialize - {name: value} for every descendant input

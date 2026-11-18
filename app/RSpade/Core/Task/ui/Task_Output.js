@@ -118,6 +118,7 @@ class Task_Output extends Component {
     // ------------------------------------------------------------------------------------
 
     /** Throw when the component was invoked without what it reads. */
+    @Replaceable
     _check_args() {
         if (!this.args.task_id) {
             throw new Error('Task_Output requires $task_id');
@@ -130,6 +131,7 @@ class Task_Output extends Component {
      * @param {string} streams both | stdout | stderr
      * @returns {string[]}
      */
+    @Replaceable
     _stream_list(streams) {
         return streams === 'both' ? ['stdout', 'stderr', 'operator'] : (streams === 'stderr' ? ['stderr', 'operator'] : ['stdout']);
     }
@@ -140,11 +142,13 @@ class Task_Output extends Component {
      * @param {*} cursor null, or a last_id this answered
      * @param {string[]} streams
      */
+    @Replaceable
     _read_page(cursor, streams) {
         return Rsx_Task.output_after(this.args.task_id, cursor, streams);
     }
 
     /** Call `callback` whenever the source has new output. */
+    @Replaceable
     _subscribe_output(callback) {
         this.subscribe('Task_Output_Topic', { id: int(this.args.task_id) }, callback);
     }
@@ -153,6 +157,7 @@ class Task_Output extends Component {
      * Write anything the source says about a page before its lines (each through
      * _write_line()). A run's output has nothing to say.
      */
+    @Replaceable
     _write_notices(response) {}
 
     /** Write one line in a stream's style, and remember when it was written (null: unknown). */

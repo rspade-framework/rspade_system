@@ -12,6 +12,10 @@ button, a programmatic caller - funnels into it.
 - `system/app/RSpade/Core/Forms/Rsx_Form.jqhtml` - `<Define:Rsx_Form tag="form">`, which is
   what makes the component a real `<form>` element and brings the browser's own submission
   machinery into scope
+- `system/app/RSpade/Core/Forms/Form_Input_Abstract.js` - the value contract every input
+  inherits (buffering, `_mark_ready()`, `_notify_input()`, `is_changed()`), and the framework's
+  inputs: `Core/Forms/Password_Input.js` and the control panel's `_Sys_*_Input` components in
+  `system/app/RSpade/Sys/theme/components/`
 - `system/app/RSpade/Core/Forms/Form_Questions.php` - the endpoint's reader for the answers a
   resubmission carries
 - `response_form_question()` in `system/app/RSpade/helpers.php`, `Ajax::ERROR_QUESTION` and
@@ -61,3 +65,7 @@ and a playwright script drives the ordinary web server.
 | A question with no registered handler throws instead of rendering | playwright | implemented (`form_questions_round_trip.js`) |
 | Credential fields: `$autofill_id` forwarded by `Password_Input` / `Code_Input` renders a stable id and name, keeps the token and `$sid()`; `autocomplete_off` is on | playwright | implemented (`credential_autofill.js`) |
 | Blade-written fields: `Rsx_Blade_Autocomplete` gives every token-less `<input>` / `<textarea>` `autocomplete="off"` off an SPA page, keeps a declared token, and touches nothing on an SPA page | playwright | implemented (`blade_autocomplete_off.js`) |
+| `Form_Input_Abstract`: a value set before ready is buffered (null/0/false/'' faithfully), `_mark_ready()` applies it and announces `val` once, nothing when nothing is pending; programmatic `val(v)` announces `val` only; a user edit announces `input` then `val` and is a change | playwright | implemented (`form_input_value_contract.js`) |
+| The framework's inputs round-trip `val(v)` / `val()` in their own vocabulary and announce a real user edit: `Password_Input`, `_Sys_Text_Input`, `_Sys_Textarea_Input`, `_Sys_Select_Input`, `_Sys_Checkbox_Input`, `_Sys_Checkbox_List_Input` | playwright | implemented (`form_input_value_contract.js`) |
+| `Rsx_Form.vals()` collects by name; `vals(object)` applies by name and leaves the rest; `form.input(name)` | playwright | implemented (`form_input_value_contract.js`) |
+| Select / Checkbox / Tag_List / Wysiwyg / Text value contracts of the template's inputs | - | out of scope: those inputs are the application's (`rsx/theme/components/inputs/`), not the framework's |

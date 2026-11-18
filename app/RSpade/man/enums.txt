@@ -46,7 +46,8 @@ DEFINING ENUMS
     Standard Properties
         constant        - PHP constant name (generates Model::STATUS_ACTIVE)
         label           - Human-readable display name
-        order           - Sort order (defaults to 0)
+        order           - Sort order, a whole number (defaults to 0); anything
+                          but an int fails the manifest build (MODEL-COLUMNS-01)
         selectable      - Whether shown in dropdowns (defaults to true)
 
     Custom Properties
@@ -189,6 +190,11 @@ AJAX/JSON EXPORT
         'status_id__badge' => 'bg-success',       // Custom properties too
         // ... all enum properties for current value
     ]
+
+    A column the payload does not carry carries no extras either: a
+    never_export enum column, a system (`_`-prefixed) column and a Laravel
+    $hidden column export neither the value nor any column__property,
+    since a label names its value as surely as the id does.
 
 ANTI-ALIASING POLICY
 

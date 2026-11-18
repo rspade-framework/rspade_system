@@ -212,7 +212,7 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
         $id = static::__dispatch_from($request, static::__staff_identity(), 'as_dispatcher', ['probe' => true]);
 
         // A signs out; B signs in on the same browser.
-        Session::_sign_out_user_sessions([$request['user_session']], Session::SIGN_OUT_SIGNED_OUT, false);
+        Session::_sign_out_user_sessions([$request['user_session']], Session::SIGN_OUT_SIGNED_OUT, push: false);
         $b_identity = ['login_user_id' => 990002, 'site_id' => 1, 'impersonator_login_user_id' => null];
         $b = (int) DB::table('_user_sessions')->insertGetId($b_identity + [
             'session_id' => $request['browser'],
@@ -337,7 +337,7 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
         $request = static::__signed_in_browser();
         $id = static::__dispatch_from($request, static::__staff_identity());
 
-        Session::_sign_out_user_sessions([$request['user_session']], Session::SIGN_OUT_TIMED_OUT_IDLE, false);
+        Session::_sign_out_user_sessions([$request['user_session']], Session::SIGN_OUT_TIMED_OUT_IDLE, push: false);
         static::__run_worker();
 
         static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) Task_Run_Model::find($id)->status_id);

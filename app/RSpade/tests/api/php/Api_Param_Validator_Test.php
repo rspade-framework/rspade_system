@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\Api\Php;
 
+use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -229,5 +230,131 @@ class Api_Param_Validator_Test extends Rsx_Test_Abstract
 
         static::__assert_false($result['valid']);
         static::__assert_equals('Expected string', $result['fields']['body'] ?? null);
+    }
+
+    // -------------------------------------------------------------------------
+    // A json param: any JSON value, checked only for parsing
+    // -------------------------------------------------------------------------
+
+    public static function test_a_json_param_decodes_an_object_sent_as_text()
+    {
+        $specs = [static::__spec('filters', 'json', true)];
+        $result = Api_Param_Validator::validate($specs, ['filters' => '{"status": 1, "tags": ["a", "b"]}']);
+
+        static::__assert_true($result['valid'], json_encode($result['fields']));
+        static::__assert_equals(['status' => 1, 'tags' => ['a', 'b']], $result['params']['filters'], 'an object decodes to an associative array');
+    }
+
+    public static function test_a_json_param_decodes_a_list_sent_as_text()
+    {
+        $specs = [static::__spec('ids', 'json', true)];
+        $result = Api_Param_Validator::validate($specs, ['ids' => '[3, 1, 2]']);
+
+        static::__assert_true($result['valid'], json_encode($result['fields']));
+        static::__assert_equals([3, 1, 2], $result['params']['ids']);
+    }
+
+    public static function test_a_json_param_takes_a_value_structured_in_a_json_body_as_it_is()
+    {
+        $specs = [static::__spec('filters', 'json', true)];
+        $structured = ['status' => 1, 'nested' => ['deep' => [true, null, 2.5]]];
+        $result = Api_Param_Validator::validate($specs, ['filters' => $structured]);
+
+        static::__assert_true($result['valid'], json_encode($result['fields']));
+        static::__assert_equals($structured, $result['params']['filters']);
+    }
+
+    public static function test_a_json_param_accepts_scalars()
+    {
+        $specs = [static::__spec('v', 'json', true)];
+
+        // [raw value as it arrives, decoded value the endpoint receives]
+        $cases = [
+            ['5', 5],
+            ['"x"', 'x'],
+            ['true', true],
+            ['null', null],
+            [7, 7],
+            [false, false],
+            [null, null],
+        ];
+
+        foreach ($cases as [$sent, $expected]) {
+            $result = Api_Param_Validator::validate($specs, ['v' => $sent]);
+            static::__assert_true($result['valid'], 'valid JSON scalar: ' . var_export($sent, true));
+            static::__assert_true(array_key_exists('v', $result['params']), 'the scalar reaches the endpoint: ' . var_export($sent, true));
+            static::__assert_equals($expected, $result['params']['v'], 'scalar: ' . var_export($sent, true));
+        }
+    }
+
+    public static function test_a_json_param_refuses_text_that_does_not_parse()
+    {
+        $specs = [static::__spec('filters', 'json', true)];
+
+        foreach (['{status: 1}', '{"a": 1', 'x', '', "{'a': 1}"] as $sent) {
+            $result = Api_Param_Validator::validate($specs, ['filters' => $sent]);
+            static::__assert_false($result['valid'], 'refused: ' . $sent);
+            static::__assert_equals(['filters' => 'Expected valid JSON'], $result['fields'], 'the field error: ' . $sent);
+            static::__assert_equals([], $result['params']);
+        }
+    }
+
+    public static function test_a_json_param_refuses_an_uploaded_file()
+    {
+        $specs = [static::__spec('filters', 'json', true)];
+        $path = tempnam(sys_get_temp_dir(), 'json-param-');
+        file_put_contents($path, '{"a": 1}');
+
+        try {
+            $file = new UploadedFile($path, 'filters.json', 'application/json', null, true);
+            $result = Api_Param_Validator::validate($specs, ['filters' => $file]);
+        } finally {
+            unlink($path);
+        }
+
+        static::__assert_false($result['valid']);
+        static::__assert_equals('Expected valid JSON', $result['fields']['filters'] ?? null);
+    }
+
+    public static function test_a_required_json_param_that_is_absent_is_reported()
+    {
+        $specs = [static::__spec('filters', 'json', true)];
+        $result = Api_Param_Validator::validate($specs, []);
+
+        static::__assert_false($result['valid']);
+        static::__assert_equals('This field is required', $result['fields']['filters'] ?? null);
+    }
+
+    public static function test_an_optional_json_param_without_a_default_stays_absent()
+    {
+        $specs = [static::__spec('filters', 'json')];
+        $result = Api_Param_Validator::validate($specs, []);
+
+        static::__assert_true($result['valid']);
+        static::__assert_false(array_key_exists('filters', $result['params']));
+    }
+
+    public static function test_a_json_default_is_applied_decoded()
+    {
+        $specs = [
+            static::__spec('filters', 'json', false, ['status' => 1]),
+            static::__spec('sort', 'json', false, '["name", "id"]'),
+            static::__spec('empty', 'json', false, []),
+        ];
+        $result = Api_Param_Validator::validate($specs, []);
+
+        static::__assert_true($result['valid']);
+        static::__assert_equals(['status' => 1], $result['params']['filters'], 'an array default as written');
+        static::__assert_equals(['name', 'id'], $result['params']['sort'], 'a JSON-text default decoded');
+        static::__assert_equals([], $result['params']['empty'], 'an empty-array default applied');
+    }
+
+    public static function test_a_sent_json_value_overrides_the_default()
+    {
+        $specs = [static::__spec('filters', 'json', false, ['status' => 1])];
+        $result = Api_Param_Validator::validate($specs, ['filters' => '{"status": 2}']);
+
+        static::__assert_true($result['valid']);
+        static::__assert_equals(['status' => 2], $result['params']['filters']);
     }
 }

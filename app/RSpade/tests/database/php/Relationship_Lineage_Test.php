@@ -49,7 +49,7 @@ class Relationship_Lineage_Test extends Rsx_Test_Abstract
     {
         $relationships = File_Attachment_Model::get_relationships();
 
-        foreach (['file_storage', 'site', 'fileable'] as $relation) {
+        foreach (['file_storage', 'fileable'] as $relation) {
             static::__assert_true(
                 in_array($relation, $relationships, true),
                 "File_Attachment_Model still reports its own {$relation}"

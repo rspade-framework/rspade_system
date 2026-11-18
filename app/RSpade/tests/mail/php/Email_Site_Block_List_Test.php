@@ -360,7 +360,7 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
         $row = (new Mail_Notification_Fixture_Email())->to($email)->send();
 
         static::__assert_equals(Rsx_Mail::RESEND_ADDRESS_BLOCKED, Rsx_Mail::resend($row));
-        static::__assert_equals(Rsx_Mail::RESEND_ADDRESS_BLOCKED, Rsx_Mail::resend($row, true), 'force does not override the list');
+        static::__assert_equals(Rsx_Mail::RESEND_ADDRESS_BLOCKED, Rsx_Mail::resend($row, force: true), 'force does not override the list');
 
         Rsx_Mail::unblock_address($email);
 
@@ -431,6 +431,6 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
         $row = (new Mail_Notification_Fixture_Email())->to($email)->send();
 
         static::__assert_equals(Rsx_Mail::RESEND_BLOCKED, Rsx_Mail::resend($row));
-        static::__assert_equals(Rsx_Mail::RESEND_QUEUED, Rsx_Mail::resend($row, true));
+        static::__assert_equals(Rsx_Mail::RESEND_QUEUED, Rsx_Mail::resend($row, force: true));
     }
 }

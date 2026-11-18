@@ -70,6 +70,17 @@ class Lockd_Client
         self::$connection?->use_endpoint($host, $port);
     }
 
+    /**
+     * The protocol version the connected daemon announced at hello, or null when there is no
+     * open connection. Version 2 is the first with the progress watchdog (`progress`,
+     * `stall`, `notice`); a daemon older than its client - an image not yet rebuilt or a
+     * daemon not yet restarted after an update - answers 1 and arms no watchdog at all.
+     */
+    public static function server_protocol(): ?int
+    {
+        return self::$connection?->server_protocol();
+    }
+
     /** True when a socket to the daemon is currently open. */
     public static function is_connected(): bool
     {
@@ -147,9 +158,29 @@ class Lockd_Client
             ];
         }
 
+        // The daemon runs from the container image (or was started before the checkout was
+        // updated), so it can be older than this client. A daemon before protocol 2 serves
+        // every lock correctly but has no progress watchdog: stalled holders are never
+        // reported and rsx.locks.stall_seconds / wait_notice_seconds do nothing.
+        $pong = json_decode(trim((string) $line), true);
+        $daemon_protocol = (int) ($pong['protocol'] ?? 1);
+
+        if ($daemon_protocol < 2) {
+            return [
+                'status' => 'WARN',
+                'detail' => 'rsx-lockd answering on ' . $endpoint['host'] . ':' . $endpoint['port']
+                    . " speaks protocol {$daemon_protocol}, older than this framework's 2 - the lock stall"
+                    . ' watchdog and the web wait notice are inactive until it is replaced',
+                'remediation' => 'restart rsx-lockd from the current framework at a quiet moment (a restart releases'
+                    . ' every held lock): rebuild the container image, or supervisorctl restart rsx-lockd where'
+                    . ' it runs from the checkout',
+            ];
+        }
+
         return [
             'status' => 'OK',
-            'detail' => 'rsx-lockd answering on ' . $endpoint['host'] . ':' . $endpoint['port'],
+            'detail' => 'rsx-lockd answering on ' . $endpoint['host'] . ':' . $endpoint['port']
+                . " (protocol {$daemon_protocol})",
         ];
     }
 
@@ -157,12 +188,13 @@ class Lockd_Client
      * Send one request frame and return the response frame that answers it.
      *
      * Connects (and says hello) on first use. Blocks for as long as the daemon takes to
-     * answer - which for a parked acquire is "until the lock is available".
+     * answer - which for a parked acquire is "until the lock is available". `$on_notice`
+     * receives the `waiting` notice a request carrying a `notice` key may get mid-wait.
      *
      * @throws Lockd_Unavailable_Exception on connect failure, socket death, or a protocol
      *                                     violation - the outage (see the class docblock).
      */
-    public static function request(array $frame): array
+    public static function request(array $frame, ?callable $on_notice = null): array
     {
         $connection = self::__connection();
 
@@ -175,7 +207,7 @@ class Lockd_Client
             }
         }
 
-        return $connection->request($frame);
+        return $connection->request($frame, $on_notice);
     }
 
     /**

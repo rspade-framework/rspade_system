@@ -524,6 +524,6 @@ class Task_Worker_Command extends Command
 
         // Each run gets a context of its own and ends blank (Task_Runner::execute()): a fresh
         // revision unit and virtual session before, Session::_end_virtual() after.
-        return [$instance, Task_Runner::execute($instance, true, true)];
+        return [$instance, Task_Runner::execute($instance, true, own_context: true)];
     }
 }

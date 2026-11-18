@@ -420,30 +420,30 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         // A per-test IP, so this never collides with another test's address.
         $ip = '203.0.113.' . random_int(1, 254);
 
-        Login_Throttle::reset(null, $ip);
+        Login_Throttle::reset(ip: $ip);
 
         try {
             $limit = (int) $config['attempts'];
 
             // Inside the limit nothing is refused.
             for ($i = 0; $i < $limit; $i++) {
-                Login_Throttle::require_not_throttled(null, $ip);
-                Login_Throttle::record_failure(null, $ip);
+                Login_Throttle::require_not_throttled(ip: $ip);
+                Login_Throttle::record_failure(ip: $ip);
             }
 
             static::__assert_throws(
                 Auth_Throttled_Exception::class,
-                fn () => Login_Throttle::require_not_throttled(null, $ip),
+                fn () => Login_Throttle::require_not_throttled(ip: $ip),
                 'too fast'
             );
 
             static::__assert_greater_than(
                 0,
-                Login_Throttle::retry_after_seconds(null, $ip),
+                Login_Throttle::retry_after_seconds(ip: $ip),
                 'and the refusal says when to come back'
             );
         } finally {
-            Login_Throttle::reset(null, $ip);
+            Login_Throttle::reset(ip: $ip);
         }
     }
 

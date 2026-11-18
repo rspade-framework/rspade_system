@@ -14,8 +14,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The pure, unit-testable seams of the /_download_zip endpoint: archive-entry name
  * sanitization (a hostile custom name degrades silently to the attachment file_name),
  * cross-set collision de-duplication, the error-marker naming convention, the download
- * filename sanitizer, and the non-ZIP64 streaming-envelope guard. All static, no
- * database, no HTTP.
+ * filename sanitizer. All static, no database, no HTTP.
  *
  * The full HTTP round-trip (auth cascade, streaming, byte-identity, the denial path) is
  * exercised on the live dev box during development verification and cataloged as a
@@ -181,35 +180,5 @@ class Zip_Download_Naming_Test extends Rsx_Test_Abstract
     public static function test_zip_filename_quotes_replaced()
     {
         static::__assert_equals('a_b.zip', File_Attachment_Controller::_sanitize_zip_filename('a"b.zip'));
-    }
-
-    // =====================================================================
-    // _zip64_limit_error
-    // =====================================================================
-
-    public static function test_zip64_within_limits_returns_null()
-    {
-        static::__assert_null(File_Attachment_Controller::_zip64_limit_error([100, 200, 300]));
-    }
-
-    public static function test_zip64_too_many_entries()
-    {
-        static::__assert_not_null(
-            File_Attachment_Controller::_zip64_limit_error(array_fill(0, 65001, 1))
-        );
-    }
-
-    public static function test_zip64_single_file_too_large()
-    {
-        static::__assert_not_null(
-            File_Attachment_Controller::_zip64_limit_error([0xFFFFFFFF])
-        );
-    }
-
-    public static function test_zip64_total_over_four_gb()
-    {
-        static::__assert_not_null(
-            File_Attachment_Controller::_zip64_limit_error([2000000000, 2000000001])
-        );
     }
 }

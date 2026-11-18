@@ -257,7 +257,7 @@ class StubProcessor
             $file_prefix = "{$module_name}_{$feature_name}_{$subfeature_name}";
 
             // Try to resolve parent route, fallback* to generated path
-            $parent_url = self::__resolve_parent_route_url($module_name, null, $feature_name);
+            $parent_url = self::__resolve_parent_route_url($module_name, feature_name: $feature_name);
             $route_path = $parent_url ? "{$parent_url}/{$subfeature_name}" : "/{$module_name}/{$feature_name}/{$subfeature_name}";
 
             $layout_class = self::to_class_name($module_name) . '_Layout';
@@ -270,7 +270,7 @@ class StubProcessor
             $file_prefix = "{$module_name}_{$feature_name}";
 
             // Try to resolve module's index route, fallback* to generated path
-            $parent_url = self::__resolve_parent_route_url($module_name, null, null);
+            $parent_url = self::__resolve_parent_route_url($module_name, feature_name: null);
             $route_path = $parent_url ? "{$parent_url}/{$feature_name}" : "/{$module_name}/{$feature_name}";
 
             $layout_class = self::to_class_name($module_name) . '_Layout';
@@ -342,7 +342,7 @@ class StubProcessor
         string $module_name,
         string $feature_name = 'index'
     ): array {
-        $replacements = self::generate_replacements($module_name, null, $feature_name);
+        $replacements = self::generate_replacements($module_name, feature_name: $feature_name);
 
         $module_class = self::to_class_name($module_name);
 

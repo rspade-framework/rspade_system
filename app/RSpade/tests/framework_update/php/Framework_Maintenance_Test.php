@@ -74,7 +74,7 @@ class Framework_Maintenance_Test extends Rsx_Test_Abstract
         Framework_Maintenance::clear();
 
         try {
-            Framework_Maintenance::raise(null, 'writer test reason');
+            Framework_Maintenance::raise(reason: 'writer test reason');
             static::__assert_equals('writer test reason', Framework_Maintenance::reason());
 
             Framework_Maintenance::raise();
@@ -96,7 +96,7 @@ class Framework_Maintenance_Test extends Rsx_Test_Abstract
         Framework_Maintenance::clear();
 
         try {
-            Framework_Maintenance::raise(null, 'stamp test reason');
+            Framework_Maintenance::raise(reason: 'stamp test reason');
 
             $raw = (string) file_get_contents(Framework_Maintenance::flag_path());
             static::__assert_contains("stamp test reason\n", $raw, 'line 1 is the reason');

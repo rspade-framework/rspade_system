@@ -534,6 +534,20 @@ MODEL CHANGE EMISSION
       self-referential or cyclic touch graph terminates instead of looping. A
       multi-level chain works: Message -> Thread -> Client is two hops.
 
+    Seeing the graph. php artisan rsx:realtime:map prints it, read-only, from
+    the manifest through the same resolution the cascade uses: the $realtime
+    models; a touch tree (each parent, then every model whose write notifies
+    it, transitively, with the relationship method and resolved FK); the
+    realtime_touch() overrides under "(parent resolved at run time)"; and every
+    #[Emitter] with its topic and model constraint. Framework models are
+    marked [framework]. --model=X narrows it to what notifies X or is notified
+    by X (and emitters constrained to X), --edges prints a flat child -> parent
+    list, --json the graph as {models, edges, emitters, errors}. A
+    #[Realtime_Touch] that does not resolve (not on a belongsTo) is an [ERROR]
+    row and exit 1 - the same error the model's first write would throw. When
+    a page does not refresh after a child changes, look for the missing edge
+    here.
+
     BULK WRITES
     A bulk model-builder write - Model::where(...)->update([...]) or
     Model::where(...)->delete() - on a model with a SIDE-EFFECT SURFACE is

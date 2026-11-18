@@ -666,6 +666,7 @@ test, built unsaved). User_Payload_Never_Export_Test covers the user invite colu
 | nexp-04 | makeVisible() cannot reveal a staff identity secret | makeVisible(['password','remember_token']) | neither key, no hash in the JSON | implemented |
 | nexp-05 | makeVisible() cannot reveal a portal password | makeVisible('password') | no password key | implemented |
 | nexp-06 | a portal user's metadata never serializes, server code still reads it | set_metadata() | no metadata key or value in toArray()/JSON; get_metadata() answers | implemented |
+| nexp-07 | a never-exported enum column exports none of its `col__*` extras; an exported enum column keeps them | fixture leaf `leaf_secret_tier_id` (never_export + enum with a custom property), `visible_tier_id` (enum) | no `leaf_secret_tier_id__*` key, label or custom value in the JSON; `visible_tier_id__label` / `__badge` present; server code still reads the secret's label | implemented |
 
 ## Session_User_Sessions_Test (php, default isolation) - the user session engine
 

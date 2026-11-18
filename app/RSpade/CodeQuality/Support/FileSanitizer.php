@@ -76,7 +76,7 @@ class FileSanitizer
         // The cache key is the file's build hash, so a changed file misses by construction.
         // The mtime guard is kept on top of it - this cache had one before the move, and a
         // cache never gets weaker in a consolidation.
-        $sanitized = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, '', 'js', true);
+        $sanitized = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, '', 'js', guard_source_mtime: true);
 
         if ($sanitized === null) {
             // Sanitize via RPC server
@@ -214,7 +214,7 @@ class FileSanitizer
      */
     public static function blank_php_comments(string $content): string
     {
-        return static::__blank_slash_comments($content, false, true);
+        return static::__blank_slash_comments($content, false, hash_comments: true);
     }
 
     /**

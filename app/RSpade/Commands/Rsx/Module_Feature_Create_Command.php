@@ -168,7 +168,7 @@ class Module_Feature_Create_Command extends Command
         $this->info("Creating Blade feature '{$feature_name}' in module '{$module_name}'...");
 
         // Generate replacements
-        $replacements = StubProcessor::generate_replacements($module_name, null, $feature_name);
+        $replacements = StubProcessor::generate_replacements($module_name, feature_name: $feature_name);
 
         try {
             // Create controller

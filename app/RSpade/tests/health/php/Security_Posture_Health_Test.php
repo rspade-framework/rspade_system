@@ -7,12 +7,15 @@
 
 namespace App\RSpade\Tests\Health\Php;
 
+use ReflectionMethod;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Lib\Developer\Ide\Ide_Bridge_Token;
 use App\RSpade\Lib\Operations\Health\Security_Health_Checks;
 
 /**
  * The two security-posture rows of rsx:health that guard a third-party component:
- * "Ignition Read-Only" and "ImageMagick Coder Policy".
+ * "Ignition Read-Only" and "ImageMagick Coder Policy" - and the Web Exposure probes that
+ * answer WARN, never OK, when the request itself fails.
  */
 class Security_Posture_Health_Test extends Rsx_Test_Abstract
 {
@@ -55,5 +58,46 @@ class Security_Posture_Health_Test extends Rsx_Test_Abstract
 
         $row = Security_Health_Checks::imagemagick_coder_policy();
         static::__assert_equals('OK', $row['status'], $row['detail']);
+    }
+
+    /**
+     * A php-fpm status probe whose request fails has not shown the page is unserved: the row
+     * is WARN carrying the transport error, never an OK. Port 1 on loopback refuses at once.
+     */
+    public static function test_fpm_status_probe_that_fails_is_a_warn()
+    {
+        $row = static::__probe('__probe_fpm_status', 'http://127.0.0.1:1');
+
+        static::__assert_equals('WARN', $row['status'], $row['detail']);
+        static::__assert_equals('php-fpm status exposure', $row['label']);
+        static::__assert_contains('probe of http://127.0.0.1:1/_fpm_status/web?json failed: ', $row['detail']);
+    }
+
+    /**
+     * The IDE bridge directory probe likewise: a failed request is WARN with the error, and
+     * the marker file it wrote into the directory is still removed.
+     */
+    public static function test_bridge_probe_that_fails_is_a_warn_and_cleans_up()
+    {
+        $bridge_dir = Ide_Bridge_Token::bridge_dir();
+        if (!is_dir($bridge_dir)) {
+            static::__skip('no IDE bridge directory on this box - the probe answers OK before any request');
+        }
+
+        $before = glob($bridge_dir . '/probe-*.txt');
+        $row = static::__probe('__probe_bridge', 'http://127.0.0.1:1');
+
+        static::__assert_equals('WARN', $row['status'], $row['detail']);
+        static::__assert_equals('IDE bridge dir exposure', $row['label']);
+        static::__assert_contains('probe of http://127.0.0.1:1/', $row['detail']);
+        static::__assert_contains(' failed: ', $row['detail']);
+        static::__assert_equals($before, glob($bridge_dir . '/probe-*.txt'), 'the probe marker is removed');
+    }
+
+    private static function __probe(string $method, string $base): array
+    {
+        $reflection = new ReflectionMethod(Security_Health_Checks::class, $method);
+
+        return $reflection->invoke(null, $base);
     }
 }

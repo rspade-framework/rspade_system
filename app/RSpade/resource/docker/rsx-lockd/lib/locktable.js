@@ -2,9 +2,19 @@
  * rsx-lockd lock state machine.
  *
  * THE MODEL: the connection is the lock. A lock is held from the moment it is granted
- * until the holder releases it or its connection goes away. There is no lease, no TTL, no
- * renewal and no heartbeat anywhere in this file - the only clock present is the OPTIONAL
- * per-waiter timeout a caller explicitly asked for.
+ * until the holder releases it or its connection goes away. There is no lease, no TTL and
+ * no renewal: nothing here ever takes a lock away from a holder. The clocks present are all
+ * on WAITERS, and each is one the waiter's request asked for:
+ *
+ *   - `timeout`  the caller's own wait budget (answered `timeout`);
+ *   - `stall`    the progress watchdog: a waiter whose holders have shown no progress for
+ *                this many seconds is answered `stalled` (see _check_stall());
+ *   - `notice`   one `waiting` notice frame after this many seconds, the wait continuing.
+ *
+ * PROGRESS is what a holder shows by being granted (a fresh holder is progressing) or by
+ * sending a `progress` frame (a keep-alive covering everything its connection holds). It
+ * never extends, renews or bounds a HOLD - a silent holder keeps its lock for as long as
+ * its connection lives; only the waiters behind it are told, by name, that it went silent.
  *
  * Everything here is pure state manipulation. No sockets, no logging, no process globals.
  * Delivery of a deferred answer (a waiter that later gets granted, times out, or is
@@ -85,6 +95,7 @@ class Lock_Table {
             granted: 0,
             released: 0,
             timed_out: 0,
+            stalled: 0,
             deadlocked: 0,
             dropped_connections: 0,
         };
@@ -101,6 +112,10 @@ class Lock_Table {
             group_id: (meta && meta.group_id) || conn_id,
             meta: meta || {},
             since: this.now(),
+            // The last `progress` frame this connection sent, or null. A hold's own grant
+            // time is progress too, so a connection that never sends one is still a
+            // progressing holder for its first stall window.
+            progress_at: null,
             tokens: new Set(),
             waits: [],
         });
@@ -251,6 +266,11 @@ class Lock_Table {
             return this._error(req, 'acquire timeout must be null or a non-negative number of seconds');
         }
 
+        const watch = this._normalize_watch(req, 'acquire');
+        if (watch.error) {
+            return this._error(req, watch.error);
+        }
+
         const lock = this._ensure_lock(name);
 
         // Reentrancy is the CLIENT's job (the PHP client keeps the counts, so a nested
@@ -318,6 +338,8 @@ class Lock_Table {
             name: name,
             mode: mode,
             timeout: timeout.value,
+            stall: watch.stall,
+            notice: watch.notice,
             req: req,
         });
 
@@ -495,6 +517,11 @@ class Lock_Table {
             return this._error(req, 'upgrade timeout must be null or a non-negative number of seconds');
         }
 
+        const watch = this._normalize_watch(req, 'upgrade');
+        if (watch.error) {
+            return this._error(req, watch.error);
+        }
+
         const lock = this.locks.get(name);
         const holder = lock ? lock.holders.get(conn_id) : null;
         if (!holder) {
@@ -544,6 +571,8 @@ class Lock_Table {
             name: name,
             mode: MODE_WRITE,
             timeout: timeout.value,
+            stall: watch.stall,
+            notice: watch.notice,
             req: req,
             upgraded: true,
         });
@@ -580,6 +609,11 @@ class Lock_Table {
         const timeout = protocol.normalize_timeout(req.timeout);
         if (!timeout.ok) {
             return this._error(req, 'sem_acquire timeout must be null or a non-negative number of seconds');
+        }
+
+        const watch = this._normalize_watch(req, 'sem_acquire');
+        if (watch.error) {
+            return this._error(req, watch.error);
         }
 
         if (max_slots <= 0) {
@@ -621,6 +655,8 @@ class Lock_Table {
             name: name,
             mode: null,
             timeout: timeout.value,
+            stall: watch.stall,
+            notice: watch.notice,
             req: req,
         });
 
@@ -660,6 +696,29 @@ class Lock_Table {
         }
 
         return { id: req.id, status: protocol.STATUS_OK, name: record.name, held: held };
+    }
+
+    // ---- Progress -------------------------------------------------------------------
+
+    /**
+     * The holder says it is still working: a keep-alive covering every lock and semaphore
+     * slot this connection holds (and any it takes later - the stamp belongs to the
+     * connection). It changes nothing about any hold; it only restarts the stall window of
+     * every waiter queued behind this connection, which those waiters' own checks read when
+     * they fire. Answered at once, holding something or not.
+     */
+    progress(conn_id, req) {
+        const conn = this.connections.get(conn_id);
+        if (!conn) {
+            return this._error(req, 'Unknown connection');
+        }
+
+        conn.progress_at = this.now();
+
+        this.log(() => 'PROGRESS by ' + this._describe_conn(conn_id, conn)
+            + ' holding ' + conn.tokens.size, 'verbose');
+
+        return { id: req.id, status: protocol.STATUS_OK, holds: conn.tokens.size };
     }
 
     // ---- Introspection --------------------------------------------------------------
@@ -742,6 +801,7 @@ class Lock_Table {
                         mode: holder.mode,
                         token: token,
                         held_ms: now - holder.since,
+                        progress_ms: now - this._own_progress_at(conn, holder.since),
                     });
                 } else {
                     const semaphore = this.semaphores.get(record.name);
@@ -752,6 +812,7 @@ class Lock_Table {
                         slot: holder.slot,
                         token: token,
                         held_ms: now - holder.since,
+                        progress_ms: now - this._own_progress_at(conn, holder.since),
                     });
                 }
             }
@@ -761,6 +822,8 @@ class Lock_Table {
                 name: entry.name,
                 mode: entry.mode,
                 timeout: entry.timeout,
+                stall: entry.stall,
+                notice: entry.notice,
                 waiting_ms: now - entry.since,
             }));
 
@@ -772,8 +835,13 @@ class Lock_Table {
                 group_id: conn.group_id === conn_id ? null : conn.group_id,
                 host: conn.meta.host || null,
                 pid: conn.meta.pid || null,
+                // The process start time its hello carried (null when it sent none): with
+                // host and pid, the identity an operator checks before signalling it.
+                start: conn.meta.start === undefined ? null : conn.meta.start,
                 remote: conn.meta.remote || null,
                 connected_ms: now - conn.since,
+                // Since this connection's last `progress` frame; null when it never sent one.
+                progress_ms: conn.progress_at === null ? null : now - conn.progress_at,
                 holds: holds,
                 semaphores: semaphores,
                 waiting: waiting,
@@ -789,11 +857,14 @@ class Lock_Table {
                     conn_id: conn_id,
                     mode: holder.mode,
                     held_ms: now - holder.since,
+                    progress_ms: now - this._own_progress_at(this.connections.get(conn_id), holder.since),
                 })),
                 queue: lock.queue.map((entry) => ({
                     conn_id: entry.conn_id,
                     mode: entry.mode,
                     timeout: entry.timeout,
+                    stall: entry.stall,
+                    notice: entry.notice,
                     waiting_ms: now - entry.since,
                 })),
             });
@@ -809,9 +880,13 @@ class Lock_Table {
                     slot: holder.slot,
                     token: token,
                     held_ms: now - holder.since,
+                    progress_ms: now - this._own_progress_at(this.connections.get(holder.conn_id), holder.since),
                 })),
                 queue: semaphore.queue.map((entry) => ({
                     conn_id: entry.conn_id,
+                    timeout: entry.timeout,
+                    stall: entry.stall,
+                    notice: entry.notice,
                     waiting_ms: now - entry.since,
                 })),
             });
@@ -1023,9 +1098,11 @@ class Lock_Table {
     }
 
     /**
-     * Park a request. The ONLY timer in this daemon is armed here, and only when the
-     * caller explicitly passed a timeout - timeout null arms nothing at all, which is what
-     * "wait forever, with no upper bound anywhere" actually means in code.
+     * Park a request. Every lock-path timer in this daemon is armed here, each only because
+     * the request asked for it: `timeout` (the caller's wait budget), `stall` (the progress
+     * watchdog) and `notice` (one `waiting` frame). A request carrying none of the three
+     * arms nothing at all, which is what "wait forever, with no upper bound anywhere" means
+     * in code - and no timer here ever touches a HOLD.
      */
     _enqueue(target, conn, spec) {
         this.waiter_seq++;
@@ -1036,10 +1113,14 @@ class Lock_Table {
             name: spec.name,
             mode: spec.mode,
             timeout: spec.timeout,
+            stall: spec.stall === undefined ? null : spec.stall,
+            notice: spec.notice === undefined ? null : spec.notice,
             req: spec.req,
             upgraded: spec.upgraded === true,
             since: this.now(),
             timer: null,
+            stall_timer: null,
+            notice_timer: null,
         };
 
         target.queue.push(entry);
@@ -1054,7 +1135,8 @@ class Lock_Table {
                 ? this._describe_holders(target)
                 : this._describe_slots(target))
             + ', queue depth ' + target.queue.length
-            + (entry.timeout === null ? ', waiting forever' : ', timeout ' + entry.timeout + 's'));
+            + (entry.timeout === null ? ', waiting forever' : ', timeout ' + entry.timeout + 's')
+            + (entry.stall === null ? '' : ', stall watch ' + entry.stall + 's'));
 
         if (entry.timeout !== null) {
             entry.timer = this.set_timeout(() => {
@@ -1062,7 +1144,238 @@ class Lock_Table {
             }, Math.round(entry.timeout * 1000));
         }
 
+        if (entry.stall !== null) {
+            entry.stall_timer = this.set_timeout(() => {
+                this._check_stall(entry);
+            }, Math.round(entry.stall * 1000));
+        }
+
+        if (entry.notice !== null) {
+            entry.notice_timer = this.set_timeout(() => {
+                this._fire_notice(entry);
+            }, Math.round(entry.notice * 1000));
+        }
+
         return entry;
+    }
+
+    /**
+     * Parse a request's `stall` and `notice` keys: each null/absent (off) or a positive
+     * number of seconds. Zero is refused rather than read as "off", because a request that
+     * says "stall after 0 seconds" is a bug in its sender, not a choice.
+     */
+    _normalize_watch(req, op) {
+        const out = { stall: null, notice: null, error: null };
+        for (const key of ['stall', 'notice']) {
+            const value = req[key];
+            if (value === undefined || value === null) continue;
+            if (typeof value !== 'number' || !isFinite(value) || value <= 0) {
+                out.error = op + ' ' + key + ' must be null or a positive number of seconds';
+                return out;
+            }
+            out[key] = value;
+        }
+        return out;
+    }
+
+    /**
+     * THE PROGRESS WATCHDOG, run when a waiter's stall window may have closed.
+     *
+     * The waiter's window starts at the LATER of its own enqueue and the most recent
+     * progress of what blocks it (_blocking_progress_at): a holder that signalled progress
+     * restarts every waiter's window behind it, and a fresh grant is progress, so a queue
+     * that is moving never stalls however long any one waiter has been in it. When the
+     * window has not closed the check re-arms for exactly the remainder - so a waiter
+     * behind a progressing holder costs one timer per window, not a poll.
+     *
+     * Closed: the waiter is answered `stalled`, naming every holder with how long it has
+     * held and since when it last showed progress. The HOLDERS are untouched - the
+     * watchdog fails the waiter that would otherwise wait on a silent holder forever; it
+     * never takes a lock from anyone.
+     */
+    _check_stall(entry) {
+        entry.stall_timer = null;
+
+        const target = entry.kind === 'lock'
+            ? this.locks.get(entry.name)
+            : this.semaphores.get(entry.name);
+        if (!target || target.queue.indexOf(entry) === -1) {
+            return;   // granted, timed out or cancelled meanwhile - nothing to watch
+        }
+
+        const window_ms = Math.round(entry.stall * 1000);
+        const now = this.now();
+        const progress_at = this._blocking_progress_at(target, entry, new Set());
+        const deadline = Math.max(entry.since, progress_at) + window_ms;
+
+        if (now < deadline) {
+            entry.stall_timer = this.set_timeout(() => {
+                this._check_stall(entry);
+            }, deadline - now);
+            return;
+        }
+
+        const holders = this._holder_report(target);
+
+        // Named BEFORE the waiter is removed, while the holders are still in place.
+        this.log(() => 'STALLED ' + this._describe_want(entry)
+            + ' for ' + this._describe_conn(entry.conn_id, this.connections.get(entry.conn_id))
+            + ' after waiting ' + this._seconds_since(entry.since)
+            + ' - held by ' + (entry.kind === 'lock'
+                ? this._describe_holders(target)
+                : this._describe_slots(target))
+            + ', no progress for ' + ((now - progress_at) / 1000).toFixed(1) + 's');
+
+        this._remove_waiter(entry, false);
+        this.counters.stalled++;
+
+        const what = entry.kind === 'lock'
+            ? entry.mode.toUpperCase() + ' lock ' + entry.name
+            : 'semaphore slot ' + entry.name;
+
+        this.deliver(entry.conn_id, {
+            id: entry.req.id,
+            status: protocol.STATUS_STALLED,
+            name: entry.name,
+            mode: entry.mode,
+            stall: entry.stall,
+            waited_ms: now - entry.since,
+            holders: holders,
+            message: 'Stalled: waited ' + ((now - entry.since) / 1000).toFixed(1) + 's for ' + what
+                + ' while its holder showed no progress for ' + entry.stall + 's - held by '
+                + (entry.kind === 'lock' ? this._describe_holders(target) : this._describe_slots(target)),
+        });
+
+        // Removing a blocked waiter can unblock the ones behind it, as a timeout does.
+        if (entry.kind === 'lock') {
+            this._run_grants(target);
+            this._gc_locks([target]);
+        } else {
+            this._run_semaphore_grants(target);
+            this._gc_semaphores([target]);
+        }
+    }
+
+    /**
+     * The one `waiting` notice a request asked for (its `notice` key): sent once, carrying
+     * the holders as _check_stall() would name them, and the wait goes on. Silent when the
+     * request has meanwhile been answered.
+     */
+    _fire_notice(entry) {
+        entry.notice_timer = null;
+
+        const target = entry.kind === 'lock'
+            ? this.locks.get(entry.name)
+            : this.semaphores.get(entry.name);
+        if (!target || target.queue.indexOf(entry) === -1) {
+            return;
+        }
+
+        this.deliver(entry.conn_id, {
+            id: entry.req.id,
+            status: protocol.STATUS_WAITING,
+            name: entry.name,
+            mode: entry.mode,
+            waited_ms: this.now() - entry.since,
+            holders: this._holder_report(target),
+        });
+    }
+
+    /**
+     * Every holder of a lock or semaphore as a waiter's stalled or waiting frame reports
+     * it: connection, host, pid, mode (a lock) or slot (a semaphore), how long it has held,
+     * and how long since it last showed progress.
+     */
+    _holder_report(target) {
+        const now = this.now();
+        const out = [];
+        const add = (conn_id, extra, since) => {
+            const conn = this.connections.get(conn_id);
+            out.push(Object.assign({
+                conn_id: conn_id,
+                host: conn && conn.meta.host ? conn.meta.host : null,
+                pid: conn && conn.meta.pid ? conn.meta.pid : null,
+                held_ms: now - since,
+                progress_ms: now - this._own_progress_at(conn, since),
+            }, extra));
+        };
+
+        if (target.max_slots === undefined) {
+            for (const [conn_id, holder] of target.holders) {
+                add(conn_id, { mode: holder.mode }, holder.since);
+            }
+        } else {
+            for (const holder of target.holders.values()) {
+                add(holder.conn_id, { slot: holder.slot }, holder.since);
+            }
+        }
+        return out;
+    }
+
+    /** A connection's own latest progress for one of its holds: its grant, or a later frame. */
+    _own_progress_at(conn, since) {
+        if (!conn || conn.progress_at === null || conn.progress_at < since) {
+            return since;
+        }
+        return conn.progress_at;
+    }
+
+    /**
+     * The most recent moment the holders blocking `entry` showed progress, as the stall
+     * rule reads it.
+     *
+     * A LOCK waits on EVERY holder (a writer needs all of them gone), so it is the
+     * LEAST-recent holder's progress: one silent reader stalls a writer however busy the
+     * other readers are. A SEMAPHORE waits on ANY slot freeing, so it is the MOST-recent
+     * slot holder's progress: a pool of working slot holders keeps its queue waiting.
+     * No holders at all (the waiter sits behind other waiters only, an instant before a
+     * grant pass) reads as progress now.
+     *
+     * A holder that is ITSELF parked in a wait is not silent by its own fault - it cannot
+     * send a frame while blocked - so its progress is the later of its own and that of
+     * what it waits on, followed transitively (_conn_progress_at). `visited` guards the
+     * walk; a cycle cannot exist (deadlock is refused at enqueue) and is read as no
+     * progress if one ever did.
+     */
+    _blocking_progress_at(target, entry, visited) {
+        const now = this.now();
+
+        if (target.max_slots === undefined) {
+            let least = null;
+            for (const [conn_id, holder] of target.holders) {
+                if (entry && conn_id === entry.conn_id) continue;
+                const at = this._conn_progress_at(conn_id, holder.since, visited);
+                if (least === null || at < least) least = at;
+            }
+            return least === null ? now : least;
+        }
+
+        let most = null;
+        for (const holder of target.holders.values()) {
+            if (entry && holder.conn_id === entry.conn_id) continue;
+            const at = this._conn_progress_at(holder.conn_id, holder.since, visited);
+            if (most === null || at > most) most = at;
+        }
+        return most === null ? now : most;
+    }
+
+    /** One holder connection's effective progress - see _blocking_progress_at(). */
+    _conn_progress_at(conn_id, since, visited) {
+        const conn = this.connections.get(conn_id);
+        let at = this._own_progress_at(conn, since);
+        if (!conn || visited.has(conn_id)) {
+            return at;
+        }
+        visited.add(conn_id);
+
+        for (const wait of conn.waits) {
+            const target = wait.kind === 'lock'
+                ? this.locks.get(wait.name)
+                : this.semaphores.get(wait.name);
+            const waited_from = Math.max(wait.since, target ? this._blocking_progress_at(target, wait, visited) : wait.since);
+            if (waited_from > at) at = waited_from;
+        }
+        return at;
     }
 
     _fire_timeout(entry) {
@@ -1115,6 +1428,17 @@ class Lock_Table {
             this.clear_timeout(entry.timer);
         }
         entry.timer = null;
+
+        // The watchdog and notice timers are never the one that fired here (each clears
+        // its own handle before acting), so they are always cleared.
+        if (entry.stall_timer) {
+            this.clear_timeout(entry.stall_timer);
+        }
+        entry.stall_timer = null;
+        if (entry.notice_timer) {
+            this.clear_timeout(entry.notice_timer);
+        }
+        entry.notice_timer = null;
 
         const target = entry.kind === 'lock'
             ? this.locks.get(entry.name)

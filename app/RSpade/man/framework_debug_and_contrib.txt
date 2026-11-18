@@ -2660,9 +2660,11 @@ HOUSE RULES THAT BITE A FRAMEWORK PATCH
     attribute argument - reflection resolves arguments before the autoloader
     is ready and the manifest scan dies.
 
-    PARENT-CALL CHAINING (PHP-PARENT-CHAIN-01). An override MUST call the
-    same method on its parent unless the nearest declaring ancestor is
-    abstract, marked replaceable, or a vendor class. A manifest-build FATAL.
+    PARENT-CALL CHAINING (PHP-PARENT-CHAIN-01, JS-PARENT-CHAIN-01). An
+    override MUST call the same method on its parent (parent:: in PHP, super.
+    in JavaScript) unless the nearest declaring ancestor is abstract, marked
+    replaceable (#[Replaceable] / the @Replaceable decorator), or outside the
+    manifest. A manifest-build FATAL.
 
     NO BACKWARDS COMPATIBILITY LAYERS. Delete the old implementation when you
     change one; do not add a compatible second path, a deprecation shim or a

@@ -437,8 +437,7 @@ class Api_Dispatcher
                 'insufficient_scope',
                 'This API key is not scoped for this endpoint',
                 403,
-                null,
-                Api_Catalog::is_hidden_pattern($route['pattern'])
+                extra: Api_Catalog::is_hidden_pattern($route['pattern'])
                     ? []
                     : ['required' => rtrim($route['pattern'], '/')]
             );
@@ -579,7 +578,7 @@ class Api_Dispatcher
             try {
                 $response = self::__api_response($rollback->response, $handler);
             } catch (Throwable $e) {
-                self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, null);
+                self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, response: null);
 
                 throw $e;
             }
@@ -600,7 +599,7 @@ class Api_Dispatcher
                 return $coded;
             }
 
-            self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, null);
+            self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, response: null);
 
             throw $e;
         }
@@ -677,7 +676,7 @@ class Api_Dispatcher
         $requested = (int) $m[1];
         $rest = $m[2];
 
-        $endpoints = Api_Catalog::get_endpoint_list(true);
+        $endpoints = Api_Catalog::get_endpoint_list(include_hidden: true);
 
         $newest = 0;
         foreach ($endpoints as $endpoint) {
@@ -712,8 +711,7 @@ class Api_Dispatcher
             'api_version_retired',
             "API version v{$requested} does not serve this path. It is served by " . implode(', ', $versions) . '.',
             410,
-            null,
-            ['versions' => $versions]
+            extra: ['versions' => $versions]
         );
     }
 

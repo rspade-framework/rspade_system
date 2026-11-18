@@ -259,7 +259,7 @@ class RuleDiscovery
         }
 
         $found = static::select_app_rule_files(
-            Manifest::php_class_records_extending(static::RULE_BASE_CLASS, true),
+            Manifest::php_class_records_extending(static::RULE_BASE_CLASS, concrete_only: true),
             Manifest::overrides()
         );
 

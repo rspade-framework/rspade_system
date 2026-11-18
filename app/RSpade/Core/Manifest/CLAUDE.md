@@ -127,9 +127,17 @@ three times, and every file record repeated its own path as a value (3.3% of `fi
   any row naming an unindexed surface (NO SURFACE), so the two can only disagree through a bug.
 - A PHP file record's `public_static_methods` holds exactly the PUBLIC STATIC methods (the
   class's own and its traits'); `public_instance_methods` holds the public instance methods
-  (the class's own and its NON-VENDOR traits', each trait method carrying `file`). The two
-  maps never share a name. A vendor trait's instance methods are left out: they carry no RSX
-  attribute and would read as methods the class declares.
+  (the class's own and its NON-VENDOR traits'). A method a trait supplies, in either map,
+  carries `file`: the trait's path in manifest key form (`vendor/laravel/...`, `rsx/...`),
+  never the absolute path reflection reports. The two maps never share a name. A vendor
+  trait's instance methods are left out: they carry no RSX attribute and would read as
+  methods the class declares.
+- **No path in the manifest is absolute.** Keys and every `file` value are `base_path()`
+  relative, `rsx/...` for the application and the logical key (`build/`, `tmp/`, `storage/`)
+  for a volatile tree - `Rsx_Paths::relative()` writes that form and `Rsx_Paths::absolute()`
+  opens it. Neither cache file names the checkout's location, so the build key hashes the
+  derived sections verbatim (`_emit_hash_material()` rewrites nothing), and
+  `Manifest_Location_Independence_Test` fails on an absolute path in either file.
 - **The reflection extract is cached by the source file's CONTENT** (`php-reflection`, keyed on
   the file's hash), not by the extractor - so a change to what `_extract_reflection_data()`
   writes must bump `Manifest_Scanner::REFLECTION_CACHE_VERSION`, or an unchanged file keeps

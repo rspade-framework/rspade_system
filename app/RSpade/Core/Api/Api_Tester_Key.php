@@ -42,7 +42,7 @@ class Api_Tester_Key
      */
     public static function adopt(Api_Key_Model $key): void
     {
-        Session::put_value(self::SESSION_KEY, (int) $key->id, null, self::SESSION_REALM);
+        Session::put_value(self::SESSION_KEY, (int) $key->id, realm: self::SESSION_REALM);
     }
 
     /**
@@ -62,7 +62,7 @@ class Api_Tester_Key
      */
     public static function current(): ?Api_Key_Model
     {
-        $id = Session::get_value(self::SESSION_KEY, null, self::SESSION_REALM);
+        $id = Session::get_value(self::SESSION_KEY, realm: self::SESSION_REALM);
 
         if ($id === null) {
             return null;
@@ -165,7 +165,7 @@ class Api_Tester_Key
         $targets = self::accessible_targets_for_user($user);
 
         if ($key->read_only) {
-            foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+            foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
                 if (in_array('GET', (array) $endpoint['methods'], true)) {
                     continue;
                 }
@@ -183,7 +183,7 @@ class Api_Tester_Key
         // half-answer for the console to render.
         $granted = [];
 
-        foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+        foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
             if (!Api_Scopes::reaches_route($key->scopes, (string) $endpoint['pattern'])) {
                 continue;
             }
@@ -253,7 +253,7 @@ class Api_Tester_Key
         Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id);
 
         try {
-            foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+            foreach (Api_Catalog::get_endpoint_list(include_hidden: false) as $endpoint) {
                 $target = $endpoint['class'] . '::' . $endpoint['method'];
 
                 $targets[$target] = Auth_Gates::can_access($target, Auth_Gates::REALM_STAFF);

@@ -66,7 +66,7 @@ class Api_Exception_Handler extends Rsx_Exception_Handler_Abstract
         }
 
         return Api_Dispatcher::stamp_response(
-            Api_Dispatcher::_error('internal_error', Rsx_Diagnostics::user_message($e) ?? 'Internal server error', 500, null, [
+            Api_Dispatcher::_error('internal_error', Rsx_Diagnostics::user_message($e) ?? 'Internal server error', 500, extra: [
                 'error_id' => Rsx_Diagnostics::report_redacted($e, 'api'),
             ]),
             $request

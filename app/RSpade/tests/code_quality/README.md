@@ -5,11 +5,22 @@ whose detection logic is subtle enough to warrant a pinned unit test.
 
 ## Source under test
 
+- `system/app/RSpade/CodeQuality/Rules/PHP/OutboundHttp_CodeQualityRule.php`
+  (PHP-OUTBOUND-HTTP-01) - outbound HTTP in `rsx/` (Http facade, new GuzzleHttp\Client,
+  curl_init/curl_exec, get_headers, file functions on an argument not provably local)
+  uses `Rsx_Url_Fetch` or carries `@PHP-OUTBOUND-HTTP-01-EXCEPTION <reason>`.
+  `Outbound_Http_Rule_Test` drives `check()` over assembled fixture sources.
+
 - `system/app/RSpade/CodeQuality/Rules/Manifest/ParentCallChain_CodeQualityRule.php`
   (PHP-PARENT-CHAIN-01) - the default parent-call chaining rule. A method override
   MUST call `parent::<same-method>()` unless the nearest manifest-visible ancestor
   that declares the method is abstract or marked `#[Replaceable]`. Covers static +
   instance methods (including `__construct` / magic); vendor parents are excluded.
+- `system/app/RSpade/CodeQuality/Rules/JavaScript/JsParentCallChain_CodeQualityRule.php`
+  (JS-PARENT-CHAIN-01) - the JavaScript twin: an override calls `super.<same-method>()`
+  unless the nearest in-manifest declaring ancestor carries the `@Replaceable`
+  decorator. Instance + static; constructor, accessors and `#private` exempt; ancestors
+  outside the manifest (jqhtml's base) impose nothing.
 - `system/app/RSpade/CodeQuality/Rules/PHP/ModelFetchAuthCheck_CodeQualityRule.php`
   (PHP-MODEL-FETCH-01) - flags a model-borne `#[Ajax_Endpoint]`, which is
   unreachable dead security metadata. Whether a fetch surface is GATED is not a
@@ -77,6 +88,15 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   an undefined token. Any default that is not itself a `var()` read is flagged; a
   chain is not; vendored, minified and framework-core stylesheets are out of
   scope, `Sys/` is in (`Scss_Phantom_Token_Rule_Test`).
+- `system/app/RSpade/CodeQuality/Rules/Scss/ScssImport_CodeQualityRule.php`
+  (SCSS-IMPORT-01, manifest-time) - a quoted `@import` in a non-vendor stylesheet,
+  through the predicate the bundle compiler shares (`Scss_Import_Rule_Test`).
+- `system/app/RSpade/CodeQuality/Rules/JavaScript/AsyncOnCreate_CodeQualityRule.php`
+  (JS-ON-CREATE-01, manifest-time) - `async on_create()` on a Component-lineage class
+  (`Async_On_Create_Rule_Test`).
+- `system/app/RSpade/CodeQuality/Rules/Convention/BundleCdnHttps_CodeQualityRule.php`
+  (BUNDLE-CDN-01, manifest-time) - a `cdn_assets` entry whose url is not https://, or
+  that has none (`Bundle_Cdn_Https_Rule_Test`).
 - `system/app/RSpade/CodeQuality/Rules/Common/Assignment_Comparison_CodeQualityRule.php`
   (COMMON-ASSIGN-01) - an assignment in an if, PHP elseif or for-loop condition. The
   condition is captured to its MATCHING parenthesis from a line with comments and
@@ -86,6 +106,11 @@ whose detection logic is subtle enough to warrant a pinned unit test.
 
 ## Testable surface
 
+- **Super-call chaining (implemented):** `Js_Parent_Call_Chain_Rule_Test` parses
+  JavaScript fixtures with the real parser (`Js_Parser`) and drives the rule's
+  `evaluate_class()` seam; the jqhtml and framework-lineage cases build the ancestry
+  from the real index (`Component`, `Spa_Layout`), and the incremental cases drive
+  `subjects()` - which classes a pass judges for a changed set - over the real index.
 - **Parent-call chaining (implemented):** `Parent_Call_Chain_Rule_Test` drives the
   rule's testable seam (`evaluate_class_methods()`) over synthetic fixture files so
   lineage resolution, nearest-declarer anchoring, abstract / `#[Replaceable]`
@@ -163,6 +188,16 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   clean; `nl2br()` alone is not safe; comments and strings never fire; the marker is
   per line, needs a rationale, and - through the real driver - does not suppress the
   rest of the file; out-of-scope paths are skipped.
+
+- **named-optional tests (implemented):** `Named_Optional_Argument_Rule_Test` drives
+  PHP-NAMED-OPTIONAL-01 (`Rules/PHP/NamedOptionalArgument_CodeQualityRule.php`) over fixture
+  files calling REAL framework callees (`RsxLocks::system_lock`, `Task_Runner::execute`,
+  `Manifest::php_get_subclasses_of`, `rmdir_recursive`). Coverage: a null placeholder then a
+  bare flag into defaulted parameters (static call, imported and simple names) and a bare flag
+  into a helper function are flagged; named arguments, a literal into a REQUIRED parameter and
+  a non-literal into a defaulted one are clean; unresolvable, vendor-declared and builtin
+  callees are skipped; a call spelled in a string or a comment is not a call; the marker needs
+  a rationale and excuses only the call beneath it.
 
 - **navigation tests (implemented):** `Navigation_Rule_Test` drives JS-NAVIGATE-01
   (`Rules/JavaScript/Navigation_CodeQualityRule.php`) through the real node-service

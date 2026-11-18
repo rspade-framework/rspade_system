@@ -20,30 +20,33 @@ class Rsx_Jq_Helpers {
             return this.is(':visible');
         };
 
-        // Scrolls to the target element, only scrolls up.  Todo: Create a version
-        // of this that also scrolls only down, or both
+        // Scrolls the window up until the top of the first element is at the top of the
+        // viewport, when that top is above the viewport. Never scrolls down. Does nothing
+        // for an empty set or a detached element. speed is the animation duration in
+        // milliseconds; 0 scrolls at once.
         $.fn.scroll_up_to = function (speed = 0) {
-            if (!this.exists()) {
-                // console.warn("Could not find target element to scroll to");
-                return;
-            }
-
             if (!this.is_in_dom()) {
-                // console.warn("Target element for scroll is not on dom");
-                return;
+                return this;
             }
 
-            let e_top = Math.round(this.offset().top);
-            let s_top = $('body').scrollTop();
-            if (e_top < 0) {
-                let target = s_top + e_top;
-                $('html, body').animate(
-                    {
-                        scrollTop: target,
-                    },
-                    speed
-                );
+            // Position relative to the viewport, not the document: negative means above it.
+            const viewport_top = this[0].getBoundingClientRect().top;
+            if (viewport_top >= 0) {
+                return this;
             }
+
+            // Every write is an INSTANT scroll: the theme's `scroll-behavior: smooth` would
+            // otherwise turn a plain scrollTop write into the browser's own animation, so
+            // speed 0 would not land at once and each animation step would restart it.
+            const scroll_to = (y) => window.scrollTo({ left: window.scrollX, top: y, behavior: 'instant' });
+            const start = $(window).scrollTop();
+            const target = Math.max(0, Math.round(start + viewport_top));
+            if (speed > 0) {
+                $({ y: start }).animate({ y: target }, { duration: speed, step: scroll_to });
+            } else {
+                scroll_to(target);
+            }
+            return this;
         };
 
         // $().is(":focus") - check if element has focus
@@ -137,39 +140,37 @@ class Rsx_Jq_Helpers {
             });
         };
 
-        // Returns true if the jquery element exists in and is attached to the DOM
+        // Returns true if the first element exists and is attached to the document.
+        // An empty set is false.
         $.fn.is_in_dom = function () {
-            let $element = this;
-            let _ancestor = function (HTMLobj) {
-                while (HTMLobj.parentElement) {
-                    HTMLobj = HTMLobj.parentElement;
-                }
-                return HTMLobj;
-            };
-            return _ancestor($element[0]) === document.documentElement;
-        };
-
-        // Returns true if the element is visible in the viewport
-        $.fn.is_in_viewport = function () {
-            let scrolltop = $(window).scrollTop() > 0 ? $(window).scrollTop() : $('body').scrollTop();
-
-            let $element = this;
-
-            const top_of_element = $element.offset().top;
-            const bottom_of_element = $element.offset().top + $element.outerHeight();
-            const bottom_of_screen = scrolltop + $(window).innerHeight();
-            const top_of_screen = scrolltop;
-
-            if (bottom_of_screen > top_of_element && top_of_screen < bottom_of_element) {
-                return true;
-            } else {
+            if (this.length === 0) {
                 return false;
             }
+            return document.documentElement.contains(this[0]);
         };
 
-        // Gets the tagname of a jquery element
+        // Returns true if any part of the first element is within the viewport's
+        // vertical extent. An empty set is false.
+        $.fn.is_in_viewport = function () {
+            if (this.length === 0) {
+                return false;
+            }
+
+            const top_of_screen = $(window).scrollTop();
+            const bottom_of_screen = top_of_screen + $(window).innerHeight();
+            const top_of_element = this.offset().top;
+            const bottom_of_element = top_of_element + this.outerHeight();
+
+            return bottom_of_screen > top_of_element && top_of_screen < bottom_of_element;
+        };
+
+        // The lowercase tag name of the first element; undefined for an empty set, as
+        // jQuery's own getters (.attr(), .prop()) answer.
         $.fn.tagname = function () {
-            return this.prop('tagName').toLowerCase();
+            if (this.length === 0) {
+                return undefined;
+            }
+            return this[0].tagName.toLowerCase();
         };
 
         // Returns true if a href is not same domain
@@ -496,8 +497,16 @@ class Rsx_Jq_Helpers {
 
         // Override $.ajax to prevent direct AJAX calls to local server
         // Developers must use the Ajax endpoint pattern: await Controller.method(params)
-        const native_ajax = $.ajax;
-        $.ajax = function (url, options) {
+        //
+        // The override goes on jQuery's OWN function object as well as on the global $.
+        // jqhtml replaces window.$ / window.jQuery with a wrapper constructor carrying
+        // COPIES of jQuery's statics, while $.get / $.post / $.getJSON / $.getScript and
+        // $.fn.load call the ajax property of the original object they closed over.
+        // $.fn.constructor is that original; patching only the wrapper left every
+        // shorthand reaching the server unblocked.
+        const jquery_core = $.fn.constructor;
+        const native_ajax = jquery_core.ajax;
+        const rsx_ajax = function (url, options) {
             // Handle both $.ajax(url, options) and $.ajax(options) signatures
             let settings;
             if (typeof url === 'string') {
@@ -561,6 +570,8 @@ class Rsx_Jq_Helpers {
             // Allow external requests (different domain)
             return native_ajax.call(this, settings);
         };
+        jquery_core.ajax = rsx_ajax;
+        $.ajax = rsx_ajax;
     }
 
     /**

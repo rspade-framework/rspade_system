@@ -33,6 +33,12 @@ DESCRIPTION
         @debounce(ms)
                     method decorator: the debounce() of Core/Js/async.js
                     applied to a method
+        @Replaceable
+                    method marker (instance or static): an override of this
+                    method owes no super call (JS-PARENT-CHAIN-01). Returns the
+                    method unchanged; the manifest build reads it off the parse
+                    (Core/Js/replaceable.js; rsx:man coding_standards, OVERRIDES
+                    CALL THEIR PARENT)
 
 DECORATOR WHITELIST SYSTEM
     Whitelist Requirement:
@@ -452,4 +458,4 @@ DECORATOR PARAMETER RESTRICTIONS
 SEE ALSO
     spa - SPA actions and the @route / @layout / @spa / @auth decorators
     bundle_api - Bundle loading and compilation
-    coding_standards - JavaScript coding patterns
+    coding_standards - JavaScript coding patterns; OVERRIDES CALL THEIR PARENT

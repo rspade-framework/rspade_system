@@ -40,8 +40,8 @@ class Route_Hash_Test extends Rsx_Test_Abstract
     public static function test_no_hash_and_an_all_empty_hash_add_no_fragment()
     {
         static::__assert_equals('/test-dispatch/page', Rsx::Route(self::TARGET));
-        static::__assert_equals('/test-dispatch/page', Rsx::Route(self::TARGET, null, []));
-        static::__assert_equals('/test-dispatch/page', Rsx::Route(self::TARGET, null, ['a' => null, 'b' => '']));
+        static::__assert_equals('/test-dispatch/page', Rsx::Route(self::TARGET, hash: []));
+        static::__assert_equals('/test-dispatch/page', Rsx::Route(self::TARGET, hash: ['a' => null, 'b' => '']));
     }
 
     public static function test_the_anchor_alone_is_unchanged()
@@ -52,19 +52,19 @@ class Route_Hash_Test extends Rsx_Test_Abstract
 
     public static function test_a_placeholder_route_ignores_the_hash()
     {
-        static::__assert_equals('#', Rsx::Route('Anything::#index', null, ['tab' => 'x']));
+        static::__assert_equals('#', Rsx::Route('Anything::#index', hash: ['tab' => 'x']));
     }
 
     public static function test_a_non_scalar_value_throws()
     {
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['tab' => ['a']]);
+            Rsx::Route(self::TARGET, hash: ['tab' => ['a']]);
         }, "'tab' must be a string or an int");
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['tab' => true]);
+            Rsx::Route(self::TARGET, hash: ['tab' => true]);
         }, 'got bool');
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['tab' => 1.5]);
+            Rsx::Route(self::TARGET, hash: ['tab' => 1.5]);
         }, 'got float');
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
             Rsx::Route(self::TARGET, ['at' => ['x']]);
@@ -74,24 +74,24 @@ class Route_Hash_Test extends Rsx_Test_Abstract
     public static function test_a_list_or_an_integer_key_throws()
     {
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['a', 'b']);
+            Rsx::Route(self::TARGET, hash: ['a', 'b']);
         }, 'non-integer');
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['5' => 'x']);
+            Rsx::Route(self::TARGET, hash: ['5' => 'x']);
         }, 'non-integer');
     }
 
     public static function test_the_anchor_key_in_the_hash_throws()
     {
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['at' => 'x']);
+            Rsx::Route(self::TARGET, hash: ['at' => 'x']);
         }, 'reserved anchor key');
     }
 
     public static function test_invalid_utf8_throws()
     {
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
-            Rsx::Route(self::TARGET, null, ['k' => "\xC3"]);
+            Rsx::Route(self::TARGET, hash: ['k' => "\xC3"]);
         }, 'UTF-8');
     }
 }

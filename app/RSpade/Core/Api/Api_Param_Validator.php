@@ -35,6 +35,14 @@ use App\RSpade\Lib\SignIn\Turnstile\Rsx_Turnstile;
  *   amount beyond it is the field's error "This amount is larger than this field can hold.",
  *   the refusal Model::money_from_submitted() gives, so the endpoint receives an amount the
  *   column holds;
+ * - reads a type:'json' param as any JSON value, with no schema of its own (the endpoint
+ *   checks the shape it needs): a STRING is JSON text and is decoded (a form field, a query
+ *   parameter, a route segment, or a string inside a JSON body - so a JSON string scalar is
+ *   sent quoted, "\"x\""); any other value - an array, number, bool or null already parsed out
+ *   of a JSON request body - is taken as it is. Objects decode to associative arrays, so {}
+ *   and [] both arrive as []. A scalar is valid JSON and is accepted. A string that does not
+ *   parse is the field's error "Expected valid JSON"; a declared default is read the same
+ *   way (a literal array, or a string of JSON text);
  * - validates a type:'file' param, which is NOT coerced: it must arrive as an UploadedFile
  *   (a multipart part the dispatcher merged in) and that upload must have succeeded. The
  *   UploadedFile instance is passed through to the endpoint untouched.
@@ -108,9 +116,13 @@ class Api_Param_Validator
                     // receives it as the Rsx_Money a submitted value would be. A default that
                     // is not an amount throws: the declaration is wrong, not the request.
                     // A default beyond the column's limit throws the same way.
-                    $params[$name] = $spec['type'] === 'money'
-                        ? static::_money_for_column($spec, Rsx_Money::_from_api_param($spec['default']))
-                        : $spec['default'];
+                    // A json default is read like a submitted value: an array as it is, a
+                    // string as JSON text (checked at manifest build, so it parses).
+                    $params[$name] = match ($spec['type']) {
+                        'money' => static::_money_for_column($spec, Rsx_Money::_from_api_param($spec['default'])),
+                        'json' => static::_json_param_value($spec['default']),
+                        default => $spec['default'],
+                    };
                 }
                 continue;
             }
@@ -161,6 +173,25 @@ class Api_Param_Validator
     }
 
     /**
+     * The value a type:'json' param carries: a string is JSON text, decoded (objects to
+     * associative arrays); anything else is a value already parsed out of a JSON request body
+     * and is answered as it is. Shared with the manifest build (a string default must parse)
+     * and the OpenAPI projection (the default it documents).
+     *
+     * @param mixed $value
+     * @return mixed
+     * @throws \JsonException when a string is not valid JSON
+     */
+    public static function _json_param_value(mixed $value): mixed
+    {
+        if (is_string($value)) {
+            return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        }
+
+        return $value;
+    }
+
+    /**
      * Coerce a single raw value to a declared type. Scalars are coerced; a file is validated
      * and passed through. An optional 'message' overrides the caller's generic field error.
      *
@@ -202,6 +233,20 @@ class Api_Param_Validator
                 return ['ok' => true, 'value' => static::_money_for_column($spec, Rsx_Money::_from_api_param($value))];
             } catch (Rsx_Money_Exception $e) {
                 return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
+            }
+        }
+
+        // Any JSON value. Read before the compound-value guard below: an array is a value
+        // already parsed out of a JSON request body. An UploadedFile is not JSON.
+        if ($type === 'json') {
+            if ($value instanceof UploadedFile) {
+                return ['ok' => false, 'value' => null, 'message' => 'Expected valid JSON'];
+            }
+
+            try {
+                return ['ok' => true, 'value' => static::_json_param_value($value)];
+            } catch (\JsonException) {
+                return ['ok' => false, 'value' => null, 'message' => 'Expected valid JSON'];
             }
         }
 

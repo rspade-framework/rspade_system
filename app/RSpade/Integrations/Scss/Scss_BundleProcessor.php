@@ -428,63 +428,94 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     }
     
     /**
-     * Validate that non-vendor SCSS files don't contain @import directives
-     * 
+     * The `@import` directives a stylesheet may not carry - SCSS-IMPORT-01, the one predicate
+     * the bundle compiler (before Sass runs) and the manifest-time rule both apply.
+     *
+     * An authored stylesheet reaches a bundle by being INCLUDED, never by being imported:
+     * an `@import "partial"` bypasses the bundle's include list, its order and the manifest's
+     * view of what the bundle depends on. A file under a `/vendor/` directory is third-party
+     * source that manages its own imports and is exempt. A quoted `@import "..."` is what is
+     * refused; a CSS `@import url(...)` of a remote stylesheet is localized by the compiler
+     * (rsx:man bundle_api, CDN ASSETS) and is not one. Commented-out imports are not imports.
+     *
+     * @param string $file_path The stylesheet's path (only the /vendor/ test reads it)
+     * @param string $content Its source
+     * @return array<int, array{line:int, text:string}> Empty when the file is clean
+     */
+    public static function forbidden_imports(string $file_path, string $content): array
+    {
+        if (str_contains(str_replace(base_path() . '/', '', $file_path), '/vendor/')) {
+            return [];
+        }
+
+        // The comment-blanked copy keeps every line where it was, so a match in it is
+        // reported at its line in the file the developer is looking at.
+        $code = static::__remove_scss_comments($content);
+
+        if (!preg_match_all('/@import\s+["\'][^"\']+["\']/', $code, $imports, PREG_OFFSET_CAPTURE)) {
+            return [];
+        }
+
+        $found = [];
+        foreach ($imports[0] as [$text, $offset]) {
+            $found[] = ['line' => substr_count($code, "\n", 0, $offset) + 1, 'text' => $text];
+        }
+
+        return $found;
+    }
+
+    /**
+     * The remediation SCSS-IMPORT-01 prints, from the compiler and the rule alike.
+     */
+    public static function forbidden_import_remedy(): string
+    {
+        return "Why this is not allowed:\n" .
+            "- @import directives bypass the bundle system's dependency management\n" .
+            "- Files should be explicitly included in bundle definitions instead\n" .
+            "- This ensures proper load order and prevents missing dependencies\n\n" .
+            "How to fix:\n" .
+            "1. Remove the @import directives from this file\n" .
+            "2. Add the imported files directly to your bundle's include list\n" .
+            "3. Example: include: ['rsx/styles/variables.scss', 'rsx/app/mymodule/styles.scss']\n\n" .
+            "Exception for vendor files:\n" .
+            "- Files in 'vendor' directories CAN use @import (e.g., Bootstrap's SCSS)\n" .
+            "- These are third-party files that manage their own dependencies\n" .
+            "- Include only the main vendor entry file in your bundle";
+    }
+
+    /**
+     * Validate that non-vendor SCSS files don't contain @import directives (SCSS-IMPORT-01).
+     *
+     * The manifest-time rule (Rules/Scss/ScssImport_CodeQualityRule) refuses the same thing
+     * in every indexed stylesheet; this check covers a stylesheet a bundle includes from a
+     * path the manifest does not index (a resource/ directory).
+     *
      * @param string $file_path The path to the SCSS file
      * @throws \RuntimeException If a non-vendor file contains @import directives
      */
     protected static function __validate_scss_file(string $file_path): void
     {
-        // Check if this is a vendor file (contains '/vendor/' in the path)
         $relative_path = str_replace(base_path() . '/', '', $file_path);
-        $is_vendor_file = str_contains($relative_path, '/vendor/');
-        
-        // Vendor files are allowed to have @import directives
-        if ($is_vendor_file) {
-            return;
-        }
-        
-        // Read the file content
+
         if (!file_exists($file_path)) {
             throw new \RuntimeException("SCSS file not found: {$file_path}");
         }
-        
-        $content = file_get_contents($file_path);
-        
-        // Check for @import directives (must handle comments properly)
-        // First remove comments to avoid false positives
-        $content_without_comments = static::__remove_scss_comments($content);
-        
-        // Now check for @import directives
-        if (preg_match('/@import\s+["\']/', $content_without_comments)) {
-            // The comment-blanked copy keeps every line where it was, so a match in it is
-            // reported at its line in the file the developer is looking at.
-            preg_match_all('/@import\s+["\'][^"\']+["\']/', $content_without_comments, $imports, PREG_OFFSET_CAPTURE);
-            $import_lines = [];
-            foreach ($imports[0] as [$text, $offset]) {
-                $import_lines[] = 'line ' . (substr_count($content_without_comments, "\n", 0, $offset) + 1) . ': ' . $text;
-            }
-            $import_list = implode("\n  ", $import_lines);
-            
-            throw new \RuntimeException(
-                "SCSS file '{$relative_path}' contains @import directives, which are not allowed in non-vendor files.\n\n" .
-                "Found imports:\n  {$import_list}\n\n" .
-                "Why this is not allowed:\n" .
-                "- @import directives bypass the bundle system's dependency management\n" .
-                "- Files should be explicitly included in bundle definitions instead\n" .
-                "- This ensures proper load order and prevents missing dependencies\n\n" .
-                "How to fix:\n" .
-                "1. Remove the @import directives from this file\n" .
-                "2. Add the imported files directly to your bundle's include list\n" .
-                "3. Example: include: ['rsx/styles/variables.scss', 'rsx/app/mymodule/styles.scss']\n\n" .
-                "Exception for vendor files:\n" .
-                "- Files in 'vendor' directories CAN use @import (e.g., Bootstrap's SCSS)\n" .
-                "- These are third-party files that manage their own dependencies\n" .
-                "- Include only the main vendor entry file in your bundle"
-            );
+
+        $imports = static::forbidden_imports($file_path, file_get_contents($file_path));
+
+        if ($imports === []) {
+            return;
         }
+
+        $import_list = implode("\n  ", array_map(fn ($i) => "line {$i['line']}: {$i['text']}", $imports));
+
+        throw new \RuntimeException(
+            "SCSS file '{$relative_path}' contains @import directives, which are not allowed in non-vendor files.\n\n" .
+            "Found imports:\n  {$import_list}\n\n" .
+            static::forbidden_import_remedy()
+        );
     }
-    
+
     /**
      * Blank the comments in SCSS content, to avoid false positives in validation.
      *

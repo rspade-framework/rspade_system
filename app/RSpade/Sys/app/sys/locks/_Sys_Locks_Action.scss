@@ -1,0 +1,29 @@
+._Sys_Locks_Action {
+    td,
+    th {
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__mono {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__dim {
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    // A holder silent past the stall window with waiters behind it.
+    &__row--silent td {
+        color: var(--rsx-warn);
+    }
+}

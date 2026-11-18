@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Exceptions\Infrastructure_Outage;
+use App\RSpade\Core\Exceptions\Rsx_User_Facing_Exception;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\Face_Detection;
 use App\RSpade\Core\Files\File_Attachment_Icons;
@@ -678,18 +679,19 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * natively as a download. Members are archived ONE AT A TIME with constant memory
      * (see Zip_Stream); a multi-gigabyte set never lands in memory.
      *
-     * The :key resolves to a stored request. An unknown key or an expired request throws
-     * one opaque invalid/expired message BEFORE anything streams. Rows are NOT consumed on
+     * The :key resolves to a stored request. An unknown key or an expired request is refused
+     * with one opaque invalid/expired sentence (Rsx_User_Facing_Exception) BEFORE anything
+     * streams. Rows are NOT consumed on
      * use (a browser may retry a download); they die by expiry.
      *
      * PHASE 1 validates EVERYTHING before a single byte streams:
      *   - the request resolves and is not expired;
      *   - every entry resolves to an attachment AND passes BOTH the thumbnail and
-     *     download gates (identical cascade to download_file());
-     *   - the archive fits inside the non-ZIP64 streaming envelope (4GB / 65k entries).
+     *     download gates (identical cascade to download_file()).
      * Any failure throws BEFORE streaming, so a denied request never yields partial
-     * bytes. A single denied file fails the WHOLE request with one opaque message that
-     * never reveals which file (or whether it merely does not exist). Authorization runs
+     * bytes. A single denied file fails the WHOLE request with one opaque user-facing
+     * sentence that never reveals which file (or whether it merely does not exist).
+     * There is no size or entry-count limit: every archive is ZIP64-framed (Zip_Stream). Authorization runs
      * per-file HERE against the downloading session, never at request creation.
      *
      * PHASE 2 streams via StreamedResponse. Handler serve-takeover
@@ -821,33 +823,28 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
         $download_request = is_string($key) ? Zip_Download_Request_Model::find_by_download_key($key) : null;
         if ($download_request === null || $download_request->is_expired()) {
-            // OWNER NOTE: this exception is a PLACEHOLDER - a future internal user-feedback
-            // error mechanism will replace it. It is user feedback (the link is no longer
-            // usable), NOT a server fault, and stays opaque about whether the key was
-            // unknown or merely expired.
-            throw new \RuntimeException('This download link is invalid or has expired.');
+            // Shown to the user; deliberately opaque about whether the key was unknown or
+            // merely expired.
+            throw new Rsx_User_Facing_Exception('This download link is invalid or has expired.');
         }
 
         $entries = $download_request->get_files();
 
-        // The opaque denial message. OWNER NOTE: this exception is a PLACEHOLDER - a
-        // future internal user-feedback error mechanism will replace it. It is user
-        // feedback (a request was refused), NOT a server fault. It deliberately does not
-        // reveal which file failed, or whether the file even exists.
+        // The one denial sentence for every refused member. Deliberately opaque: it never
+        // reveals which file failed, or whether the file even exists.
         $denied_message = 'Access to one or more of the requested files was denied. Please log in.';
 
         $prepared = [];
-        $sizes = [];
         $names = [];
 
         foreach ($entries as $entry) {
             if (!is_array($entry) || !isset($entry['key']) || !is_string($entry['key'])) {
-                throw new \RuntimeException($denied_message);
+                throw new Rsx_User_Facing_Exception($denied_message);
             }
 
             $attachment = File_Attachment_Model::find_by_key($entry['key']);
             if (!$attachment) {
-                throw new \RuntimeException($denied_message);
+                throw new Rsx_User_Facing_Exception($denied_message);
             }
 
             // Cascading auth gates - identical order to download_file().
@@ -857,7 +854,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 'request' => $request,
             ]);
             if ($thumbnail_auth !== true) {
-                throw new \RuntimeException($denied_message);
+                throw new Rsx_User_Facing_Exception($denied_message);
             }
 
             $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
@@ -866,21 +863,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 'request' => $request,
             ]);
             if ($download_auth !== true) {
-                throw new \RuntimeException($denied_message);
+                throw new Rsx_User_Facing_Exception($denied_message);
             }
 
             $provided = (isset($entry['name']) && is_string($entry['name'])) ? $entry['name'] : null;
             $name = static::_sanitize_zip_entry_name($provided, (string) $attachment->file_name);
 
             $prepared[] = ['attachment' => $attachment, 'name' => $name];
-            $sizes[] = $attachment->get_size();
             $names[] = $name;
-        }
-
-        // ZIP64 envelope guard (the writer supports neither >4GB offsets nor >65k entries).
-        $zip64_error = static::_zip64_limit_error($sizes);
-        if ($zip64_error !== null) {
-            throw new \RuntimeException($zip64_error);
         }
 
         // De-duplicate colliding archive names across the whole set (report.pdf -> report (2).pdf).
@@ -1065,41 +1055,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         return $out;
-    }
-
-    /**
-     * The non-ZIP64 streaming-envelope guard. Returns an error message if the requested
-     * set exceeds what the streaming writer can encode without ZIP64 support, else null.
-     * file_size is authoritative even for external (non-resident) attachments.
-     *
-     * Limits: total size > 4,000,000,000 bytes (4GB, with margin for headers/descriptors),
-     * any single file >= 0xFFFFFFFF, or more than 65,000 entries.
-     *
-     * @param int[] $sizes Per-member file sizes in bytes.
-     * @return string|null Error message if over-limit, else null.
-     */
-    public static function _zip64_limit_error(array $sizes): ?string
-    {
-        $limit_message = 'Requested archive exceeds the 4GB/65k-entry streaming limit';
-
-        if (count($sizes) > 65000) {
-            return $limit_message;
-        }
-
-        $total = 0;
-        foreach ($sizes as $size) {
-            $size = (int) $size;
-            if ($size >= 0xFFFFFFFF) {
-                return $limit_message;
-            }
-            $total += $size;
-        }
-
-        if ($total > 4000000000) {
-            return $limit_message;
-        }
-
-        return null;
     }
 
     // ============================================================================================

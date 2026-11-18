@@ -377,6 +377,15 @@ class Rsx_Project_Paths
         return self::tmp_path('tasks');
     }
 
+    /**
+     * Where Rsx_Url_Fetch streams downloads: scratch files the caller moves or deletes, and
+     * whatever is left is deleted when the fetching process ends.
+     */
+    public static function url_fetch_dir(): string
+    {
+        return self::tmp_path('url_fetch');
+    }
+
     /** A uniquely-named scratch file. */
     public static function scratch_file(string $prefix, string $extension): string
     {

@@ -592,7 +592,7 @@ class Session extends Rsx_System_Model_Abstract
             ->pluck('u.id')
             ->all();
 
-        self::_sign_out_user_sessions($ids, $reason, false);
+        self::_sign_out_user_sessions($ids, $reason, push: false);
     }
 
     /**
@@ -684,7 +684,7 @@ class Session extends Rsx_System_Model_Abstract
             ->pluck('u.id')
             ->all();
 
-        return count(self::_sign_out_user_sessions($ids, self::SIGN_OUT_API_KEY_EXPIRED, false));
+        return count(self::_sign_out_user_sessions($ids, self::SIGN_OUT_API_KEY_EXPIRED, push: false));
     }
 
     /**
@@ -1628,7 +1628,7 @@ class Session extends Rsx_System_Model_Abstract
             $expiry = self::__expiry_of($candidate, $realm);
 
             if ($expiry !== null && now()->gte($expiry['at'])) {
-                self::_sign_out_user_sessions([(int) $candidate->id], self::timeout_sign_out_reason($expiry['reason']), false);
+                self::_sign_out_user_sessions([(int) $candidate->id], self::timeout_sign_out_reason($expiry['reason']), push: false);
 
                 continue;
             }
@@ -2942,7 +2942,7 @@ class Session extends Rsx_System_Model_Abstract
 
         $evict = $signed_in()->whereNotIn('u.id', $keep)->pluck('u.id')->all();
 
-        self::_sign_out_user_sessions($evict, self::SIGN_OUT_SESSION_CAP, false);
+        self::_sign_out_user_sessions($evict, self::SIGN_OUT_SESSION_CAP, push: false);
     }
 
     /**
@@ -3336,7 +3336,7 @@ class Session extends Rsx_System_Model_Abstract
         if (self::__is_virtual()) {
             self::$_cli_impersonator_login_user_id = $impersonator_login_user_id;
             self::$_cli_impersonation_started_at = Rsx_Time::now_iso();
-            self::set_login_user_id($target_login_user_id, false);
+            self::set_login_user_id($target_login_user_id, touch_last_login: false);
 
             return;
         }
@@ -3378,7 +3378,7 @@ class Session extends Rsx_System_Model_Abstract
         if (self::__is_virtual()) {
             self::$_cli_impersonator_login_user_id = null;
             self::$_cli_impersonation_started_at = null;
-            self::set_login_user_id($impersonator_login_user_id, false);
+            self::set_login_user_id($impersonator_login_user_id, touch_last_login: false);
 
             return true;
         }
@@ -3725,11 +3725,12 @@ class Session extends Rsx_System_Model_Abstract
      *   1. The target IS the actor. Self-management of one's own device list is always
      *      allowed and needs no role at all.
      *   2. The actor's role may ADMINISTER the target's role - Permission::can_admin_role()
-     *      on the target's per-site users.role_id. That list is "my role and the roles
-     *      BELOW it" (User_Model's role_id enum, can_admin_roles, equal-or-lower
-     *      administration), so a SUPERIOR refuses for free and by construction, and a PEER
-     *      is permitted exactly because the role names itself - two Site Admins may sign
-     *      each other out, as they may edit each other.
+     *      on the target's per-site users.role_id, the sole "may manage" test. The acting
+     *      role's can_admin_roles list (User_Model's role_id enum) decides; the template's
+     *      lists name the role itself and the roles below it, so a SUPERIOR refuses by
+     *      construction and a PEER is permitted because the role names itself - two Site
+     *      Admins may sign each other out, as they may edit each other. No role constant
+     *      and no role-id comparison appears here: roles are application vocabulary.
      * A target with no users row on the acting site is likewise refused - the actor's site
      * cannot see that identity, so there is nothing here to authorize against.
      *
@@ -3745,12 +3746,14 @@ class Session extends Rsx_System_Model_Abstract
      * A session belongs to a login_users row, which is CROSS-SITE; a role lives on a
      * users row, which is PER-SITE. This guard resolves the target's role in the ACTOR'S
      * OWN site and terminates sessions that are not scoped to any site at all. On a
-     * deployment with ONE site those are the same population and the rule is exactly right.
-     * On a genuinely multi-tenant deployment they are not: the target may hold a lower role
-     * on the actor's site and a higher one elsewhere, and terminating the shared login
-     * session reaches that other tenant too. The multi-tenant model (membership-scoped
-     * termination, per-site session affinity) is BACKLOG B-92 and is deliberately NOT
-     * approximated here. Do not "improve" this into a half-tenant-aware rule.
+     * deployment with ONE site (rsx.tenancy = single, the default) those are the same
+     * population and the rule is exactly right. On a genuinely multi-tenant deployment they
+     * are not: the target may hold a lower role on the actor's site and a higher one
+     * elsewhere, and terminating the shared login session reaches that other tenant too.
+     * Membership-scoped termination and per-site session affinity belong to the multi-tenant
+     * review, BACKLOG B-184, and are deliberately NOT approximated here. Do not "improve"
+     * this into a half-tenant-aware rule. The role contract this relies on (roles per site,
+     * can_admin_roles the sole "may manage" authority): rsx:man auth, ROLES.
      *
      * VOCABULARY: framework only. can_admin_role() is a framework primitive on the app's
      * Permission class (Permission_Abstract::can_admin_role, resolved by simple name through
@@ -3918,7 +3921,7 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         // "Sign out everywhere else" also ends every other browser's two-factor trust.
-        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $login_user_id, true);
+        \App\RSpade\Lib\SignIn\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $login_user_id, except_this_device: true);
 
         $ended = self::_sign_out_user_sessions(
             self::__terminable_ids((int) $login_user_id, null, true),
@@ -4346,7 +4349,7 @@ class Session extends Rsx_System_Model_Abstract
         ]);
 
         if ($previous !== null && (int) $previous->id !== $user_session_id && $previous->impersonator_user_id !== null) {
-            self::_sign_out_user_sessions([(int) $previous->id], self::SIGN_OUT_REPLACED, false);
+            self::_sign_out_user_sessions([(int) $previous->id], self::SIGN_OUT_REPLACED, push: false);
         }
 
         self::__point($session_id, self::REALM_PORTAL, $user_session_id);
@@ -4673,7 +4676,7 @@ class Session extends Rsx_System_Model_Abstract
             }
         }
 
-        self::_sign_out_user_sessions($ended, $previous_reason, false);
+        self::_sign_out_user_sessions($ended, $previous_reason, push: false);
     }
 
     /**
@@ -4906,7 +4909,7 @@ class Session extends Rsx_System_Model_Abstract
         self::_sign_out_user_sessions(
             DB::table('_user_sessions')->whereIn('session_id', $session_ids)->whereNull('signed_out_at')->pluck('id')->all(),
             self::SIGN_OUT_BROWSER_UNUSED,
-            false
+            push: false
         );
 
         return static::whereIn('id', $session_ids)->where('active', true)->raw_bulk()->update(['active' => false]);

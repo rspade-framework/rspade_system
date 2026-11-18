@@ -5,7 +5,7 @@ template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (the framework's own `/_sys` panel, so it depends on no
 application code; links, code navigation and real page exits) and the Back/Forward half of
 the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the breadcrumb-origin rows (`SPA-VIA-*`) live in `playwright/breadcrumb_origins.js` (`/_sys`, structure declared at run time; the manifest FATALs of rule SPA-VIA-01 are `code_quality`'s `Spa_Via_Rule_Test`, and the template sidebar's half is `rsx/tests/playwright/sidebar_trail_root.js`); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the return-state rows (`SPA-RETURN-*`, the per-tab journal and the `_scroll` key) live in `playwright/breadcrumb_return_state.js` (`/_sys`, structure declared by an init script; the template grid's half is `rsx/tests/playwright/breadcrumb_return_state.js`); the navigation-door rows (`SPA-NAVIGATE-*`, `Rsx.navigate()` / `Rsx.redirect()`) live in `playwright/navigate.js` (`/_sys`, breadcrumb structure declared by an init script so it survives full loads); the fragment rows live in `playwright/fragment_popstate.js`
-(same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
+(same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape); the route/query argument rows (`SPA-ARGS-*`) in `playwright/spa_action_args.js` (`/_sys`, patterns registered at run time onto the panel's System Info action). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -123,6 +123,18 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-RETURN-11 | The user's own scroll during the restoration wins | playwright | navigate to `#_scroll=2000`, wheel + scroll to 500 mid-load | 500 after ready; key gone | implemented | 2026-11-11 |
 | SPA-RETURN-12 | A new tab opened on a stateful href lands in that state with a journal of one entry and no `from` | playwright | new context on `/_sys/sites#probe=sorted&_scroll=1200` | hash kept, y 1200, one record; journey continues from it | implemented | 2026-11-11 |
 | SPA-RETURN-13 | Session storage unavailable: bare crumbs, no console error | playwright | init script makes `sessionStorage` throw | bare href and `Spa.return_url()`; no errors | implemented | 2026-11-11 |
+| SPA-ARGS-01 | A `:param` route segment arrives in `this.args` under its name, as a string | playwright | `playwright/spa_action_args.js`: a pattern registered at run time on `/_sys`, `Rsx.navigate('/_sys/args-probe/42')` | `{id: '42'}`, `typeof` string | implemented | 2026-11-18 |
+| SPA-ARGS-02 | Every `:param` segment of a multi-parameter pattern arrives | playwright | `/_sys/args-probe/7/item/9` | `{id: '7', item_id: '9'}` | implemented | 2026-11-18 |
+| SPA-ARGS-03 | Query keys arrive beside the route parameters, as strings (no coercion) | playwright | `?q=1&tab=history` | `{id: '42', q: '1', tab: 'history'}`, all strings | implemented | 2026-11-18 |
+| SPA-ARGS-04 | A bare key and an empty value are both the empty string | playwright | `?flag&empty=` | `flag: ''`, `empty: ''` | implemented | 2026-11-18 |
+| SPA-ARGS-05 | Percent-encoding is decoded in the path and the query | playwright | `/a%20b?q=x%26y%3Dz&name=J%C3%B6rg` | `'a b'`, `'x&y=z'`, the umlaut | implemented | 2026-11-18 |
+| SPA-ARGS-06 | A route parameter wins over a query key of the same name | playwright | `/_sys/args-probe/42?id=9&q=1` | `id: '42'` | implemented | 2026-11-18 |
+| SPA-ARGS-07 | A route with no `:param` still receives the query | playwright | `/_sys/args-probe?q=1&id=5` | `{id: '5', q: '1'}` | implemented | 2026-11-18 |
+| SPA-ARGS-08 | A fragment-only navigation keeps the same action instance and its args | playwright | `Rsx.navigate(same + '#panel=open')` | same instance, args unchanged, fragment in the address | implemented | 2026-11-18 |
+| SPA-ARGS-09 | A query change re-dispatches a new instance carrying the new args | playwright | `?q=1` -> `?q=2` | new instance, `q: '2'` | implemented | 2026-11-18 |
+| SPA-ARGS-10 | The reserved `_via` key never reaches `this.args` | playwright | `Spa.match_url_to_route('...?_via=x&q=1')` | `{q: '1', id: '42'}` | implemented | 2026-11-18 |
+| SPA-ARGS-11 | A literal `=` inside a query value survives, as the server reads it | playwright | `?q=a=b&token=YWJj==` | `q: 'a=b'`, `token: 'YWJj=='` | implemented | 2026-11-18 |
+| SPA-ARGS-12 | `+` in a query value is a space (form encoding, as the server reads it); in a path segment it stays a plus; `%2B` is a plus | playwright | `/_sys/args-probe/a+b?q=x+y&name=a%2Bb` | `id: 'a+b'`, `q: 'x y'`, `name: 'a+b'` | implemented | 2026-11-18 |
 
 ## Notes
 

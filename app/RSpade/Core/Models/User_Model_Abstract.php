@@ -196,9 +196,16 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      * the account's own activity stamp (written with a bare statement on a page view, never
      * through save(); declared so that a save that does carry it records nothing for it).
      *
-     * role_id carries each role's ACL permissions and can_admin_roles. A static property
-     * initializer cannot name self:: constants here, so the values are literals that must match
-     * the ROLE_* and PERM_* constants defined above.
+     * role_id is the ROLE enum: each entry carries the role's default ACL 'permissions', its
+     * 'can_admin_roles' and optionally 'selectable'. Lower role id = more privilege
+     * (has_role() is "this role or higher"); can_admin_roles is the SOLE authority for "may
+     * this user manage that user", equals included - Site Admin lists 400, so Site Admins
+     * manage each other. These roles are the template's defaults: an application that
+     * overrides User_Model and changes them redeclares the whole role_id entry (a child's
+     * entry replaces the parent's), and only application code names a ROLE_* constant. Roles
+     * are per site; cross-site authority is is_sysadmin, never a role. Contract: rsx:man auth,
+     * ROLES. A static property initializer cannot name self:: constants here, so the values
+     * are literals that must match the ROLE_* and PERM_* constants defined above.
      */
     public static $columns = [
         'invite_code' => ['never_export' => true, 'revision_exclude' => true],
@@ -394,12 +401,15 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     /**
      * Check if user can administer users with the given role
      *
-     * Prevents privilege escalation - a user administers (creates, edits, re-roles,
-     * disables) only users whose role is EQUAL to or LOWER than their own, as listed
-     * in the role's can_admin_roles. An administration endpoint asks it of BOTH the
-     * target's current role and any new role it assigns.
+     * The SOLE answer to "may this user manage that user": true exactly when this user's
+     * role lists $role_id in its can_admin_roles, equals included. A user administers
+     * (creates, edits, re-roles, disables) only users whose role is listed - the template
+     * lists the role itself and the roles below it, so a superior is refused by
+     * construction. Never derived from comparing role ids. An administration endpoint asks
+     * it of BOTH the target's current role and any new role it assigns. Contract:
+     * rsx:man auth, ROLES.
      *
-     * @param int $role_id Role constant (ROLE_*)
+     * @param int $role_id The target's role id
      * @return bool
      */
     public function can_admin_role(int $role_id): bool
@@ -409,17 +419,25 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     }
 
     /**
-     * Check if user has at least the specified role level
+     * Check if user holds the specified role or a higher one
      *
-     * "At least" means same or higher privilege (lower role_id number).
+     * Lower role id = more privilege, so this is role_id <= $role_id: a ranking floor,
+     * never a "may manage that user" decision (that is can_admin_role()). A membership with
+     * no role (role_id NULL) holds no role and fails every floor - PHP orders null below
+     * every integer, so the comparison alone would rank it above the most privileged role.
+     * Contract: rsx:man auth, ROLES.
      *
-     * @param int $role_id Role constant (ROLE_*)
+     * @param int $role_id A role id from the role_id enum
      * @return bool
      */
     public function has_role(int $role_id): bool
     {
+        if ($this->role_id === null) {
+            return false;
+        }
+
         // Lower role_id = higher privilege
-        return $this->role_id <= $role_id;
+        return (int) $this->role_id <= $role_id;
     }
 
     // =========================================================================

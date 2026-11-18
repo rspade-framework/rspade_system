@@ -123,6 +123,9 @@ destructor already reaps what this process spawned.
 - A class record's `decorators` merges the ES decorators with the JSDoc markers
   (`@Instantiatable`); `decorator_sites` (`[{name, line}]`) holds only the ES decorators
   APPLIED to the class.
+- A method record carries `decorators` (compact `[[name, args], ...]`) and, when its body calls
+  through `super`, `super_calls` (the names called, arrow functions included, `'*'` for
+  `super[expr]()`), read by JS-PARENT-CHAIN-01 from `parse()`.
 - `Js_Parser::parse($file_path)` / `Js_Parser::extract_metadata($file_path)`
 
 ## JS Transformer (Babel)

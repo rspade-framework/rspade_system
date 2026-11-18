@@ -256,6 +256,56 @@ function extractJSDocDecorators(leadingComments) {
     return decorators;
 }
 
+/**
+ * The names of the methods a class method's body calls through `super` - `super.name(...)`,
+ * `super.name.call(...)` / `.apply(...)` - plus '*' for a computed `super[expr](...)`.
+ * Read off the AST, so a comment or string mentioning `super.name(` is never a call.
+ *
+ * Arrow functions are walked (they share the method's `super`); a nested class, object
+ * method or function has a `super` of its own, or none, and is not.
+ * Feeds JS-PARENT-CHAIN-01.
+ */
+function collectSuperCalls(methodNode) {
+    const names = new Set();
+
+    const superMemberName = (node) => {
+        if (!t.isMemberExpression(node) || !t.isSuper(node.object)) return null;
+        if (node.computed) return t.isStringLiteral(node.property) ? node.property.value : '*';
+        return t.isIdentifier(node.property) ? node.property.name : '*';
+    };
+
+    const walk = (node) => {
+        if (!node || typeof node.type !== 'string') return;
+        if (t.isClass(node) || t.isObjectMethod(node) || t.isFunctionExpression(node) || t.isFunctionDeclaration(node)) {
+            return;
+        }
+
+        if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+            const callee = node.callee;
+            let name = superMemberName(callee);
+            if (name === null && (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
+                && !callee.computed && t.isIdentifier(callee.property)
+                && ['call', 'apply'].includes(callee.property.name)) {
+                name = superMemberName(callee.object);
+            }
+            if (name !== null) names.add(name);
+        }
+
+        for (const key of t.VISITOR_KEYS[node.type] || []) {
+            const child = node[key];
+            if (Array.isArray(child)) {
+                child.forEach(walk);
+            } else {
+                walk(child);
+            }
+        }
+    };
+
+    walk(methodNode.body);
+
+    return [...names];
+}
+
 // Helper functions
 function getValueType(node) {
     if (t.isStringLiteral(node)) return `"${node.value}"`;
@@ -435,6 +485,14 @@ function parseFileContent(content, filePath, jsonOutput) {
                         // and false was the majority of every JS method record in the index.
                         if (member.static) {
                             methodInfo.static = true;
+                        }
+
+                        // JS-PARENT-CHAIN-01 input, recorded only when present: the methods
+                        // this body calls through `super`. (The parent-side opt-out is the
+                        // @Replaceable decorator, already in `decorators`.)
+                        const superCalls = collectSuperCalls(member);
+                        if (superCalls.length > 0) {
+                            methodInfo.super_calls = superCalls;
                         }
 
                         if (member.static) {

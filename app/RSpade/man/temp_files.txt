@@ -6,7 +6,7 @@ NAME
 
 SYNOPSIS
     $file = Rsx_Temp_Files::store_bytes($csv, 'contacts.csv', 'text/csv');
-    $file = Rsx_Temp_Files::store_file($path, 'report.pdf', null, 1);   // 1 day
+    $file = Rsx_Temp_Files::store_file($path, 'report.pdf', retention_days: 1);   // 1 day
     $file = Rsx_Temp_Files::find($temp_key);            // null: none, or expired
     $file->read_bytes(); $file->read_stream(); $file->download_response();
     Rsx_Temp_Files::delete($file);

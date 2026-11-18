@@ -285,6 +285,20 @@ HTTP
     framework's own URL builder (rsx_absolute_url()), which composes from the
     request only for a served host (rsx:man helpers).
 
+OUTBOUND URL FETCH
+    'url_fetch' => [
+        'connect_timeout_seconds' => 30,
+    ]
+
+    connect_timeout_seconds  How long the remote server has to ACCEPT A
+                         CONNECTION when Rsx_Url_Fetch downloads a URL
+                         (create_from_url() included). Expiry is a loud
+                         error naming the URL. It is the only time limit: the
+                         transfer itself runs as long as the data takes, and
+                         the caller's max_bytes cap bounds a hostile server.
+                         Raise it for a box on a degraded link; never lower it
+                         to hurry a request (rsx:man url_fetch).
+
 TENANCY
     'tenancy' => 'single',                 # 'single' | 'multi'
 

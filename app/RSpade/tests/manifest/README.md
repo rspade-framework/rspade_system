@@ -51,6 +51,9 @@ alone dies at "Manifest support module must extend ManifestSupport_Abstract".
 | Persistence, the bad-manifest flag | `Core/Manifest/Manifest_Store.php` |
 | The code-quality pass | `CodeQuality/Manifest_Rule_Driver.php`, `CodeQuality/Support/Source_Cache.php` |
 | A stylesheet's wrapper class | `Integrations/Scss/Scss_ManifestModule.php` (`wrapper_class_of()`) |
+| The class-hierarchy queries (`php_is_subclass_of`, `php_get_extending`, `js_is_subclass_of`, `js_get_extending`, lineage) | `Core/Manifest/Manifest.php`; the descendant index `Core/Manifest/Manifest_Indexer.php` (`_collate_files_by_classes()`) - `Manifest_Query_Test` over the `Manifest_Query_Fixture_*` classes |
+| The Ajax controller JS stubs | `Core/Controller/Controller_Stub_ManifestSupport.php` - `Controller_Stub_Generation_Test` (child builds) |
+| A malformed source file failing the build | `Core/PHP/Php_Parser.php`, `Core/Manifest/Manifest_Scanner.php` - `Manifest_Malformed_Source_Test` (child builds) |
 
 Man pages: `rsx:man manifest_build`, `rsx:man manifest_api`, `rsx:man code_quality`.
 Colocated: `Core/Manifest/CLAUDE.md`.

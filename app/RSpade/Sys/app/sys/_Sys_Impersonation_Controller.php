@@ -72,7 +72,7 @@ class _Sys_Impersonation_Controller extends _Sys_Endpoint_Controller_Abstract
 
         Session::stop_impersonation();
 
-        $return_site_id = Session::get_value(self::RETURN_SITE_KEY, null, 'staff');
+        $return_site_id = Session::get_value(self::RETURN_SITE_KEY, realm: 'staff');
         Session::forget_value(self::RETURN_SITE_KEY, 'staff');
 
         if ($return_site_id !== null) {

@@ -79,7 +79,6 @@ $scoped = App\RSpade\Core\Api\Api_Key_Model::generate(
     'HTTP scope test key (temporary)',
     'live',
     null,
-    null,
     "/api/v1/files/*"
 );
 $open = App\RSpade\Core\Api\Api_Key_Model::generate(1, 'HTTP unscoped test key (temporary)');

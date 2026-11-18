@@ -495,6 +495,42 @@ The manifest holds code facts only, so a column's existence is checked at first
 use, not at build: give every group a test (a save of one column, then a stale
 submission of a field stored in another, is asked about).
 
+READING PROPERTIES
+
+Reading a property the model does not have THROWS (LogicException) - it never
+reads as null. A property is a column of the record, a cast, an accessor
+(an appended property), a relationship, an enum property (status_id__label,
+any custom one), a static enum lookup (status_id__enum_ids) or a detail
+accessor; anything else is a mistake, usually a typo:
+
+    $record->role_id_can_admin_roles;   // THROWS: Customer_Model has no property
+                                        // 'role_id_can_admin_roles' ... Did you mean
+                                        // 'role_id__can_admin_roles'?
+
+The message names the model, the key and the closest real name.
+
+    A record loaded from the database holds every column its query selected.
+    A column the query did not select (->select([...]), ->get([...])) is
+    missing too, and reading it throws "... was not loaded on this record".
+    Select what the code reads.
+
+    A record NOT loaded from the database (new, or created by this process)
+    reads an unassigned column of its table as null: the row holds only what
+    was assigned. Any other key throws, as on a loaded record.
+
+    An enum property the current value does not define (a NULL column, or a
+    value whose entry omits that property) reads as null - it is a declared
+    property, not a missing one.
+
+To ask whether a property is present, test presence - these never throw:
+
+    isset($record->key)                 // false when missing (or null)
+    $record->key ?? $default
+    array_key_exists('key', $record->getAttributes())   // loaded, even if null
+
+Writes are unaffected. Laravel's Model::preventAccessingMissingAttributes() is
+not used (rsx:man framework_divergences).
+
 MASS ASSIGNMENT PREVENTION
 
 Mass assignment is explicitly prohibited. Use explicit field assignment:
@@ -511,7 +547,9 @@ Mass assignment is explicitly prohibited. Use explicit field assignment:
     $model->update(['name' => 'John']);
 
 Blocked methods: fill(), forceFill(), create(), firstOrCreate(), firstOrNew(),
-updateOrCreate(), update()
+updateOrCreate(), update(). An empty array is not mass assignment. forceFill()
+accepts one array - the timestamp columns alone, which Eloquent's query-builder
+update() assigns to cast updated_at.
 
 EAGER LOADING PREVENTION
 

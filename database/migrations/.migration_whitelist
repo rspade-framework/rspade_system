@@ -886,6 +886,11 @@
             "created_at": "2026-11-17T08:22:12+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe reclassify_degraded_videos_on_file_attachments"
+        },
+        "2026_11_18_041420_drop_user_role_id_from_api_keys.php": {
+            "created_at": "2026-11-18T04:14:20+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe drop_user_role_id_from_api_keys"
         }
     }
 }

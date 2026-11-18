@@ -104,7 +104,7 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        $models = Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false);
+        $models = Manifest::php_get_subclasses_of('Rsx_Model_Abstract', concrete_only: false);
         sort($models);
 
         foreach ($models as $class_name) {

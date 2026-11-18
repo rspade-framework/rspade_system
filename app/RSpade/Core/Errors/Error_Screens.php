@@ -177,7 +177,7 @@ class Error_Screens
 
         return static::render(
             $request,
-            static::__context(500, $request, null, $e !== null ? (Rsx_Diagnostics::user_message($e) ?? '') : '', $detail, false, $error_id)
+            static::__context(500, $request, message: $e !== null ? (Rsx_Diagnostics::user_message($e) ?? '') : '', detail: $detail, error_id: $error_id)
         );
     }
 
@@ -201,7 +201,7 @@ class Error_Screens
      */
     public static function bad_request(Request $request, string $message): Response
     {
-        return static::render($request, static::__context(400, $request, null, $message));
+        return static::render($request, static::__context(400, $request, message: $message));
     }
 
     /**
@@ -216,7 +216,7 @@ class Error_Screens
      */
     public static function http_status(Request $request, int $status, string $message = '', string $title = ''): Response
     {
-        return static::render($request, static::__context($status, $request, null, $message, null, false, null, $title));
+        return static::render($request, static::__context($status, $request, message: $message, title: $title));
     }
 
     /**
@@ -240,7 +240,7 @@ class Error_Screens
 
         return static::render(
             $request,
-            static::__context($status, $request, null, '', $detail, true),
+            static::__context($status, $request, message: '', detail: $detail, preview: true),
             !$is_generic
         );
     }
