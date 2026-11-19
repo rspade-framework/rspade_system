@@ -65,7 +65,7 @@ class Security_Update_Health_Checks
             case 'disabled':
                 return [
                     'status' => 'WARN',
-                    'detail' => 'Automatic security updates are off (RSX_AUTO_SECURITY_UPDATES). ' . $php
+                    'detail' => 'Automatic security updates are off (PHP_SECURITY_UPDATES). ' . $php
                         . ' - patch it yourself, or pull a newer image when a PHP security release ships.',
                 ];
 

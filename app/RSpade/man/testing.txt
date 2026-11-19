@@ -569,11 +569,13 @@ DOCKER-ACCELERATED TESTING
     While a live run is in progress one line per finished class streams as it
     completes; the full report follows at the end.
 
-    THE HOST-SIDE REQUIREMENT. The development container runs its own Docker
-    Engine (the image installs it; supervisor's dockerd program starts it), and
-    that daemon needs capabilities and confinement the container must be STARTED
-    with. Without them the daemon refuses to start, says so in one line, and
-    every run is sequential. The flags:
+    THE HOST-SIDE REQUIREMENT. Parallel mode needs a Docker Engine inside the
+    development container. The shipped development image does NOT include one:
+    parallel test runs are a framework-author tool, and only the framework's own
+    development container installs an engine (in its own host-side build) and is
+    started with the capabilities and confinement a nested daemon needs. Every
+    other development container has no daemon, and every run there is
+    sequential. A container that does run its own engine needs these flags:
 
         --cap-drop=ALL
         --cap-add=CAP_DAC_OVERRIDE --cap-add=CAP_CHOWN --cap-add=CAP_FOWNER

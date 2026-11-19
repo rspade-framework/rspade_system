@@ -50,7 +50,7 @@ FROM rspade/rspade-server-dev:latest
 # No automatic security updates in a test worker: it is started many times per run and
 # discarded, and a package check at every start would slow every run and call the PHP PPA
 # for nothing. The dev image it is built from takes the updates.
-ENV RSX_AUTO_SECURITY_UPDATES=0
+ENV PHP_SECURITY_UPDATES=0
 
 # -----------------------------------------------------------------------------
 # LAYER 0 - the CURRENT entrypoint, over the one baked into the dev image.

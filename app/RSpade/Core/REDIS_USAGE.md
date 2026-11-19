@@ -27,7 +27,7 @@ pressure is one nobody was hitting - an attacker keeps their own keys hot. Realt
 subsystem whose loss a page could not notice, detects it and resyncs every client
 (`rsx:man realtime`, REDIS DATA LOSS). The cap scales with the machine: 32 MB under 1 GB of
 memory, otherwise the larger of 64 MB and 5% of memory, written by the container at every
-start (`REDIS_MAXMEMORY_MB` overrides it; `rspade-sizing`).
+start (`RSPADE_REDIS_MEMORY_MB` overrides it; `rspade-sizing`).
 
 **Redis does NOT back locking.** `RsxLocks` left Redis entirely: web-cluster locks are held
 by a live socket to the `rsx-lockd` daemon (`system/app/RSpade/resource/docker/rsx-lockd/`), and system locks are

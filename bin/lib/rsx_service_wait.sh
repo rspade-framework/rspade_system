@@ -244,7 +244,7 @@ rsx_lockd_wait_stopped() {
 # the environment). Return 0 once it does, or at once when supervisor has no rsx-lockd
 # program. Return 1, saying why and what to do, when the address is incomplete or the
 # daemon provably cannot start (rsx_service_cannot_start, asked after every ping that goes
-# unanswered) - with the image-contract sentence when the image is older than the
+# unanswered) - with the minimum-image-version sentence when the image is older than the
 # checkout named by <image contract conf>.
 wait_for_lockd() {
     local conf="${1:-}" state_dir="${2:-$RSX_SERVICE_STATE_DIR_DEFAULT}"

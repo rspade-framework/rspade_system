@@ -57,6 +57,8 @@ RUN apt-get update && apt-get install -y \
     # fetching and unpacking. No software-properties-common: it exists to provide
     # add-apt-repository, and the PHP apt source is now shipped as a file instead.
         ca-certificates curl wget gnupg2 unzip \
+    # reading JSON from the shell (health output, API answers): every image, not just dev
+        jq \
     # image handling: thumbnails, uploads, optimisation
         imagemagick ghostscript optipng \
     # HEIC/HEIF photos (a phone's default format): libheif decodes them for ImageMagick
@@ -183,13 +185,19 @@ RUN curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
 # Node. The framework's own helpers are node: the realtime relay, the full-page
 # cache proxy, the lock daemon, and the parser/transform RPC workers.
 #
-# npm is pinned to 11 deliberately: npm 12 requires node ^22.22.2 || ^24.15.0 ||
-# >=26, so on node 23 an upgrade to latest aborts with EBADENGINE and takes the
-# whole image build down with it.
-RUN curl -fsSL https://deb.nodesource.com/setup_23.x | bash - \
-    && apt-get update && apt-get install -y nodejs \
-    && npm install -g npm@11 \
-    && rm -rf /var/lib/apt/lists/*
+# BOTH ARE PINNED to exact versions: node from NodeSource's apt repository (the
+# setup script adds the major line's repository; the install names the exact build),
+# npm from the registry. Node 26 is the current LTS line; npm 12 requires node
+# ^22.22.2 || ^24.15.0 || >=26. Bumping either is a deliberate edit here, followed by
+# a test build and a framework suite run on the new image before it is published.
+ARG NODE_VERSION=26.13.1
+ARG NPM_VERSION=12.2.3
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION%%.*}.x" | bash - \
+    && apt-get update && apt-get install -y "nodejs=${NODE_VERSION}-1nodesource1" \
+    && npm install -g "npm@${NPM_VERSION}" \
+    && [ "$(node -v)" = "v${NODE_VERSION}" ] \
+    && [ "$(npm -v)" = "${NPM_VERSION}" ] \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Headless Chromium, the browser Playwright drives. BOTH targets, production
 # included: it is how `rsx:debug` and the browser tests render a page, and it is how
@@ -274,10 +282,12 @@ COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
 COPY supervisor/conf.d/rsx-companiond.conf /etc/supervisor/conf.d/rsx-companiond.conf
 COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
 COPY supervisor/conf.d/security-updates.conf /etc/supervisor/conf.d/security-updates.conf
+# The log echo onto `docker logs` (rspade-log-to-docker); idle unless RSPADE_LOG_TO_DOCKER=1.
+COPY supervisor/conf.d/log-to-docker.conf /etc/supervisor/conf.d/log-to-docker.conf
 # AUTOMATIC SECURITY UPDATES. What unattended-upgrades may install: the Ubuntu security
 # pocket and PHP patch releases from the ondrej PPA (rspade-security-update says why and
 # when). Runs before PHP serves anything at every start and every 4 hours after; off with
-# RSX_AUTO_SECURITY_UPDATES=0 in the container's environment.
+# PHP_SECURITY_UPDATES=0 in the container's environment.
 COPY apt/52rspade-security-updates /etc/apt/apt.conf.d/52rspade-security-updates
 # ImageMagick reads raster coders only: its SVG/MVG/MSL/TEXT/LABEL coders turn an uploaded
 # file into a local-file read. rsx:health "ImageMagick Coder Policy" FAILs without this.
@@ -368,6 +378,7 @@ COPY sizing.sh         /usr/local/bin/rspade-sizing
 COPY trusted-proxies.sh /usr/local/bin/rspade-trusted-proxies
 COPY security-update.sh /usr/local/bin/rspade-security-update
 COPY security-updates-run.sh /usr/local/bin/rspade-security-updates-run
+COPY log-to-docker.sh  /usr/local/bin/rspade-log-to-docker
 COPY claude-run.sh     /usr/local/bin/claude
 
 # git IS the RSpade git proxy in this container.
@@ -402,6 +413,7 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-trusted-proxies \
               /usr/local/bin/rspade-security-update \
               /usr/local/bin/rspade-security-updates-run \
+              /usr/local/bin/rspade-log-to-docker \
               /usr/local/bin/claude \
               /usr/local/bin/git \
               /usr/local/bin/npm
@@ -480,7 +492,7 @@ RUN apt-get update && apt-get install -y \
     # (supervisor/conf.d/mail-catcher.conf says why not Mailpit)
         python3-aiosmtpd \
     # developer quality of life for anyone who shells in
-        fzf jq man-db gh \
+        fzf man-db gh \
     && rm -rf /var/lib/apt/lists/*
 
 # MySQL is held back from the automatic security updates here: its package scripts run
@@ -489,106 +501,18 @@ COPY apt/53rspade-security-updates-dev /etc/apt/apt.conf.d/53rspade-security-upd
 RUN chmod 644 /etc/apt/apt.conf.d/53rspade-security-updates-dev
 
 # -----------------------------------------------------------------------------
-# Docker-in-docker: this image runs its own Docker Engine
+# No Docker Engine in this image
 # -----------------------------------------------------------------------------
 #
-# WHY. `php artisan rsx:test` runs every invocation in sibling containers when
-# its gate passes - one execution path for a single class and for the whole
-# suite (`rsx:man testing`). The daemon those containers are started against is
-# the one installed here, inside this container. Development target only: the
-# production image runs an application, not a test suite.
-#
-# HALF THE JOB IS ON THE HOST. Installing the engine is not enough - the
-# container also has to be STARTED with the capabilities and confinement dockerd
-# and runc need (--cap-add=CAP_NET_ADMIN --cap-add=CAP_SYS_ADMIN, apparmor and
-# seccomp unconfined, and the rest of the list in `rsx:man testing`). Without
-# them the daemon installs perfectly and refuses to start; the launcher below
-# says so in one line and the test runner falls back to a sequential run.
-#
-# runc is PINNED, one variable, and the pin re-applies on every build of this
-# image - which is what keeps a containerd.io upgrade from silently restoring a
-# binary that cannot start a nested container. Rationale beside the pin itself.
-ARG RUNC_PINNED_VERSION=1.3.2
-
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y iptables uidmap; \
-    . /etc/os-release; \
-    install -m 0755 -d /etc/apt/keyrings; \
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
-    chmod a+r /etc/apt/keyrings/docker.gpg; \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
-        > /etc/apt/sources.list.d/docker.list; \
-    apt-get update; \
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; \
-    rm -rf /var/lib/apt/lists/*
-
-# The .deb enables a systemd unit and a socket-activation unit. There is neither
-# systemd nor socket activation in this container - dockerd is a supervisor
-# program like every other service here - so make sure nothing else ever tries to
-# start a second one.
-RUN systemctl disable docker.service docker.socket 2>/dev/null || true; \
-    rm -f /etc/systemd/system/multi-user.target.wants/docker.service \
-          /etc/systemd/system/sockets.target.wants/docker.socket
-
-# --- the runc pin ------------------------------------------------------------
-#
-# runc 1.3.3 and newer cannot start a container while running INSIDE one. Every
-# `docker run` dies in container init with
-#
-#   open sysctl net.ipv4.ip_unprivileged_port_start file: reopen fd 8: permission denied
-#
-# and dockerd sets that sysctl on every container it starts, so this is not an
-# edge case - only --network=host, which creates no network namespace and so
-# writes no net sysctl, gets through. Bisected against docker 29.x on kernel 6.8:
-# 1.3.0 / 1.3.1 / 1.3.2 work, 1.3.3 / 1.4.0 / 1.4.3 fail, 8 of 8 runs each way.
-# It is not a permissions problem: it reproduces with the outer container
-# --privileged, and the same write succeeds by hand from a shell in the
-# container. Non-nested containers on the same host with the same runc are fine.
-#
-# So the packaged binary is replaced with the newest version that works nested.
-# Delete this block to retest when the upstream regression is fixed.
-#
-# THE DOWNLOAD AND THE CHECKSUM ARE BOTH FATAL. A build that quietly kept the
-# packaged runc would produce an image whose every `docker run` fails in init -
-# a failure that looks like anything except a build that did not do what it said.
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    base="https://github.com/opencontainers/runc/releases/download/v${RUNC_PINNED_VERSION}"; \
-    curl -fsSL -o /tmp/runc "$base/runc.${arch}"; \
-    curl -fsSL -o /tmp/runc.sha256sum "$base/runc.sha256sum"; \
-    cd /tmp; \
-    expected="$(grep " runc\.${arch}$" runc.sha256sum | awk '{ print $1 }')"; \
-    [ -n "$expected" ]; \
-    echo "$expected  runc" | sha256sum -c -; \
-    install -m 0755 /tmp/runc "$(command -v runc || echo /usr/bin/runc)"; \
-    rm -f /tmp/runc /tmp/runc.sha256sum; \
-    runc --version
-
-# Address-space separation from the HOST's docker.
-#
-# The host engine owns 172.17.0.0/16 and this container's own eth0 lives on it.
-# An inner daemon defaulting to 172.17 would bring up a bridge that shadows the
-# route to this container's own gateway and kill its outbound networking the
-# moment docker0 appeared. The inner engine gets its own private ranges instead.
-RUN mkdir -p /etc/docker /var/lib/docker \
-    && printf '%s\n' \
-        '{' \
-        '    "bip": "10.210.0.1/24",' \
-        '    "default-address-pools": [' \
-        '        { "base": "10.211.0.0/16", "size": 24 }' \
-        '    ],' \
-        '    "log-driver": "json-file",' \
-        '    "log-opts": { "max-size": "10m", "max-file": "3" }' \
-        '}' \
-        > /etc/docker/daemon.json \
-    && chmod 644 /etc/docker/daemon.json
-
-COPY dockerd-run.sh /usr/local/bin/rspade-dockerd-run
-COPY supervisor/conf.d/dockerd.conf /etc/supervisor/conf.d/dockerd.conf
-RUN chmod 755 /usr/local/bin/rspade-dockerd-run \
-    && chmod 644 /etc/supervisor/conf.d/dockerd.conf
+# This image deliberately does NOT install Docker or run a dockerd program.
+# `rsx:test`'s parallel mode (sibling test containers) is a framework-AUTHOR
+# tool: only the framework's own development container runs a nested engine,
+# and that container provides it itself (its host-side build adds Docker Engine
+# and starts the container with the capabilities nested docker needs). An
+# application's development container has no use for one, and shipping an engine
+# that cannot start without extra host capabilities only produced an EXITED
+# supervisor program and an unhealthy container. Without a daemon, `rsx:test`'s
+# gate finds none and runs sequentially (`rsx:man testing`).
 
 COPY mysql/mysqld.cnf   /etc/mysql/mysql.conf.d/mysqld.cnf
 COPY mysql/provision.sql /opt/rspade/provision.sql
@@ -659,14 +583,18 @@ RUN chown -R root:root /opt/rspade/mail-catcher \
 
 # THE IMAGE RECORD - the LAST layer of this stage, so a new revision rebuilds this layer
 # and nothing else (an ARG in base would invalidate every layer after it on every build).
-# image_contract.conf is the contract this image provides, copied verbatim; build.sh passes
-# the framework revision it was built from (a plain `docker build` records "unknown").
-# Read by system/bin/lib/rsx_image_contract.sh and Rsx_Image_Contract against the
-# checkout's own copy: an image older than its checkout is named with the remedy.
+# image_contract.conf is copied verbatim (its header has the rule); build.sh passes the
+# framework revision it was built from (a plain `docker build` records "unknown"), and
+# system/bin/publish_docker_images passes the published image version (`image_version=`,
+# "local" for any other build, which every checkout accepts).
+# Read by bootstrap/rsx_image_contract.php and system/bin/lib/rsx_image_contract.sh against
+# the checkout's min_image_version: inside the container an older image is fatal.
 ARG RSPADE_BUILT_FROM=unknown
+ARG RSPADE_IMAGE_VERSION=local
 COPY image_contract.conf /opt/rspade/image.conf
 RUN sed -i -e '$a\' /opt/rspade/image.conf \
     && printf 'built_from=%s\n' "$RSPADE_BUILT_FROM" >> /opt/rspade/image.conf \
+    && printf 'image_version=%s\n' "$RSPADE_IMAGE_VERSION" >> /opt/rspade/image.conf \
     && chown root:root /opt/rspade/image.conf \
     && chmod 644 /opt/rspade/image.conf
 
@@ -704,14 +632,18 @@ RUN for sapi in fpm cli; do \
 
 # THE IMAGE RECORD - the LAST layer of this stage, so a new revision rebuilds this layer
 # and nothing else (an ARG in base would invalidate every layer after it on every build).
-# image_contract.conf is the contract this image provides, copied verbatim; build.sh passes
-# the framework revision it was built from (a plain `docker build` records "unknown").
-# Read by system/bin/lib/rsx_image_contract.sh and Rsx_Image_Contract against the
-# checkout's own copy: an image older than its checkout is named with the remedy.
+# image_contract.conf is copied verbatim (its header has the rule); build.sh passes the
+# framework revision it was built from (a plain `docker build` records "unknown"), and
+# system/bin/publish_docker_images passes the published image version (`image_version=`,
+# "local" for any other build, which every checkout accepts).
+# Read by bootstrap/rsx_image_contract.php and system/bin/lib/rsx_image_contract.sh against
+# the checkout's min_image_version: inside the container an older image is fatal.
 ARG RSPADE_BUILT_FROM=unknown
+ARG RSPADE_IMAGE_VERSION=local
 COPY image_contract.conf /opt/rspade/image.conf
 RUN sed -i -e '$a\' /opt/rspade/image.conf \
     && printf 'built_from=%s\n' "$RSPADE_BUILT_FROM" >> /opt/rspade/image.conf \
+    && printf 'image_version=%s\n' "$RSPADE_IMAGE_VERSION" >> /opt/rspade/image.conf \
     && chown root:root /opt/rspade/image.conf \
     && chmod 644 /opt/rspade/image.conf
 

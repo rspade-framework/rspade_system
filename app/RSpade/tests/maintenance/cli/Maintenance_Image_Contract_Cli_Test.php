@@ -10,8 +10,10 @@ namespace App\RSpade\Tests\Maintenance\Cli;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * maintenance-mode.sh opens enable and disable with the image-contract warning and then
- * proceeds exactly as it otherwise would.
+ * maintenance-mode.sh opens enable and disable with the minimum-image-version warning and
+ * then proceeds exactly as it otherwise would: it is a boot-free lever, so an image older
+ * than the checkout needs is reported here, never refused (the container start, every
+ * other command and every web request refuse).
  *
  * Running the real script with services would stop this box's services, and the image
  * paths it reads are the real ones, so the test is two halves: STRUCTURAL - the warning is

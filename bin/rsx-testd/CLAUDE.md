@@ -76,10 +76,10 @@ exposed one real stale-cache bug the sequential order was hiding by luck
 **`rspade/rspade-server-dev:latest`** is the SHIPPED development image
 (`system/app/RSpade/resource/docker/Dockerfile`, built by
 `bash system/app/RSpade/resource/docker/build.sh dev`). This daemon neither builds nor
-checks it: the GATE builds it on every invocation, before this process exists. That image is also
-where the nested docker daemon these containers are started against comes from - it installs
-Docker Engine, pins runc, and runs `dockerd` as a supervisor program
-(`resource/docker/dockerd-run.sh`, `supervisor/conf.d/dockerd.conf`).
+checks it: the GATE builds it on every invocation, before this process exists. The nested docker
+daemon these containers are started against does NOT come from that image (it ships no Docker
+Engine): only the framework author's own development container runs one, installed by that
+container's host-side build.
 
 **`rspade-test:latest`** is `FROM` that image, built here from `Dockerfile.test`. It is FROM
 it because that image already IS the runtime the framework is written for: supervisor,

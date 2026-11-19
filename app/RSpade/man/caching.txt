@@ -324,7 +324,7 @@ client (rsx:man realtime, REDIS DATA LOSS).
 
 THE CAP SCALES WITH THE MACHINE. The RSpade container writes it at every
 start: 32 MB under 1 GB of memory, otherwise the larger of 64 MB and 5% of
-memory. REDIS_MAXMEMORY_MB in the container's environment sets it instead
+memory. RSPADE_REDIS_MEMORY_MB in the container's environment sets it instead
 (system/app/RSpade/resource/docker/README.md).
 
 

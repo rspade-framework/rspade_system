@@ -643,6 +643,40 @@ fetch_upstream() {
 }
 
 # =============================================================================
+# refuse_older_image - the incoming release needs a newer container image.
+#
+# Reads min_image_version from the FETCHED tree and refuses the pull, before anything is
+# checked out, when this container's image is older - a release applied anyway would refuse
+# every command and web request until the image was pulled. The comparison is the CURRENT
+# checkout's bin/lib/rsx_image_contract.sh (the minimum-image-version model; a checkout
+# whose library predates it has nothing to compare), which also skips it outside the
+# container and on the framework authors' box.
+# =============================================================================
+refuse_older_image() {
+    local lib="$SYSTEM_DIR/bin/lib/rsx_image_contract.sh" incoming sentence
+
+    [ -f "$lib" ] || return 0
+    . "$lib"
+    declare -F rsx_image_contract_version_older >/dev/null || return 0
+
+    incoming="$(mktemp)" || return 0
+    if ! git -C "$PROJECT_ROOT/$SUBMODULE_PATH" show "$NEW_SHA:app/RSpade/resource/docker/image_contract.conf" > "$incoming" 2>/dev/null \
+        || ! grep -q '^min_image_version=' "$incoming"; then
+        rm -f "$incoming"
+        return 0
+    fi
+
+    sentence="$(rsx_image_contract_problem "$incoming" /opt/rspade/image.conf /.rspade_container "$PROJECT_ROOT/.env" 2>/dev/null)"
+    local rc=$?
+    rm -f "$incoming"
+    [ "$rc" -eq 0 ] || return 0
+
+    die "The release being pulled (${NEW_SHA:0:12}) needs a newer container image. Nothing was changed.
+   ${sentence}
+   Then run php artisan rsx:framework:pull again."
+}
+
+# =============================================================================
 # compute_changelog - the byte-faithful OLD..NEW changelog.
 #
 # ONE string, TWO consumers: the history .dat (in full) and the pointer commit
@@ -1254,6 +1288,7 @@ main() {
     #     this reads back exactly what it set.
     resolve_upstream
     fetch_upstream
+    refuse_older_image
 
     if [ "$OLD_SHA" = "$NEW_SHA" ] && [ "$CONVERTED" != true ]; then
         # OLD is the RECORDED gitlink, so this branch means what it says: the

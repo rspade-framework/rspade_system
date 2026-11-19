@@ -75,10 +75,11 @@
 # that hides its cause; the flag and the printed cause are the honest state. A slow lock
 # server is never this case - it is waited for however long it takes.
 #
-# AN IMAGE OLDER THAN THIS CHECKOUT IS REPORTED THE SAME WAY. Inside the RSpade
-# container, enable and disable each open with one [WARNING] naming the remedy when the
-# image provides an older image contract than this checkout needs (bin/lib/
-# rsx_image_contract.sh), then proceed exactly as they otherwise would.
+# AN IMAGE OLDER THAN THIS CHECKOUT IS REPORTED, NEVER REFUSED HERE. Inside the RSpade
+# container, enable and disable each open with one [WARNING] naming the image to pull when
+# the image is older than this checkout's minimum image version (bin/lib/
+# rsx_image_contract.sh), then proceed exactly as they otherwise would: this is a boot-free
+# lever, and everything else - commands, web requests, the container start - refuses.
 # =============================================================================
 
 set -u
@@ -105,8 +106,8 @@ PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
 RSX_PATHS_PROJECT_ROOT_DIR="$PROJECT_ROOT"
 . "$SYSTEM_DIR/bin/lib/rsx_paths.sh"
 
-# The image contract: this script runs under whatever image the container was built from,
-# which may be older than this checkout. The library needs nothing but the checkout.
+# The minimum image version: this script runs under whatever image the container was built
+# from, which may be older than this checkout. The library needs nothing but the checkout.
 . "$SYSTEM_DIR/bin/lib/rsx_image_contract.sh"
 IMAGE_CONTRACT_CONF="$SYSTEM_DIR/app/RSpade/resource/docker/image_contract.conf"
 
@@ -225,8 +226,8 @@ start_unit() {
 # Services this image cannot run (a program the checkout moved into a newer image)
 # will not start, and when rsx-lockd is one of them the wait in do_disable() stops on
 # that evidence and repeats this sentence - this line names the cause up front. A
-# malformed record or requirement file is an [ERROR] naming the file (printed by the
-# library) and is not a refusal either.
+# malformed requirement file is an [ERROR] naming the file (printed by the library) and
+# is not a refusal either.
 # -----------------------------------------------------------------------------
 warn_if_image_is_older() {
     local sentence

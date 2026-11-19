@@ -58,7 +58,7 @@ class Security_Update_Health_Test extends Rsx_Test_Abstract
         static::__assert_contains('up to date', static::__row(['result' => 'current'])['detail']);
         static::__assert_equals('OK', static::__row(['result' => 'updated', 'restart_recommended' => false])['status'], 'installed and reloaded');
         static::__assert_equals('WARN', static::__row(['result' => 'updated', 'restart_recommended' => true])['status'], 'waiting for a restart');
-        static::__assert_contains('RSX_AUTO_SECURITY_UPDATES', static::__row(['result' => 'disabled'])['detail'], 'switched off');
+        static::__assert_contains('PHP_SECURITY_UPDATES', static::__row(['result' => 'disabled'])['detail'], 'switched off');
         static::__assert_equals('WARN', static::__row(['result' => 'failed'])['status'], 'the last check failed');
     }
 }

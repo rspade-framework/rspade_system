@@ -1,8 +1,17 @@
 # The RSpade container
 
 The image definition for the RSpade application container. One Dockerfile, three
-targets — and `build.sh` is the way to build them, because it also applies the
-names and tags everything else expects.
+targets, **published ready-built** on GitHub Container Registry for x86 and ARM
+(linux/amd64 + linux/arm64), each version tagged with its build date and the
+newest also as `latest`:
+
+    ghcr.io/rspade-framework/rspade-server-dev       # --target dev
+    ghcr.io/rspade-framework/rspade-server-prod      # --target prod
+    ghcr.io/rspade-framework/rspade-docconvert       # --target docconvert
+
+Pull those; running one is `rsx:man prod`, THE PRODUCTION IMAGE (and the starter
+README for development). To build locally instead, `build.sh` is the way, because it
+also applies the local names everything else expects:
 
     bash build.sh              # dev      -> rspade/rspade-server-dev
     bash build.sh prod         # prod     -> rspade/rspade-server-prod
@@ -94,7 +103,7 @@ place.
 | YuNet model `face_detection_yunet_2023mar.onnx` (in `/opt/rspade/face_detection/`) | the face detection network the detector loads; downloaded at build and checked against its sha256 |
 | PHP 8.5 and its extensions | the list mirrors `Rsx_Php_Requirements::REQUIRED_EXTENSIONS`, which every request enforces at boot. `sodium` and OPcache are compiled into the binary and have no package |
 | Composer | application-layer packages (`rsx:composer`) |
-| Node 23, npm 11 | the framework's own helpers are node: the realtime relay, Proxority, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. npm is pinned to 11 because 12 refuses this node |
+| Node 26.13.1, npm 12.2.3 (pinned) | the framework's own helpers are node: the realtime relay, Proxority, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. Node 26 is the LTS line; both versions are exact pins in the Dockerfile (`NODE_VERSION`, `NPM_VERSION`) |
 
 **Development only (the `dev` stage)**
 
@@ -103,7 +112,6 @@ place.
 | `mysql-server` | a self-contained environment; production brings its own database |
 | `python3-aiosmtpd` | the mail catcher: an SMTP sink with no web UI, so nothing leaves a development box |
 | `fzf`, `jq`, `man-db`, `gh` | quality of life for a developer in the shell |
-| Docker Engine, `iptables`, `uidmap`, a pinned `runc` | `rsx:test` runs in sibling containers started against this daemon (below) |
 
 ### The headless browser
 
@@ -159,7 +167,7 @@ as an upright JPEG copy ImageMagick draws. Using it from an application: `rsx:ma
 thumbnails`, FACE-AWARE CROPS.
 
 The virtualenv keeps these packages out of the distribution's Python and away from
-everything else in the image. The image contract is not raised for it: an image
+everything else in the image. The minimum image version is not raised for it: an image
 without the detector serves plain centre-cropped thumbnails, and `rsx:health` says so.
 
 **Licenses.** OpenCV (`opencv-python-headless`) is Apache-2.0 and bundles the
@@ -170,6 +178,14 @@ the YuNet model is MIT (OpenCV model zoo, `models/face_detection_yunet`).
 
 All under supervisor; `supervisorctl status` lists them.
 
+**Supervisor starts the infrastructure; the entrypoint starts the rest.** `mysql`, `redis`,
+`rsx-lockd`, `mail-catcher`, `security-updates` and `log-to-docker` start with supervisor. The
+programs that serve and work - `php-fpm`, `nginx`, `proxority`, `realtime`, `tasks`,
+`rsx-companiond` - are `autostart=false`, and the entrypoint starts them (`supervisorctl
+start`) only after its build and migrate step and `configure.sh`, so no request and no task
+runs against a schema or a build the start is still changing (First boot, below). Until then
+they read STOPPED, which the health check does not count as a failure.
+
 **A service that stops is started again, forever.** Every long-running program runs under the
 retry runner (`retry-run.sh`, installed as `rspade-retry-run`): it waits 2 s before the first
 restart, doubling to a minute across consecutive failures (a run that has lasted a minute
@@ -177,18 +193,17 @@ starts the count over, the moment it has), and never gives up. Supervisor alone 
 parks a program that keeps failing in FATAL. The runner passes every signal supervisor sends
 on to the service and waits for it to exit, so a graceful stop and `stopwaitsecs` work as if
 the service were the program itself. Two exceptions: `mysql` relies on supervisor's own
-restart (also forever), because `migrate` stops it to copy the data directory, and `dockerd`
-is never restarted (its launcher exits on purpose when the host grants no nested Docker).
+restart (also forever), because `migrate` stops it to copy the data directory.
 
 **A stale pid or lock file never keeps a service down.** Before EVERY start - the first and
 each restart - the runner removes each pid or lock file the service is known to keep (its
-table: `rsx-lockd`, `nginx`, `mysql`'s pid and socket locks, `dockerd` and its containerd)
+table: `rsx-lockd`, `nginx`, `mysql`'s pid and socket locks)
 unless the pid in it is a running copy of THAT service, matched on the process's command line.
 Pids in a container start again from 1, so after a host reboot that kept the container's
 `/run` a leftover file usually names some unrelated live process, and a daemon that refuses to
 start while "its" pid lives would stay down until that process happened to exit. Checked at
-every start, the next attempt recovers from inside the running container. `mysql` and
-`dockerd` start through the runner's `--exec` mode: the same check, then the runner becomes
+every start, the next attempt recovers from inside the running container. `mysql` starts
+through the runner's `--exec` mode: the same check, then the runner becomes
 the program, with no loop. `retry-run.sh --clear-stale-pidfile <file> <pattern>` is the check
 for one file. A service added to the image that keeps such a file gets an entry in the table.
 
@@ -199,7 +214,7 @@ records each service in `/run/rspade-services/<label>.state` (status `running` /
 row it repeated, and start; the format is in `retry-run.sh`'s header) and marks it `failing` after five consecutive exits,
 until a run lasts a minute. It logs one `[ERROR] [<label>] failing: N consecutive exits (last
 status S) since T` line at 5 exits and at each doubling (10, 20, 40, ...), beside the
-per-attempt line. `--exec` programs (mysql, dockerd) write no state; supervisor's own covers
+per-attempt line. `--exec` programs (mysql) write no state; supervisor's own covers
 them. A failing streak of exit 126 or 127 (the command cannot run, or is not there) is one of
 the pieces of evidence on which `rsx:maintenance:disable` stops waiting for an rsx-lockd that
 cannot start (`rsx:man maintenance_mode`).
@@ -227,8 +242,8 @@ that defines its own container points its health check at `bash /usr/local/bin/r
 | `rsx-companiond` | runs the application's companion applications (`rsx:man companion_apps`); always up and idle until one is started. `stopwaitsecs=360` (the largest companion grace, 300, plus a minute) covers its stop: the retry runner passes the signal on and waits. Absent from the test worker images, whose tests start their own |
 | `tasks` | **the cron replacement**: `rspade-taskd` runs `rsx:task:process` when work comes due and when the application pokes it |
 | `mail-catcher` | dev target only — the SMTP mail sink on `127.0.0.1:1025`; `mail-catcher/` here, installed at `/opt/rspade/mail-catcher/` |
-| `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 | `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
+| `log-to-docker` | echoes the nginx access log and the ERROR-and-above entries of the Laravel log (each with its stack trace) onto `docker logs`, prefixed `[nginx]` / `[laravel]`, when `RSPADE_LOG_TO_DOCKER=1`; idle otherwise (`log-to-docker.sh`) |
 
 The `tasks` program matters. The framework's documented driver for all background and
 scheduled work is a single crontab line, and a container has no crontab. Without
@@ -281,26 +296,14 @@ PHP-bound request. In both cases `/` runs the docroot's `index.php`.
 visitor arrives from the proxy's one address, and Proxority schedules the whole site as one
 client.
 
-## Docker-in-docker (dev target)
+## No Docker Engine in the image
 
-The development image installs Docker Engine and runs it as the `dockerd`
-supervisor program, because `php artisan rsx:test` runs every invocation in
-sibling containers when it can. Three things are worth knowing:
-
-- **runc is PINNED** to a version that can start a container while running inside
-  one, in a single build ARG with the reasoning beside it. The download and its
-  checksum are both fatal to the build: an image that silently kept the packaged
-  binary would fail every `docker run` deep inside container init.
-- **The inner engine gets its own address space** (`bip 10.210.0.1/24`, pools
-  `10.211.0.0/16`), never the outer `172.17` bridge — whose route to this
-  container's own gateway an inner `docker0` would otherwise shadow.
-- **Half the job is on the host.** The container has to be STARTED with the
-  capabilities and confinement dockerd and runc need — at minimum
-  `--cap-add=CAP_NET_ADMIN --cap-add=CAP_SYS_ADMIN` plus
-  `--security-opt apparmor=unconfined --security-opt seccomp=unconfined`. Without
-  them the daemon says so in one line and exits without restarting, and the test
-  runner runs sequentially. The full flag list and its `docker-compose.yml`
-  equivalent are in `rsx:man testing`.
+Neither image installs Docker or runs a `dockerd` program. Running `rsx:test` in
+sibling containers is a tool for developing the framework itself: the framework
+author's own development container brings its own nested Docker Engine (installed
+and granted the needed capabilities by its host-side build), so an application's
+container never carries one. Without a daemon, `rsx:test` runs sequentially
+(`rsx:man testing`).
 
 ## ImageMagick reads raster coders only
 
@@ -351,27 +354,41 @@ listeners that talk to php-fpm) and `3201` (php-fpm's status pages for the `/_sy
 Performance screen). They bind 127.0.0.1 and trust what arrives on them.
 
 `APP_URL` must name the port your browser actually uses. A container cannot
-discover its host-side mapping, so pass `RSPADE_APP_URL` (the compose file
-does). Get it wrong and the realtime socket dials the wrong port.
+discover its host-side mapping: in development the welcome screen records it from
+your first visit; an automated deployment with no browser passes `RSPADE_APP_URL`.
+Get it wrong and the realtime socket dials the wrong port.
 
 ## Environment
+
+### Set these
 
 | Variable | Effect |
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log, Proxority's scheduling and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
-| `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
-| `PHP_FPM_WORKER_COUNT` | the php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pool is sized in prod only) |
+| `RSPADE_BUILD_MIGRATE_ON_START` | `1` makes every start a deployment: build (`rsx:build`; `rsx:build --force` in debug and production mode, which reseals), then `migrate --force`, before anything serves; a failure of either stops the container with the output in `docker logs`. Production migrates BARE, with no rollback - snapshot the database before starting (`rsx:man prod`). Off by default: the dev image then migrates on its own and the prod image only reports pending migrations (First boot, below). Any value but 1/0, true/false, yes/no, on/off stops the start |
+| `RSPADE_LOG_TO_DOCKER` | `1` echoes the nginx access log and the Laravel log's ERROR-and-above entries onto `docker logs` (the `log-to-docker` service). Off by default; when on, run the container with `--log-driver local` (compose: `logging: driver: local`) - Docker's default json-file driver never rotates |
+| `PUID` / `PGID` | development, Linux hosts: your own user and group ids (`id -u`, `id -g`), so the files the application writes into your bind-mounted project - and the database files - belong to you |
+
+Booleans accept 1/0, true/false, yes/no and on/off, in any case.
+
+### Advanced overrides - rarely needed; the defaults size everything to the machine
+
+| Variable | Effect |
+|---|---|
+| `RSPADE_PHP_WORKERS` | the php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pool is sized in prod only) |
 | `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `352` prod, `320` dev when unset |
 | `RSPADE_PHP_TYPICAL_MB` | what one PHP process typically holds, for the RAM ceiling; `128` when unset |
 | `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `3` when unset |
 | `RSX_TASK_MAX_WORKERS` | on-demand task workers; also read from the project `.env`; two thirds of the calculated task workers when unset |
 | `RSX_TASK_SCHEDULED_WORKERS` | scheduled task workers; also read from the project `.env`; a third of the calculated task workers (at least 1) when unset |
-| `REDIS_MAXMEMORY_MB` | the Redis cap; scaled to the machine when unset |
-| `RSPADE_RESERVED_MB` | memory to leave alone beside the container's own reservation (a co-tenant, heavy PDF rendering, companion applications - which the sizing does not count); `0` when unset |
-| `MYSQL_INNODB_BUFFER_MB` | dev only: the MySQL buffer pool; `64` when unset |
-| `RSX_AUTO_SECURITY_UPDATES` | `0` (or `false`/`no`/`off`) turns the automatic security updates off; on when unset (below) |
-| `RSPADE_SECURITY_UPDATE_HOURS` | hours between the scheduled security update checks; `4` when unset |
+| `RSPADE_REDIS_MEMORY_MB` | the Redis cap; scaled to the machine when unset |
+| `RSPADE_MEMORY_RESERVED_MB` | memory to leave alone beside the container's own reservation (a co-tenant, heavy PDF rendering, companion applications - which the sizing does not count); `0` when unset |
+| `RSPADE_MYSQL_BUFFER_MB` | dev only: the MySQL buffer pool; `64` when unset |
+| `PHP_SECURITY_UPDATES` | `0` (or `false`/`no`/`off`) turns the automatic security updates off; on when unset (below) |
+| `PHP_SECURITY_UPDATE_INTERVAL_HOURS` | hours between the scheduled security update checks; `4` when unset |
+
+`RSPADE_CONTAINER_TARGET` (`dev` or `prod`) is set by the image, not by you.
 
 ## Security updates
 
@@ -386,8 +403,10 @@ reach an unpatched PHP does not wait for an image rebuild, so the container does
   mirror never stops a container - and the scheduled check keeps trying.
 - **Every 4 hours** (within 10 minutes either side of the slot, so a fleet does not arrive at
   the PPA at once) the `security-updates` program checks again. When something was installed
-  it reloads php-fpm in place onto the new PHP (a request in flight at that instant is cut,
-  as on any php-fpm reload), restarts nginx when nginx changed, and leaves anything else that
+  it restarts php-fpm onto the new PHP without cutting a request: Proxority is held (new
+  requests wait, never refused), in-flight requests finish, php-fpm restarts, and the waiting
+  requests run once it answers (`security-update.sh` has the sequence). It restarts nginx
+  when nginx changed (connections open at that instant are cut), and leaves anything else that
   changed to load at the next container restart. Running CLI processes - task workers
   included - keep the PHP they started with and pick up the new one when they next start.
 
@@ -404,10 +423,10 @@ directory, which a `migrate` may be snapshotting.
 **Turning it off** is for an operator whose own change control installs updates:
 
 ```
-docker run -e RSX_AUTO_SECURITY_UPDATES=0 ...
+docker run -e PHP_SECURITY_UPDATES=0 ...
 ```
 
-or `RSX_AUTO_SECURITY_UPDATES: "0"` under the service's `environment:` in a compose file.
+or `PHP_SECURITY_UPDATES: "0"` under the service's `environment:` in a compose file.
 The `rsx:health` row then warns, so the decision stays visible.
 
 **It is a safety net, not the upgrade path.** A container that patches itself drifts from
@@ -480,38 +499,44 @@ on-demand task worker - and a box that cannot hold them runs out of memory under
 Everything else is ordinary `.env` configuration — see `.env.README` in the
 project root.
 
-## The image contract
+## The minimum image version
 
 The image and the checkout it runs are versioned apart: the image carries services and tools
 (rsx-lockd, Proxority, rspade-taskd, the retry runner, the dev mail catcher), and `system/` is
 the checkout a project pins. A checkout can depend on something only a newer image provides,
-so the two agree on one number:
+so it states the oldest image it runs on:
 
-- `image_contract.conf` (here) states the **image contract** this checkout needs, plus the
-  `breaking_changes` document of the release that last raised it. Its header says when to
-  raise it.
-- Every `dev` and `prod` image records the contract it provides at `/opt/rspade/image.conf`: a
-  copy of that same file, written in the stage's last layer, plus `built_from=<revision>`.
-  `build.sh` passes the revision of `system/` (`+modified` when this directory has uncommitted
-  changes); a plain `docker build` records `built_from=unknown`. `docconvert` records nothing.
-  An image with no record counts as contract 1 when it carries
-  `/opt/rspade/rsx-lockd/lockd-run.sh`, 0 otherwise.
+- `image_contract.conf` (here) holds `min_image_version=YYYY.MM.DD[.N]`. Its header says when
+  it moves: only when the framework starts to depend on something new in the container, with
+  the owner's approval, never above the newest published image (`bin/publish` refuses), and
+  with a `breaking_changes` document telling downstream to pull the image.
+- Every `dev` and `prod` image records what it is at `/opt/rspade/image.conf`: a copy of that
+  file, written in the stage's last layer, plus `built_from=<revision>` and
+  `image_version=<version>`. A published image records its version (the UTC build date,
+  `bin/publish_docker_images`); a `build.sh` image records `image_version=local`, which every
+  checkout accepts. `docconvert` records nothing.
 
-**Older image, newer checkout** - inside the RSpade container, four places say so with the
-same sentence naming the remedy (rebuild from this `system/` with `build.sh <target>`, recreate
-the container, see the breaking change):
+Versions compare numerically field by field (a missing `.N` is 0). An image with no record, or
+no dated `image_version`, counts as older.
+
+**Older image, newer checkout is FATAL inside the RSpade container**, with one sentence naming
+the remedy: `docker pull ghcr.io/rspade-framework/rspade-server-<target>:latest`, then recreate
+the container from it.
 
 | Where | What happens |
 |---|---|
-| the entrypoint, at every start | `[rspade] WARNING: <sentence>` and "Services this image cannot run will not start."; the start continues |
-| `rsx:maintenance:enable` / `:disable` | `[WARNING] <sentence>` first, then the transition as usual (`rsx:man maintenance_mode`, AN IMAGE OLDER THAN THE CHECKOUT) - until disable's wait for rsx-lockd finds the daemon cannot start: it repeats the sentence and exits 1, php-fpm not started, the flag up |
-| `rsx:framework:pull` | `[WARNING] <sentence>` from the pulled checkout, before the window is lowered |
+| the entrypoint, at every start | `[rspade] ERROR: <sentence>`; the container does not start |
+| every artisan command and `system/script.php` script | `[ERROR] <sentence>`, exit 1 - except `rsx:framework:pull`, `rsx:maintenance:enable` / `:disable`, `rsx:git` and `rsx:health` |
+| every web request | a 500 page carrying the sentence |
+| `rsx:framework:pull` | refuses a release whose minimum the running image does not meet, before changing anything (from the pull after the updater that carries the check) |
+| `rsx:maintenance:enable` / `:disable` | `[WARNING] <sentence>` first, then the transition as usual (`rsx:man maintenance_mode`) |
 | `rsx:health` | the "Container Image" row FAILs, in every mode |
 
-A newer image under an older checkout is fine, and nothing is compared outside the container.
-The readers are `system/bin/lib/rsx_image_contract.sh` (bash, needing nothing from the image)
-and `Rsx_Image_Contract` (PHP). The deploy order that includes the rebuild is
-`rsx:man prod`, IN THE RSPADE CONTAINER.
+A newer image under an older checkout is fine. Nothing is compared outside the container, and
+the framework authors' box (`IS_FRAMEWORK_DEVELOPER=true`, an image built on the host with no
+record) skips it, the entrypoint saying so in one line. The readers are
+`bootstrap/rsx_image_contract.php` (the pre-boot gate), `system/bin/lib/rsx_image_contract.sh`
+(bash, needing nothing from the image) and `Rsx_Image_Contract` (the health row).
 
 ## Waiting for a start
 
@@ -538,8 +563,8 @@ the executable not found).
 
 The record is `/run/rspade-startup` (`startup-state.sh`, installed as `rspade-startup`, has
 the format): `status=starting|started|failed`, the current `step`, `began_at` /
-`finished_at`, `error=` on a failure, `warning=` with the image-contract sentence when the
-start printed one, and PID 1's start time, so a record left from an earlier start of the same
+`finished_at`, `error=` on a failure, `warning=` when the minimum image version check was
+skipped, and PID 1's start time, so a record left from an earlier start of the same
 container is never read as this one.
 
 **`rsx:build` and `rsx:clean` refuse while the container is still starting** - the start is
@@ -550,18 +575,28 @@ refused, and without a record nothing is.
 
 ## First boot
 
-1. Creates `.env` from `.env.dist` if absent.
-2. Generates `APP_KEY` if blank.
+The order of a start (the entrypoint's numbered steps):
+
+1. Refuses to start on an image older than the checkout's minimum image version (above).
+2. Creates `.env` from `.env.dist` if absent, and generates `APP_KEY` if blank (development).
 3. Sets `APP_URL` from `RSPADE_APP_URL`.
-4. **dev**: generates first-user credentials if blank and prints them once.
-   **prod**: refuses to start rather than inventing a credential.
-5. Unpacks a pristine MySQL data directory (dev, empty volume only).
-6. Starts supervisor.
-7. Waits for the database — without a deadline, because a slow start is normal
+4. **prod**: refuses to start without `RSPADE_DEFAULT_EMAIL` / `RSPADE_DEFAULT_PASSWORD`
+   rather than inventing a credential. **dev** creates no user here: the first-run screen asks.
+5. Unpacks a pristine MySQL data directory (dev, empty volume only), sizes the services to
+   the machine, installs security updates.
+6. Starts supervisor - the infrastructure only (Services, above).
+7. Waits for Redis and the database - without a deadline, because a slow start is normal
    and a timeout would turn "wait longer" into a failed boot.
 8. Provisions databases (dev, first boot only).
-9. **dev**: migrates. **prod**: reports pending migrations and leaves them.
+9. Builds and migrates:
+   - `RSPADE_BUILD_MIGRATE_ON_START=1`: `rsx:build` (`--force` in debug and production
+     mode), then `migrate --force`; a failure stops the container.
+   - off: **dev** migrates (a failure is warned about); **prod** reports pending migrations
+     and leaves them.
+   What a build or migrate wrote (they run as root) is handed back to the application's user
+   - the `PUID` identity, or `www-data` on the prod image - as step 5 handed it over.
 10. Runs `rsx/resource/docker/configure.sh` if present.
+11. Starts the web and worker services, then records the start finished (`RSpade is up`).
 
 Every step is idempotent; a restart finds its work done and says nothing.
 

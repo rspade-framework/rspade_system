@@ -111,11 +111,11 @@ PHP, no Node, no MySQL on your machine.
 ```bash
 git clone --recurse-submodules <your-project-url> my-app
 cd my-app
-bash system/app/RSpade/resource/docker/build.sh
 docker compose up
 ```
 
-Open **http://localhost:8080**. On a fresh database the application takes you
+The first start downloads the RSpade development image once. Then open
+**http://localhost:8080**. On a fresh database the application takes you
 through its own setup screens — it asks for its own address, then for the account
 you want to sign in with. There is no `.env` to write first and no install step.
 
@@ -132,8 +132,9 @@ A few things worth knowing before they surprise you:
 - **Everything the application writes lives under `storage/`** — the database, the
   uploads, the logs. It is gitignored, and it is the whole of the state. Back the
   project up by copying the directory.
-- **Add Claude Code to the image** with `build.sh --claude` if you intend to use
-  it. See [section 20](#20-working-with-an-ai-assistant).
+- **Running it some other way** - plain `docker run`, a GUI database client, a
+  reverse proxy, updating the image - is covered in
+  [Development environment](https://github.com/rspade-framework/rspade_system/tree/master/app/RSpade/docs/developer/DEVELOPMENT_ENVIRONMENT.md).
 
 ---
 
@@ -1119,15 +1120,16 @@ the DOM — so an assistant can make a change, load the affected screen, see
 whether it actually worked, and iterate. Combined with `rsx:check` and
 `rsx:test`, that closes the loop without a human in it for the routine parts.
 
-Build the image with it included, then start a session inside the container:
+Start a session inside the container:
 
 ```bash
-bash system/app/RSpade/resource/docker/build.sh --claude
 docker compose exec app claude
 ```
 
-Your login, settings and history live in `storage/.claude` in the project, so
-they survive rebuilds. That directory is gitignored.
+The first `claude` installs Claude Code into the container, and it keeps itself
+up to date from then on. Your login, settings and history live in
+`storage/.claude` in the project, so they survive a new image. That directory is
+gitignored.
 
 Run it inside the container rather than on your host — that is where the project,
 the tooling, the documentation and the RSpade git proxy all are.
@@ -1152,6 +1154,12 @@ looking for — which, after this document, you do.
 **The template application is the other reference.** Every screen in it is built
 the way the framework intends. When you are unsure how something should look,
 open the equivalent screen in `rsx/app/frontend/` and copy its shape.
+
+**Running and operating the box** has its own guides:
+[Development environment](https://github.com/rspade-framework/rspade_system/tree/master/app/RSpade/docs/developer/DEVELOPMENT_ENVIRONMENT.md),
+[System administration](https://github.com/rspade-framework/rspade_system/tree/master/app/RSpade/docs/operations/SYSTEM_ADMINISTRATION.md)
+and
+[Production deployment](https://github.com/rspade-framework/rspade_system/tree/master/app/RSpade/docs/operations/PRODUCTION_DEPLOYMENT.md).
 
 **Full online documentation is coming to [rspade.org](https://rspade.org/).**
 

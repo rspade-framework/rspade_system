@@ -208,7 +208,8 @@ FRAMEWORK INVENTORY
         Companion Daemon            all
         Container Image             all           INFO outside the RSpade
                                                   container; FAIL in every mode
-                                                  when the image is older
+                                                  when the image is older than
+                                                  the minimum image version
         Console Debug               debug, prod   names which sealed variant
                                                   this is
         Document Render Backlog     all
@@ -467,23 +468,25 @@ FRAMEWORK INVENTORY
                                  controller refuses --memory, the seam drops the cap
                                  (once per process) and converts without it, and the
                                  row repeats the daemon's refusal.
-        Container Image          whether the RSpade container's image provides the
-                                 image contract this checkout needs: the image's
-                                 record (/opt/rspade/image.conf) against the
-                                 checkout's system/app/RSpade/resource/docker/
-                                 image_contract.conf. OK naming the image's
-                                 contract, the revision it was built from and what
-                                 the checkout needs. FAIL in every mode when the
-                                 image is older - a service the checkout expects the
-                                 image to provide cannot start - with the sentence
-                                 naming the rebuild, the recreate and the breaking
-                                 change, and the build.sh command as remediation.
-                                 FAIL naming the file when a record or requirement
-                                 is malformed. An image with no record counts as
-                                 contract 1 when it carries /opt/rspade/rsx-lockd/
-                                 lockd-run.sh, 0 otherwise. A newer image is OK.
-                                 INFO outside the container. rsx:man prod, IN THE
-                                 RSPADE CONTAINER.
+        Container Image          whether the RSpade container's image meets this
+                                 checkout's minimum image version: the image's
+                                 image_version (/opt/rspade/image.conf) against the
+                                 min_image_version in system/app/RSpade/resource/
+                                 docker/image_contract.conf, dated versions compared
+                                 field by field. OK naming the image's version, the
+                                 revision it was built from and the minimum. FAIL
+                                 in every mode when the image is older, or records
+                                 no dated version, with the sentence naming the
+                                 image to pull and, as remediation, the docker pull
+                                 and the recreate - the same image fails every other
+                                 command and every web request, and stops the
+                                 container's start. image_version=local (a build.sh
+                                 image) is OK. FAIL naming the file when the
+                                 checkout's requirement is malformed. INFO outside
+                                 the container and on the framework authors' box
+                                 (IS_FRAMEWORK_DEVELOPER). rsx:health itself always
+                                 runs, to report it. rsx:man prod, IN THE RSPADE
+                                 CONTAINER.
         Lock Server              rsx-lockd listening and answering (INFO under
                                  maintenance; WARN when it speaks an older protocol
                                  than the framework - the stall watchdog is off)
@@ -565,7 +568,7 @@ FRAMEWORK INVENTORY
                                  workers, the web/Ajax split and which ceiling
                                  decided them (RAM, RAM + swap at the memory limit,
                                  cores, the 140-process cap, the floor of 2, or
-                                 PHP_FPM_WORKER_COUNT); task workers, scheduled and
+                                 RSPADE_PHP_WORKERS); task workers, scheduled and
                                  on demand; memory_limit; the Redis cap; what is
                                  reserved - a figure a switch set is marked "(set)".
                                  A box the cap held back, with no count set by hand,
@@ -582,7 +585,7 @@ FRAMEWORK INVENTORY
                                  version and when it was last checked; WARN when
                                  no check has run (an image that predates the
                                  feature - pull or rebuild it), when it is off
-                                 (RSX_AUTO_SECURITY_UPDATES=0), when the last
+                                 (PHP_SECURITY_UPDATES=0), when the last
                                  check failed, and when installed packages wait
                                  for a container restart. INFO outside the
                                  container: the host's package manager owns PHP

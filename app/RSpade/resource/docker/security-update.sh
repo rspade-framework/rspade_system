@@ -29,16 +29,34 @@
 # running yet, so nothing needs restarting: supervisor starts every service on what is
 # now installed.
 #
-# SCHEDULED: one attempt. When anything was installed php-fpm is reloaded - USR2 to its
-# master re-executes the new binary and its libraries on the same process and sockets,
-# replacing the workers (a request in flight at that instant is cut, as on any php-fpm
-# reload). nginx is restarted when an nginx package changed. Anything else that changed
-# (a library under redis, supervisor, the node services) loads at the next container
-# restart, and the status says so. Running CLI processes - task workers included - keep
-# the binary they started with and pick up the new one when they next start.
+# SCHEDULED: one attempt. When anything was installed php-fpm is restarted onto the new
+# binary and libraries WITHOUT CUTTING A REQUEST, through Proxority (every PHP request
+# passes through it):
 #
-# OFF SWITCH: RSX_AUTO_SECURITY_UPDATES=0 (or false/no/off) in the container's environment,
-# e.g. `docker run -e RSX_AUTO_SECURITY_UPDATES=0 ...`. On by default.
+#     1. proxority hold --holder-pid=<this script>   new requests wait, parked, never
+#                                                     refused; returns once nothing is in
+#                                                     flight at php-fpm
+#     2. supervisorctl restart php-fpm
+#     3. wait until php-fpm answers its status page (127.0.0.1:3201/_fpm_status)
+#     4. proxority release                            the parked requests run on the new PHP
+#
+# None of the waits has a deadline; the pause between status probes is a cadence. An EXIT
+# trap releases the hold on every way out after step 1 (a failed restart, a signal), and a
+# holder that dies outright is released by Proxority itself, which watches the pid. Where
+# Proxority is not running (or the hold fails) php-fpm is reloaded instead: USR2 to its
+# master re-executes the new binary on the same process and sockets, replacing the workers,
+# and a request in flight at that instant is cut.
+#
+# nginx is restarted when an nginx package changed (connections open at that instant are
+# cut): its graceful binary upgrade (USR2, then QUIT to the old master) hands the listening
+# sockets to a NEW master process that supervisor does not track, so under supervisor the
+# restart is the clean way. Anything else that changed (a library under redis, supervisor,
+# the node services) loads at the next container restart, and the status says so. Running
+# CLI processes - task workers included - keep the binary they started with and pick up the
+# new one when they next start.
+#
+# OFF SWITCH: PHP_SECURITY_UPDATES=0 (or false/no/off) in the container's environment,
+# e.g. `docker run -e PHP_SECURITY_UPDATES=0 ...`. On by default.
 #
 # REPORTS to /var/lib/rspade/security-updates.json, which the rsx:health "Security Updates"
 # row reads. Never exits non-zero: a failed check must not stop a container or a program.
@@ -50,6 +68,13 @@ STATUS_DIR="${2:-/var/lib/rspade}"
 STATUS_FILE="$STATUS_DIR/security-updates.json"
 RETRY_PAUSE_SECONDS=60
 
+# php-fpm's status page on the loopback nginx listener (nginx/site.conf, :3201): answering
+# means php-fpm is up and accepting work.
+FPM_STATUS_URL="http://127.0.0.1:3201/_fpm_status"
+
+# Seconds between status probes while php-fpm restarts: a cadence, not a deadline.
+FPM_PROBE_PAUSE_SECONDS=1
+
 export DEBIAN_FRONTEND=noninteractive
 
 # One collation for sort and join below: join requires its inputs sorted the way it compares.
@@ -57,16 +82,21 @@ export LC_ALL=C
 
 say() { echo "[security-updates] $*"; }
 
+# Whether a switch is on: 0/false/no/off is off, anything else (1/true/yes/on) is on.
+switch_on() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        0|false|no|off) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 case "$MODE" in
     startup|scheduled) ;;
     *) say "unknown mode '$MODE' (startup|scheduled)"; exit 0 ;;
 esac
 
 enabled() {
-    case "$(printf '%s' "${RSX_AUTO_SECURITY_UPDATES:-1}" | tr '[:upper:]' '[:lower:]')" in
-        0|false|no|off) return 1 ;;
-        *) return 0 ;;
-    esac
+    switch_on "${PHP_SECURITY_UPDATES:-1}"
 }
 
 # Every installed package and its version, one per line, sorted - compared before and after.
@@ -114,9 +144,60 @@ attempt() {
     return 0
 }
 
+# The old reload: USR2 to the php-fpm master re-executes the new binary in place.
+reload_php_fpm() {
+    local master
+    master="$(pgrep -f 'php-fpm: master process' | head -n1)"
+    if [ -n "$master" ]; then
+        say "reloading php-fpm (master $master) onto PHP $(php_version)..."
+        kill -USR2 "$master"
+    fi
+}
+
+HELD=0
+
+release_hold() {
+    [ "$HELD" = 1 ] || return 0
+    HELD=0
+    proxority release || say "WARNING: proxority release failed; Proxority releases the hold itself once this process ends"
+}
+
+# Hold Proxority, restart php-fpm, wait until it answers, release. Answers non-zero, having
+# done nothing, when Proxority is not running or refuses the hold.
+restart_php_fpm_held() {
+    command -v proxority >/dev/null 2>&1 || return 1
+    proxority status >/dev/null 2>&1 || return 1
+
+    say "holding Proxority; waiting for the requests in flight to finish..."
+    # The trap is set first: a signal between the hold and the release still releases.
+    trap release_hold EXIT
+    trap 'exit 143' TERM INT HUP
+    HELD=1
+    if ! proxority hold --reason="php security update" --holder-pid="$$"; then
+        say "WARNING: proxority hold failed"
+        # Whatever state the failure left behind, this process does not keep a hold.
+        release_hold
+        return 1
+    fi
+
+    say "restarting php-fpm onto PHP $(php_version)..."
+    if supervisorctl restart php-fpm; then
+        say "waiting for php-fpm to answer..."
+        until curl -fsS -o /dev/null "$FPM_STATUS_URL" 2>/dev/null; do
+            sleep "$FPM_PROBE_PAUSE_SECONDS"
+        done
+        say "php-fpm answers."
+    else
+        say "WARNING: php-fpm did not restart"
+    fi
+
+    release_hold
+    return 0
+}
+
 if ! enabled; then
-    say "automatic security updates are off (RSX_AUTO_SECURITY_UPDATES=${RSX_AUTO_SECURITY_UPDATES})."
-    write_status disabled "Turned off by RSX_AUTO_SECURITY_UPDATES." "" false
+    say "automatic security updates are off (PHP_SECURITY_UPDATES=${PHP_SECURITY_UPDATES})."
+    write_status disabled "Turned off by PHP_SECURITY_UPDATES." "" false
     exit 0
 fi
 
@@ -161,11 +242,7 @@ printf '%s\n' "$upgraded" | sed 's/^/    /'
 
 restart=false
 if [ "$MODE" = scheduled ]; then
-    master="$(pgrep -f 'php-fpm: master process' | head -n1)"
-    if [ -n "$master" ]; then
-        say "reloading php-fpm (master $master) onto PHP $(php_version)..."
-        kill -USR2 "$master"
-    fi
+    restart_php_fpm_held || reload_php_fpm
 
     if printf '%s\n' "$upgraded" | grep -q '^nginx'; then
         say "restarting nginx..."

@@ -1,0 +1,76 @@
+# RSpade development environment.
+#
+#     docker compose up
+#
+# Then open http://localhost:8080 and follow the setup screens: the application
+# asks for its own address, then for the account you want to sign in with.
+#
+# TO CHANGE THE PORT, change it below. Nothing else needs to agree with it: the
+# application learns its own address from the first request you make, on the
+# welcome screen, so whatever host and port you actually browse is the one it
+# records - localhost, a machine name, or a LAN address alike.
+#
+# There is deliberately no ${VARIABLE} interpolation anywhere in this file.
+# Compose reads .env from this directory for its own substitution, and that is
+# the application's .env - with no interpolation here, that read is harmless.
+
+services:
+  app:
+    # The published development image (x86 and arm64). `docker compose up` pulls it
+    # the first time; `docker compose pull` fetches a newer one, and
+    # `docker compose up -d` then recreates the container on it.
+    image: ghcr.io/rspade-framework/rspade-server-dev:latest
+
+    ports:
+      - "8080:80"
+
+    # Docker's default json-file log driver never rotates what the container
+    # prints; `local` rotates and compresses it.
+    logging:
+      driver: local
+
+    # LINUX USERS: uncomment these and set them to your own ids, so files the
+    # application writes - including the database in storage/mysql_data - belong
+    # to you rather than to root, and you can move or delete your own project
+    # without sudo:
+    #
+    #     id -u    # -> PUID
+    #     id -g    # -> PGID
+    #
+    # macOS and Windows do not need this - Docker Desktop already presents every
+    # file as yours - and leaving it commented changes nothing.
+    #
+    # environment:
+    #   PUID: "1000"
+    #   PGID: "1000"
+
+    volumes:
+      # Your project. Edit files on your machine; the container serves them.
+      - .:/var/www/html
+      # The database, kept in your project under storage/ (which is gitignored)
+      # so you can see it, back it up by copying a directory, and keep it across
+      # a `docker compose down -v` that would have destroyed a named volume.
+      #
+      # LINUX HOSTS: this is the right default. MACOS AND WINDOWS: if MySQL fails
+      # to start with errors about file locking or InnoDB, your Docker Desktop
+      # filesystem layer is the reason - swap this one line for a named volume
+      # (`- rspade-mysql:/var/lib/mysql`, plus a top-level `volumes:` block
+      # declaring `rspade-mysql:`) and everything else keeps working.
+      #
+      # The directory arrives empty; the container initialises it on first boot.
+      - ./storage/mysql_data:/var/lib/mysql
+      # Claude Code's settings, login and history. Kept in your project (under
+      # storage/, which is gitignored) so they survive `docker compose down` and
+      # a new image does not sign you out.
+      - ./storage/.claude:/root/.claude
+
+    # Lets the container stop cleanly rather than being killed mid-write.
+    #
+    # This is the REAL ceiling on shutdown: docker SIGKILLs the whole container when it
+    # expires, whatever supervisor promised its programs. It was 30s while supervisor
+    # gave mysqld 60s to flush, so mysqld could never actually use the window it was
+    # given - docker killed it at half time, mid-flush, which is how an InnoDB datadir
+    # gets corrupted. mysqld exits when it has finished flushing; it is not on a clock,
+    # so neither is this. `docker compose down` therefore waits for a clean stop. If a
+    # process is genuinely wedged, kill it deliberately (docker kill) - having looked.
+    stop_grace_period: 24h

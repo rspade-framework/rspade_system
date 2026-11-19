@@ -21,6 +21,11 @@ SYNOPSIS
         php artisan rsx:manifest:get_build_key
         php artisan rsx:manifest:get_state_key
 
+    Run the published production image (THE PRODUCTION IMAGE):
+        docker run -d --name my-app --stop-timeout 86400 \
+          -v /srv/my-app:/var/www/html \
+          ghcr.io/rspade-framework/rspade-server-prod:latest
+
     Take the site down and bring it back:
         php artisan rsx:maintenance:enable --reason="..."
         php artisan rsx:maintenance:disable
@@ -318,31 +323,174 @@ THE RECOMMENDED DEPLOYMENT
         php artisan rsx:build --force
         php artisan migrate
 
+  THE PRODUCTION IMAGE
+    RSpade publishes its container images on GitHub Container Registry, each
+    one tag covering x86 (linux/amd64) and ARM (linux/arm64):
+
+        ghcr.io/rspade-framework/rspade-server-prod   production
+        ghcr.io/rspade-framework/rspade-server-dev    development
+        ghcr.io/rspade-framework/rspade-docconvert    the document sandbox
+
+    Each version is tagged with its build date (2026.11.19, or 2026.11.19.2
+    for a second build that day) and the newest also as latest; a version
+    tag never changes. Pull latest, or pin a version tag to choose when the
+    image moves. The image records its own version as image_version= in
+    /opt/rspade/image.conf.
+
+    The production image is the development runtime without the database
+    server: you provide MySQL and name it in .env. It runs PHP as www-data
+    in a pool sized to the machine at every start, migrates only when told
+    to (RSPADE_BUILD_MIGRATE_ON_START, below), and creates nothing - a blank
+    credential stops the start rather than being invented. The application is not in the image: the project
+    is mounted at /var/www/html, so one image serves any checkout.
+
+    Before the first start, .env (in the project root, created from
+    .env.dist if absent) must carry:
+
+        APP_KEY                       generated in development; production
+                                      refuses to mint one
+        APP_URL                       the https address people type
+        DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD
+                                      your MySQL server
+        RSPADE_DEFAULT_EMAIL, RSPADE_DEFAULT_PASSWORD
+                                      the first account, created by the
+                                      first migrate
+        TRUSTED_PROXIES               the proxy in front of the container
+                                      (or RSPADE_TRUSTED_PROXIES on the
+                                      container; BEHIND A LOAD BALANCER)
+
+    The container holds no certificate. A proxy terminates TLS and forwards
+    to port 8000, which tells the application the visitor is on https; port
+    80 is plain http for a container with nothing in front of it. On a
+    docker network shared with the proxy, publish nothing:
+
+        docker run -d --name my-app --network web \
+          --restart unless-stopped \
+          --stop-timeout 86400 \
+          -v /srv/my-app:/var/www/html \
+          ghcr.io/rspade-framework/rspade-server-prod:latest
+
+        docker exec my-app rspade-wait-started
+
+    --stop-timeout lets a stop finish whatever is mid-write instead of
+    being killed after docker's default 10 seconds. rspade-wait-started
+    blocks until the container has finished starting and exits non-zero
+    when the start failed (the "[rspade] ERROR:" line is in docker logs).
+    Every php artisan below runs inside it: docker exec my-app php artisan
+    <command>.
+
+    FIRST INSTALL, on an empty database:
+
+        docker exec my-app php artisan rsx:mode:set prod   # build + seal
+        docker exec my-app php artisan migrate
+        docker exec my-app php artisan rsx:health
+
+    CONTAINER SWITCHES, set with -e on docker run (or environment: in a
+    compose file). Booleans take 1/0, true/false, yes/no or on/off.
+
+        RSPADE_TRUSTED_PROXIES        the proxy in front of the container,
+                                      when .env TRUSTED_PROXIES is blank
+        RSPADE_APP_URL                written into .env as APP_URL at start
+        RSPADE_BUILD_MIGRATE_ON_START 1 makes every start a deployment:
+                                      php artisan rsx:build --force (build
+                                      and reseal), then php artisan migrate
+                                      --force, BEFORE the web server or the
+                                      task scheduler starts. A failure of
+                                      either stops the container, the output
+                                      in docker logs, nothing served. The
+                                      migrate is BARE - no --dump-rollback,
+                                      no automatic undo - so snapshot the
+                                      database before starting the container
+                                      with it (A DEPLOY WITH THE SWITCH,
+                                      below). Start ONE container with it: two
+                                      starting at once migrate the same
+                                      database twice. Off by default: the
+                                      start then reports pending migrations
+                                      and runs none.
+        RSPADE_LOG_TO_DOCKER          1 echoes the nginx access log and the
+                                      Laravel log's ERROR-and-above entries
+                                      (with their stack traces) onto docker
+                                      logs. Docker's default json-file log
+                                      driver never rotates, so run such a
+                                      container with --log-driver local
+                                      (compose: logging: driver: local).
+
+    Everything else the container reads (worker counts, memory limits, the
+    security update schedule) defaults to values sized to the machine and
+    rarely needs setting: resource/docker/README.md, Environment.
+
+    A DEPLOY WITH THE SWITCH:
+
+        docker pull ghcr.io/rspade-framework/rspade-server-prod:latest
+        docker stop my-app && docker rm my-app
+        git -C /srv/my-app pull --recurse-submodules   # the project
+        <snapshot the database: a filesystem or cloud volume snapshot>
+        docker run -d --name my-app -e RSPADE_BUILD_MIGRATE_ON_START=1 ...
+        docker exec my-app rspade-wait-started
+
+    Rolling back is the reverse: restore the snapshot, then start the
+    previous image tag on the previous checkout.
+
+    UPDATING THE IMAGE is a pull and a recreate with the same arguments.
+    The project, storage/ and the database live outside the container, so
+    nothing is lost; raise maintenance first so nothing is mid-request:
+
+        docker exec my-app php artisan rsx:maintenance:enable --reason="image update"
+        docker pull ghcr.io/rspade-framework/rspade-server-prod:latest
+        docker stop my-app && docker rm my-app
+        docker run -d --name my-app ...          # the same arguments
+        docker exec my-app rspade-wait-started
+        docker exec my-app php artisan rsx:maintenance:disable
+
+    The recreated container comes up still in maintenance (the flag is
+    under storage/), so the web answers 503 until the disable.
+
   IN THE RSPADE CONTAINER
     The container image and system/ are versioned apart: the image carries
     services and tools (rsx-lockd, Proxority, the task scheduler, the retry
     runner), and a checkout can need more of them than an older image has.
-    The checkout states what it needs as an IMAGE CONTRACT number in
-    system/app/RSpade/resource/docker/image_contract.conf; every image built
-    from it records the number it provides in /opt/rspade/image.conf. When a
-    release raises the number it ships a breaking_changes document, and the
-    image has to be rebuilt from that checkout before its services can run.
+    The checkout states the OLDEST IMAGE IT RUNS ON as min_image_version
+    (a dated version, YYYY.MM.DD[.N]) in
+    system/app/RSpade/resource/docker/image_contract.conf; every image
+    records its own version as image_version= in /opt/rspade/image.conf.
+    The minimum moves only when the framework starts to depend on something
+    new in the container, and a release that moves it ships a
+    breaking_changes document.
+
+    AN IMAGE OLDER THAN THE MINIMUM IS FATAL inside the container - as is
+    one with no record or no dated image_version. The container does not
+    start, every artisan command and script refuses, and every web request
+    answers 500, each with:
+
+        This container's image (version <X>) is older than this checkout
+        needs (<Y> or newer): docker pull
+        ghcr.io/rspade-framework/rspade-server-<target>:latest, then
+        recreate the container from it.
+
+    rsx:framework:pull, rsx:maintenance:enable / :disable, rsx:git and
+    rsx:health still run (the levers that get a box back in step; health
+    FAILs its "Container Image" row), and rsx:framework:pull refuses a
+    release whose minimum the running image does not meet, before changing
+    anything. An image built locally with build.sh records
+    image_version=local and always passes; a newer image under an older
+    checkout is fine. Outside the RSpade container none of this applies.
 
     The deploy, in order:
 
         1. php artisan rsx:maintenance:enable --reason="deploying <version>"
         2. sync the checkout (and system/)
-        3. when the checkout needs a newer image - rsx:framework:pull prints
-           "[WARNING] This container's image ... is older than this checkout
-           needs", and rsx:health FAILs its "Container Image" row - build the
-           image from that system/ and recreate the container:
-               bash system/app/RSpade/resource/docker/build.sh <dev|prod>
-               docker compose up --detach --force-recreate
-               docker compose exec <service> rspade-wait-started
+        3. when the checkout needs a newer image (rsx:health FAILs its
+           "Container Image" row; commands refuse with the sentence above),
+           pull the current published image and recreate the container on
+           it (THE PRODUCTION IMAGE, above):
+               docker pull ghcr.io/rspade-framework/rspade-server-prod:latest
+               docker stop <name> && docker rm <name>
+               docker run -d --name <name> ...    # the same arguments
+               docker exec <name> rspade-wait-started
            rspade-wait-started blocks, with no deadline, until the
            container has finished starting: exit 0 when it has. A start
            that FAILS stops the container, so the exec returns non-zero and
-           the "[rspade] ERROR:" line is in docker compose logs <service>.
+           the "[rspade] ERROR:" line is in docker logs <name>.
            Until the start finishes, rsx:build and rsx:clean refuse ("The
            container is still starting").
         4. php artisan migrate --dump-rollback
@@ -352,23 +500,14 @@ THE RECOMMENDED DEPLOYMENT
 
     Migrate stays before the build, for the reason above: the build about to
     be served never runs against a schema older than the one it was written
-    for.
+    for. A deploy with RSPADE_BUILD_MIGRATE_ON_START (THE PRODUCTION IMAGE,
+    above) replaces steps 4 and 5 with the start's own build and migrate.
 
     A RECREATED CONTAINER COMES UP STILL IN MAINTENANCE. The flag lives under
     storage/, which persists, so the new container's supervisor starts every
     service while the web answers 503 until step 6 lowers it.
 
-    Skipping step 3 is not refused. rsx:maintenance:enable and :disable each
-    open with the same [WARNING] and then do their whole job; the services
-    this image cannot run (a program the checkout expects the image to
-    provide) do not start until the container runs an image built from this
-    checkout - and disable waits for rsx-lockd to answer before starting
-    php-fpm, so a lock daemon the image cannot run stops it there: it exits
-    1 naming the cause, with php-fpm not started and the flag still up
-    (rsx:man maintenance_mode, THE ONE EXCEPTION). The entrypoint prints the
-    same sentence at every start. A newer image under an
-    older checkout is fine. Outside the RSpade container none of this applies.
-    resource/docker/README.md, The image contract.
+    resource/docker/README.md, The minimum image version.
 
   BUILD AND MIGRATE
     A build holds CODE FACTS ONLY - which models exist and which table each

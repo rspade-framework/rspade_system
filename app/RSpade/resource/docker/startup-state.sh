@@ -7,13 +7,13 @@
 #
 #     begin              a start begins: status=starting, a fresh record
 #     step <text>        what the start is doing now ("waiting for the database")
-#     warning <text>     a warning the start printed (the image-contract sentence)
+#     warning <text>     a warning the start printed (the minimum image version skipped)
 #     started            the start finished: status=started
 #     failed <message>   the start failed: status=failed, error=<message>
 #     wait               block until the start has finished (rspade-wait-started)
 #
 # The entrypoint (entrypoint.sh) is the only writer: `begin` as its first statement, `step`
-# at each numbered section, `warning` with the image-contract sentence, `started` right
+# at each numbered section, `warning` when the minimum image version check is skipped, `started` right
 # before "RSpade is up" (and before a command passed to the container runs), `failed` from
 # die(). Docker's health check is a different question - it is healthy during maintenance by
 # design, so `docker compose up --wait` cannot tell "starting" from "started". This can.

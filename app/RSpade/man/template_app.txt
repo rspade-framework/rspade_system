@@ -145,7 +145,7 @@ DISTRIBUTION
 
         system/app/RSpade/resource/starter/README.md
 
-    (in this monorepo, a symlink back to the publish asset; excluded from the main system/
+    beside the shipped docker-compose.yml (in this monorepo, a symlink back to the publish asset; excluded from the main system/
     rsync and materialized as a real file, exactly as reference_app is). The script rewrites
     only while the project's README.md is cmp-identical to that copy. An edited README, an
     already-personalized one, or a release too old to carry the pristine copy is a silent

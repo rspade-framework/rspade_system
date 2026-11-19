@@ -8,6 +8,7 @@
  * Everything that has to happen before Composer's autoloader is required and Laravel
  * boots: the path resolver and its writability assertions, the .env and build link
  * guards, the submodule sync guard, the environment heal, the container gate, the
+ * minimum image version gate, the
  * `--_` internal-flag strip, the boot-free command interceptions, and the maintenance
  * gate that defines RSPADE_MAINT_MODE.
  *
@@ -231,6 +232,25 @@ function rsx_preboot(array $options = []): void
     */
 
     require __DIR__ . '/rsx_container_gate.php';
+
+    /*
+    |--------------------------------------------------------------------------
+    | Minimum Image Version (pre-boot, inside the RSpade container only)
+    |--------------------------------------------------------------------------
+    |
+    | An image older than this checkout's min_image_version refuses the process,
+    | naming the image to pull. Exempt: the boot-free repair commands (a pull is how
+    | a checkout and its image get back in step, and maintenance mode and rsx:git
+    | must stay usable on any tree) and rsx:health, which reports the same problem as
+    | its "Container Image" row. Skipped outside the container and on the framework
+    | authors' box. bootstrap/rsx_image_contract.php has the rules.
+    |
+    */
+
+    require_once __DIR__ . '/rsx_image_contract.php';
+    if (!rsx_image_contract_exempt($script_mode ? null : ($_SERVER['argv'][1] ?? null))) {
+        rsx_image_contract_gate();
+    }
 
     /*
     |--------------------------------------------------------------------------

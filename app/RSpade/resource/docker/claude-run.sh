@@ -26,8 +26,11 @@ run_installer() {
 }
 
 maybe_update() {
-    # An escape hatch for anyone who wants a fixed version, or is offline.
-    [ "${RSPADE_CLAUDE_NO_UPDATE:-0}" = 1 ] && return 0
+    # An escape hatch for anyone who wants a fixed version, or is offline:
+    # CLAUDE_AUTO_UPDATE=0 (or false/no/off) runs the installed version as it is.
+    case "$(printf '%s' "${CLAUDE_AUTO_UPDATE:-1}" | tr '[:upper:]' '[:lower:]')" in
+        0|false|no|off) return 0 ;;
+    esac
 
     # Not installed - which happens after the binary's own directory is lost to a
     # container recreate, since only ~/.claude is persisted, not ~/.local/bin.

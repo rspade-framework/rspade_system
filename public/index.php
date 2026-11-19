@@ -281,6 +281,23 @@ if (file_exists($__rsx_migrating_flag)) {
 
 /*
 |--------------------------------------------------------------------------
+| Minimum Image Version
+|--------------------------------------------------------------------------
+|
+| Inside the RSpade container, an image older than this checkout's
+| min_image_version answers every request with a 500 naming the image to pull.
+| After the maintenance and migration gates, whose 503s describe a window that
+| ends by itself. One stat outside the container, one stat and two small reads
+| inside it; skipped on the framework authors' box.
+| bootstrap/rsx_image_contract.php has the rules.
+|
+*/
+
+require_once __DIR__ . '/../bootstrap/rsx_image_contract.php';
+rsx_image_contract_gate();
+
+/*
+|--------------------------------------------------------------------------
 | Live-Stack Test Probe
 |--------------------------------------------------------------------------
 |

@@ -214,7 +214,7 @@ class Retry_Run_Stale_Pidfile_Test extends Rsx_Test_Abstract
     {
         $runner = (string) file_get_contents(static::__runner());
 
-        foreach (['rsx-lockd' => '/var/run/rsx-lockd.pid', 'nginx' => '/run/nginx.pid', 'mysql' => '/var/run/mysqld/mysqld.sock.lock', 'dockerd' => '/var/run/docker.pid'] as $label => $file) {
+        foreach (['rsx-lockd' => '/var/run/rsx-lockd.pid', 'nginx' => '/run/nginx.pid', 'mysql' => '/var/run/mysqld/mysqld.sock.lock'] as $label => $file) {
             static::__assert_true((bool) preg_match('/^\s+' . preg_quote($label, '/') . '\)\s*$/m', $runner), "the runner has an entry for {$label}");
             static::__assert_true(str_contains($runner, "'{$file}|"), "{$label}'s {$file} is checked");
         }
@@ -225,7 +225,7 @@ class Retry_Run_Stale_Pidfile_Test extends Rsx_Test_Abstract
         $mysql = (string) file_get_contents(base_path('app/RSpade/resource/docker/supervisor/conf.d/mysql.conf'));
         static::__assert_true(str_contains($mysql, 'command=bash /usr/local/bin/rspade-retry-run --exec mysql /usr/sbin/mysqld'), 'mysql starts through --exec');
 
-        $dockerd = (string) file_get_contents(base_path('app/RSpade/resource/docker/dockerd-run.sh'));
-        static::__assert_true(str_contains($dockerd, 'exec bash /usr/local/bin/rspade-retry-run --exec dockerd dockerd'), 'dockerd starts through --exec');
+        static::__assert_true(!file_exists(base_path('app/RSpade/resource/docker/dockerd-run.sh')), 'the image ships no dockerd launcher (no Docker Engine in the image)');
+        static::__assert_true(!(bool) preg_match('/^\s+dockerd\)\s*$/m', $runner), 'the runner has no dockerd entry');
     }
 }

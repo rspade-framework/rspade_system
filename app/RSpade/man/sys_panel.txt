@@ -87,7 +87,7 @@ DESCRIPTION
     revalidate_freq, JIT; statistics only when the cache runs in that
     process and opcache.restrict_api allows them) and Extensions. Inside an
     RSpade container (/.rspade_container) it adds one card per php-fpm pool
-    (www and ajax: pm, max_children, start/min/max spare servers,
+    (www: pm, max_children, start/min/max spare servers,
     max_requests, idle timeout, user, listen, read from the pool files of
     the running PHP version) and a table of the services supervisor runs
     with their state. A value that cannot be read on this box is shown as a

@@ -26,7 +26,7 @@ class Resource_Sizing_Health_Checks
         'cpu' => 'cores',
         'floor' => 'the floor of 2',
         'cap' => 'the 140-process cap',
-        'override' => 'PHP_FPM_WORKER_COUNT',
+        'override' => 'RSPADE_PHP_WORKERS',
     ];
 
     #[Health_Check('Resource Sizing')]

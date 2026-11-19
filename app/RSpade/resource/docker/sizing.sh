@@ -17,15 +17,15 @@
 # `environment:`). Unset means calculated; a value that is not a whole number of the
 # allowed range stops the start, naming the switch - nothing is silently replaced.
 #
-#   RSPADE_PHP_MEMORY_LIMIT_MB   L: memory_limit for php-fpm AND the CLI    352 prod, 320 dev
-#   RSPADE_PHP_TYPICAL_MB        A: what one PHP process typically holds    128
-#   RSPADE_PHP_WORKERS_PER_CORE  the CPU ceiling's factor                   3
-#   PHP_FPM_WORKER_COUNT         the php-fpm total, instead of calculated   (2 or more)
-#   RSX_TASK_MAX_WORKERS         on-demand task workers; also read from the project .env
-#   RSX_TASK_SCHEDULED_WORKERS   scheduled task workers; also read from the project .env
-#   REDIS_MAXMEMORY_MB           the Redis cap
-#   RSPADE_RESERVED_MB           memory to leave alone besides ours         0
-#   MYSQL_INNODB_BUFFER_MB       the development MySQL buffer pool          64
+#   RSPADE_PHP_MEMORY_LIMIT_MB     L: memory_limit for php-fpm AND the CLI    352 prod, 320 dev
+#   RSPADE_PHP_TYPICAL_MB          A: what one PHP process typically holds    128
+#   RSPADE_PHP_WORKERS_PER_CORE    the CPU ceiling's factor                   3
+#   RSPADE_PHP_WORKERS             the php-fpm total, instead of calculated   (2 or more)
+#   RSX_TASK_MAX_WORKERS           on-demand task workers; also read from the project .env
+#   RSX_TASK_SCHEDULED_WORKERS     scheduled task workers; also read from the project .env
+#   RSPADE_REDIS_MEMORY_MB         the Redis cap
+#   RSPADE_MEMORY_RESERVED_MB      memory to leave alone besides ours         0
+#   RSPADE_MYSQL_BUFFER_MB         the development MySQL buffer pool          64
 #
 set -u
 
@@ -95,7 +95,7 @@ redis_cap() {
 #            + min(2048, max(200, floor(memory / 20))) scratch
 #            + ceil(redis_cap * 1.25)       Redis
 #            + 192 + innodb_buffer          MySQL (development target only)
-#            + RSPADE_RESERVED_MB
+#            + RSPADE_MEMORY_RESERVED_MB
 #
 # FIXED is the operating system and kernel plus every service in the container that is
 # not a PHP worker. Measured on a development container (2026-10-31, resident + swapped):
@@ -174,7 +174,7 @@ reserved_mb() {
 # under load, and that is the operator's choice to make with a bigger box or the switches
 # above. The kill pool is not counted: a kill worker only delivers a signal and exits.
 #
-# PHP_FPM_WORKER_COUNT fixes php-fpm, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS
+# RSPADE_PHP_WORKERS fixes php-fpm, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS
 # fix the two task pools; whatever is not set is still calculated, around what is.
 PROCESS_CAP=140
 
@@ -391,9 +391,9 @@ default_limit=352
 take_switch limit_mb RSPADE_PHP_MEMORY_LIMIT_MB "$default_limit" 1
 take_switch typical_mb RSPADE_PHP_TYPICAL_MB 128 1
 take_switch per_core RSPADE_PHP_WORKERS_PER_CORE 3 1
-take_switch extra_mb RSPADE_RESERVED_MB 0 0
-take_switch innodb_mb MYSQL_INNODB_BUFFER_MB 64 1
-take_switch redis_mb REDIS_MAXMEMORY_MB "$(redis_cap "$memory_mb")" 1
+take_switch extra_mb RSPADE_MEMORY_RESERVED_MB 0 0
+take_switch innodb_mb RSPADE_MYSQL_BUFFER_MB 64 1
+take_switch redis_mb RSPADE_REDIS_MEMORY_MB "$(redis_cap "$memory_mb")" 1
 
 # The task pools: the container environment, else the project .env line - the framework
 # reads the same lines, so the budget must count what it will run.
@@ -404,7 +404,7 @@ for name in RSX_TASK_MAX_WORKERS RSX_TASK_SCHEDULED_WORKERS; do
 done
 take_switch on_demand RSX_TASK_MAX_WORKERS "" 1
 take_switch scheduled RSX_TASK_SCHEDULED_WORKERS "" 1
-take_switch total PHP_FPM_WORKER_COUNT "" 2
+take_switch total RSPADE_PHP_WORKERS "" 2
 
 read -r reserved scratch_mb redis_reserved_mb mysql_mb <<< "$(reserved_mb "$memory_mb" "$redis_mb" "$target" "$innodb_mb" "$extra_mb")"
 read -r total scheduled on_demand ceiling by_ram by_worst by_cpu processes capped <<< "$(budget "$cores" "$memory_mb" "$swap_mb" "$reserved" "$typical_mb" "$limit_mb" "$per_core" "$total" "$scheduled" "$on_demand")"
@@ -457,11 +457,11 @@ memory_limit = ${limit_mb}M"
 write_file "${php_dir}/fpm/conf.d/95-rspade-memory.ini" "$memory_ini"
 write_file "${php_dir}/cli/conf.d/95-rspade-memory.ini" "$memory_ini"
 
-write_file "${ROOT}/etc/redis/rspade-memory.conf" "# Written by rspade-sizing at container start. Change it with REDIS_MAXMEMORY_MB.
+write_file "${ROOT}/etc/redis/rspade-memory.conf" "# Written by rspade-sizing at container start. Change it with RSPADE_REDIS_MEMORY_MB.
 maxmemory ${redis_mb}mb"
 
 if [ "$target" = "dev" ]; then
-    write_file "${ROOT}/etc/mysql/mysql.conf.d/95-rspade-sizing.cnf" "# Written by rspade-sizing at container start. Change it with MYSQL_INNODB_BUFFER_MB.
+    write_file "${ROOT}/etc/mysql/mysql.conf.d/95-rspade-sizing.cnf" "# Written by rspade-sizing at container start. Change it with RSPADE_MYSQL_BUFFER_MB.
 [mysqld]
 innodb_buffer_pool_size = ${innodb_mb}M"
 fi
@@ -485,5 +485,5 @@ write_file "${ROOT}/var/lib/rspade/sizing.json" "{
 
 echo "[rspade] sized for ${cores} cores, ${memory_mb} MB memory, ${swap_mb} MB swap: php-fpm ${total}$([ "$target" = "dev" ] && echo ' (development pool unchanged)'), ${tasks} task workers (${scheduled} scheduled, ${on_demand} on demand), memory_limit ${limit_mb}M, redis ${redis_mb} MB."
 if [ "$cap_notice" = true ]; then
-    echo "[rspade] NOTICE: this machine could run more than ${PROCESS_CAP} PHP processes, the most the automatic sizing plans. Past it, set PHP_FPM_WORKER_COUNT, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS yourself and configure the database server to accept that many connections: php artisan rsx:man server_sizing."
+    echo "[rspade] NOTICE: this machine could run more than ${PROCESS_CAP} PHP processes, the most the automatic sizing plans. Past it, set RSPADE_PHP_WORKERS, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS yourself and configure the database server to accept that many connections: php artisan rsx:man server_sizing."
 fi

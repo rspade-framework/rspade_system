@@ -234,28 +234,30 @@ DISABLE ALWAYS STARTS THE SERVICES
     --no-services starts nothing but still clears the flag.
 
 AN IMAGE OLDER THAN THE CHECKOUT
-    Inside the RSpade container (/.rspade_container), enable and disable each open with one
-    line when the container's image provides an older image contract than this checkout
-    needs (rsx:man prod, IN THE RSPADE CONTAINER):
+    Inside the RSpade container (/.rspade_container), an image older than this checkout's
+    minimum image version is fatal for the container's start, every other artisan command
+    and every web request (rsx:man prod, IN THE RSPADE CONTAINER). Enable and disable are
+    boot-free levers and are NOT refused: each opens with one line instead
 
-        [WARNING] This container's image (built from <rev>, image contract <N>) is older than
-        this checkout needs (image contract <M>): rebuild the image from this system/ (bash
-        system/app/RSpade/resource/docker/build.sh <target>) and recreate the container; see
-        breaking change <name> (php artisan rsx:framework:breaking_changes:show <name>).
+        [WARNING] This container's image (version <X>) is older than this checkout needs (<Y>
+        or newer): docker pull ghcr.io/rspade-framework/rspade-server-<target>:latest, then
+        recreate the container from it.
 
-    and then do exactly what they otherwise do: the warning refuses nothing and --force plays
-    no part in it. What it explains is the step that follows - a service this image cannot
-    run does not start, and when that service is rsx-lockd the wait in step 1a sees the
-    evidence, stops, and repeats the sentence: disable exits 1 with php-fpm not started and
-    the flag up (THE ONE EXCEPTION, above). The cure is the remedy the line names.
+    and then does exactly what it otherwise does: the warning refuses nothing and --force
+    plays no part in it. What it explains is what follows - a service this image cannot run
+    does not start, and when that service is rsx-lockd the wait in step 1a sees the evidence,
+    stops, and repeats the sentence: disable exits 1 with php-fpm not started and the flag up
+    (THE ONE EXCEPTION, above). The cure is the remedy the line names.
 
-    The checkout's requirement is system/app/RSpade/resource/docker/image_contract.conf; the
-    image's record is /opt/rspade/image.conf. An image with no record counts as contract 1
-    when it carries /opt/rspade/rsx-lockd/lockd-run.sh and contract 0 otherwise. A record or
-    requirement whose contract= is not a whole number prints "[ERROR] <file> is unreadable:
-    contract=<value>" in place of the warning, and the transition still proceeds. The check
-    reads only files from the checkout and the image record, so it works under any image.
-    rsx:health reports the same comparison as its "Container Image" row.
+    The checkout's minimum is min_image_version in system/app/RSpade/resource/docker/
+    image_contract.conf; the image's version is image_version in /opt/rspade/image.conf. An
+    image with no record or no dated version counts as older; image_version=local (an image
+    built with build.sh) never does. A requirement whose min_image_version is not a dated
+    version prints "[ERROR] <file> is unreadable: min_image_version=<value>" in place of the
+    warning, and the transition still proceeds. The check reads only files from the checkout
+    and the image record, so it works under any image, and is skipped on the framework
+    authors' box (IS_FRAMEWORK_DEVELOPER). rsx:health reports the same comparison as its
+    "Container Image" row.
 
 THE CLI GATE (allow-most-deny-some)
     The gate exists to stop AUTOMATED processes - the cron tick, task workers, web traffic -

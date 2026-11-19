@@ -8,6 +8,9 @@
  *     node proxority.js close --reason=...  stop admitting EXTERNAL clients; returns once the
  *                                          external requests already admitted have finished
  *     node proxority.js open               admit everyone again
+ *     node proxority.js hold --reason=...  stop dispatching: every new request waits (parked, never
+ *                                          refused); returns once nothing is in flight at php-fpm
+ *     node proxority.js release            dispatch the parked requests and resume
  *
  * The image installs this directory at /opt/rspade/proxority and the operator's wrapper
  * /usr/local/bin/proxority (`proxority status`, `proxority log --follow`).
@@ -102,6 +105,12 @@ const MAX_SOCKET_FRAME_BYTES = 64 * 1024;
  * A hint to the client, not a deadline on anything.
  */
 const CLOSED_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * While HELD, how often the holder process is checked for life (the dead-holder release).
+ * A polling cadence, not a deadline: a live holder keeps the hold as long as it likes.
+ */
+const HOLDER_CHECK_INTERVAL_MS = 1000;
 
 /** Proxority's own routing header: which public listener received the request. Never forwarded. */
 const SCHEME_HEADER = 'x-rsx-scheme';
@@ -269,6 +278,19 @@ class Proxority {
         // `close` callers waiting for the admitted external requests to finish.
         this.drain_waiters = [];
 
+        // HELD (the `hold` / `release` verbs): nothing new is dispatched. Null while not held;
+        // otherwise {reason, since, holder_pid, holder_start_time}. In memory only, so a
+        // restart always comes up dispatching. Requests arriving while held wait in `parked`
+        // in arrival order, outside the ledger; `release` submits them.
+        this.held = null;
+        this.parked = [];
+
+        // `hold` callers waiting for nothing to be in flight at php-fpm.
+        this.hold_waiters = [];
+
+        // While held with a holder pid: the periodic dead-holder check.
+        this.holder_check = null;
+
         this.event_log = new Event_Log({
             echo: (line) => process.stdout.write('[proxority] ' + line + '\n'),
         });
@@ -348,6 +370,9 @@ class Proxority {
             process.exit(0);
         }
         this.shutting_down = true;
+
+        // A held request is inside too: it is dispatched and finishes like the rest.
+        if (this.held) this.release('shutting down; ' + this.parked.length + ' parked request(s) dispatched');
 
         this.event_log.log('stop', signal + ': no longer accepting; ' + this.active.size + ' request(s) in flight will finish');
         this.server.close();
@@ -430,6 +455,100 @@ class Proxority {
     }
 
     // -----------------------------------------------------------------------------------
+    // Held: nothing dispatched
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Stop dispatching. Every request that arrives from now on - loopback included - is
+     * PARKED: kept open, never refused, never counted, and submitted to the ledger in arrival
+     * order at `release`. Resolve once nothing is in flight at php-fpm: every request already
+     * admitted (queued ones included, which still dispatch as workers free) has had its
+     * upstream response end. A wait with no deadline. A client still reading a page whose
+     * upstream response has ended no longer involves php-fpm and does not delay it.
+     *
+     * The holder is a pid plus its kernel start time, read here (see close()). While held,
+     * the holder is checked every HOLDER_CHECK_INTERVAL_MS; a holder that is gone - or a pid
+     * that now names another process - releases the hold, so a holder that died between
+     * `hold` and `release` never leaves every request waiting. A holder already gone when it
+     * holds is released at the first check. A closure (`close`) is separate and still
+     * refuses external clients first: a request it refuses is never parked.
+     */
+    hold(reason, holder_pid) {
+        const text = String(reason || '').trim() || 'held';
+        const pid = Number.isInteger(holder_pid) && holder_pid > 0 ? holder_pid : null;
+
+        this.held = { reason: text, since: new Date().toISOString(), holder_pid: pid, holder_start_time: pid ? process_start_time(pid) : null };
+        this.event_log.log('held', text + (pid ? ' (held by pid ' + pid + ')' : '') + '; '
+            + this._php_in_flight() + ' request(s) in flight to finish');
+
+        if (this.holder_check) clearInterval(this.holder_check);
+        this.holder_check = null;
+        if (pid) {
+            this.holder_check = setInterval(() => this._check_holder(), HOLDER_CHECK_INTERVAL_MS);
+            this.holder_check.unref();
+        }
+
+        return new Promise((resolve) => {
+            this.hold_waiters.push(resolve);
+            this._settle_hold();
+        });
+    }
+
+    /** Resume dispatching: the parked requests are submitted in arrival order. */
+    release(why) {
+        const was = this.held;
+        this.held = null;
+        if (this.holder_check) clearInterval(this.holder_check);
+        this.holder_check = null;
+
+        const parked = this.parked;
+        this.parked = [];
+
+        if (was) this.event_log.log('resumed', why || ('was held: ' + was.reason + '; ' + parked.length + ' parked request(s) dispatched'));
+        this._settle_hold();
+
+        for (const job of parked) {
+            job.parked = false;
+            this._admit(job);
+        }
+        return was;
+    }
+
+    _check_holder() {
+        if (!this.held || !this.held.holder_pid) return;
+        if (process_is_alive(this.held.holder_pid, this.held.holder_start_time)) return;
+
+        this.release('the holder, pid ' + this.held.holder_pid + ', is gone; released with '
+            + this.parked.length + ' parked request(s)');
+    }
+
+    /** Requests admitted to the ledger whose upstream response has not ended (queued ones included). */
+    _php_in_flight() {
+        let count = 0;
+        for (const job of this.active) {
+            if (!job.upstream_done) count++;
+        }
+        return count;
+    }
+
+    _upstream_finished(job) {
+        if (job.upstream_done) return;
+        job.upstream_done = true;
+        this._settle_hold();
+    }
+
+    /** Resolve the `hold` callers once nothing is in flight at php-fpm (or it was released). */
+    _settle_hold() {
+        if (this.hold_waiters.length === 0) return;
+        if (this.held && this._php_in_flight() > 0) return;
+
+        const waiters = this.hold_waiters;
+        this.hold_waiters = [];
+        if (this.held) this.event_log.log('idle', 'nothing in flight; ' + this.parked.length + ' request(s) parked');
+        for (const resolve of waiters) resolve(this.held !== null);
+    }
+
+    // -----------------------------------------------------------------------------------
     // Requests
     // -----------------------------------------------------------------------------------
 
@@ -459,10 +578,25 @@ class Proxority {
             timer: null,
             released: false,
             timed_out: false,
+            upstream_done: false,
+            parked: false,
         });
 
-        this.active.add(job);
         res.on('close', () => this._client_closed(job));
+
+        if (this.held) {
+            job.parked = true;
+            this.parked.push(job);
+            this.event_log.log('parked', this._describe(job) + ' (' + this.parked.length + ' parked; held: ' + this.held.reason + ')');
+            return;
+        }
+
+        this._admit(job);
+    }
+
+    /** Into the ledger: dispatched now if a worker is free, else queued. */
+    _admit(job) {
+        this.active.add(job);
 
         const started = job.ledger.submit(job);
         if (job._state === 'queued') {
@@ -505,6 +639,7 @@ class Proxority {
 
         upstream_req.on('error', (error) => {
             this._disarm(job);
+            this._upstream_finished(job);
             if (job.timed_out || job.client_gone) return;
 
             this.event_log.log('upstream_error', this._describe(job) + ': ' + error.message);
@@ -540,14 +675,19 @@ class Proxority {
         // exactly when the upstream sent it.
         res.flushHeaders();
 
-        upstream_res.on('end', () => this._release(job, 'response end'));
+        upstream_res.on('end', () => {
+            this._upstream_finished(job);
+            this._release(job, 'response end');
+        });
         upstream_res.on('aborted', () => {
+            this._upstream_finished(job);
             if (job.client_gone) return;
             this.event_log.log('upstream_error', this._describe(job) + ': the upstream aborted the response');
             res.destroy();
             this._release(job, 'upstream aborted');
         });
         upstream_res.on('error', () => {
+            this._upstream_finished(job);
             if (job.client_gone) return;
             res.destroy();
             this._release(job, 'upstream error');
@@ -559,8 +699,17 @@ class Proxority {
     }
 
     _client_closed(job) {
+        if (job.parked) {
+            job.parked = false;
+            this.parked.splice(this.parked.indexOf(job), 1);
+            this.event_log.log('client_abort', this._describe(job) + ' left while parked after ' + (Date.now() - job.arrived_at) + ' ms');
+            this._exit_when_idle();
+            return;
+        }
+
         this.active.delete(job);
         this._settle_drain();
+        this._settle_hold();
 
         if (job._state === 'queued') {
             job.ledger.cancel(job);
@@ -593,6 +742,7 @@ class Proxority {
         job.timer = setTimeout(() => {
             job.timer = null;
             job.timed_out = true;
+            this._upstream_finished(job);
             this.event_log.log('timeout', this._describe(job) + ': ' + ms + ' ms ' + waiting_for + '; answered 504');
             job.upstream_req.destroy();
             if (!job.res.headersSent) {
@@ -651,6 +801,8 @@ class Proxority {
             pool: this.ledger.snapshot(),
             whitelist: this.whitelist.snapshot(),
             closed: this.closed,
+            held: this.held,
+            parked: this.parked.length,
         };
     }
 
@@ -722,6 +874,15 @@ class Proxority {
                             : { ok: false, error: 'reopened before the external requests finished' }));
                 } else if (frame.verb === 'open') {
                     send({ ok: true, was_closed: this.open() !== null });
+                } else if (frame.verb === 'hold') {
+                    const pid = Number(frame.holder_pid);
+                    this.hold(frame.reason, Number.isInteger(pid) ? pid : null)
+                        .then((still_held) => send(still_held
+                            ? { ok: true, held: this.held }
+                            : { ok: false, error: 'released before the requests in flight finished' }));
+                } else if (frame.verb === 'release') {
+                    const parked = this.parked.length;
+                    send({ ok: true, was_held: this.release() !== null, dispatched: parked });
                 } else if (frame.verb === 'follow') {
                     send({ ok: true, events: this.event_log.entries() });
                     if (!unfollow) unfollow = this.event_log.follow((event) => send({ event }));
@@ -814,6 +975,11 @@ function format_status(status) {
         ? 'CLOSED to external clients since ' + status.closed.since + ': ' + status.closed.reason
             + (status.closed.holder_pid ? ' (held by pid ' + status.closed.holder_pid + ')' : '')
         : 'Open to every client');
+    lines.push(status.held
+        ? 'HELD since ' + status.held.since + ': ' + status.held.reason
+            + (status.held.holder_pid ? ' (held by pid ' + status.held.holder_pid + ')' : '')
+            + '; ' + status.parked + ' request(s) parked'
+        : 'Dispatching (not held)');
 
     const whitelist = status.whitelist;
     lines.push('');
@@ -861,6 +1027,29 @@ async function run_client(verb, flags) {
         return;
     }
 
+    if (verb === 'hold') {
+        const reason = typeof flags.reason === 'string' ? flags.reason : '';
+        const holder = flags['holder-pid'] === undefined ? null : Number(flags['holder-pid']);
+        process.stdout.write('Holding; waiting for the requests in flight to finish...\n');
+        await client_request(socket_file, { verb: 'hold', reason, holder_pid: holder }, (frame) => {
+            if (!frame.ok) throw new Error(frame.error);
+            process.stdout.write('[OK] Held, nothing in flight: ' + frame.held.reason + '\n');
+            return 'done';
+        });
+        return;
+    }
+
+    if (verb === 'release') {
+        await client_request(socket_file, 'release', (frame) => {
+            if (!frame.ok) throw new Error(frame.error);
+            process.stdout.write(frame.was_held
+                ? '[OK] Released; ' + frame.dispatched + ' parked request(s) dispatched\n'
+                : '[OK] Was not held\n');
+            return 'done';
+        });
+        return;
+    }
+
     const follow = flags.follow === true;
     await client_request(socket_file, follow ? 'follow' : 'log', (frame) => {
         if (frame.event) {
@@ -881,12 +1070,12 @@ async function main() {
     const { flags, words } = parse_argv(process.argv.slice(2));
     const verb = words[0] || 'serve';
 
-    if (verb === 'status' || verb === 'log' || verb === 'close' || verb === 'open') {
+    if (['status', 'log', 'close', 'open', 'hold', 'release'].includes(verb)) {
         await run_client(verb, flags);
         return;
     }
     if (verb !== 'serve') {
-        throw new Error('Unknown command "' + verb + '". Usage: proxority.js [serve] | status | log [--follow] | close --reason=... [--holder-pid=N] | open');
+        throw new Error('Unknown command "' + verb + '". Usage: proxority.js [serve] | status | log [--follow] | close --reason=... [--holder-pid=N] | open | hold --reason=... [--holder-pid=N] | release');
     }
 
     const proxy = new Proxority(serve_options(flags));

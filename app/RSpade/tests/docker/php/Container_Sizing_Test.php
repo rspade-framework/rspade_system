@@ -166,7 +166,7 @@ class Container_Sizing_Test extends Rsx_Test_Abstract
         ]);
         $row = Resource_Sizing_Health_Checks::resource_sizing();
         static::__assert_contains('php-fpm 24 (set)', $row['detail']);
-        static::__assert_contains('(development pool unchanged), limited by PHP_FPM_WORKER_COUNT', $row['detail']);
+        static::__assert_contains('(development pool unchanged), limited by RSPADE_PHP_WORKERS', $row['detail']);
         static::__assert_contains('redis 500 MB (set)', $row['detail']);
     }
 }

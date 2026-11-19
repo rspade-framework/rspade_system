@@ -101,7 +101,7 @@ Output: `storage/logs/companions/<name>/<name>.log` is the record (rotated by th
 
 ## Gotchas
 
-- `rspade-sizing` does not count companions: give their memory back with `RSPADE_RESERVED_MB`.
+- `rspade-sizing` does not count companions: give their memory back with `RSPADE_MEMORY_RESERVED_MB`.
 - Several web hosts need a shared Redis and rsx-lockd, and the desired flag set on each host. Restarting rsx-lockd restarts every single-instance companion.
 - The daemon reads `RSX_MODE` at its own start: after `rsx:mode:set`, `supervisorctl restart rsx-companiond`.
 - A child of a root daemon runs as the storage tree's owner and sees no `APP_KEY` or database password.

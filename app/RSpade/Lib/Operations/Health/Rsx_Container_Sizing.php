@@ -48,7 +48,7 @@ class Rsx_Container_Sizing
 
     /** The Laravel log line for a box the process cap held back. */
     public const CAP_NOTICE = 'This machine could run more PHP processes than the automatic sizing plans (%d).'
-        . ' Past that cap, set PHP_FPM_WORKER_COUNT, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS'
+        . ' Past that cap, set RSPADE_PHP_WORKERS, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS'
         . ' in the container\'s environment and configure the database server to accept that many'
         . ' connections - see php artisan rsx:man server_sizing.';
 

@@ -12,7 +12,7 @@ use App\RSpade\Tests\Proxority\Php\Proxority_Test_Abstract;
 
 /**
  * What the operator and the application see of the proxy: the whitelist refresh in every
- * outcome, the status socket and its CLI (status, log, log --follow, close, open), and the
+ * outcome, the status socket and its CLI (status, log, log --follow, close, open, hold, release), and the
  * socket file's own lifecycle (a stale file is replaced, a live one is never stolen).
  */
 class Proxority_Control_Test extends Proxority_Test_Abstract
@@ -165,6 +165,99 @@ class Proxority_Control_Test extends Proxority_Test_Abstract
             foreach (['l1', 'e3'] as $token) {
                 static::__release($s, $token);
             }
+        });
+    }
+
+    /**
+     * HELD (the container's security updater, around a php-fpm restart). `hold` returns only
+     * once nothing is in flight at php-fpm - a page whose head has arrived but whose body is
+     * still coming counts until its upstream response ends. Meanwhile every new request,
+     * external and loopback alike, waits parked and is never refused; `release` dispatches
+     * the parked requests in arrival order and each one succeeds.
+     */
+    public static function test_hold_waits_for_in_flight_requests_and_parks_new_ones_until_release()
+    {
+        static::__in_scratch(function (array $s) {
+            $s = static::__start_proxy($s, [], 4);
+
+            $holder = new Process(['sleep', 'infinity']);
+            $holder->setTimeout(null);
+            $holder->start();
+
+            $first = static::__send_from($s, '198.51.100.7', '/page?hold=e1');
+            static::__send_from($s, '198.51.100.9', '/page?head=e2');
+            static::__wait_arrived($s, 2);
+
+            $hold = static::__spawn(['node', static::__proxority_js(), 'hold', '--reason=php security update',
+                '--holder-pid=' . $holder->getPid(), '--socket=' . $s['socket']]);
+            static::__wait_event($s, 'held', 'php security update');
+
+            $parked_external = static::__send_from($s, '198.51.100.8', '/page?hold=p1');
+            $parked_loopback = static::__send($s, '/page?hold=p2');
+            static::__poll_until(fn () => static::__status($s)['parked'] === 2, 'two requests parked');
+            static::__assert_equals(['e1', 'e2'], static::__arrived($s), 'nothing new is dispatched while held');
+
+            $status = static::__cli($s, ['status']);
+            static::__assert_contains('HELD since', $status);
+            static::__assert_contains('php security update (held by pid ' . $holder->getPid() . '); 2 request(s) parked', $status);
+
+            // The first in-flight request ends; the second has sent its head but not its body.
+            // The client has the whole of e1 only after its upstream response ended.
+            static::__release($s, 'e1');
+            static::__assert_equals(200, static::__read_response($first)['status']);
+            static::__assert_true($hold->isRunning(), 'hold still waits for a response whose body has not ended');
+            static::__assert_equals([], array_values(array_filter(static::__events($s), fn ($event) => $event['type'] === 'idle')),
+                'nothing is reported idle while a response is still coming');
+
+            static::__release($s, 'e2');
+            $hold->wait();
+            static::__assert_equals(0, $hold->getExitCode(), 'hold succeeded: ' . $hold->getErrorOutput());
+            static::__assert_contains('[OK] Held, nothing in flight: php security update', $hold->getOutput());
+            static::__assert_equals(['e1', 'e2'], static::__arrived($s), 'still nothing dispatched once idle');
+
+            static::__assert_contains('[OK] Released; 2 parked request(s) dispatched', static::__cli($s, ['release']));
+            static::__assert_equals(['e1', 'e2', 'p1', 'p2'], static::__wait_arrived($s, 4), 'the parked requests are dispatched in arrival order');
+            static::__assert_null(static::__status($s)['held']);
+            static::__assert_contains('Dispatching (not held)', static::__cli($s, ['status']));
+
+            static::__release($s, 'p1');
+            static::__release($s, 'p2');
+            foreach ([$parked_external, $parked_loopback] as $client) {
+                $response = static::__read_response($client);
+                static::__assert_equals(200, $response['status'], 'a request parked while held succeeds after release');
+            }
+
+            static::__assert_contains('[OK] Was not held', static::__cli($s, ['release']));
+            $holder->stop(0);
+        });
+    }
+
+    /**
+     * A holder that dies without calling `release` never leaves requests waiting: the periodic
+     * check sees the pid is no longer that process and releases the hold, dispatching what
+     * was parked.
+     */
+    public static function test_a_hold_whose_holder_dies_is_released()
+    {
+        static::__in_scratch(function (array $s) {
+            $s = static::__start_proxy($s, [], 4);
+
+            $holder = new Process(['sleep', 'infinity']);
+            $holder->setTimeout(null);
+            $holder->start();
+            $holder_pid = $holder->getPid();
+
+            // Nothing is in flight, so the hold returns at once.
+            static::__assert_contains('[OK] Held', static::__cli($s, ['hold', '--reason=held by a process that dies', '--holder-pid=' . $holder_pid]));
+
+            $client = static::__send_from($s, '198.51.100.7', '/page');
+            static::__poll_until(fn () => static::__status($s)['parked'] === 1, 'the request is parked');
+
+            $holder->stop(0);
+            static::__assert_contains('pid ' . $holder_pid . ', is gone', static::__wait_event($s, 'resumed', 'is gone')['text']);
+            static::__assert_equals(200, static::__read_response($client)['status'], 'the parked request is dispatched and succeeds');
+            static::__assert_null(static::__status($s)['held']);
+            static::__assert_equals(0, static::__status($s)['parked']);
         });
     }
 

@@ -251,6 +251,20 @@ OPERATING IT
     proxority open
         Admit every client again.
 
+    proxority hold --reason="..." [--holder-pid=N]
+        Stop dispatching and return once nothing is in flight at php-fpm:
+        every request already admitted, queued ones included, has had its
+        response from php-fpm end (no deadline). Every request that arrives
+        meanwhile - loopback included - waits, parked; none is refused. The
+        container's security updater holds the proxy around a php-fpm restart,
+        so a new PHP release is taken without cutting a request. With
+        --holder-pid the proxy releases by itself once that process is gone
+        (pid plus start time, checked every second while held). A closure
+        still refuses external clients first. A restart comes up released.
+
+    proxority release
+        Dispatch the parked requests, in arrival order, and resume.
+
     supervisorctl signal HUP proxority
         Re-read pm.max_children after changing a pool file (reload php-fpm
         first). Requests already running are never stopped.

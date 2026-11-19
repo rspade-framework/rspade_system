@@ -98,7 +98,7 @@ set -u
 #                                                         retry forever (the default)
 #     retry-run.sh --exec <label> <command> [args...]    check, then BECOME the service:
 #         no retry and no restart - for a program supervisor must restart itself, or not
-#         at all (mysql: `migrate` stops it to snapshot the datadir; dockerd). Writes no
+#         at all (mysql: `migrate` stops it to snapshot the datadir). Writes no
 #         state file: the program is supervisor's own, and supervisor's state covers it.
 #     retry-run.sh --clear-stale-pidfile <file> <pattern>   the check for one file
 #
@@ -118,11 +118,6 @@ runtime_files() {
             echo '/var/run/mysqld/mysqld.pid|(^|/)mysqld( |$)'
             echo '/var/run/mysqld/mysqld.sock.lock|(^|/)mysqld( |$)'
             echo '/var/run/mysqld/mysqlx.sock.lock|(^|/)mysqld( |$)'
-            ;;
-        dockerd)
-            echo '/var/run/docker.pid|(^|/)dockerd( |$)'
-            # dockerd starts its own containerd and acts on a pid it finds here as its own.
-            echo '/var/run/docker/containerd/containerd.pid|(^|/)containerd( |$)'
             ;;
     esac
 }

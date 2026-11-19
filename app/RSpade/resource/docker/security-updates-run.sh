@@ -2,7 +2,7 @@
 #
 # Supervisor runner for the scheduled security update check.
 #
-# Every RSPADE_SECURITY_UPDATE_HOURS hours (4), at a random point within 10 minutes either
+# Every PHP_SECURITY_UPDATE_INTERVAL_HOURS hours (4), at a random point within 10 minutes either
 # side of the slot, runs `rspade-security-update scheduled` - which installs the security
 # updates this container may take and reloads php-fpm when anything was installed. The
 # container start runs the same check before PHP serves anything (see the entrypoint);
@@ -17,7 +17,7 @@
 # PHP PPA in the same second. The sleep is the cadence, not a timeout: the check itself is
 # never interrupted.
 #
-# OFF: RSX_AUTO_SECURITY_UPDATES=0 (false/no/off) idles this program for the life of the
+# OFF: PHP_SECURITY_UPDATES=0 (false/no/off) idles this program for the life of the
 # container, saying so once.
 #
 #     rspade-security-updates-run plan <now> <random>
@@ -27,7 +27,7 @@
 #
 set -u
 
-HOURS="${RSPADE_SECURITY_UPDATE_HOURS:-4}"
+HOURS="${PHP_SECURITY_UPDATE_INTERVAL_HOURS:-4}"
 JITTER_SECONDS=600
 interval=$((HOURS * 3600))
 
@@ -51,9 +51,9 @@ if [ "${1:-}" = plan ]; then
     exit 0
 fi
 
-case "$(printf '%s' "${RSX_AUTO_SECURITY_UPDATES:-1}" | tr '[:upper:]' '[:lower:]')" in
+case "$(printf '%s' "${PHP_SECURITY_UPDATES:-1}" | tr '[:upper:]' '[:lower:]')" in
     0|false|no|off)
-        echo "[security-updates] automatic security updates are off (RSX_AUTO_SECURITY_UPDATES=${RSX_AUTO_SECURITY_UPDATES}); idling."
+        echo "[security-updates] automatic security updates are off (PHP_SECURITY_UPDATES=${PHP_SECURITY_UPDATES}); idling."
         exec sleep infinity
         ;;
 esac

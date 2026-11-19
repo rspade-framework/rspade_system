@@ -17,7 +17,7 @@ SYNOPSIS
 
     Past the automatic ceiling (140 PHP processes), set the counts yourself:
 
-        docker run -e PHP_FPM_WORKER_COUNT=200 \
+        docker run -e RSPADE_PHP_WORKERS=200 \
                    -e RSX_TASK_SCHEDULED_WORKERS=8 \
                    -e RSX_TASK_MAX_WORKERS=16 ...
 
@@ -66,7 +66,7 @@ THE BUDGET
                      else min(2048, max(64, 5% of memory))
         reserved   = 600 fixed + min(2048, max(200, 5% of memory)) scratch
                      + redis x 1.25 + (development) 192 + the MySQL buffer pool
-                     + RSPADE_RESERVED_MB
+                     + RSPADE_MEMORY_RESERVED_MB
         processes  = min( (memory - reserved) / A,           typical, in RAM
                           (memory + swap - reserved) / L,    worst case, RAM + swap
                           140 )                              THE PROCESS CAP
@@ -139,7 +139,7 @@ SETTING THE COUNTS BY HAND
     the switch. A count that is set is never capped; whatever is not set is
     still calculated around it.
 
-        PHP_FPM_WORKER_COUNT          php-fpm workers, 2 or more (the one
+        RSPADE_PHP_WORKERS            php-fpm workers, 2 or more (the one
                                       pool; sized in production)
         RSX_TASK_SCHEDULED_WORKERS    scheduled task workers; also read from
                                       the project .env
@@ -148,12 +148,12 @@ SETTING THE COUNTS BY HAND
         RSPADE_PHP_MEMORY_LIMIT_MB    memory_limit, php-fpm and the CLI
         RSPADE_PHP_TYPICAL_MB         the typical size the RAM ceiling uses
         RSPADE_PHP_WORKERS_PER_CORE   the CPU ceiling (3)
-        REDIS_MAXMEMORY_MB            the Redis cap
-        RSPADE_RESERVED_MB            memory to leave alone beside ours;
+        RSPADE_REDIS_MEMORY_MB        the Redis cap
+        RSPADE_MEMORY_RESERVED_MB     memory to leave alone beside ours;
                                       companion applications are not
                                       counted, so their memory goes here
                                       (rsx:man companion_apps)
-        MYSQL_INNODB_BUFFER_MB        development MySQL buffer pool
+        RSPADE_MYSQL_BUFFER_MB        development MySQL buffer pool
 
     Choosing them on a large machine: start from what the /_sys Performance
     screen shows - the peak memory and time of real requests and tasks, and

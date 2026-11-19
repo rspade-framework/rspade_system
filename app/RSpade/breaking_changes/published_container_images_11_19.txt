@@ -1,0 +1,146 @@
+THE STARTER README AND DOCKER-COMPOSE.YML: PUBLISHED IMAGES, A DOCUMENTATION HUB, ADMINISTRATION AND PRODUCTION GUIDES
+Date: 2026-11-19
+
+IF YOU DO NOTHING: nothing fails, but every machine that starts your project keeps building the development image from source (bash system/app/RSpade/resource/docker/build.sh, then docker compose up with pull_policy: build) - tens of minutes per machine and per image update - and your README keeps telling new developers to do so, while giving them nothing on backups, updates, logs or production deployment.
+
+SUMMARY
+    Category 1: two files at your project ROOT belong to your project and are
+    never updated by the framework - README.md and docker-compose.yml. The
+    starter's versions of both have changed, and the current ones now ship
+    inside every framework checkout, on your own disk:
+
+        system/app/RSpade/resource/starter/README.md
+        system/app/RSpade/resource/starter/docker-compose.yml
+
+    Compare yours to them and carry over the kinds of change below that apply
+    to your project. Your README is your own document - keep your product's
+    content; what matters is that it covers these points.
+
+    What changed:
+
+    - The RSpade container images are published ready-built on GitHub
+      Container Registry, for x86 and ARM (linux/amd64 + linux/arm64):
+
+          ghcr.io/rspade-framework/rspade-server-dev     development
+          ghcr.io/rspade-framework/rspade-server-prod    production
+          ghcr.io/rspade-framework/rspade-docconvert     the document sandbox
+
+      Each version is tagged with its build date (2026.11.19) and the newest
+      as latest. Nobody builds an image to start a project any more; building
+      locally with build.sh still works, and is no longer the way in.
+
+    - The framework ships its own guides, updated with every release, so a
+      project README links to them rather than repeating them:
+
+          DEVELOPER_QUICKSTART.md     the framework in one sitting
+          DEVELOPMENT_ENVIRONMENT.md  Compose or docker run, PUID/PGID, the
+                                      database and GUI clients, a reverse
+                                      proxy, Claude Code, updating the image
+          SYSTEM_ADMINISTRATION.md    what runs in the container, backups,
+                                      updates, health, logs, maintenance
+                                      mode, the /_sys panel
+          PRODUCTION_DEPLOYMENT.md    the production image, first install, the
+                                      deploy procedure, rollback, the
+                                      container environment
+
+      at https://github.com/rspade-framework/rspade_system/tree/master/app/RSpade/docs/
+      (developer/ for the first two, operations/ for the other two), and in
+      your checkout under system/app/RSpade/docs/.
+
+AFFECTED FILES
+    /docker-compose.yml
+    /README.md
+
+CHANGES REQUIRED
+
+    File: /docker-compose.yml
+    -------------------------------------------------------------------------
+    1. In the `app:` service, replace the image, build and pull_policy lines
+       (and their comments):
+
+           image: rspade/rspade-server-dev:latest
+           build:
+             context: ./system/app/RSpade/resource/docker
+             target: dev
+           pull_policy: build
+
+       with the one line:
+
+           image: ghcr.io/rspade-framework/rspade-server-dev:latest
+
+    2. Add, in the same service:
+
+           # Docker's default json-file log driver never rotates what the container
+           # prints; `local` rotates and compresses it.
+           logging:
+             driver: local
+
+    Leave your ports, environment, volumes and stop_grace_period as they are.
+    system/app/RSpade/resource/starter/docker-compose.yml is the complete
+    starter file, comments included.
+
+    File: /README.md
+    -------------------------------------------------------------------------
+    Revise it so it covers each of the following that applies to your project.
+    system/app/RSpade/resource/starter/README.md shows one way to write each.
+
+    1. The published image, and no build step. The quick start is clone and
+       start, with the first start downloading the image once:
+
+           git clone --recurse-submodules <your repository> my-app
+           cd my-app
+           docker compose up
+
+       Delete every instruction to run
+           bash system/app/RSpade/resource/docker/build.sh
+       including `build.sh --claude` in a Claude Code section: the published
+       image installs Claude Code the first time `claude` runs in it. Replace
+       every rspade/rspade-server-dev and rspade/rspade-server-prod with
+       ghcr.io/rspade-framework/rspade-server-dev and
+       ghcr.io/rspade-framework/rspade-server-prod, and in any `docker run`
+       example replace --stop-timeout 30 with --stop-timeout 86400 (a
+       30-second stop kills MySQL mid-flush).
+
+    2. A documentation hub: ONE section, right after the quick start, linking
+       the four guides above (by their GitHub URLs, so the links work wherever
+       the README is read), `php artisan rsx:man`, and `.env.README`. A
+       developer looking for anything beyond the quick start finds it there
+       without searching the README.
+
+    3. Administration basics: a short section, each point linking the
+       System administration guide for depth -
+       - where the data lives and what to back up (the database, storage/,
+         and .env, which is not in git);
+       - updating the image (docker compose pull, then docker compose up -d -
+         nothing is lost, the project and database are on the host) and the
+         framework (php artisan rsx:framework:pull, then
+         php artisan rsx:framework:breaking_changes);
+       - security updates are automatic;
+       - php artisan rsx:health;
+       - logs (storage/logs, docker compose logs).
+
+    4. Production via the production image. Replace any production
+       instructions of your own that build an image, or that predate it, with
+       a short pointer: production runs ghcr.io/rspade-framework/rspade-server-prod
+       against your own MySQL behind a TLS-terminating proxy, deployed by the
+       procedure in PRODUCTION_DEPLOYMENT.md (pull the image, stop the
+       container, pull your code, snapshot the database, start it with
+       RSPADE_BUILD_MIGRATE_ON_START=1).
+
+    5. Long sections the guides now carry - the database tools and GUI
+       clients, running without Compose, a reverse proxy, the production
+       walkthrough - can shrink to a sentence and a link to the guide that
+       covers them. Keep them in full only if your project's README needs to
+       stand alone.
+
+VERIFICATION
+    docker compose pull && docker compose up -d, then
+    docker compose exec app grep ^image_version= /opt/rspade/image.conf
+    prints a dated version (image_version=local means the container still
+    runs a locally built image), docker inspect shows the container's log
+    driver as local:
+
+        docker inspect --format '{{.HostConfig.LogConfig.Type}}' $(docker compose ps -q app)
+
+    and the application serves as before. In your README, every link in the
+    documentation hub opens its guide, and nothing in it mentions build.sh.

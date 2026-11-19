@@ -6,6 +6,9 @@
 #     proxority log --follow      the ring, then every new event as it is logged
 #     proxority close --reason=.. stop admitting external clients; returns once they have drained
 #     proxority open              admit every client again
+#     proxority hold --reason=..  stop dispatching (new requests wait, never refused); returns
+#                                 once nothing is in flight at php-fpm
+#     proxority release           dispatch the waiting requests and resume
 #
 # Installed as /usr/local/bin/proxority. It is `node /opt/rspade/proxority/proxority.js "$@"`
 # and nothing else: the proxy's own CLI, which reads the running proxy's status socket.

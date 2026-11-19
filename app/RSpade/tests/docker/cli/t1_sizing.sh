@@ -17,7 +17,7 @@ SCRIPT="$DOCKER_DIR/sizing.sh"
 fail() { echo "FAIL: $TEST_NAME - $*"; exit 1; }
 
 # Every switch unset, whatever the environment running the test carries.
-SWITCHES="RSPADE_PHP_MEMORY_LIMIT_MB RSPADE_PHP_TYPICAL_MB RSPADE_PHP_WORKERS_PER_CORE PHP_FPM_WORKER_COUNT RSX_TASK_MAX_WORKERS REDIS_MAXMEMORY_MB RSPADE_RESERVED_MB MYSQL_INNODB_BUFFER_MB"
+SWITCHES="RSPADE_PHP_MEMORY_LIMIT_MB RSPADE_PHP_TYPICAL_MB RSPADE_PHP_WORKERS_PER_CORE RSPADE_PHP_WORKERS RSX_TASK_MAX_WORKERS RSPADE_REDIS_MEMORY_MB RSPADE_MEMORY_RESERVED_MB RSPADE_MYSQL_BUFFER_MB"
 for name in $SWITCHES; do unset "$name"; done
 
 # The machine-readable last line of a plan.
@@ -57,8 +57,8 @@ plan_is "total=96 min_spare=32 max_spare=64 tasks=17 scheduled=6 on_demand=11 re
 plan_is "total=122 min_spare=61 max_spare=91 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=352" 128 524288 0
 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice    capped at 140 PHP processes" || fail "a capped box says so"
 bash "$SCRIPT" plan 16 32768 0 | grep -q "^notice" && fail "a box under the cap has no notice"
-PHP_FPM_WORKER_COUNT=300 plan_line 128 524288 0 | grep -q "^total=300 .* tasks=25 scheduled=8 on_demand=17 " || fail "a set count is never capped"
-PHP_FPM_WORKER_COUNT=300 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice" && fail "a box with counts set by hand has no notice"
+RSPADE_PHP_WORKERS=300 plan_line 128 524288 0 | grep -q "^total=300 .* tasks=25 scheduled=8 on_demand=17 " || fail "a set count is never capped"
+RSPADE_PHP_WORKERS=300 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice" && fail "a box with counts set by hand has no notice"
 
 # ---- 3. The reservation and the ceilings are reported. --------------------------------
 OUT="$(bash "$SCRIPT" plan 2 4096 4096)"
@@ -72,17 +72,17 @@ echo "$OUT" | grep -q "reserved  1315 MB = 600 fixed + 204 scratch + 255 redis +
 echo "$OUT" | tail -n1 | grep -q "total=6 .* tasks=2 .* limit_mb=320$" || fail "dev budget: $OUT"
 
 # ---- 5. Each switch replaces its part of the calculation. -----------------------------
-[ "$(PHP_FPM_WORKER_COUNT=10 plan_line 1 1 0 | cut -d' ' -f1-3)" = "total=10 min_spare=3 max_spare=3" ] || fail "PHP_FPM_WORKER_COUNT"
-[ "$(PHP_FPM_WORKER_COUNT=2 plan_line 64 65536 0 | cut -d' ' -f1-3)" = "total=2 min_spare=2 max_spare=2" ] || fail "PHP_FPM_WORKER_COUNT=2 is the floor, and the spares never exceed the pool"
-REDIS_MAXMEMORY_MB=500 plan_line 2 4096 0 | grep -q "redis_mb=500 "        || fail "REDIS_MAXMEMORY_MB"
+[ "$(RSPADE_PHP_WORKERS=10 plan_line 1 1 0 | cut -d' ' -f1-3)" = "total=10 min_spare=3 max_spare=3" ] || fail "RSPADE_PHP_WORKERS"
+[ "$(RSPADE_PHP_WORKERS=2 plan_line 64 65536 0 | cut -d' ' -f1-3)" = "total=2 min_spare=2 max_spare=2" ] || fail "RSPADE_PHP_WORKERS=2 is the floor, and the spares never exceed the pool"
+RSPADE_REDIS_MEMORY_MB=500 plan_line 2 4096 0 | grep -q "redis_mb=500 "        || fail "RSPADE_REDIS_MEMORY_MB"
 RSX_TASK_MAX_WORKERS=6 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=7 scheduled=1 on_demand=6 " || fail "RSX_TASK_MAX_WORKERS"
 RSX_TASK_SCHEDULED_WORKERS=3 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=4 scheduled=3 on_demand=1 " || fail "RSX_TASK_SCHEDULED_WORKERS"
-PHP_FPM_WORKER_COUNT=20 plan_line 2 4096 0 | grep -q "^total=20 .* tasks=5 scheduled=2 on_demand=3 " || fail "PHP_FPM_WORKER_COUNT keeps the quarter"
+RSPADE_PHP_WORKERS=20 plan_line 2 4096 0 | grep -q "^total=20 .* tasks=5 scheduled=2 on_demand=3 " || fail "RSPADE_PHP_WORKERS keeps the quarter"
 RSPADE_PHP_MEMORY_LIMIT_MB=512 plan_line 2 4096 0 | grep -q "^total=3 .* tasks=2 .* limit_mb=512$" || fail "RSPADE_PHP_MEMORY_LIMIT_MB"
 RSPADE_PHP_WORKERS_PER_CORE=2 plan_line 2 4096 4096 | grep -q "^total=4 .* tasks=2 " || fail "RSPADE_PHP_WORKERS_PER_CORE"
 RSPADE_PHP_TYPICAL_MB=256 bash "$SCRIPT" plan 2 4096 4096 | grep -q "ceilings  processes: ram 11," || fail "RSPADE_PHP_TYPICAL_MB"
-RSPADE_RESERVED_MB=1000 bash "$SCRIPT" plan 2 4096 4096 | grep -q "+ 1000 extra" || fail "RSPADE_RESERVED_MB"
-MYSQL_INNODB_BUFFER_MB=512 bash "$SCRIPT" plan 2 4096 0 dev | grep -q "+ 704 mysql" || fail "MYSQL_INNODB_BUFFER_MB"
+RSPADE_MEMORY_RESERVED_MB=1000 bash "$SCRIPT" plan 2 4096 4096 | grep -q "+ 1000 extra" || fail "RSPADE_MEMORY_RESERVED_MB"
+RSPADE_MYSQL_BUFFER_MB=512 bash "$SCRIPT" plan 2 4096 0 dev | grep -q "+ 704 mysql" || fail "RSPADE_MYSQL_BUFFER_MB"
 
 # ---- 6. A switch that is not a whole number in range is refused, naming it. -----------
 SCRATCH="$(mktemp -d)"
@@ -93,11 +93,11 @@ for bad in abc 0 -3 2.5; do
     fi
     grep -q "RSPADE_PHP_TYPICAL_MB must be a whole number of 1 or more" "$SCRATCH/err" || fail "refusing '$bad' did not say why"
 done
-if PHP_FPM_WORKER_COUNT=1 bash "$SCRIPT" plan 1 2048 0 >/dev/null 2>"$SCRATCH/err"; then
-    fail "PHP_FPM_WORKER_COUNT=1 was accepted (the floor is two workers)"
+if RSPADE_PHP_WORKERS=1 bash "$SCRIPT" plan 1 2048 0 >/dev/null 2>"$SCRATCH/err"; then
+    fail "RSPADE_PHP_WORKERS=1 was accepted (the floor is two workers)"
 fi
-grep -q "PHP_FPM_WORKER_COUNT must be a whole number of 2 or more" "$SCRATCH/err" || fail "refusing 1 did not say why"
-RSPADE_RESERVED_MB=0 bash "$SCRIPT" plan 1 2048 0 >/dev/null || fail "RSPADE_RESERVED_MB=0 is allowed"
+grep -q "RSPADE_PHP_WORKERS must be a whole number of 2 or more" "$SCRATCH/err" || fail "refusing 1 did not say why"
+RSPADE_MEMORY_RESERVED_MB=0 bash "$SCRIPT" plan 1 2048 0 >/dev/null || fail "RSPADE_MEMORY_RESERVED_MB=0 is allowed"
 
 # ---- 7. apply prod: the pool, both memory ini files, the Redis cap, the record. -------
 ROOT="$SCRATCH/root"
@@ -105,7 +105,7 @@ POOLS="$ROOT/etc/php/8.5/fpm/pool.d"
 mkdir -p "$POOLS" "$ROOT/var/www/html"
 cp "$DOCKER_DIR/php/www-prod.conf" "$POOLS/www.conf"
 
-OUT="$(PHP_VERSION=8.5 PHP_FPM_WORKER_COUNT=10 REDIS_MAXMEMORY_MB=300 bash "$SCRIPT" apply prod --root="$ROOT")" || fail "apply exited non-zero"
+OUT="$(PHP_VERSION=8.5 RSPADE_PHP_WORKERS=10 RSPADE_REDIS_MEMORY_MB=300 bash "$SCRIPT" apply prod --root="$ROOT")" || fail "apply exited non-zero"
 echo "$OUT" | grep -qE "sized for [0-9]+ cores, [0-9]+ MB memory, [0-9]+ MB swap: php-fpm 10, " \
     || fail "apply did not report what it chose: $OUT"
 
@@ -116,7 +116,7 @@ value_of() { grep -E "^$2 = " "$POOLS/$1.conf" | sed 's/.* = //'; }
 # The spares depend on the cores this machine has; the plan for the same cores is the oracle
 # (the rows above pin the formula itself).
 cores="$(echo "$OUT" | sed -nE 's/.*sized for ([0-9]+) cores.*/\1/p')"
-expected="$(PHP_FPM_WORKER_COUNT=10 plan_line "$cores" 1 0 | cut -d' ' -f2-3)"
+expected="$(RSPADE_PHP_WORKERS=10 plan_line "$cores" 1 0 | cut -d' ' -f2-3)"
 [ "min_spare=$(value_of www pm.min_spare_servers) max_spare=$(value_of www pm.max_spare_servers)" = "$expected" ] \
     || fail "www spares: expected $expected for $cores cores"
 [ "$(value_of www pm.start_servers)" = "$(value_of www pm.min_spare_servers)" ] || fail "www start_servers is min_spare"
@@ -162,7 +162,7 @@ rm "$ROOT/var/www/html/.env"
 # ---- 9. apply dev: the pool untouched, 320 MB, the MySQL buffer pool. ----------------
 cp "$DOCKER_DIR/php/www.conf" "$POOLS/www.conf"
 BEFORE="$(md5sum < "$POOLS/www.conf")"
-PHP_VERSION=8.5 MYSQL_INNODB_BUFFER_MB=96 bash "$SCRIPT" apply dev --root="$ROOT" >/dev/null || fail "apply dev"
+PHP_VERSION=8.5 RSPADE_MYSQL_BUFFER_MB=96 bash "$SCRIPT" apply dev --root="$ROOT" >/dev/null || fail "apply dev"
 [ "$(md5sum < "$POOLS/www.conf")" = "$BEFORE" ] || fail "a development apply changed the pool"
 grep -qx "memory_limit = 320M" "$ROOT/etc/php/8.5/cli/conf.d/95-rspade-memory.ini" || fail "the dev CLI memory limit"
 grep -qx "innodb_buffer_pool_size = 96M" "$ROOT/etc/mysql/mysql.conf.d/95-rspade-sizing.cnf" || fail "the dev MySQL buffer pool"

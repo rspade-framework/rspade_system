@@ -98,7 +98,7 @@ if [ -e "$SYSTEM_DIR/.git" ]; then
     RELEASE_TAG="$(git -C "$SYSTEM_DIR" rev-parse HEAD 2>/dev/null | cut -c1-12)"
 
     # The revision the application images record as built_from (/opt/rspade/image.conf,
-    # beside the image contract; image_contract.conf says who reads it). A build context
+    # beside image_version; image_contract.conf says who reads it). A build context
     # with uncommitted changes is not that revision, and the record says so.
     if [ -n "$RELEASE_TAG" ]; then
         BUILT_FROM="$RELEASE_TAG"

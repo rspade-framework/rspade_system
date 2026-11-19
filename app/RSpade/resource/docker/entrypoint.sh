@@ -12,6 +12,11 @@
 # restarting MySQL through supervisorctl - so supervisor has to already be up
 # when migrations run, or the snapshot has nothing to talk to.
 #
+# Supervisor starts only the INFRASTRUCTURE on its own (MySQL, Redis, rsx-lockd, the mail
+# catcher, the security updater, the log echo). The programs that serve and work - php-fpm,
+# nginx, Proxority, the realtime relay, the task scheduler, the companion daemon - are
+# autostart=false and started by step 11b, once the build and the migrations are done.
+#
 set -u
 
 # THE STARTUP RECORD (startup-state.sh, /usr/local/bin/rspade-startup): what this start is
@@ -29,6 +34,84 @@ TARGET="${RSPADE_CONTAINER_TARGET:-dev}"
 say()  { echo "[rspade] $*"; }
 warn() { echo "[rspade] WARNING: $*" >&2; }
 die()  { echo "[rspade] ERROR: $*" >&2; startup_record failed "$*"; exit 1; }
+
+# switch_is_on <name> <value> : return 0 for on (1, true, yes, on - any case), 1 for off
+# (unset, empty, 0, false, no, off), 2 with a sentence on stderr for anything else.
+switch_is_on() {
+    case "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        ''|0|false|no|off) return 1 ;;
+    esac
+    echo "$1 is '$2': it must be 1/0, true/false, yes/no or on/off." >&2
+    return 2
+}
+
+# start_steps <target> <mode> <RSPADE_BUILD_MIGRATE_ON_START value> : what step 10 runs,
+# one word per line, in order. <mode> is the application mode (development, debug,
+# production); <target> the image (dev, prod).
+#
+#   build          php system/artisan rsx:build             (switch on, development)
+#   build-force    php system/artisan rsx:build --force     (switch on, debug/production:
+#                                                            build and reseal)
+#   migrate        php system/artisan migrate --force; a failure stops the start
+#                                                           (switch on)
+#   migrate-warn   the same, a failure only warned about    (switch off, dev image)
+#   pending        report pending migrations, run none      (switch off, prod image)
+#
+# Returns 2 (the sentence on stderr) for a switch value that is neither on nor off.
+start_steps() {
+    local target="$1" mode="$2" value="$3" answer
+
+    switch_is_on RSPADE_BUILD_MIGRATE_ON_START "$value"
+    answer=$?
+
+    case "$answer" in
+        0)
+            if [ "$mode" = development ]; then
+                echo build
+            else
+                echo build-force
+            fi
+            echo migrate
+            ;;
+        1)
+            if [ "$target" = dev ]; then
+                echo migrate-warn
+            else
+                echo pending
+            fi
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+# The owner of the trees the application writes, "user:group": set by step 5b (the PUID
+# identity, or www-data on the prod image), empty when the files stay as they are.
+APP_OWNER=""
+
+# hand_over_app_trees : give storage/ (all but storage/mysql_data), build/ and tmp/ to
+# APP_OWNER. Run by step 5b, and again after step 10 has built or migrated: those
+# commands run as root, and the files they create must belong to the application too.
+#
+# storage/mysql_data is EXCLUDED, and must stay excluded: it is the database's
+# bind-mounted data directory, mysqld requires it to be owned by its own user, and
+# handing it to the application's stops the database from starting.
+hand_over_app_trees() {
+    [ -n "$APP_OWNER" ] || return 0
+    find storage -mindepth 1 -maxdepth 1 ! -name mysql_data \
+        -exec chown -R "$APP_OWNER" {} + 2>/dev/null \
+        || warn "could not chown storage/ to ${APP_OWNER}"
+    chown "$APP_OWNER" storage 2>/dev/null || true
+    chown -R "$APP_OWNER" build tmp 2>/dev/null || true
+}
+
+# The supervisor programs that SERVE or WORK, configured autostart=false: step 11b starts
+# them once the build and the migrations are done, so nothing answers a request or runs a
+# task against a schema or build that is about to change. Infrastructure (MySQL, Redis,
+# rsx-lockd, the mail catcher, the security updater, the log echo) starts with supervisor.
+SERVING_PROGRAMS="php-fpm nginx proxority fpc-proxy realtime tasks rsx-companiond"
 
 # -----------------------------------------------------------------------------
 # 0. Is a framework checkout present?
@@ -106,18 +189,33 @@ fi
 # -----------------------------------------------------------------------------
 # 0b. Is this image older than the checkout it runs?
 # -----------------------------------------------------------------------------
-# The checkout states the image contract it needs (resource/docker/image_contract.conf)
-# and this image carries the one it provides (/opt/rspade/image.conf). When the image is
-# older, a service the checkout expects the image to provide cannot start, so say so here,
-# loudly and with the remedy, and carry on: the container starts and serves what it can.
-# The library comes from the CHECKOUT; a checkout that predates it has nothing to compare.
+# The checkout states the oldest image it runs on (min_image_version in
+# resource/docker/image_contract.conf) and this image records its own version
+# (image_version in /opt/rspade/image.conf). An older image may lack a service or tool
+# the checkout depends on, so the container DOES NOT START: the sentence names the image
+# to pull. The same check refuses every artisan command and web request
+# (bootstrap/rsx_image_contract.php), so starting anyway would only serve 500s.
+#
+# Skipped on the framework authors' box (IS_FRAMEWORK_DEVELOPER true), whose image is
+# built on the host and carries no record - with one line saying so. The library comes
+# from the CHECKOUT; a checkout that predates the minimum image version (no library, or
+# one from the earlier contract-counter model, which cannot read this image's record) has
+# nothing to compare, and a newer image under an older checkout is fine.
 if [ "$HAS_FRAMEWORK" = "1" ] && [ -f "$APP_DIR/system/bin/lib/rsx_image_contract.sh" ]; then
     . "$APP_DIR/system/bin/lib/rsx_image_contract.sh"
-    if IMAGE_CONTRACT_SENTENCE="$(rsx_image_contract_problem "$APP_DIR/system/app/RSpade/resource/docker/image_contract.conf")"; then
-        warn "${IMAGE_CONTRACT_SENTENCE}
-  Services this image cannot run will not start."
-        startup_record warning "${IMAGE_CONTRACT_SENTENCE}"
-    fi
+fi
+if ! declare -F rsx_image_contract_version_older >/dev/null; then
+    :
+elif rsx_image_contract_framework_developer "$APP_DIR/.env"; then
+    warn "IS_FRAMEWORK_DEVELOPER is set: the minimum image version is not checked."
+    startup_record warning "IS_FRAMEWORK_DEVELOPER is set: the minimum image version is not checked."
+else
+    IMAGE_CONTRACT_SENTENCE="$(rsx_image_contract_problem "$APP_DIR/system/app/RSpade/resource/docker/image_contract.conf" \
+        /opt/rspade/image.conf /.rspade_container "$APP_DIR/.env" 2>&1)"
+    case $? in
+        0) die "${IMAGE_CONTRACT_SENTENCE}" ;;
+        2) die "the checkout's minimum image version cannot be read: ${IMAGE_CONTRACT_SENTENCE}" ;;
+    esac
 fi
 
 cd "$APP_DIR" || die "Cannot enter $APP_DIR"
@@ -408,18 +506,10 @@ if [ -n "${PUID:-}" ]; then
             || warn "could not repoint mysqld at ${APP_USER}"
     fi
 
-    # Hand over the things the application writes. Everything else in the project
-    # is yours already - it came from your checkout.
-    #
-    # storage/mysql_data is EXCLUDED, and must stay excluded: it is the database's
-    # bind-mounted data directory, mysqld requires it to be owned by mysql, and
-    # handing it to the developer's uid stops the database from starting. It is
-    # not a thing you edit by hand anyway.
-    find storage -mindepth 1 -maxdepth 1 ! -name mysql_data \
-        -exec chown -R "${APP_USER}:${APP_GROUP}" {} + 2>/dev/null \
-        || warn "could not chown storage/ to ${APP_USER}"
-    chown "${APP_USER}:${APP_GROUP}" storage 2>/dev/null || true
-    chown -R "${APP_USER}:${APP_GROUP}" build tmp 2>/dev/null || true
+    # Hand over the things the application writes (hand_over_app_trees). Everything
+    # else in the project is yours already - it came from your checkout.
+    APP_OWNER="${APP_USER}:${APP_GROUP}"
+    hand_over_app_trees
     [ -f "$APP_DIR/.env" ] && chown "${APP_USER}:${APP_GROUP}" "$APP_DIR/.env" 2>/dev/null
 
     say "Running the application as ${APP_USER} (uid ${PUID}, gid ${APP_GID})."
@@ -427,11 +517,8 @@ if [ -n "${PUID:-}" ]; then
 elif [ "$TARGET" = "prod" ]; then
     # Production has no bind-mounted developer tree to fight, so it runs as
     # www-data unconditionally and owns what it writes.
-    find storage -mindepth 1 -maxdepth 1 ! -name mysql_data \
-        -exec chown -R www-data:www-data {} + 2>/dev/null \
-        || warn "Could not chown storage/ to www-data"
-    chown www-data:www-data storage 2>/dev/null || true
-    chown -R www-data:www-data build tmp 2>/dev/null || true
+    APP_OWNER="www-data:www-data"
+    hand_over_app_trees
 fi
 
 # -----------------------------------------------------------------------------
@@ -542,7 +629,7 @@ startup_record step "sizing PHP, Redis and MySQL"
 # a developer's box is not sized for traffic), the memory_limit php-fpm and the CLI share,
 # the Redis cap, and the development MySQL buffer pool. The numbers come from this
 # container's cores, memory and swap, or from the switches the container was started with
-# (RSPADE_PHP_MEMORY_LIMIT_MB, PHP_FPM_WORKER_COUNT, REDIS_MAXMEMORY_MB and the rest); the
+# (RSPADE_PHP_MEMORY_LIMIT_MB, RSPADE_PHP_WORKERS, RSPADE_REDIS_MEMORY_MB and the rest); the
 # script holds the formula and the reasoning (rspade-sizing), and records the budget it
 # chose in /var/lib/rspade/sizing.json, which the framework reads (rsx:health "Resource
 # Sizing", the task pools, the /_sys Performance screen).
@@ -583,7 +670,7 @@ startup_record step "installing security updates"
 #
 # One attempt, one retry a minute later, then the start continues whatever happened: a
 # mirror that cannot be reached never stops a container, and the scheduled program tries
-# again every 4 hours. RSX_AUTO_SECURITY_UPDATES=0 turns it off. The script's header has
+# again every 4 hours. PHP_SECURITY_UPDATES=0 turns it off. The script's header has
 # the rest.
 #
 # Skipped when the script is absent: an older image under a newer entrypoint.
@@ -657,32 +744,96 @@ if [ "$TARGET" = "dev" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 10. Migrations
+# 10. Build and migrate - BEFORE anything serves
 # -----------------------------------------------------------------------------
-# DEVELOPMENT migrates automatically: a freshly cloned project should just work.
+# The serving programs (SERVING_PROGRAMS above) are autostart=false and start in step 11b,
+# after this step, so no request and no task ever runs against a schema or a build this
+# step is still changing.
 #
-# PRODUCTION DOES NOT. Schema changes are a deploy decision, not a side effect of
-# a container restart - and with more than one replica, several containers
-# starting at once would race each other through the same migration. Run it
-# yourself, once, as a deliberate step:
+# RSPADE_BUILD_MIGRATE_ON_START (default off) makes a start a deployment: it builds, then
+# migrates, and a failure of either STOPS THE START - the output is in `docker logs`, and
+# no serving program is started.
 #
-#     docker exec <container> php system/artisan migrate
+#   development mode    php system/artisan rsx:build, then migrate --force (snapshot-
+#                       protected where migrate can protect it: rsx:man migrations)
+#   debug / production  php system/artisan rsx:build --force (build and reseal), then
+#                       migrate --force - a BARE run, no rollback: the operator snapshots
+#                       the database before starting the container (rsx:man prod)
 #
-# Skipped entirely without a checkout - artisan is the thing that is missing.
-if [ "$HAS_FRAMEWORK" != "1" ]; then
-    :
-elif [ "$TARGET" = "dev" ]; then
-    startup_record step "running migrations"
-    say "Running migrations..."
-    if ! php system/artisan migrate --force; then
-        warn "Migrations did not complete. The application may not work until this is resolved."
-        warn "Run them yourself to see the full error:  php system/artisan migrate"
+# Off, the image decides, as it always has:
+#
+#   DEVELOPMENT image   migrates automatically - a freshly cloned project should just
+#                       work. A failure is warned about and the start continues.
+#   PRODUCTION image    does not. Schema changes are a deploy decision, not a side effect
+#                       of a container restart, and several replicas starting at once
+#                       would race each other through the same migration. Pending
+#                       migrations are reported; run them as a deliberate step
+#                       (docker exec <container> php system/artisan migrate), or start
+#                       ONE container with the switch on.
+#
+# The mode is the application's (RSX_MODE: the container's environment, else .env), read
+# as bootstrap/rsx_mode.php reads it. Skipped entirely without a checkout - artisan is the
+# thing that is missing.
+if [ "$HAS_FRAMEWORK" = "1" ]; then
+    if declare -F rsx_env_value >/dev/null; then
+        app_mode="$(rsx_env_value RSX_MODE)"
+    else
+        app_mode="${RSX_MODE:-$(env_value RSX_MODE)}"
     fi
-else
-    startup_record step "checking for pending migrations"
-    if php system/artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
-        say "NOTE: there are pending migrations. Production does not migrate automatically:"
-        say "      php system/artisan migrate"
+    app_mode="$(printf '%s' "$app_mode" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$app_mode" in
+        ''|dev) app_mode=development ;;
+        prod)   app_mode=production ;;
+    esac
+
+    start_steps_said="$(start_steps "$TARGET" "$app_mode" "${RSPADE_BUILD_MIGRATE_ON_START:-}" 2>&1)" \
+        || die "$start_steps_said"
+
+    trees_written=0
+    for start_step in $start_steps_said; do
+        case "$start_step" in
+            build)
+                startup_record step "building"
+                say "Building (RSPADE_BUILD_MIGRATE_ON_START)..."
+                php system/artisan rsx:build \
+                    || die "The build failed (see above). No web service was started."
+                ;;
+            build-force)
+                startup_record step "building and sealing"
+                say "Building and sealing the ${app_mode} build (RSPADE_BUILD_MIGRATE_ON_START)..."
+                php system/artisan rsx:build --force \
+                    || die "The build failed (see above). No web service was started."
+                ;;
+            migrate)
+                startup_record step "running migrations"
+                say "Running migrations (RSPADE_BUILD_MIGRATE_ON_START)..."
+                php system/artisan migrate --force \
+                    || die "Migrations failed (see above). No web service was started."
+                ;;
+            migrate-warn)
+                startup_record step "running migrations"
+                say "Running migrations..."
+                if ! php system/artisan migrate --force; then
+                    warn "Migrations did not complete. The application may not work until this is resolved."
+                    warn "Run them yourself to see the full error:  php system/artisan migrate"
+                fi
+                ;;
+            pending)
+                startup_record step "checking for pending migrations"
+                if php system/artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
+                    say "NOTE: there are pending migrations. Production does not migrate automatically:"
+                    say "      php system/artisan migrate"
+                fi
+                ;;
+        esac
+        [ "$start_step" = pending ] || trees_written=1
+    done
+
+    # The build and migrate commands above ran as root: what they wrote under build/,
+    # tmp/ and storage/ goes back to the application's user (step 5b) before it serves.
+    if [ "$trees_written" = 1 ]; then
+        startup_record step "handing the written files to the application user"
+        hand_over_app_trees
     fi
 fi
 
@@ -698,6 +849,30 @@ if [ -f "$APP_DIR/rsx/resource/docker/configure.sh" ]; then
     bash "$APP_DIR/rsx/resource/docker/configure.sh" \
         || warn "configure.sh exited non-zero"
 fi
+
+# -----------------------------------------------------------------------------
+# 11b. Start serving
+# -----------------------------------------------------------------------------
+startup_record step "starting the web and worker services"
+# The programs this image carries out of SERVING_PROGRAMS (a production image has no
+# development-only programs; the test image removes some), started together - each
+# `supervisorctl start` waits out its program's startsecs, and in sequence those add up
+# for nothing. Whether they started without a checkout too: the container serves what is
+# in the docroot either way. A program that does not start is warned about, never a
+# stopped start: supervisor and the health check (rspade-healthcheck) keep reporting it.
+say "Starting the web and worker services..."
+supervisor_programs="$(supervisorctl status 2>/dev/null | awk '{ print $1 }')"
+start_pids=()
+start_names=()
+for program in $SERVING_PROGRAMS; do
+    printf '%s\n' "$supervisor_programs" | grep -qx "$program" || continue
+    supervisorctl start "$program" >/dev/null 2>&1 &
+    start_pids+=("$!")
+    start_names+=("$program")
+done
+for i in "${!start_pids[@]}"; do
+    wait "${start_pids[$i]}" || warn "${start_names[$i]} did not start: supervisorctl status ${start_names[$i]}"
+done
 
 # -----------------------------------------------------------------------------
 # 12. Ready

@@ -741,7 +741,7 @@ DEPLOYMENT FACTS
     - A daemon running as root runs children as the owner of the storage tree, else
       of the project tree; otherwise as itself.
     - rspade-sizing does NOT count companions. Memory a companion needs is given
-      back to the box with RSPADE_RESERVED_MB (rsx:man server_sizing).
+      back to the box with RSPADE_MEMORY_RESERVED_MB (rsx:man server_sizing).
     - Redis DB 4 holds the records, stream, history and counters, keys
       rsx_companion:<scope token>:*; the instance records are the one thing there
       that is not derived, and the daemon republishes them when Redis loses them.
@@ -792,6 +792,6 @@ SEE ALSO
     rsx:man locks - rsx-lockd, which elects single-instance companions
     rsx:man site_locks - readers by default, #[Writer] / #[Manual_Lock] on an endpoint
     rsx:man caching - the Redis database map
-    rsx:man server_sizing - RSPADE_RESERVED_MB
+    rsx:man server_sizing - RSPADE_MEMORY_RESERVED_MB
     rsx:man config_rsx - rsx.companions
     skill rspade:companion-apps - writing a companion and its endpoints

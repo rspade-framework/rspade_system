@@ -13,7 +13,7 @@ It is node core only - no npm dependencies:
 
 | File | What it is |
 |---|---|
-| `proxority.js` | the server (the network around the policy) and the CLI client (`status`, `log`) |
+| `proxority.js` | the server (the network around the policy) and the CLI client (`status`, `log`, `close` / `open`, `hold` / `release`) |
 | `lib/scheduler.js` | the ledger of one pool: caps, queues, round robin, priority. Pure - no I/O, no clock |
 | `lib/classify.js` | what a request is: pool, client address, loopback, robot, media, priority, unthrottled; the pattern syntax |
 | `lib/whitelist.js` | the periodic refresh of the application's directives |
@@ -316,6 +316,8 @@ proxority log
 proxority log --follow
 proxority close --reason="..." [--holder-pid=N]
 proxority open
+proxority hold --reason="..." [--holder-pid=N]
+proxority release
 ```
 
 - `status` - pid and uptime; listen and upstream addresses; the pool's capacity, the three
@@ -335,6 +337,20 @@ proxority open
   so a closer that died never leaves the site closed. The
   state is in memory, so a restart always comes up open. `status` shows it.
 - `open` - admit everyone again.
+- `hold` - stop dispatching, and return once nothing is in flight at php-fpm: every request
+  already admitted (queued ones included, which still dispatch as workers free) has had its
+  upstream response END - a client still reading a page whose response has ended does not
+  count, a download still streaming does. A wait with no deadline. Every request that arrives
+  while held - external and loopback alike - is PARKED: held open outside the ledger, never
+  refused, never counted. A closure still refuses external clients first, so a refused request
+  is never parked. `--holder-pid` works as for `close`, except that nothing triggers the check
+  while every request is parked, so a held proxy checks its holder every second (a polling
+  cadence, not a deadline) and releases the hold when the holder is gone. The state is in
+  memory, so a restart always comes up released; SIGTERM releases it too, so parked requests
+  are dispatched and finish with the rest. `status` shows it and how many requests are parked.
+  The container's security updater holds the proxy around a php-fpm restart
+  (`resource/docker/security-update.sh`).
+- `release` - submit the parked requests in arrival order and resume dispatching.
 
 A sequential `rsx:test` inside the container closes the proxy for its run and opens it again
 when the run ends (PHP side: `Core/Proxority/Proxority_Gate.php`; `rsx:man testing`).
@@ -345,15 +361,17 @@ points them at another socket.
 The ring keeps the last 1000 events in memory - nothing is written to disk. Event types:
 `start`, `stop`, `capacity`, `queued`, `dispatched`, `released`, `timeout`,
 `upstream_error`, `client_abort`, `refresh_ok`, `refresh_failed`, `refresh_maintenance`,
-`refresh_skipped`, `closed`, `drained`, `opened`, `refused`. `queued`, `dispatched`, `released`
-and `refused` are per-request traffic and stay in
+`refresh_skipped`, `closed`, `drained`, `opened`, `refused`, `held`, `idle`, `resumed`, `parked`.
+`queued`, `dispatched`, `released`, `refused` and `parked` are per-request traffic and stay in
 the ring only (echoing them would make stdout an access log); the rest are also echoed.
 
 The socket protocol is newline-delimited JSON: a line `{"verb":"status"}` (or `log`, or
 `follow`) answers `{"ok":true,...}`; `follow` then streams `{"event":{...}}` lines.
 `{"verb":"close","reason":"...","holder_pid":N}` answers `{"ok":true,"closed":{...}}` once
 drained (`ok:false` if it was reopened first); `{"verb":"open"}` answers
-`{"ok":true,"was_closed":bool}`.
+`{"ok":true,"was_closed":bool}`. `{"verb":"hold","reason":"...","holder_pid":N}` answers
+`{"ok":true,"held":{...}}` once nothing is in flight (`ok:false` if it was released first);
+`{"verb":"release"}` answers `{"ok":true,"was_held":bool,"dispatched":N}`.
 
 
 ## Signals
@@ -361,7 +379,8 @@ drained (`ok:false` if it was reopened first); `{"verb":"open"}` answers
 - **SIGHUP** - re-read the pool sizes (above).
 - **SIGTERM / SIGINT** - stop accepting new connections, stop the whitelist refresh, remove the
   status socket, and exit 0 once every request already inside has finished - queued ones
-  included, which still run as workers free. A second SIGTERM / SIGINT exits at once.
+  included, which still run as workers free, and parked ones (a hold is released). A second
+  SIGTERM / SIGINT exits at once.
 - Supervisor's `stopwaitsecs` is the SIGKILL deadline on that drain (see the supervisor
   program's own comment; `killasgroup` makes the SIGKILL reach a running refresh child too).
 
