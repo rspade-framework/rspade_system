@@ -32,6 +32,7 @@ use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Lib\Support\Process\Process_Identity;
 use App\RSpade\Lib\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
@@ -1462,14 +1463,78 @@ class Maint_Migrate extends Command
         }
     }
 
+    /** MySQL's error log in the RSpade container (mysql/mysqld.cnf, log_error). */
+    protected const MYSQL_ERROR_LOG = '/var/log/mysql/error.log';
+
+    /** How often a wait on MySQL reports that it is still waiting, with MySQL's newest log line. */
+    protected const MYSQL_WAIT_PROGRESS_SECONDS = 30;
+
     /**
-     * Wait for MySQL to be ready for connections
+     * Wait until the MySQL that supervisor just started accepts connections.
+     *
+     * NO DEADLINE (engineering mandate): a mysqld recovering after a crash or loading a large
+     * datadir is working, however long it takes. The wait ends on EVIDENCE instead:
+     *   - the probe connects                               -> ready
+     *   - the mysqld supervisor started has exited, or supervisor no longer reports it
+     *     RUNNING (it crashed during start; supervisor is retrying it)  -> MySQL reported a
+     *     startup error: throw with the tail of its error log
+     *   - MySQL answers but refuses the application's credentials        -> throw: waiting
+     *     cannot fix that
+     * The mysqld is identified by its pid AND kernel start time (pid-identity mandate), so a
+     * restarted mysqld that reused the pid is not mistaken for the one that started. Every
+     * MYSQL_WAIT_PROGRESS_SECONDS it reports MySQL's newest log line (crash recovery prints
+     * its own progress there), so a slow start is visibly alive and a stuck one visibly stuck.
      *
      * Credentials come from the configured default connection - never hardcoded - and the
      * password rides in the child's environment (MYSQL_PWD), never on the command line,
      * where `ps` would expose it to every user on the box.
      */
     protected function wait_for_mysql_ready(): void
+    {
+        $pid = $this->_supervised_mysqld_pid();
+        if ($pid === null) {
+            throw new \Exception('MySQL did not start: supervisor does not report it RUNNING ('
+                . trim($this->shell_exec_privileged('supervisorctl status mysql 2>&1') ?? '') . ').'
+                . $this->_mysql_error_log_excerpt());
+        }
+        $start_time = $this->_process_start_time($pid);
+
+        $reported_at = $this->_now();
+        while (true) {
+            [$state, $detail] = $this->_probe_mysql();
+
+            if ($state === 'ready') {
+                return;
+            }
+
+            if ($state === 'refused') {
+                throw new \Exception('MySQL is running but refused the application\'s connection: ' . $detail);
+            }
+
+            if (!$this->_mysqld_is_running($pid, $start_time) || $this->_supervised_mysqld_pid() !== $pid) {
+                throw new \Exception('MySQL exited while starting (it reported a startup error; supervisor is retrying it).'
+                    . $this->_mysql_error_log_excerpt());
+            }
+
+            if ($this->_now() - $reported_at >= static::MYSQL_WAIT_PROGRESS_SECONDS) {
+                $this->_say('  Still waiting for MySQL to accept connections. Its newest log line: ' . $this->_mysql_error_log_last_line());
+                $reported_at = $this->_now();
+            }
+
+            $this->_pause();
+        }
+    }
+
+    /**
+     * Probe whether MySQL accepts the application's connection.
+     *
+     * Answers ['ready', ''], ['starting', <error>] (a client-side connection error: no socket,
+     * connection refused, lost during the handshake, or the server still starting or shutting
+     * down) or ['refused', <error>] (the server answered and rejected the login).
+     *
+     * @return array{0: string, 1: string}
+     */
+    protected function _probe_mysql(): array
     {
         $connection = config('database.default');
         $db = config('database.connections.' . $connection);
@@ -1479,59 +1544,114 @@ class Maint_Migrate extends Command
             . ' -P' . escapeshellarg((string) $db['port'])
             . ' -u' . escapeshellarg((string) $db['username'])
             . ' -e ' . escapeshellarg("SELECT 'mysql_ready_probe'")
-            . ' 2>/dev/null';
+            . ' 2>&1';
 
         $env = [];
         if ((string) $db['password'] !== '') {
             $env['MYSQL_PWD'] = (string) $db['password'];
         }
 
-        $max_attempts = 120;
-        $attempt = 0;
+        $output = [];
+        $return_var = 0;
+        \exec_safe($command, $output, $return_var, $env);
+        $text = trim(implode("\n", $output));
 
-        while ($attempt < $max_attempts) {
-            $output = [];
-            $return_var = 0;
-            \exec_safe($command, $output, $return_var, $env);
-
-            if ($return_var === 0 && str_contains(implode("\n", $output), 'mysql_ready_probe')) {
-                return;
-            }
-
-            sleep(1);
-            $attempt++;
+        if ($return_var === 0 && str_contains($text, 'mysql_ready_probe')) {
+            return ['ready', ''];
         }
 
-        throw new \Exception('MySQL did not start within 120 seconds');
+        return [static::_classify_mysql_probe_error($text), $text];
     }
 
     /**
-     * Wait until mysqld has fully stopped before copying the datadir. Copying while
-     * mysqld is still flushing/holding files open captures an inconsistent snapshot.
+     * 'refused' for an error the server sends when it rejects the login (access denied for the
+     * user or host, an unsupported authentication method); 'starting' for anything else - a
+     * client-side connection error (ERROR 2xxx) or the server not yet, or no longer, serving.
+     */
+    protected static function _classify_mysql_probe_error(string $text): string
+    {
+        if (preg_match('/ERROR (1044|1045|1130|1251|1698)\b/', $text)) {
+            return 'refused';
+        }
+
+        return 'starting';
+    }
+
+    /**
+     * Wait until no mysqld process remains, before the datadir is copied or replaced.
      *
-     * SANCTIONED TIMEOUT (owner ruling 2026-11-11, an exception to the no-timeout mandate):
-     * this waits on an external party - mysqld finishing its own shutdown - and gives up after
-     * 10 minutes. A clean shutdown of even a large datadir finishes far inside that; a mysqld
-     * still present after 10 minutes is a stray or hung server (see
-     * preflight_mysqld_topology()), and expiry fails the migration LOUDLY before any
-     * copy is made, so nothing is truncated or half-done.
+     * NO DEADLINE (engineering mandate): mysqld exits when it has finished flushing, and a
+     * large buffer pool takes as long as it takes. Copying while a mysqld still holds the files
+     * would capture an inconsistent datadir, so there is nothing to do but wait. Every
+     * MYSQL_WAIT_PROGRESS_SECONDS it reports MySQL's newest log line, so a long shutdown is
+     * visibly progressing and a wedged one is visible to the person watching.
      */
     protected function wait_for_mysql_stopped(): void
     {
-        $max_attempts = 600;
-        $attempt = 0;
-
-        while ($attempt < $max_attempts) {
-            // pgrep returns empty when no mysqld process remains.
-            $running = trim($this->shell_exec_privileged('pgrep -x mysqld 2>/dev/null') ?? '');
-            if ($running === '') {
-                return;
+        $reported_at = $this->_now();
+        while ($this->_running_mysqld_pids() !== []) {
+            if ($this->_now() - $reported_at >= static::MYSQL_WAIT_PROGRESS_SECONDS) {
+                $this->_say('  Still waiting for MySQL to finish shutting down. Its newest log line: ' . $this->_mysql_error_log_last_line());
+                $reported_at = $this->_now();
             }
-            sleep(1);
-            $attempt++;
+
+            $this->_pause();
+        }
+    }
+
+    /** The kernel start time of $pid (Process_Identity), null when it is gone. */
+    protected function _process_start_time(int $pid): ?int
+    {
+        return Process_Identity::start_time($pid);
+    }
+
+    /** Whether $pid is still the process that had $start_time. */
+    protected function _mysqld_is_running(int $pid, ?int $start_time): bool
+    {
+        return Process_Identity::is_running($pid, $start_time);
+    }
+
+    /** The last lines of MySQL's error log, formatted to append to an error message. */
+    protected function _mysql_error_log_excerpt(): string
+    {
+        $tail = trim($this->_mysql_error_log_tail(20));
+        if ($tail === '') {
+            return ' (' . static::MYSQL_ERROR_LOG . ' is empty or unreadable.)';
         }
 
-        throw new \Exception('MySQL did not stop within 10 minutes: a mysqld process is still running (pgrep -x mysqld)');
+        return "\nThe last lines of " . static::MYSQL_ERROR_LOG . ":\n" . $tail;
+    }
+
+    /** MySQL's newest error-log line, or a note that there is none. */
+    protected function _mysql_error_log_last_line(): string
+    {
+        $line = trim($this->_mysql_error_log_tail(1));
+
+        return $line === '' ? '(none yet)' : $line;
+    }
+
+    /** The last $lines lines of MySQL's error log ('' when it cannot be read). */
+    protected function _mysql_error_log_tail(int $lines): string
+    {
+        return $this->shell_exec_privileged('tail -n ' . (int) $lines . ' ' . escapeshellarg(static::MYSQL_ERROR_LOG) . ' 2>/dev/null') ?? '';
+    }
+
+    /** One step of a wait on MySQL. */
+    protected function _pause(): void
+    {
+        sleep(1);
+    }
+
+    /** The current time, in seconds. */
+    protected function _now(): int
+    {
+        return time();
+    }
+
+    /** A progress line on the command's output. */
+    protected function _say(string $line): void
+    {
+        $this->info($line);
     }
 
     /**

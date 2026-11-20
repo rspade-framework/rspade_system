@@ -605,6 +605,15 @@ SNAPSHOT PROTECTION
           socket. Pointed at an external database, /var/lib/mysql is not the
           database being migrated at all.
 
+       THE WAITS ON MYSQL HAVE NO DEADLINE. Stopping waits until no mysqld remains
+       (a large buffer pool takes as long as it takes to flush). Starting waits until
+       the application's connection succeeds, however long crash recovery runs, and
+       ends early only on evidence: the mysqld supervisor started has exited or been
+       replaced (a startup error - the message carries the tail of
+       /var/log/mysql/error.log), or MySQL answers and refuses the application's login.
+       Both waits print MySQL's newest log line every 30 seconds, so a slow restart is
+       visibly progressing and a stuck one is visible to whoever is watching.
+
        Two further things suppress the snapshot for a given RUN even where the
        mechanism is available: --framework-only (a schema-only subset used by
        tooling) and the framework-internal --_no-snapshot (a caller that already
