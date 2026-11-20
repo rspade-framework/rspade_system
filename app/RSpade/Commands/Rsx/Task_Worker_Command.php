@@ -16,6 +16,7 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Daemon;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Claim_Pass;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock_Set;
@@ -89,14 +90,14 @@ class Task_Worker_Command extends Command
     private const CLAIM_SKIPPED = 'skipped';
 
     /**
-     * Pending runs this worker set aside in the current pass because their run lock is held:
-     * the identity is already running, or another task of its exclusive group is. Excluded
-     * from selection so a pass never revisits a row; emptied after every task this worker
-     * settles, since a lock was just released and a set-aside run may be claimable now.
-     *
-     * @var int[]
+     * The current claim pass (Task_Claim_Pass): the runs set aside because a run lock they
+     * need is held - the identity is already running, or another task of its exclusive group
+     * is - and the locks they wait on. Excluded from selection so a pass never revisits a row,
+     * and a younger run needing any of those locks is set aside behind them, so runs sharing
+     * a lock start in queue order. A new pass begins every time this worker takes the queue:
+     * at its start and after every run it settles.
      */
-    private array $skip_ids = [];
+    private Task_Claim_Pass $pass;
 
     public function handle()
     {
@@ -113,7 +114,7 @@ class Task_Worker_Command extends Command
         // Per-invocation state. The console application resolves a command ONCE and reuses
         // the instance for every in-process call (Artisan::call), so a run set aside by an
         // earlier invocation must not stay excluded from this one.
-        $this->skip_ids = [];
+        $this->pass = new Task_Claim_Pass();
         $this->tasks_processed = 0;
 
         if (!Task::is_enabled()) {
@@ -202,10 +203,10 @@ class Task_Worker_Command extends Command
                 $recorded = Task_Runner::settle($instance, $outcome, $run_lock);
                 $this->tasks_processed++;
 
-                // A run lock was just released, and time has passed: a run this worker set
-                // aside because its identity or its exclusive group was busy may be claimable
-                // now, so the next pass looks at every pending run again.
-                $this->skip_ids = [];
+                // A run lock was just released, and time has passed: the worker takes the queue
+                // afresh, so a run set aside because its identity or its exclusive group was
+                // busy is looked at again - the oldest of a group first.
+                $this->pass = new Task_Claim_Pass();
                 $this->info("[WORKER] Task {$task_id} " . ($outcome->success ? 'completed' : 'failed: ' . $outcome->error));
                 if (!$recorded && $instance->is_superseded()) {
                     $this->error("[WORKER] Task {$task_id} had been settled as abandoned while it ran; its outcome was not recorded");
@@ -297,9 +298,10 @@ class Task_Worker_Command extends Command
      * scheduled_for, id), whose order is the ORDER BY: the first due row in index order is the
      * answer, with no sort.
      *
-     * A run set aside this pass (skip_ids: its run lock is held) is passed over, whatever its
-     * tier, so a blocked high-priority run never holds up the runs behind it; it is looked at
-     * again after the next settle.
+     * A run set aside this pass (its run lock is held, or an older run set aside this pass
+     * waits on one of its locks) is passed over, whatever its tier, so a blocked high-priority
+     * run never holds up the runs that need none of its locks; it is looked at again on the
+     * next pass. Runs sharing a run lock therefore start in queue order.
      */
     private function claim_pending_run(array $identity)
     {
@@ -308,8 +310,8 @@ class Task_Worker_Command extends Command
         $row = Task_Daemon::where_pending_due(
             DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING)
         )
-            ->when($this->skip_ids, function ($query) {
-                $query->whereNotIn('id', $this->skip_ids);
+            ->when($this->pass->set_aside_ids(), function ($query, $ids) {
+                $query->whereNotIn('id', $ids);
             })
             ->orderBy('priority')
             ->orderBy('scheduled_for')
@@ -323,13 +325,23 @@ class Task_Worker_Command extends Command
         // Per-identity guard for Exclusive/Debounce tasks: at most one instance runs at a
         // time, cluster-wide, via every run lock the task names - all of them or none. NON-
         // BLOCKING tries - the only kind of other lock THE RULE allows under the pool lock. A
-        // run that cannot have them all is set aside for this pass; the pass resumes with the
-        // next most overdue run, and the set-aside list is cleared after every settle.
+        // run that cannot have them all is set aside for this pass, and so is every later run
+        // needing any of the same locks, WITHOUT a try: a lock that frees mid-pass must not go
+        // to a younger run while an older one waits for it - the next pass gives it to the
+        // oldest. The pass resumes with the next most overdue run.
         $run_lock = null;
         if (Task_Concurrency::is_managed($row->class, $row->method)) {
+            $identities = Task_Concurrency::run_lock_identities($row->class, $row->method, $row->params_hash);
+
+            if ($this->pass->waits_behind_a_set_aside_run($identities)) {
+                $this->pass->set_aside((int) $row->id, $identities);
+
+                return self::CLAIM_SKIPPED;
+            }
+
             $run_lock = Task_Concurrency::try_acquire_run_lock($row->class, $row->method, $row->params_hash);
             if (!$run_lock) {
-                $this->skip_ids[] = (int) $row->id;
+                $this->pass->set_aside((int) $row->id, $identities);
 
                 return self::CLAIM_SKIPPED;
             }
@@ -376,8 +388,8 @@ class Task_Worker_Command extends Command
             ->where('status_id', Task_Run_Model::STATUS_PENDING)
             ->where('priority', '<', Task_Runner::PRIORITY_SCHEDULED)
             ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
-            ->when($this->skip_ids, function ($query) {
-                $query->whereNotIn('id', $this->skip_ids);
+            ->when($this->pass->set_aside_ids(), function ($query, $ids) {
+                $query->whereNotIn('id', $ids);
             })
             ->exists();
 

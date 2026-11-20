@@ -156,8 +156,16 @@ anything, and the first query answers `ERROR 1046 (3D000): No database selected`
 `mysql rspade` is the form to use; the same goes for `mysqldump`. If you renamed
 the database in `.env`, use that name.
 
-**After a reset, migrate.** Dropping the database leaves an empty one and an
-application that cannot serve a page. Bring the schema back:
+**Migrations are yours to run.** A container start migrates nothing on its own, with
+one exception: a database that has never been migrated - a new project's first start,
+or a `storage/mysql_data` folder you deleted to start over - is migrated as the
+container starts. After pulling code that brings new migrations, run them yourself
+(the start-up log notes when some are pending), or start the container with
+`RSPADE_BUILD_MIGRATE_ON_START=1`.
+
+**After a reset, migrate.** Dropping the database from a SQL prompt leaves an empty
+one and an application that cannot serve a page. Restarting the container brings the
+schema back (an emptied database counts as never migrated), or do it in place:
 
 ```bash
 docker compose exec app php artisan migrate

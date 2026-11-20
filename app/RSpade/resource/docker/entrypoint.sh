@@ -46,21 +46,24 @@ switch_is_on() {
     return 2
 }
 
-# start_steps <target> <mode> <RSPADE_BUILD_MIGRATE_ON_START value> : what step 10 runs,
-# one word per line, in order. <mode> is the application mode (development, debug,
-# production); <target> the image (dev, prod).
+# start_steps <target> <mode> <RSPADE_BUILD_MIGRATE_ON_START value> <never migrated> : what
+# step 10 runs, one word per line, in order. <mode> is the application mode (development,
+# debug, production); <target> the image (dev, prod); <never migrated> is 1 when the dev
+# image's database has never been migrated (no _migrations table - a new project, or a
+# database deliberately deleted to start over), 0 otherwise.
 #
 #   build          php system/artisan rsx:build             (switch on, development)
 #   build-force    php system/artisan rsx:build --force     (switch on, debug/production:
 #                                                            build and reseal)
 #   migrate        php system/artisan migrate --force; a failure stops the start
 #                                                           (switch on)
-#   migrate-warn   the same, a failure only warned about    (switch off, dev image)
-#   pending        report pending migrations, run none      (switch off, prod image)
+#   migrate-new    the same, a failure only warned about    (switch off, dev image, a
+#                                                            database never migrated)
+#   pending        report pending migrations, run none      (switch off, otherwise)
 #
 # Returns 2 (the sentence on stderr) for a switch value that is neither on nor off.
 start_steps() {
-    local target="$1" mode="$2" value="$3" answer
+    local target="$1" mode="$2" value="$3" never_migrated="${4:-0}" answer
 
     switch_is_on RSPADE_BUILD_MIGRATE_ON_START "$value"
     answer=$?
@@ -75,8 +78,8 @@ start_steps() {
             echo migrate
             ;;
         1)
-            if [ "$target" = dev ]; then
-                echo migrate-warn
+            if [ "$target" = dev ] && [ "$never_migrated" = 1 ]; then
+                echo migrate-new
             else
                 echo pending
             fi
@@ -760,16 +763,18 @@ fi
 #                       migrate --force - a BARE run, no rollback: the operator snapshots
 #                       the database before starting the container (rsx:man prod)
 #
-# Off, the image decides, as it always has:
+# Off (the default), a start builds nothing and migrates nothing. Pending migrations are
+# reported; run them as a deliberate step (docker exec <container> php system/artisan
+# migrate), or start ONE container with the switch on. Schema changes are a deploy
+# decision, not a side effect of a container restart, and several replicas starting at
+# once would race each other through the same migration.
 #
-#   DEVELOPMENT image   migrates automatically - a freshly cloned project should just
-#                       work. A failure is warned about and the start continues.
-#   PRODUCTION image    does not. Schema changes are a deploy decision, not a side effect
-#                       of a container restart, and several replicas starting at once
-#                       would race each other through the same migration. Pending
-#                       migrations are reported; run them as a deliberate step
-#                       (docker exec <container> php system/artisan migrate), or start
-#                       ONE container with the switch on.
+# The one exception is a NEW DATABASE in the development image: a database that has never
+# been migrated (no _migrations table - the first start of a freshly cloned project, or a
+# database folder deleted to start over) is migrated, so the quick start (clone, docker
+# compose up) needs no extra step. There is nothing in such a database to protect. A
+# failure is warned about and the start continues. The production image's database is the
+# operator's and is never created here, so it has no such exception.
 #
 # The mode is the application's (RSX_MODE: the container's environment, else .env), read
 # as bootstrap/rsx_mode.php reads it. Skipped entirely without a checkout - artisan is the
@@ -786,7 +791,18 @@ if [ "$HAS_FRAMEWORK" = "1" ]; then
         prod)   app_mode=production ;;
     esac
 
-    start_steps_said="$(start_steps "$TARGET" "$app_mode" "${RSPADE_BUILD_MIGRATE_ON_START:-}" 2>&1)" \
+    # Has the dev image's database ever been migrated? Asked of the server as root over the
+    # socket, as step 9b provisions it: no _migrations table in the application database
+    # means never.
+    never_migrated=0
+    if [ "$TARGET" = "dev" ]; then
+        app_database="$(env_value DB_DATABASE)"
+        app_database="${app_database:-rspade}"
+        migrations_tables="$(mysql -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${app_database//\'/}' AND table_name = '_migrations'" 2>/dev/null)"
+        [ "$migrations_tables" = 0 ] && never_migrated=1
+    fi
+
+    start_steps_said="$(start_steps "$TARGET" "$app_mode" "${RSPADE_BUILD_MIGRATE_ON_START:-}" "$never_migrated" 2>&1)" \
         || die "$start_steps_said"
 
     trees_written=0
@@ -810,9 +826,9 @@ if [ "$HAS_FRAMEWORK" = "1" ]; then
                 php system/artisan migrate --force \
                     || die "Migrations failed (see above). No web service was started."
                 ;;
-            migrate-warn)
+            migrate-new)
                 startup_record step "running migrations"
-                say "Running migrations..."
+                say "New database: running the migrations that create it..."
                 if ! php system/artisan migrate --force; then
                     warn "Migrations did not complete. The application may not work until this is resolved."
                     warn "Run them yourself to see the full error:  php system/artisan migrate"
@@ -821,8 +837,8 @@ if [ "$HAS_FRAMEWORK" = "1" ]; then
             pending)
                 startup_record step "checking for pending migrations"
                 if php system/artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
-                    say "NOTE: there are pending migrations. Production does not migrate automatically:"
-                    say "      php system/artisan migrate"
+                    say "NOTE: there are pending migrations. A start does not migrate unless"
+                    say "      RSPADE_BUILD_MIGRATE_ON_START=1; run them with: php system/artisan migrate"
                 fi
                 ;;
         esac

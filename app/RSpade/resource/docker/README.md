@@ -61,7 +61,7 @@ runs it as root before the application serves traffic.
 |  | dev | prod |
 |---|---|---|
 | MySQL server | in the container | **yours** — `mysql-client` only |
-| Migrations at start | automatic | **never** — run them deliberately |
+| Migrations at start | only a **new** database (never migrated), or with `RSPADE_BUILD_MIGRATE_ON_START=1` | only with `RSPADE_BUILD_MIGRATE_ON_START=1` |
 | `migrate` snapshot/rollback | yes, against a local DB | **no** — nothing to snapshot |
 | OPcache | revalidate every request | revalidate every 10s |
 | PHP-FPM | one pool, root, `ondemand`, 16 workers | one pool, `www-data`, `dynamic`, **sized to the machine at start** (below) |
@@ -366,7 +366,7 @@ Get it wrong and the realtime socket dials the wrong port.
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log, Proxority's scheduling and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
-| `RSPADE_BUILD_MIGRATE_ON_START` | `1` makes every start a deployment: build (`rsx:build`; `rsx:build --force` in debug and production mode, which reseals), then `migrate --force`, before anything serves; a failure of either stops the container with the output in `docker logs`. Production migrates BARE, with no rollback - snapshot the database before starting (`rsx:man prod`). Off by default: the dev image then migrates on its own and the prod image only reports pending migrations (First boot, below). Any value but 1/0, true/false, yes/no, on/off stops the start |
+| `RSPADE_BUILD_MIGRATE_ON_START` | `1` makes every start a deployment: build (`rsx:build`; `rsx:build --force` in debug and production mode, which reseals), then `migrate --force`, before anything serves; a failure of either stops the container with the output in `docker logs`. Production migrates BARE, with no rollback - snapshot the database before starting (`rsx:man prod`). Off by default: a start then builds and migrates nothing and reports pending migrations - except that the dev image migrates a database that has never been migrated, so a new project's first start needs no extra step (First boot, below). Any value but 1/0, true/false, yes/no, on/off stops the start |
 | `RSPADE_LOG_TO_DOCKER` | `1` echoes the nginx access log and the Laravel log's ERROR-and-above entries onto `docker logs` (the `log-to-docker` service). Off by default; when on, run the container with `--log-driver local` (compose: `logging: driver: local`) - Docker's default json-file driver never rotates |
 | `PUID` / `PGID` | development, Linux hosts: your own user and group ids (`id -u`, `id -g`), so the files the application writes into your bind-mounted project - and the database files - belong to you |
 
@@ -591,8 +591,11 @@ The order of a start (the entrypoint's numbered steps):
 9. Builds and migrates:
    - `RSPADE_BUILD_MIGRATE_ON_START=1`: `rsx:build` (`--force` in debug and production
      mode), then `migrate --force`; a failure stops the container.
-   - off: **dev** migrates (a failure is warned about); **prod** reports pending migrations
-     and leaves them.
+   - off (the default): nothing is built or migrated; pending migrations are reported.
+     The one exception is a **dev** database that has never been migrated (no
+     `_migrations` table: a new project's first start, or a database folder deleted to
+     start over) - that is migrated, a failure warned about, so the quick start needs
+     no extra step.
    What a build or migrate wrote (they run as root) is handed back to the application's user
    - the `PUID` identity, or `www-data` on the prod image - as step 5 handed it over.
 10. Runs `rsx/resource/docker/configure.sh` if present.

@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Claim_Pass;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -150,6 +151,89 @@ class Task_Exclusive_Group_Test extends Rsx_Test_Abstract
             strtotime((string) $beta_run->started_at) >= strtotime((string) $alpha_run->completed_at),
             'beta started only after alpha had finished'
         );
+    }
+
+    /** Five runs of one group queued while it is busy start in queue order once it frees. */
+    public static function test_a_groups_runs_start_in_queue_order()
+    {
+        static::__clear_queue();
+
+        $holder = Task_Lock_Holder::start(Task_Concurrency::run_lock_name('group::fixture_combo_group'), 'hold');
+        try {
+            $ids = [];
+            for ($n = 1; $n <= 5; $n++) {
+                $ids[] = Task::dispatch('Task_Concurrency_Fixture_Service', 'combo_debounced', ['n' => $n]);
+            }
+            static::__assert_equals(5, count(array_unique($ids)), 'each parameter set is its own pending run');
+
+            Artisan::call('rsx:task:worker');
+            foreach ($ids as $id) {
+                static::__assert_equals(Task_Run_Model::STATUS_PENDING, static::__status($id), "run {$id} waits for the group");
+            }
+        } finally {
+            Task_Lock_Holder::release($holder);
+        }
+
+        Artisan::call('rsx:task:worker');
+
+        for ($k = 1; $k < 5; $k++) {
+            $before = Task_Run_Model::find($ids[$k - 1]);
+            $after = Task_Run_Model::find($ids[$k]);
+            static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $after->status_id, "run {$ids[$k]} ran");
+            static::__assert_true(
+                (string) $after->started_at >= (string) $before->completed_at,
+                "run {$ids[$k]} started only after run {$ids[$k - 1]}, queued before it, had finished"
+            );
+        }
+    }
+
+    /**
+     * A younger run never overtakes an older one waiting on a lock they share. The older run
+     * needs groups A and B; the younger needs only B. With A busy the older cannot start, and
+     * B is free - but the younger is set aside behind it rather than taking B ahead of it.
+     */
+    public static function test_a_younger_run_does_not_overtake_an_older_one_on_a_shared_lock()
+    {
+        static::__clear_queue();
+
+        $older = Task::dispatch('Task_Concurrency_Fixture_Service', 'lock_a_and_b');
+        $younger = Task::dispatch('Task_Concurrency_Fixture_Service', 'lock_b_only');
+        $plain = Task::dispatch('Task_Concurrency_Fixture_Service', 'plain_task');
+
+        $holder = Task_Lock_Holder::start(Task_Concurrency::run_lock_name('group::fixture_lock_a'), 'hold');
+        try {
+            Artisan::call('rsx:task:worker');
+
+            static::__assert_equals(Task_Run_Model::STATUS_PENDING, static::__status($older), 'the older run waits for group A');
+            static::__assert_equals(Task_Run_Model::STATUS_PENDING, static::__status($younger), 'the younger run waits behind it for group B');
+            static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, static::__status($plain), 'a run needing neither lock still ran in that pass');
+        } finally {
+            Task_Lock_Holder::release($holder);
+        }
+
+        Artisan::call('rsx:task:worker');
+
+        $older_run = Task_Run_Model::find($older);
+        $younger_run = Task_Run_Model::find($younger);
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $younger_run->status_id, 'the younger run ran once the older had');
+        static::__assert_true(
+            (string) $younger_run->started_at >= (string) $older_run->completed_at,
+            'the younger run started only after the older one had finished'
+        );
+    }
+
+    /** The pass record: what waits behind a set-aside run, and what does not. */
+    public static function test_the_claim_pass_sets_aside_only_runs_sharing_a_lock()
+    {
+        $pass = new Task_Claim_Pass();
+        static::__assert_false($pass->waits_behind_a_set_aside_run(['group::a']), 'an empty pass holds nothing back');
+
+        $pass->set_aside(7, ['group::a', 'group::b']);
+
+        static::__assert_true($pass->waits_behind_a_set_aside_run(['group::b']), 'a run sharing one lock waits behind it');
+        static::__assert_false($pass->waits_behind_a_set_aside_run(['group::c']), 'another group goes ahead');
+        static::__assert_false($pass->waits_behind_a_set_aside_run([]), 'an unmanaged run goes ahead');
+        static::__assert_equals([7], $pass->set_aside_ids(), 'the set-aside run is excluded from the rest of the pass');
     }
 
     // -------------------------------------------------------------------------

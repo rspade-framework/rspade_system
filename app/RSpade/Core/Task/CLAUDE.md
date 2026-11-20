@@ -111,6 +111,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `try_acquire_run_lock()` (a worker's non-blocking all-or-none try) and
   `acquire_run_lock()` (an inline run waits), both answering a `Task_Lock_Set`,
   `reschedule_pending_after_completion()`.
+- `Task_Claim_Pass.php` — one claim pass of a worker: the runs it set aside and the
+  run-lock identities they wait on (`set_aside()`, `waits_behind_a_set_aside_run()`,
+  `set_aside_ids()`); a new one each time the worker takes the queue.
 - `Task_Lock_Set.php` — every run lock one run needs, held from claim to settle:
   `try_acquire()` takes all or none (releasing what it took the moment one is held
   elsewhere), `acquire()` waits for each in NAME ORDER (no two inline runs can each hold one
@@ -328,8 +331,12 @@ says what is in this DIRECTORY and what must stay true when editing it.
   moment one is refused, so a waiting run never holds part of its locks; an inline run waits
   for each in name order. A grouped member takes no lock of its own identity - one run in
   the group is implied by the group's lock. Nothing reserves a lock for a waiting run: the
-  claim walks due pending runs most overdue first and starts the first whose locks are all
-  free, and skipped runs are looked at again after every settle and at every tick. Every
+  claim walks due pending runs in queue order and starts the first whose locks are all
+  free, and skipped runs are looked at again on the next pass (after every settle and at
+  every tick). WITHIN A LOCK, QUEUE ORDER: a pass (`Task_Claim_Pass`, one per taking of the
+  queue - never carried across passes) that sets a run aside also sets aside every later
+  run needing any of its run-lock identities, without trying them, so a lock freed
+  mid-pass never goes to a younger run ahead of an older one. Every
   branch that asks "which rows are this identity's" goes through the pending identity
   (`__identity_query()`), and every branch that asks "what excludes this run" through
   `run_lock_identities()`; neither is inferred from `mode` alone.

@@ -3,9 +3,10 @@
 #
 # The decision is two functions of the entrypoint, switch_is_on() and start_steps(), EXTRACTED
 # VERBATIM and driven with every switch spelling, mode and image target: on, a development box
-# builds then migrates, debug and production build with --force then migrate; off, the dev
-# image migrates (a failure warned about) and the prod image reports pending migrations; any
-# other value refuses, naming the switch. The rest is checked in the source: the serving
+# builds then migrates, debug and production build with --force then migrate; off, nothing is
+# built or migrated and pending migrations are reported - except that the dev image migrates a
+# database that has never been migrated (a failure warned about); any other value refuses,
+# naming the switch. The rest is checked in the source: the serving
 # programs are autostart=false and the infrastructure is not, the entrypoint starts exactly
 # that set, and it does so after the build-and-migrate step and before the start is recorded
 # finished, with every switched-on failure stopping the start, and the trees a build or
@@ -31,11 +32,11 @@ $(function_source start_steps)"
 [ -n "$(function_source switch_is_on)" ] || fail "the entrypoint defines no switch_is_on()"
 [ -n "$(function_source start_steps)" ] || fail "the entrypoint defines no start_steps()"
 
-# steps <target> <mode> <value> : "<steps joined by spaces>|<exit status>|<stderr>"
+# steps <target> <mode> <value> [never migrated] : "<steps joined by spaces>|<exit status>|<stderr>"
 steps() {
     local out err rc
     err="$(mktemp)"
-    out="$(bash -c "$FUNCTIONS"$'\nstart_steps "$@"' _ "$1" "$2" "$3" 2>"$err")"
+    out="$(bash -c "$FUNCTIONS"$'\nstart_steps "$@"' _ "$1" "$2" "$3" "${4:-0}" 2>"$err")"
     rc=$?
     printf '%s|%s|%s' "$(printf '%s' "$out" | tr '\n' ' ' | sed 's/ $//')" "$rc" "$(cat "$err")"
     rm -f "$err"
@@ -43,8 +44,8 @@ steps() {
 
 expect() {
     local actual
-    actual="$(steps "$1" "$2" "$3")"
-    [ "$actual" = "$4" ] || fail "start_steps $1 $2 '$3': expected '$4', got '$actual'"
+    actual="$(steps "$1" "$2" "$3" "${5:-0}")"
+    [ "$actual" = "$4" ] || fail "start_steps $1 $2 '$3' ${5:-0}: expected '$4', got '$actual'"
 }
 
 for on in 1 true TRUE yes Yes on ON; do
@@ -56,11 +57,18 @@ for on in 1 true TRUE yes Yes on ON; do
 done
 
 for off in '' 0 false False no NO off Off; do
-    expect dev  development "$off" "migrate-warn|0|"
-    expect dev  production  "$off" "migrate-warn|0|"
+    # Off: nothing is built or migrated - except a dev-image database never migrated.
+    expect dev  development "$off" "pending|0|"
+    expect dev  production  "$off" "pending|0|"
     expect prod production  "$off" "pending|0|"
     expect prod development "$off" "pending|0|"
+    expect dev  development "$off" "migrate-new|0|" 1
+    expect dev  production  "$off" "migrate-new|0|" 1
+    expect prod production  "$off" "pending|0|" 1
 done
+
+# On: the new-database signal changes nothing - the switch already builds and migrates.
+expect dev development 1 "build migrate|0|" 1
 
 for bad in 2 ture enabled ' 1'; do
     expect prod production "$bad" "|2|RSPADE_BUILD_MIGRATE_ON_START is '$bad': it must be 1/0, true/false, yes/no or on/off."

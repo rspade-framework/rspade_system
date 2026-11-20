@@ -635,14 +635,22 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     waits for each in name order, so two inline runs can never each hold one and wait on
     the other.
 
-    WHICH RUN STARTS NEXT. Every time a worker takes the queue, it looks at the due
-    pending runs from the MOST OVERDUE to the most recent and starts the first whose locks
-    are all free right now; a run it cannot start is skipped, not held. Nothing reserves a
-    lock for a waiting run: if a younger run can go with just one free lock it goes, and a
-    run needing several waits for a window where all of them are free. Skipped runs are
-    looked at again after every run a worker finishes and at every tick (once a minute
-    under cron; at least once a minute in the container while anything runs), so a
-    waiting run starts in the first such window.
+    WHICH RUN STARTS NEXT. Every time a worker takes the queue (a PASS), it looks at the
+    due pending runs in queue order - claim tier (priority), then scheduled_for, then id -
+    and starts the first whose locks are all free right now; a run it cannot start is
+    skipped, not held. Skipped runs are looked at again on the next pass: after every run
+    a worker finishes and at every tick (once a minute under cron; at least once a minute
+    in the container while anything runs).
+
+    WITHIN ONE LOCK, RUNS START IN QUEUE ORDER. Once a pass skips a run because a lock it
+    needs is held, it also skips every later run needing ANY of that run's locks - the
+    same exclusive group, or the same identity - even if that lock frees during the pass.
+    So within one exclusive group (or one identity) runs start in queue order, and a run
+    dispatched first is never overtaken by one dispatched after it. A run needing none of
+    those locks - another group, an unmanaged run - still goes ahead in the same pass, so
+    a busy group never holds up the rest of the queue. A run of several groups waits for
+    a pass in which all of them are free, and the younger runs of each of those groups
+    wait behind it.
 
     Never take the group's lock yourself inside a task body to get the same effect: by
     then the run occupies a worker slot, and tasks waiting there starve the pool.
